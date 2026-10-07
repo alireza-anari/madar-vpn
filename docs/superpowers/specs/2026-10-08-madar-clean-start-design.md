@@ -95,7 +95,9 @@ While Premium is active, free credit is not consumed.
 
 ### Concurrent usage accounting
 
-For one user, the same wall-clock second may be debited at most once even when multiple simultaneous devices or nodes report activity. Overlapping activity is merged before debit.
+Distinct simultaneous VPN sessions consume their **actual combined observed usage**, as required by the execution plan. For example, two independent active sessions lasting 60 seconds each may consume 120 seconds of free credit.
+
+What must never be charged twice is the same telemetry evidence: retries, duplicate reports, replayed event identities, or repeated processing of the same session/window sequence are idempotent and add no second debit.
 
 ### Speed policy
 
@@ -268,11 +270,9 @@ Node credentials are hash-only in the control plane. REALITY private keys never 
 
 ### Usage
 
-`telemetry_reports`, `usage_minute_buckets`, `usage_debit_events`.
+`telemetry_reports`, `usage_session_buckets`, `usage_debit_events`.
 
-Raw telemetry has an idempotency identity equivalent to `(node_id, window_id, sequence)`.
-
-Usage buckets merge overlapping activity for the same user before debit so concurrent connections cannot double-charge the same wall-clock second.
+Raw telemetry has an idempotency identity equivalent to `(node_id, window_id, sequence)`. Settlement preserves distinct simultaneous sessions while rejecting repeated processing of the same telemetry identity.
 
 ### Push
 
@@ -339,14 +339,15 @@ Minimum telemetry payload:
 - `seconds`
 - `timestamp`
 
-The implementation may additionally send `observedFrom` and `observedTo` to support overlap reconciliation.
+The implementation may additionally send `observedFrom`, `observedTo`, and a stable server-observed session identity when the selected Xray telemetry mechanism can provide one reliably.
 
 Backend requirements:
 
 - duplicate report: no second debit;
 - out-of-order report: accepted/reconciled correctly;
 - previous Tehran-day report: cannot debit today's free balance;
-- simultaneous activity: overlapping wall-clock time is counted once per user.
+- distinct simultaneous sessions: their actual observed usage is summed;
+- retry/replay of the same session/window sequence: no duplicate debit.
 
 If Xray does not provide sufficiently accurate connection timing, actual server-observed activity on a real VPS is measured and documented. No invented connection-state signal is allowed.
 
@@ -456,7 +457,7 @@ Gate: server-authoritative auth behavior is tested; missing email provider is ho
 
 ### Phase 2 — Account Ledger + Free/Premium rules
 
-TDD for one-time 1,800-second grant, 900-second ad grant, replay prevention, Tehran reset boundary, Premium survival/extension, concurrent mutation, prior-day telemetry, and overlap merging.
+TDD for one-time 1,800-second grant, 900-second ad grant, replay prevention, Tehran reset boundary, Premium survival/extension, concurrent mutation, prior-day telemetry, distinct concurrent-session settlement, and duplicate-report replay prevention.
 
 Gate: all credit mutations are transactional and idempotent.
 
@@ -488,7 +489,7 @@ Create account → verify email → get free credit → obtain subscription → 
 
 ### Phase 9 — Multi-node + speed enforcement
 
-Second real node, multi-node subscription, unhealthy filtering, cross-node rotation, overlap telemetry, real Free/Premium throughput tests.
+Second real node, multi-node subscription, unhealthy filtering, cross-node rotation, concurrent telemetry, real Free/Premium throughput tests.
 
 ### Phase 10 — Production readiness
 
@@ -522,6 +523,7 @@ The project is not production-ready until all of the following have passed with 
 - pass traffic through the VPS;
 - decrement free time only during observed activity;
 - stop decrementing after disconnect/inactivity;
+- verify distinct simultaneous sessions consume their real combined usage without duplicate replay debit;
 - add exactly 15 minutes after a valid rewarded-ad callback;
 - reset Free at Tehran midnight;
 - keep Premium across midnight;
