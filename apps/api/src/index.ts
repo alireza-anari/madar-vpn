@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { AuthError, createAuthService, serializeSessionCookie } from './auth';
+import { AuthError, createAuthService, serializeSessionCookie, type User } from './auth';
 import { D1AuthStore, type D1DatabaseLike } from './auth/d1';
 import { createCreditService } from './credits';
 import { D1CreditStore } from './credits/d1';
@@ -43,6 +43,14 @@ const defaultSurfaceFactory: SurfaceFactory = (env) => {
 
 function unavailable(c: { json: (body: { error: string }, status: 503) => Response }, error: string) {
   return c.json({ error }, 503);
+}
+
+async function requireAdminMutation(auth: AuthService, request: Request): Promise<User> {
+  const actor = await auth.requireMutationUser(request);
+  if (actor.role !== 'admin') {
+    throw new AuthError(403, 'ADMIN_REQUIRED', 'Administrator role is required.');
+  }
+  return actor;
 }
 
 export function createApiApp(
@@ -112,11 +120,7 @@ export function createApiApp(
     const auth = authFactory(c.env);
     const surfaces = surfaceFactory(c.env);
     if (!auth || !surfaces) return unavailable(c, 'ADMIN_UNAVAILABLE');
-
-    const actor = await auth.requireMutationUser(c.req.raw);
-    if (actor.role !== 'admin') {
-      throw new AuthError(403, 'ADMIN_REQUIRED', 'Administrator role is required.');
-    }
+    const actor = await requireAdminMutation(auth, c.req.raw);
     const body = await c.req.json<unknown>().catch(() => null);
     return c.json(await surfaces.updateSettings(actor, body));
   });
@@ -127,6 +131,86 @@ export function createApiApp(
     if (!auth || !surfaces) return unavailable(c, 'ADMIN_UNAVAILABLE');
     await auth.requireAdmin(c.req.raw);
     return c.json(await surfaces.getOverview());
+  });
+
+  app.get('/api/admin/resources', async (c) => {
+    const auth = authFactory(c.env);
+    const surfaces = surfaceFactory(c.env);
+    if (!auth || !surfaces) return unavailable(c, 'ADMIN_UNAVAILABLE');
+    await auth.requireAdmin(c.req.raw);
+    return c.json(await surfaces.getAdminResources());
+  });
+
+  app.put('/api/admin/plans/:id', async (c) => {
+    const auth = authFactory(c.env);
+    const surfaces = surfaceFactory(c.env);
+    if (!auth || !surfaces) return unavailable(c, 'ADMIN_UNAVAILABLE');
+    const actor = await requireAdminMutation(auth, c.req.raw);
+    const body = await c.req.json<unknown>().catch(() => null);
+    return c.json(await surfaces.upsertPlan(actor, c.req.param('id'), body));
+  });
+
+  app.delete('/api/admin/plans/:id', async (c) => {
+    const auth = authFactory(c.env);
+    const surfaces = surfaceFactory(c.env);
+    if (!auth || !surfaces) return unavailable(c, 'ADMIN_UNAVAILABLE');
+    const actor = await requireAdminMutation(auth, c.req.raw);
+    await surfaces.deletePlan(actor, c.req.param('id'));
+    return new Response(null, { status: 204 });
+  });
+
+  app.put('/api/admin/missions/:id', async (c) => {
+    const auth = authFactory(c.env);
+    const surfaces = surfaceFactory(c.env);
+    if (!auth || !surfaces) return unavailable(c, 'ADMIN_UNAVAILABLE');
+    const actor = await requireAdminMutation(auth, c.req.raw);
+    const body = await c.req.json<unknown>().catch(() => null);
+    return c.json(await surfaces.upsertMission(actor, c.req.param('id'), body));
+  });
+
+  app.delete('/api/admin/missions/:id', async (c) => {
+    const auth = authFactory(c.env);
+    const surfaces = surfaceFactory(c.env);
+    if (!auth || !surfaces) return unavailable(c, 'ADMIN_UNAVAILABLE');
+    const actor = await requireAdminMutation(auth, c.req.raw);
+    await surfaces.deleteMission(actor, c.req.param('id'));
+    return new Response(null, { status: 204 });
+  });
+
+  app.post('/api/admin/nodes', async (c) => {
+    const auth = authFactory(c.env);
+    const surfaces = surfaceFactory(c.env);
+    if (!auth || !surfaces) return unavailable(c, 'ADMIN_UNAVAILABLE');
+    const actor = await requireAdminMutation(auth, c.req.raw);
+    const body = await c.req.json<unknown>().catch(() => null);
+    return c.json(await surfaces.createNodeEnrollment(actor, body), 201);
+  });
+
+  app.delete('/api/admin/nodes/:id', async (c) => {
+    const auth = authFactory(c.env);
+    const surfaces = surfaceFactory(c.env);
+    if (!auth || !surfaces) return unavailable(c, 'ADMIN_UNAVAILABLE');
+    const actor = await requireAdminMutation(auth, c.req.raw);
+    await surfaces.deleteNode(actor, c.req.param('id'));
+    return new Response(null, { status: 204 });
+  });
+
+  app.post('/api/admin/notification-drafts', async (c) => {
+    const auth = authFactory(c.env);
+    const surfaces = surfaceFactory(c.env);
+    if (!auth || !surfaces) return unavailable(c, 'ADMIN_UNAVAILABLE');
+    const actor = await requireAdminMutation(auth, c.req.raw);
+    const body = await c.req.json<unknown>().catch(() => null);
+    return c.json(await surfaces.createNotificationDraft(actor, body), 201);
+  });
+
+  app.delete('/api/admin/notification-drafts/:id', async (c) => {
+    const auth = authFactory(c.env);
+    const surfaces = surfaceFactory(c.env);
+    if (!auth || !surfaces) return unavailable(c, 'ADMIN_UNAVAILABLE');
+    const actor = await requireAdminMutation(auth, c.req.raw);
+    await surfaces.deleteNotificationDraft(actor, c.req.param('id'));
+    return new Response(null, { status: 204 });
   });
 
   return app;
