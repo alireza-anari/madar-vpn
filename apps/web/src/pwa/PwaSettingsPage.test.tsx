@@ -59,4 +59,37 @@ describe('PWA settings UX', () => {
     expect(screen.getByText(/اعلان در این مرورگر پشتیبانی نمی‌شود/)).toBeInTheDocument();
     expect(screen.getByText(/نصب روی iPhone/)).toBeInTheDocument();
   });
+
+  it('does not request permission when browser subscription persistence is not wired', () => {
+    const requestPermission = vi.fn(async () => 'granted' as NotificationPermission);
+
+    render(
+      <PwaSettingsPage
+        pushAvailable
+        notificationSupported
+        requestPermission={requestPermission}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: /فعال‌کردن اعلان/ })).toBeDisabled();
+    expect(screen.getByText(/فعال‌سازی این دستگاه هنوز به نشست امن متصل نشده/)).toBeInTheDocument();
+    expect(requestPermission).not.toHaveBeenCalled();
+  });
+
+  it('captures the Android beforeinstallprompt event and prompts only after a click', async () => {
+    const prompt = vi.fn(async () => undefined);
+    const installEvent = new Event('beforeinstallprompt');
+    Object.assign(installEvent, {
+      prompt,
+      userChoice: Promise.resolve({ outcome: 'accepted', platform: 'web' }),
+    });
+
+    render(<PwaSettingsPage pushAvailable={false} notificationSupported={false} />);
+    window.dispatchEvent(installEvent);
+
+    const button = await screen.findByRole('button', { name: /نصب برنامه/ });
+    expect(prompt).not.toHaveBeenCalled();
+    fireEvent.click(button);
+    await waitFor(() => expect(prompt).toHaveBeenCalledTimes(1));
+  });
 });
