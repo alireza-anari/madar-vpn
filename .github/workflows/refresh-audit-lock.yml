@@ -1,0 +1,33 @@
+name: Refresh audited dependency lock
+
+on:
+  push:
+    branches: ['impl/phase-1']
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: corepack enable
+      - run: corepack prepare pnpm@12.9.1 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm audit --fix --audit-level high
+      - run: pnpm install --lockfile-only
+      - run: pnpm audit --audit-level high
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audited-pnpm-lock
+          path: |
+            pnpm-workspace.yaml
+            pnpm-lock.yaml
+          if-no-files-found: error
+          retention-days: 1
