@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AuthError, MemoryAuthStore, createAuthService } from './index';
+import { MemoryAuthStore, createAuthService } from './index';
 
 function cookie(token: string) {
   return `__Host-madar_session=${encodeURIComponent(token)}`;
@@ -30,7 +30,7 @@ describe('authenticated mutation origin validation', () => {
       },
     });
 
-    await expect(auth.requireMutationUser(request)).rejects.toMatchObject<Partial<AuthError>>({
+    await expect(auth.requireMutationUser(request)).rejects.toMatchObject({
       status: 403,
       code: 'ORIGIN_INVALID',
     });
