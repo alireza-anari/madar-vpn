@@ -160,6 +160,14 @@ export class D1NodeControlStore implements NodeControlStore {
     return mapCredential(row);
   }
 
+  async revokeNodeCredentials(nodeId: string, revokedAt: string) {
+    await this.db.prepare(`UPDATE node_credentials
+      SET revoked_at = ?
+      WHERE node_id = ? AND revoked_at IS NULL`)
+      .bind(revokedAt, nodeId)
+      .run();
+  }
+
   async saveCapabilities(nodeId: string, capabilities: Record<string, unknown>, updatedAt: string) {
     await this.db.prepare(`INSERT INTO node_capabilities (node_id, capabilities_json, updated_at)
       VALUES (?, ?, ?)
