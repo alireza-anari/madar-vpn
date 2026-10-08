@@ -58,7 +58,7 @@ describe('approved account surfaces', () => {
     render(<SettingsPage pushAvailable={false} installSupported={false} />);
 
     expect(screen.getByText(/نصب روی iPhone/i)).toBeInTheDocument();
-    expect(screen.getByText(/افزودن به صفحه اصلی/)).toBeInTheDocument();
+    expect(screen.getAllByText(/افزودن به صفحه اصلی/)).toHaveLength(2);
     expect(screen.getByRole('button', { name: /فعال‌کردن اعلان/ })).toBeDisabled();
   });
 
