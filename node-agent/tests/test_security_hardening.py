@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 
@@ -68,6 +69,17 @@ def test_log_redaction_masks_bearer_subscription_and_named_secret_values() -> No
     for secret in (bearer, subscription, enrollment, private_key):
         assert secret not in redacted
     assert redacted.count("[REDACTED]") >= 4
+
+
+def test_worker_disables_persistent_invocation_logs_for_subscription_bearer_urls() -> None:
+    config = json.loads((ROOT / "apps" / "api" / "wrangler.jsonc").read_text(encoding="utf-8"))
+    observability = config.get("observability")
+
+    assert isinstance(observability, dict), "Worker observability must be configured explicitly"
+    assert observability.get("enabled") is True, "custom/error observability should remain enabled"
+    logs = observability.get("logs")
+    assert isinstance(logs, dict), "Worker log behavior must be configured explicitly"
+    assert logs.get("invocation_logs") is False, "subscription bearer URLs must not be persisted in invocation logs"
 
 
 def test_current_repository_contains_no_scanner_findings() -> None:
