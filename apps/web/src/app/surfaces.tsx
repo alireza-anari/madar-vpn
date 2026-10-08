@@ -353,7 +353,7 @@ export function AdminPage({
       </div>
 
       <Card>
-        <PageHeader eyebrow="کاربران" title="حساب‌های ثبت‌شده" description="فهرست واقعی کاربران قابل مشاهده است؛ این بخش credential یا session token نمایش نمی‌دهد." />
+        <PageHeader eyebrow="کاربران" title="حساب‌های ثبت‌شده" description="فهرست واقعی کاربران قابل مشاهده است؛ اطلاعات حساس ورود در این صفحه نمایش داده نمی‌شود." />
         <ResourceList label="کاربران ثبت‌شده">
           {resources.users.map((user) => <ResourceValue key={user.id} primary={user.email} secondary={user.role} />)}
         </ResourceList>
@@ -387,7 +387,7 @@ export function AdminPage({
 
       <div className="surface-grid surface-grid--two">
         <Card>
-          <PageHeader eyebrow="نودها" title="ثبت نود" description="ثبت نود فقط رکورد enrolled ایجاد می‌کند و هیچ credential یا کانفیگ آماده‌ای جعل نمی‌شود." />
+          <PageHeader eyebrow="نودها" title="ثبت نود" description="ثبت نود فقط رکورد enrolled ایجاد می‌کند؛ مواد دسترسی تنها پس از آماده‌شدن واقعی زیرساخت مدیریت می‌شوند." />
           <ResourceList label="نودهای واقعی">
             {resources.nodes.map((node) => <ResourceValue key={node.id} primary={node.name} secondary={node.status} />)}
           </ResourceList>
