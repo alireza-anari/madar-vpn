@@ -31,6 +31,7 @@ type MissionRow = {
   description: string;
   reward_seconds: number;
   status: 'draft' | 'active' | 'paused';
+  verification_kind: 'evidence' | 'referral';
   created_at: string;
   updated_at: string;
 };
@@ -207,6 +208,7 @@ export class D1SurfaceStore implements SurfaceStore {
       description: row.description,
       rewardSeconds: row.reward_seconds,
       status: row.status,
+      verificationKind: row.verification_kind,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
@@ -215,13 +217,15 @@ export class D1SurfaceStore implements SurfaceStore {
   async saveMission(mission: MissionRecord) {
     await this.db
       .prepare(
-        `INSERT INTO missions (id, title, description, reward_seconds, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO missions (
+           id, title, description, reward_seconds, status, verification_kind, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            title = excluded.title,
            description = excluded.description,
            reward_seconds = excluded.reward_seconds,
            status = excluded.status,
+           verification_kind = excluded.verification_kind,
            updated_at = excluded.updated_at`,
       )
       .bind(
@@ -230,6 +234,7 @@ export class D1SurfaceStore implements SurfaceStore {
         mission.description,
         mission.rewardSeconds,
         mission.status,
+        mission.verificationKind,
         mission.createdAt,
         mission.updatedAt,
       )
