@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import os
 import zipfile
 from collections.abc import Callable
@@ -36,6 +37,24 @@ class XrayRuntimeConfig:
 @dataclass(frozen=True, slots=True)
 class RealityPublicParameters:
     public_key: str
+
+
+@dataclass(frozen=True, slots=True)
+class RealityServerConfig:
+    port: int
+    target: str
+    server_names: tuple[str, ...]
+    short_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if self.port < 1 or self.port > 65535:
+            raise ValueError("port must be between 1 and 65535")
+        if not self.target:
+            raise ValueError("target is required")
+        if not self.server_names:
+            raise ValueError("at least one server name is required")
+        if not self.short_ids:
+            raise ValueError("at least one short id is required")
 
 
 class XrayRuntimeError(RuntimeError):
@@ -73,12 +92,18 @@ class PinnedXrayAdapter:
         download: Callable[[str], bytes],
         run: Callable[[list[str]], ProcessResult] | None = None,
         log: Callable[[str], None] | None = None,
+        binary: Path | None = None,
+        server: RealityServerConfig | None = None,
+        reload: Callable[[], None] | None = None,
     ) -> None:
         self.install_root = Path(install_root)
         self.state_root = Path(state_root)
         self._download = download
         self._run = run
         self._log = log or (lambda _message: None)
+        self._binary = Path(binary) if binary is not None else None
+        self._server = server
+        self._reload = reload
 
     def ensure_runtime(self, config: XrayRuntimeConfig) -> Path:
         payload = self._download(config.download_url)
@@ -126,11 +151,8 @@ class PinnedXrayAdapter:
         self.state_root.chmod(0o700)
         private_path = self.state_root / "reality.private"
         temporary = self.state_root / ".reality.private.tmp"
-        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        self._write_secret_file(temporary, private_key)
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                handle.write(private_key)
-            temporary.chmod(0o600)
             temporary.replace(private_path)
             private_path.chmod(0o600)
         except BaseException:
@@ -138,3 +160,86 @@ class PinnedXrayAdapter:
             raise
 
         return RealityPublicParameters(public_key=public_key)
+
+    def apply_clients(self, clients: list[ManagedClient]) -> None:
+        if self._run is None or self._binary is None or self._server is None or self._reload is None:
+            raise XrayRuntimeError("Xray managed configuration is not fully configured")
+
+        private_path = self.state_root / "reality.private"
+        try:
+            private_key = private_path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise XrayRuntimeError("Xray REALITY private key is unavailable") from exc
+        if not private_key:
+            raise XrayRuntimeError("Xray REALITY private key is unavailable")
+
+        config = self._render_config(clients, private_key)
+        self.state_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.state_root.chmod(0o700)
+        candidate = self.state_root / "xray-config.candidate.json"
+        live = self.state_root / "xray-config.json"
+        payload = json.dumps(config, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        self._write_secret_file(candidate, payload)
+
+        try:
+            result = self._run([str(self._binary), "run", "-test", "-c", str(candidate)])
+            if result.returncode != 0:
+                self._log("Xray candidate configuration validation failed")
+                raise XrayRuntimeError("Xray candidate configuration validation failed")
+            candidate.replace(live)
+            live.chmod(0o600)
+            self._reload()
+        except BaseException:
+            candidate.unlink(missing_ok=True)
+            raise
+
+    def _render_config(self, clients: list[ManagedClient], private_key: str) -> dict[str, object]:
+        assert self._server is not None
+        client_entries = [
+            {
+                "id": client.client_id,
+                "flow": "xtls-rprx-vision",
+                "email": f"madar:{client.client_id}",
+            }
+            for client in clients
+        ]
+        return {
+            "log": {"loglevel": "warning"},
+            "inbounds": [
+                {
+                    "listen": "0.0.0.0",
+                    "port": self._server.port,
+                    "protocol": "vless",
+                    "settings": {
+                        "clients": client_entries,
+                        "decryption": "none",
+                    },
+                    "streamSettings": {
+                        "network": "raw",
+                        "security": "reality",
+                        "realitySettings": {
+                            "show": False,
+                            "target": self._server.target,
+                            "serverNames": list(self._server.server_names),
+                            "privateKey": private_key,
+                            "shortIds": list(self._server.short_ids),
+                        },
+                    },
+                }
+            ],
+            "outbounds": [{"protocol": "freedom", "tag": "direct"}],
+        }
+
+    @staticmethod
+    def _write_secret_file(path: Path, content: str) -> None:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        fd = os.open(path, flags, 0o600)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(content)
+            path.chmod(0o600)
+        except BaseException:
+            path.unlink(missing_ok=True)
+            raise
