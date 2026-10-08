@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
 import { PageHeader } from '../components/PageHeader';
@@ -283,8 +284,17 @@ export function SettingsPage({ pushAvailable, installSupported }: { pushAvailabl
   );
 }
 
-function ResourceList({ children, label }: { children: React.ReactNode; label: string }) {
+function ResourceList({ children, label }: { children: ReactNode; label: string }) {
   return <div className="admin-module-list" aria-label={label}>{children}</div>;
+}
+
+function ResourceValue({ primary, secondary }: { primary: string; secondary?: string }) {
+  return (
+    <span>
+      <strong>{primary}</strong>
+      {secondary ? <small>{secondary}</small> : null}
+    </span>
+  );
 }
 
 export function AdminPage({
@@ -345,7 +355,7 @@ export function AdminPage({
       <Card>
         <PageHeader eyebrow="کاربران" title="حساب‌های ثبت‌شده" description="فهرست واقعی کاربران قابل مشاهده است؛ این بخش credential یا session token نمایش نمی‌دهد." />
         <ResourceList label="کاربران ثبت‌شده">
-          {resources.users.map((user) => <span key={user.id}>{user.email} · {user.role}</span>)}
+          {resources.users.map((user) => <ResourceValue key={user.id} primary={user.email} secondary={user.role} />)}
         </ResourceList>
       </Card>
 
@@ -379,7 +389,7 @@ export function AdminPage({
         <Card>
           <PageHeader eyebrow="نودها" title="ثبت نود" description="ثبت نود فقط رکورد enrolled ایجاد می‌کند و هیچ credential یا کانفیگ آماده‌ای جعل نمی‌شود." />
           <ResourceList label="نودهای واقعی">
-            {resources.nodes.map((node) => <span key={node.id}>{node.name} · {node.status}</span>)}
+            {resources.nodes.map((node) => <ResourceValue key={node.id} primary={node.name} secondary={node.status} />)}
           </ResourceList>
           <form className="form-stack">
             <label className="field-label" htmlFor="admin-node-name">نام نود</label>
@@ -391,7 +401,7 @@ export function AdminPage({
         <Card>
           <PageHeader eyebrow="اعلان‌ها" title="پیش‌نویس اعلان" description="ذخیره پیش‌نویس به معنی تحویل اعلان نیست و وضعیت delivery جداگانه باقی می‌ماند." />
           <ResourceList label="پیش‌نویس‌های اعلان">
-            {resources.notificationDrafts.map((draft) => <span key={draft.id}>{draft.title} · {draft.deliveryStatus}</span>)}
+            {resources.notificationDrafts.map((draft) => <ResourceValue key={draft.id} primary={draft.title} secondary={draft.deliveryStatus} />)}
           </ResourceList>
           <form className="form-stack">
             <label className="field-label" htmlFor="admin-draft-title">عنوان اعلان</label>
