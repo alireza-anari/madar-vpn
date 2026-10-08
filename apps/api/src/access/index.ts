@@ -25,9 +25,12 @@ export type SubscriptionTokenRecord = {
 
 export interface AccessStore {
   ensureProfile(candidate: AccessProfile): Promise<AccessProfile>;
+  getProfile(userId: string): Promise<AccessProfile | null>;
   ensureActiveClientCredential(candidate: ClientCredential): Promise<ClientCredential>;
+  getActiveClientCredential(userId: string): Promise<ClientCredential | null>;
   issueSubscriptionToken(candidate: Omit<SubscriptionTokenRecord, 'version' | 'revokedAt'>): Promise<SubscriptionTokenRecord>;
   getActiveSubscriptionToken(userId: string): Promise<SubscriptionTokenRecord | null>;
+  findActiveSubscriptionTokenByHash(tokenHash: string): Promise<SubscriptionTokenRecord | null>;
 }
 
 export class MemoryAccessStore implements AccessStore {
@@ -42,6 +45,11 @@ export class MemoryAccessStore implements AccessStore {
     return { ...candidate };
   }
 
+  async getProfile(userId: string) {
+    const profile = this.profiles.find((candidate) => candidate.userId === userId);
+    return profile ? { ...profile } : null;
+  }
+
   async ensureActiveClientCredential(candidate: ClientCredential) {
     const existing = this.credentials.find(
       (credential) => credential.userId === candidate.userId && credential.revokedAt === null,
@@ -52,6 +60,13 @@ export class MemoryAccessStore implements AccessStore {
     }
     this.credentials.push({ ...candidate });
     return { ...candidate };
+  }
+
+  async getActiveClientCredential(userId: string) {
+    const credential = this.credentials.find(
+      (candidate) => candidate.userId === userId && candidate.revokedAt === null,
+    );
+    return credential ? { ...credential } : null;
   }
 
   async issueSubscriptionToken(candidate: Omit<SubscriptionTokenRecord, 'version' | 'revokedAt'>) {
@@ -73,6 +88,13 @@ export class MemoryAccessStore implements AccessStore {
     );
     return record ? { ...record } : null;
   }
+
+  async findActiveSubscriptionTokenByHash(tokenHash: string) {
+    const record = this.subscriptionTokens.find(
+      (candidate) => candidate.tokenHash === tokenHash && candidate.revokedAt === null,
+    );
+    return record ? { ...record } : null;
+  }
 }
 
 function secureRandomToken() {
@@ -83,7 +105,7 @@ function secureRandomToken() {
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
-async function hashSecret(secret: string) {
+export async function hashAccessSecret(secret: string) {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(secret));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
@@ -130,7 +152,7 @@ export function createAccessService(options: {
       const record = await options.store.issueSubscriptionToken({
         id: randomUuid(),
         userId,
-        tokenHash: await hashSecret(rawToken),
+        tokenHash: await hashAccessSecret(rawToken),
         createdAt: now().toISOString(),
       });
       return { rawToken, version: record.version };
