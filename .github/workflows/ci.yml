@@ -12,6 +12,22 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: madar_test
+          POSTGRES_PASSWORD: madar_test
+          POSTGRES_DB: madar_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U madar_test -d madar_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://madar_test:madar_test@127.0.0.1:5432/madar_test
     steps:
       - uses: actions/checkout@v4
         with:
@@ -23,6 +39,9 @@ jobs:
         with:
           python-version: '3.12'
       - run: python3 scripts/security_scan.py .
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - run: bash tests/integration/postgres-schema.sh
       - run: corepack enable
       - run: corepack prepare pnpm@12.9.1 --activate
       - run: pnpm install --frozen-lockfile
