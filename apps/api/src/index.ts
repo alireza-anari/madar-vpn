@@ -141,6 +141,15 @@ export function createApiApp(
     return c.json(await surfaces.getAdminResources());
   });
 
+  app.post('/api/admin/users/:id/free-credit', async (c) => {
+    const auth = authFactory(c.env);
+    const surfaces = surfaceFactory(c.env);
+    if (!auth || !surfaces) return unavailable(c, 'ADMIN_UNAVAILABLE');
+    const actor = await requireAdminMutation(auth, c.req.raw);
+    const body = await c.req.json<unknown>().catch(() => null);
+    return c.json(await surfaces.adjustFreeCredit(actor, c.req.param('id'), body));
+  });
+
   app.put('/api/admin/plans/:id', async (c) => {
     const auth = authFactory(c.env);
     const surfaces = surfaceFactory(c.env);

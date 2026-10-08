@@ -1,4 +1,4 @@
-export type CreditLedgerKind = 'initial' | 'ad' | 'usage';
+export type CreditLedgerKind = 'initial' | 'ad' | 'usage' | 'manual';
 
 export type CreditLedgerEntry = {
   uniqueKey: string;
@@ -83,6 +83,7 @@ export class MemoryCreditStore implements CreditStore {
 
 const INITIAL_FREE_SECONDS = 1800;
 const AD_FREE_SECONDS = 900;
+const MAX_MANUAL_ADJUSTMENT_SECONDS = 30 * 24 * 60 * 60;
 
 const tehranDateFormatter = new Intl.DateTimeFormat('en-CA', {
   timeZone: 'Asia/Tehran',
@@ -102,6 +103,14 @@ export function tehranDateKey(value: Date) {
 
 function validUsageSeconds(seconds: number) {
   return Number.isSafeInteger(seconds) && seconds >= 0;
+}
+
+function validManualSeconds(seconds: number) {
+  return Number.isSafeInteger(seconds) && seconds !== 0 && Math.abs(seconds) <= MAX_MANUAL_ADJUSTMENT_SECONDS;
+}
+
+function validIdempotencyKey(value: string) {
+  return /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,119}$/.test(value);
 }
 
 export function createCreditService(options: { store: CreditStore }) {
@@ -149,6 +158,27 @@ export function createCreditService(options: { store: CreditStore }) {
         kind: 'ad',
         freeDay: tehranDateKey(now),
         deltaSeconds: AD_FREE_SECONDS,
+        occurredAt: now.toISOString(),
+      });
+    },
+
+    async adjustManual(
+      userId: string,
+      idempotencyKey: string,
+      seconds: number,
+      now: Date,
+    ): Promise<boolean> {
+      if (!validIdempotencyKey(idempotencyKey) || !validManualSeconds(seconds)) {
+        throw new CreditError('MANUAL_ADJUSTMENT_INVALID', 'Manual credit adjustment is invalid.');
+      }
+      const verifiedAt = await options.store.getVerifiedAt(userId);
+      if (!verifiedAt) return false;
+      return options.store.insertLedgerEntry({
+        uniqueKey: `manual:${idempotencyKey}`,
+        userId,
+        kind: 'manual',
+        freeDay: tehranDateKey(now),
+        deltaSeconds: seconds,
         occurredAt: now.toISOString(),
       });
     },

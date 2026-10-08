@@ -3,6 +3,7 @@ import type { Entitlement } from '../credits';
 
 type CreditReader = {
   getEntitlement(userId: string, now: Date): Promise<Entitlement>;
+  adjustManual(userId: string, idempotencyKey: string, seconds: number, now: Date): Promise<boolean>;
 };
 
 export type ProviderAvailability = {
@@ -333,6 +334,23 @@ function validateMission(id: string, input: unknown, timestamp: string, existing
   };
 }
 
+function validateManualCredit(input: unknown) {
+  const candidate = objectInput(input, 'FREE_CREDIT_ADJUSTMENT_INVALID');
+  const seconds = Number(candidate.seconds);
+  if (!Number.isSafeInteger(seconds) || seconds === 0 || Math.abs(seconds) > 30 * 24 * 60 * 60) {
+    throw new SurfaceError(400, 'FREE_CREDIT_ADJUSTMENT_INVALID', 'Free-credit adjustment is invalid.');
+  }
+  const idempotencyKey = requiredText(candidate.idempotencyKey, 'FREE_CREDIT_ADJUSTMENT_INVALID', 120);
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,119}$/.test(idempotencyKey)) {
+    throw new SurfaceError(400, 'FREE_CREDIT_ADJUSTMENT_INVALID', 'Idempotency key is invalid.');
+  }
+  return {
+    seconds,
+    idempotencyKey,
+    reason: requiredText(candidate.reason, 'FREE_CREDIT_ADJUSTMENT_INVALID', 500),
+  };
+}
+
 export function createSurfaceService(options: {
   store: SurfaceStore;
   credits: CreditReader;
@@ -400,6 +418,30 @@ export function createSurfaceService(options: {
         options.store.listAudit(),
       ]);
       return { users, plans, missions, nodes, notificationDrafts, audit: auditEntries };
+    },
+
+    async adjustFreeCredit(actor: User, userId: string, input: unknown) {
+      const targetUserId = validateResourceId(userId);
+      const targetExists = (await options.store.listUsers()).some((user) => user.id === targetUserId);
+      if (!targetExists) {
+        throw new SurfaceError(400, 'USER_NOT_FOUND', 'Target user does not exist.');
+      }
+      const adjustment = validateManualCredit(input);
+      const applied = await options.credits.adjustManual(
+        targetUserId,
+        adjustment.idempotencyKey,
+        adjustment.seconds,
+        now(),
+      );
+      if (applied) {
+        await audit(actor, 'user.free-credit.adjust', {
+          userId: targetUserId,
+          seconds: adjustment.seconds,
+          idempotencyKey: adjustment.idempotencyKey,
+          reason: adjustment.reason,
+        });
+      }
+      return { applied, seconds: adjustment.seconds };
     },
 
     async upsertPlan(actor: User, id: string, input: unknown) {
