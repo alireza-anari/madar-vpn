@@ -213,6 +213,10 @@ export function createAuthService(options: AuthOptions) {
       return user;
     },
     async requireMutationUser(request: Request): Promise<User> {
+      const origin = request.headers.get('origin');
+      if (origin !== null && origin !== new URL(request.url).origin) {
+        throw new AuthError(403, 'ORIGIN_INVALID', 'Request origin is invalid.');
+      }
       const { user, session } = await authenticate(request);
       const csrfToken = request.headers.get('x-csrf-token');
       if (!csrfToken) throw new AuthError(403, 'CSRF_INVALID', 'CSRF token is required.');
