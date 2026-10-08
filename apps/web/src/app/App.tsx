@@ -11,6 +11,7 @@ import {
   SettingsPage,
   type AccountView,
   type AdminOverviewView,
+  type AdminResourcesView,
 } from './surfaces';
 
 type Resource<T> =
@@ -84,9 +85,10 @@ function AccountRoute({ mode }: { mode: 'dashboard' | 'premium' | 'missions' | '
 
 function AdminRoute() {
   const overview = useApiResource<AdminOverviewView>('/api/admin/overview');
-  if (overview.status === 'loading') return <LoadingPanel />;
-  if (overview.status !== 'ready') return <UnavailablePanel admin />;
-  return <AdminPage overview={overview.data} />;
+  const resources = useApiResource<AdminResourcesView>('/api/admin/resources');
+  if (overview.status === 'loading' || resources.status === 'loading') return <LoadingPanel />;
+  if (overview.status !== 'ready' || resources.status !== 'ready') return <UnavailablePanel admin />;
+  return <AdminPage overview={overview.data} resources={resources.data} />;
 }
 
 export function App() {
