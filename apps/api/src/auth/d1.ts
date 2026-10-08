@@ -93,4 +93,9 @@ export class D1AuthStore implements AuthStore {
       .bind(tokenHash, now.toISOString()).first<SessionRow>();
     return mapSession(row);
   }
+
+  async revokeSessionByTokenHash(tokenHash: string) {
+    await this.db.prepare('DELETE FROM sessions WHERE token_hash = ?')
+      .bind(tokenHash).run();
+  }
 }
