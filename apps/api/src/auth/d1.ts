@@ -4,6 +4,7 @@ export interface D1PreparedStatementLike {
   bind(...values: unknown[]): D1PreparedStatementLike;
   run(): Promise<unknown>;
   first<T>(): Promise<T | null>;
+  all?<T>(): Promise<{ results: T[] }>;
 }
 
 export interface D1DatabaseLike { prepare(sql: string): D1PreparedStatementLike; }
