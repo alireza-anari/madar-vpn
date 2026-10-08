@@ -1,0 +1,15 @@
+{
+  "name": "madar-vpn",
+  "private": true,
+  "packageManager": "pnpm@12.9.1",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "pnpm -r --if-present test",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "build": "pnpm -r --if-present build",
+    "test:python": "if [ -d node-agent/tests ]; then python3 -m pytest node-agent/tests; else echo 'node-agent tests not present yet'; fi"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
+  }
+}

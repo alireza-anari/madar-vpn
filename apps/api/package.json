@@ -1,0 +1,20 @@
+{
+  "name": "@madar/api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "hono": "4.13.13",
+    "pg": "8.16.3"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "1.62.4",
+    "@cloudflare/vitest-plugin": "1.3.7",
+    "vite": "8.3.2",
+    "vitest": "5.0.3"
+  }
+}
