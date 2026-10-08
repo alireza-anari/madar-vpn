@@ -17,7 +17,8 @@ import {
 type Resource<T> =
   | { status: 'loading'; data: null }
   | { status: 'ready'; data: T }
-  | { status: 'unavailable'; data: null };
+  | { status: 'unavailable'; data: null }
+  | { status: 'error'; data: null };
 
 function useApiResource<T>(url: string | null): Resource<T> {
   const [resource, setResource] = useState<Resource<T>>({ status: 'loading', data: null });
@@ -31,13 +32,19 @@ function useApiResource<T>(url: string | null): Resource<T> {
     setResource({ status: 'loading', data: null });
     void fetch(url, { credentials: 'include', signal: controller.signal })
       .then(async (response) => {
+        if (response.status === 503) {
+          setResource({ status: 'unavailable', data: null });
+          return null;
+        }
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return (await response.json()) as T;
       })
-      .then((data) => setResource({ status: 'ready', data }))
+      .then((data) => {
+        if (data !== null) setResource({ status: 'ready', data });
+      })
       .catch((error: unknown) => {
         if (error instanceof DOMException && error.name === 'AbortError') return;
-        setResource({ status: 'unavailable', data: null });
+        setResource({ status: 'error', data: null });
       });
     return () => controller.abort();
   }, [url]);
@@ -66,6 +73,18 @@ function UnavailablePanel({ admin = false }: { admin?: boolean }) {
   );
 }
 
+function ErrorPanel({ admin = false }: { admin?: boolean }) {
+  return (
+    <Card>
+      <PageHeader
+        eyebrow="خطا"
+        title={admin ? 'خطا در خواندن پنل مدیریت' : 'خطا در خواندن اطلاعات حساب'}
+        description="پاسخ backend با خطا روبه‌رو شد؛ داده نمونه جایگزین نمی‌شود. پس از رفع خطا دوباره تلاش کنید."
+      />
+    </Card>
+  );
+}
+
 function AccountRoute({ mode }: { mode: 'dashboard' | 'premium' | 'missions' | 'settings' }) {
   const account = useApiResource<AccountView>('/api/account');
   if (account.status === 'loading') return <LoadingPanel />;
@@ -77,6 +96,7 @@ function AccountRoute({ mode }: { mode: 'dashboard' | 'premium' | 'missions' | '
       />
     );
   }
+  if (account.status === 'error') return <ErrorPanel />;
   if (account.status !== 'ready') return <UnavailablePanel />;
   if (mode === 'dashboard') return <DashboardPage account={account.data} />;
   if (mode === 'premium') return <PremiumPage paymentAvailable={account.data.providers.payments} plans={[]} />;
@@ -87,6 +107,7 @@ function AdminRoute() {
   const overview = useApiResource<AdminOverviewView>('/api/admin/overview');
   const resources = useApiResource<AdminResourcesView>('/api/admin/resources');
   if (overview.status === 'loading' || resources.status === 'loading') return <LoadingPanel />;
+  if (overview.status === 'error' || resources.status === 'error') return <ErrorPanel admin />;
   if (overview.status !== 'ready' || resources.status !== 'ready') return <UnavailablePanel admin />;
   return <AdminPage overview={overview.data} resources={resources.data} />;
 }
