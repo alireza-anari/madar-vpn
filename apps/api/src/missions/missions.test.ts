@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MemoryMissionStore, MissionError, createMissionService } from './index';
+import { MemoryMissionStore, createMissionService } from './index';
 
 const NOW = new Date('2026-10-08T09:00:00.000Z');
 
@@ -85,7 +85,7 @@ describe('mission evidence and rewards', () => {
     await expect(missions.submitEvidence('user-1', 'referral', {
       kind: 'share_click',
       value: 'clicked',
-    } as never)).rejects.toMatchObject<Partial<MissionError>>({ code: 'EVIDENCE_INVALID' });
+    } as never)).rejects.toMatchObject({ code: 'EVIDENCE_INVALID' });
 
     const submission = await missions.submitEvidence('user-1', 'referral', {
       kind: 'referral',
@@ -93,7 +93,7 @@ describe('mission evidence and rewards', () => {
     });
 
     await expect(missions.reviewSubmission('admin-1', submission.id, { decision: 'approve' }))
-      .rejects.toMatchObject<Partial<MissionError>>({ code: 'REFERRAL_NOT_VERIFIED' });
+      .rejects.toMatchObject({ code: 'REFERRAL_NOT_VERIFIED' });
     expect(store.rewards).toHaveLength(0);
 
     store.registerVerifiedReferral('user-1', 'user-2');
