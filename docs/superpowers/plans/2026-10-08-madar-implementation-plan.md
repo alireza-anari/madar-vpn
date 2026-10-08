@@ -528,13 +528,13 @@
 
 ## Task 31: Security and abuse hardening
 
-- [ ] Add API rate limits/abuse controls for login, subscription fetch, callbacks, admin, and node enrollment.
-- [ ] Secret scanning and log-redaction tests.
-- [ ] Dependency/security audit.
-- [ ] CSRF/origin/session rotation review.
-- [ ] Subscription bearer leakage review for logs/analytics/referrers.
-- [ ] Audit-log completeness review.
-- [ ] Commit hardening.
+- [x] Add API rate limits/abuse controls for login, subscription fetch, callbacks, admin, and node enrollment.
+- [x] Secret scanning and log-redaction tests.
+- [x] Dependency/security audit.
+- [x] CSRF/origin/session rotation review.
+- [x] Subscription bearer leakage review for logs/analytics/referrers.
+- [x] Audit-log completeness review.
+- [x] Commit hardening.
 
 ## Task 32: Backup, restore, recovery, and installer lifecycle
 
