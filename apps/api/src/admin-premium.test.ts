@@ -18,7 +18,9 @@ async function harness() {
     store: authStore,
     adminEmails: ['admin@example.com'],
     randomToken: () => `premium-secret-${++tokenNumber}`,
-    sender: async ({ token }) => sent.push(token),
+    sender: async ({ token }) => {
+      sent.push(token);
+    },
   });
   const credits = createCreditService({ store: creditStore });
   const surfaces = createSurfaceService({
