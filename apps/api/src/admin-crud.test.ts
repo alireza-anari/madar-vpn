@@ -52,7 +52,7 @@ async function adminHarness() {
     'content-type': 'application/json',
   };
 
-  return { app, surfaceStore, cookie, mutationHeaders, identity };
+  return { app, surfaceStore, creditStore, cookie, mutationHeaders, identity };
 }
 
 describe('server-protected admin control plane', () => {
@@ -164,5 +164,39 @@ describe('server-protected admin control plane', () => {
     expect(payload).toMatchObject({ title: 'یادآوری', target: 'all', deliveryStatus: 'draft' });
     expect(payload).not.toHaveProperty('sent');
     expect(surfaceStore.notificationDrafts).toHaveLength(1);
+  });
+
+  it('applies a manual free-credit adjustment once and records the privileged audit event', async () => {
+    const { app, mutationHeaders, surfaceStore, creditStore } = await adminHarness();
+    const targetUserId = 'user-target';
+    surfaceStore.seedUser({ id: targetUserId, email: 'user@example.com', role: 'user' });
+    creditStore.registerVerifiedUser(targetUserId, '2026-10-08T09:00:00.000Z');
+
+    const request = () => app.request(`/api/admin/users/${targetUserId}/free-credit`, {
+      method: 'POST',
+      headers: mutationHeaders,
+      body: JSON.stringify({ seconds: 600, idempotencyKey: 'support-ticket-42', reason: 'support correction' }),
+    });
+
+    const first = await request();
+    expect(first.status).toBe(200);
+    await expect(first.json()).resolves.toMatchObject({ applied: true, seconds: 600 });
+
+    const duplicate = await request();
+    expect(duplicate.status).toBe(200);
+    await expect(duplicate.json()).resolves.toMatchObject({ applied: false, seconds: 600 });
+
+    expect(creditStore.ledger.filter((entry) => entry.kind === 'manual')).toHaveLength(1);
+    expect(creditStore.ledger.find((entry) => entry.kind === 'manual')).toMatchObject({
+      userId: targetUserId,
+      deltaSeconds: 600,
+      uniqueKey: 'manual:support-ticket-42',
+    });
+    expect(surfaceStore.audit.filter((entry) => entry.action === 'user.free-credit.adjust')).toHaveLength(1);
+    expect(surfaceStore.audit.at(-1)?.details).toMatchObject({
+      userId: targetUserId,
+      seconds: 600,
+      idempotencyKey: 'support-ticket-42',
+    });
   });
 });
