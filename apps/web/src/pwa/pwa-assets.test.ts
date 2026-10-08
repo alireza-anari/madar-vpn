@@ -32,4 +32,12 @@ describe('PWA assets', () => {
     expect(serviceWorker).toMatch(/request\.method\s*!==\s*['"]GET['"]/);
     expect(serviceWorker).toContain('isSensitiveRequest');
   });
+
+  it('shows received push payloads and handles notification clicks without caching sensitive data', () => {
+    expect(serviceWorker).toMatch(/addEventListener\(['"]push['"]/);
+    expect(serviceWorker).toContain('showNotification');
+    expect(serviceWorker).toMatch(/addEventListener\(['"]notificationclick['"]/);
+    expect(serviceWorker).toContain('notification.close');
+    expect(serviceWorker).toContain('clients.openWindow');
+  });
 });
