@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createAdminAuditService } from './admin-audit';
 import { createAuthService, MemoryAuthStore, type Session } from './auth';
 import { createApiApp } from './index';
 import { createMissionService, MemoryMissionStore } from './missions';
@@ -39,6 +40,10 @@ async function auditHarness() {
     },
     now: () => new Date('2026-10-08T12:00:00.000Z'),
   });
+  const audit = createAdminAuditService({
+    store: surfaceStore,
+    now: () => new Date('2026-10-08T12:00:00.000Z'),
+  });
 
   const paymentStore = new MemoryPaymentStore();
   paymentStore.seedPlan({
@@ -77,6 +82,9 @@ async function auditHarness() {
     () => null,
     () => payments,
     () => missions,
+    () => null,
+    () => null,
+    () => audit,
   );
 
   return { app, user, admin, surfaceStore };

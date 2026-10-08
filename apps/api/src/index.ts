@@ -3,6 +3,7 @@ import { createAccessService } from './access';
 import { D1AccessStore } from './access/d1';
 import { createSubscriptionService } from './access/subscription';
 import { D1SubscriptionNodeStore } from './access/subscription-d1';
+import { createAdminAuditService, type AdminAuditService } from './admin-audit';
 import { AuthError, createAuthService, serializeSessionCookie, type User } from './auth';
 import { D1AuthStore, type D1DatabaseLike } from './auth/d1';
 import { createCreditService } from './credits';
@@ -46,6 +47,7 @@ type PaymentFactory = (env: ApiBindings | undefined) => PaymentService | null;
 type MissionFactory = (env: ApiBindings | undefined) => MissionService | null;
 type PushFactory = (env: ApiBindings | undefined) => PushService | null;
 type NodeFactory = (env: ApiBindings | undefined) => NodeControlService | null;
+type AdminAuditFactory = (env: ApiBindings | undefined) => AdminAuditService | null;
 
 function configuredAdminEmails(value: string | undefined) {
   return (value ?? '').split(',').map((email) => email.trim()).filter(Boolean);
@@ -133,6 +135,11 @@ const defaultNodeFactory: NodeFactory = (env) => {
   return createNodeControlService({ store: new D1NodeControlStore(env.DB) });
 };
 
+const defaultAdminAuditFactory: AdminAuditFactory = (env) => {
+  if (!env?.DB) return null;
+  return createAdminAuditService({ store: new D1SurfaceStore(env.DB) });
+};
+
 function unavailable(c: { json: (body: { error: string }, status: 503) => Response }, error: string) {
   return c.json({ error }, 503);
 }
@@ -175,6 +182,7 @@ export function createApiApp(
   missionFactory: MissionFactory = defaultMissionFactory,
   pushFactory: PushFactory = defaultPushFactory,
   nodeFactory: NodeFactory = defaultNodeFactory,
+  adminAuditFactory: AdminAuditFactory = defaultAdminAuditFactory,
 ) {
   const app = new Hono<{ Bindings: ApiBindings }>();
 
@@ -420,10 +428,18 @@ export function createApiApp(
   app.post('/api/admin/orders/:id/confirm', async (c) => {
     const auth = authFactory(c.env); const payments = paymentFactory(c.env);
     if (!auth || !payments) return unavailable(c, 'PAYMENTS_UNAVAILABLE');
-    await requireAdminMutation(auth, c.req.raw);
+    const actor = await requireAdminMutation(auth, c.req.raw);
     const body = await c.req.json<{ confirmationId?: unknown }>().catch(() => null);
     if (!body || typeof body.confirmationId !== 'string') return c.json({ error: 'ORDER_INVALID' }, 400);
-    return c.json(await payments.confirmOrder(c.req.param('id'), body.confirmationId));
+    const result = await payments.confirmOrder(c.req.param('id'), body.confirmationId);
+    const audit = adminAuditFactory(c.env);
+    if (audit) {
+      await audit.record(actor, 'payment.manual.confirm', {
+        orderId: c.req.param('id'),
+        applied: result.applied,
+      });
+    }
+    return c.json(result);
   });
 
   app.post('/api/admin/mission-submissions/:id/review', async (c) => {
@@ -440,7 +456,17 @@ export function createApiApp(
     const review: { decision: 'approve' | 'reject'; reason?: string } = body.reason === undefined
       ? { decision: body.decision }
       : { decision: body.decision, reason: body.reason };
-    return c.json(await missions.reviewSubmission(actor.id, c.req.param('id'), review));
+    const result = await missions.reviewSubmission(actor.id, c.req.param('id'), review);
+    const audit = adminAuditFactory(c.env);
+    if (audit) {
+      await audit.record(actor, 'mission.submission.review', {
+        submissionId: c.req.param('id'),
+        status: result.status,
+        rewardApplied: result.rewardApplied,
+        rewardSeconds: result.rewardSeconds,
+      });
+    }
+    return c.json(result);
   });
 
   app.post('/api/admin/settings', async (c) => {
