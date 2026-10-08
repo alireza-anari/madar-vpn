@@ -80,4 +80,25 @@ describe('admin resource console', () => {
     expect(screen.getByRole('button', { name: /ثبت نود/ })).toBeEnabled();
     expect(screen.getByRole('button', { name: /ذخیره پیش‌نویس/ })).toBeEnabled();
   });
+
+  it('covers the full admin operating map without inventing unavailable integrations', () => {
+    render(<AdminPage overview={overview} resources={resources} mutationsAvailable={false} />);
+
+    expect(screen.getByText('اعتبار رایگان')).toBeInTheDocument();
+    expect(screen.getByText('تنظیم پرمیوم')).toBeInTheDocument();
+    expect(screen.getByText('تعلیق حساب')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /اعمال اعتبار رایگان/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /ثبت پرمیوم/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /تغییر وضعیت حساب/ })).toBeDisabled();
+
+    expect(screen.getByText('پرداخت‌ها')).toBeInTheDocument();
+    expect(screen.getByText('تبلیغات')).toBeInTheDocument();
+    expect(screen.getByText('پاداش‌ها')).toBeInTheDocument();
+    expect(screen.getByText('Push')).toBeInTheDocument();
+    expect(screen.getByText('سلامت نود')).toBeInTheDocument();
+    expect(screen.getByText('ظرفیت')).toBeInTheDocument();
+    expect(screen.getByText('وضعیت Subscription')).toBeInTheDocument();
+    expect(screen.getByText('چرخش دسترسی')).toBeInTheDocument();
+    expect(screen.getAllByText(/هنوز آماده نیست|متصل نشده/).length).toBeGreaterThanOrEqual(4);
+  });
 });
