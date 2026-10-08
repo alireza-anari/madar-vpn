@@ -15,7 +15,7 @@ class Finding(NamedTuple):
 
 SCAN_SUFFIXES = frozenset({
     ".cjs", ".env", ".example", ".js", ".json", ".jsonc", ".md", ".mjs",
-    ".py", ".sh", ".sql", ".toml", ".ts", ".tsx", ".yaml", ".yml",
+    ".py", ".sh", ".sql", ".toml", ".ts", ".tsx", ".txt", ".yaml", ".yml",
 })
 SKIP_DIRS = frozenset({
     ".git", ".pytest_cache", ".venv", "__pycache__", "dist", "node_modules", "venv",
