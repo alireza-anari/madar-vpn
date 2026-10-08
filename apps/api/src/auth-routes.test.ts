@@ -67,6 +67,51 @@ describe('auth HTTP boundary', () => {
     });
   });
 
+  it('revokes the current server-side session on logout and rejects replay of the old cookie', async () => {
+    const sent: string[] = [];
+    let number = 0;
+    const auth = createAuthService({
+      store: new MemoryAuthStore(),
+      randomToken: () => `logout-secret-${++number}`,
+      sender: async ({ token }) => {
+        sent.push(token);
+      },
+    });
+    const app = createApiApp(() => auth);
+
+    await app.request('/api/auth/request', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'user@example.com' }),
+    });
+    const consume = await app.request('/api/auth/consume', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: sent[0] }),
+    });
+    const payload = (await consume.json()) as { csrfToken: string };
+    const sessionCookie = cookiePair(consume.headers.get('set-cookie') ?? '');
+
+    const logout = await app.request('/api/auth/logout', {
+      method: 'POST',
+      headers: {
+        cookie: sessionCookie,
+        origin: 'http://localhost',
+        'x-csrf-token': payload.csrfToken,
+      },
+    });
+
+    expect(logout.status).toBe(204);
+    expect(logout.headers.get('set-cookie')).toContain('__Host-madar_session=;');
+    expect(logout.headers.get('set-cookie')).toContain('Max-Age=0');
+
+    const replay = await app.request('/api/account/identity', {
+      headers: { cookie: sessionCookie },
+    });
+    expect(replay.status).toBe(401);
+    await expect(replay.json()).resolves.toEqual({ error: 'AUTH_REQUIRED' });
+  });
+
   it('maps anonymous and non-admin authorization failures to HTTP status codes', async () => {
     const sent: string[] = [];
     const auth = createAuthService({
