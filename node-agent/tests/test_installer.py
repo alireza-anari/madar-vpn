@@ -109,6 +109,49 @@ def test_http_enrollment_sends_token_only_as_bearer_and_returns_issued_credentia
     assert token not in json.dumps(decoded)
 
 
+def test_http_enrollment_prepares_xray_public_config_lazily_and_drops_secret_fields() -> None:
+    prepared: list[bool] = []
+    transport = FakeTransport(HttpResponse(
+        status=201,
+        body=b'{"rawCredential":"issued-node-credential","node":{"id":"node-1"}}',
+    ))
+
+    def public_config() -> dict[str, object]:
+        prepared.append(True)
+        return {
+            "address": "203.0.113.10",
+            "port": 443,
+            "serverName": "edge.example.test",
+            "realityPublicKey": "generated-public-key",
+            "realityShortId": "0123456789abcdef",
+            "realityPrivateKey": "must-never-leave-vps",
+            "rawCredential": "must-never-be-sent",
+        }
+
+    client = HttpEnrollmentClient(
+        api_base_url="https://control.example.test",
+        capabilities={"agent": "0.1.0", "xray": "26.3.27"},
+        public_config=public_config,
+        transport=transport,
+    )
+
+    assert prepared == []
+    assert client.enroll("one-time-enrollment-secret") == "issued-node-credential"
+    assert prepared == [True]
+
+    decoded = json.loads(transport.requests[0][3])
+    assert decoded["publicConfig"] == {
+        "address": "203.0.113.10",
+        "port": 443,
+        "serverName": "edge.example.test",
+        "realityPublicKey": "generated-public-key",
+        "realityShortId": "0123456789abcdef",
+    }
+    serialized = json.dumps(decoded)
+    assert "must-never-leave-vps" not in serialized
+    assert "must-never-be-sent" not in serialized
+
+
 def test_http_enrollment_error_does_not_echo_one_time_token() -> None:
     token = "one-time-enrollment-secret"
     transport = FakeTransport(HttpResponse(status=401, body=b'{"error":"NODE_ENROLLMENT_TOKEN_INVALID"}'))
