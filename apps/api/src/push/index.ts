@@ -134,10 +134,10 @@ function validatePayload(payload: PushPayload) {
 
 export function createPushService(options: {
   store: PushStore;
-  sender?: PushSender;
-  publicKey?: string;
-  now?: () => Date;
-  randomId?: () => string;
+  sender?: PushSender | undefined;
+  publicKey?: string | undefined;
+  now?: (() => Date) | undefined;
+  randomId?: (() => string) | undefined;
 }) {
   const now = options.now ?? (() => new Date());
   const randomId = options.randomId ?? (() => crypto.randomUUID());
