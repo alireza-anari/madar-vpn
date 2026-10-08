@@ -226,7 +226,7 @@ export function createApiApp(
     if (body.reason !== undefined && typeof body.reason !== 'string') {
       return c.json({ error: 'REVIEW_INVALID' }, 400);
     }
-    const review = body.reason === undefined
+    const review: { decision: 'approve' | 'reject'; reason?: string } = body.reason === undefined
       ? { decision: body.decision }
       : { decision: body.decision, reason: body.reason };
     return c.json(await missions.reviewSubmission(actor.id, c.req.param('id'), review));
