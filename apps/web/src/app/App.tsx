@@ -2,13 +2,13 @@ import { useEffect, useState } from 'react';
 import { AppShell } from '../components/AppShell';
 import { Card } from '../components/Card';
 import { PageHeader } from '../components/PageHeader';
+import { PwaSettingsPage } from '../pwa/PwaSettingsPage';
 import {
   AdminPage,
   DashboardPage,
   LoginPage,
   MissionsPage,
   PremiumPage,
-  SettingsPage,
   type AccountView,
   type AdminOverviewView,
   type AdminResourcesView,
@@ -89,12 +89,7 @@ function AccountRoute({ mode }: { mode: 'dashboard' | 'premium' | 'missions' | '
   const account = useApiResource<AccountView>('/api/account');
   if (account.status === 'loading') return <LoadingPanel />;
   if (mode === 'settings') {
-    return (
-      <SettingsPage
-        pushAvailable={account.status === 'ready' && account.data.providers.push}
-        installSupported={'onbeforeinstallprompt' in window}
-      />
-    );
+    return <PwaSettingsPage pushAvailable={account.status === 'ready' && account.data.providers.push} />;
   }
   if (account.status === 'error') return <ErrorPanel />;
   if (account.status !== 'ready') return <UnavailablePanel />;
