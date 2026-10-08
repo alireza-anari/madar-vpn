@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import { describe, expect, it } from 'vitest';
-import css from './global.css?raw';
+import css from './global.css?inline';
 
 describe('mobile shell layout guard', () => {
   it('clips accidental horizontal overflow and constrains the shell to the viewport', () => {
