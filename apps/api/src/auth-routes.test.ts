@@ -71,7 +71,9 @@ describe('auth HTTP boundary', () => {
     const sent: string[] = [];
     const auth = createAuthService({
       store: new MemoryAuthStore(),
-      sender: async ({ token }) => sent.push(token),
+      sender: async ({ token }) => {
+        sent.push(token);
+      },
     });
     const app = createApiApp(() => auth);
 
