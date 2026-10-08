@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import os
 import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -19,11 +20,22 @@ class XrayAdapter(Protocol):
     def collect_observed_activity(self) -> list[ObservedActivity]: ...
 
 
+class ProcessResult(Protocol):
+    returncode: int
+    stdout: str
+    stderr: str
+
+
 @dataclass(frozen=True)
 class XrayRuntimeConfig:
     version: str
     download_url: str
     sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class RealityPublicParameters:
+    public_key: str
 
 
 class XrayRuntimeError(RuntimeError):
@@ -59,10 +71,14 @@ class PinnedXrayAdapter:
         install_root: Path,
         state_root: Path,
         download: Callable[[str], bytes],
+        run: Callable[[list[str]], ProcessResult] | None = None,
+        log: Callable[[str], None] | None = None,
     ) -> None:
         self.install_root = Path(install_root)
         self.state_root = Path(state_root)
         self._download = download
+        self._run = run
+        self._log = log or (lambda _message: None)
 
     def ensure_runtime(self, config: XrayRuntimeConfig) -> Path:
         payload = self._download(config.download_url)
@@ -84,3 +100,41 @@ class PinnedXrayAdapter:
         temporary.chmod(0o755)
         temporary.replace(binary)
         return binary
+
+    def generate_reality_keypair(self, binary: Path) -> RealityPublicParameters:
+        if self._run is None:
+            raise XrayRuntimeError("Xray process runner is not configured")
+
+        result = self._run([str(binary), "x25519"])
+        if result.returncode != 0:
+            self._log("Xray REALITY key generation failed")
+            raise XrayRuntimeError("Xray REALITY key generation failed")
+
+        private_key = ""
+        public_key = ""
+        for line in result.stdout.splitlines():
+            if line.startswith("PrivateKey: "):
+                private_key = line.removeprefix("PrivateKey: ").strip()
+            elif line.startswith("Password (PublicKey): "):
+                public_key = line.removeprefix("Password (PublicKey): ").strip()
+
+        if not private_key or not public_key:
+            self._log("Xray REALITY key generation returned invalid output")
+            raise XrayRuntimeError("Xray REALITY key generation returned invalid output")
+
+        self.state_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.state_root.chmod(0o700)
+        private_path = self.state_root / "reality.private"
+        temporary = self.state_root / ".reality.private.tmp"
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(private_key)
+            temporary.chmod(0o600)
+            temporary.replace(private_path)
+            private_path.chmod(0o600)
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
+
+        return RealityPublicParameters(public_key=public_key)
