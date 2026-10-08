@@ -113,11 +113,11 @@ describe('D1AccessStore', () => {
     expect(active).not.toHaveProperty('rawToken');
     expect(active).not.toHaveProperty('token');
 
-    const issueQuery = db.executed[2]!;
+    const issueQuery = db.executed[0]!;
     expect(issueQuery.sql).toMatch(/token_hash/i);
     expect(issueQuery.sql).not.toMatch(/raw_token|bearer|\btoken\s+TEXT\b/i);
     expect(issueQuery.values).toContain(tokenHash);
     expect(issueQuery.values.some((value) => typeof value === 'string' && value.includes('subscription-secret'))).toBe(false);
-    expect(db.executed[3]!.sql).toMatch(/WHERE\s+user_id\s*=\s*\?\s+AND\s+revoked_at\s+IS\s+NULL/i);
+    expect(db.executed[1]!.sql).toMatch(/WHERE\s+user_id\s*=\s*\?\s+AND\s+revoked_at\s+IS\s+NULL/i);
   });
 });
