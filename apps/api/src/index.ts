@@ -9,6 +9,8 @@ import { createCreditService } from './credits';
 import { D1CreditStore } from './credits/d1';
 import { createMissionService, MissionError } from './missions';
 import { D1MissionStore } from './missions/d1';
+import { createNodeControlService, NodeControlError, type NodeControlService } from './nodes';
+import { D1NodeControlStore } from './nodes/d1';
 import { createPaymentService, PaymentError, type PaymentService } from './payments';
 import { D1PaymentStore } from './payments/d1';
 import { ProviderUnavailableError, ProviderVerificationError } from './providers';
@@ -37,6 +39,7 @@ type SubscriptionFactory = (env: ApiBindings | undefined) => SubscriptionService
 type PaymentFactory = (env: ApiBindings | undefined) => PaymentService | null;
 type MissionFactory = (env: ApiBindings | undefined) => MissionService | null;
 type PushFactory = (env: ApiBindings | undefined) => PushService | null;
+type NodeFactory = (env: ApiBindings | undefined) => NodeControlService | null;
 
 function configuredAdminEmails(value: string | undefined) {
   return (value ?? '').split(',').map((email) => email.trim()).filter(Boolean);
@@ -119,6 +122,11 @@ const defaultPushFactory: PushFactory = (env) => {
   });
 };
 
+const defaultNodeFactory: NodeFactory = (env) => {
+  if (!env?.DB) return null;
+  return createNodeControlService({ store: new D1NodeControlStore(env.DB) });
+};
+
 function unavailable(c: { json: (body: { error: string }, status: 503) => Response }, error: string) {
   return c.json({ error }, 503);
 }
@@ -129,6 +137,18 @@ async function requireAdminMutation(auth: AuthService, request: Request): Promis
   return actor;
 }
 
+function requireBearerSecret(request: Request, code: 'NODE_CREDENTIAL_INVALID' | 'NODE_ENROLLMENT_TOKEN_INVALID') {
+  const authorization = request.headers.get('authorization');
+  const match = authorization?.match(/^Bearer\s+(.+)$/i);
+  const token = match?.[1]?.trim();
+  if (!token) throw new NodeControlError(401, code, 'Bearer credential is required.');
+  return token;
+}
+
+async function requireNode(nodes: NodeControlService, request: Request) {
+  return nodes.authenticateNode(requireBearerSecret(request, 'NODE_CREDENTIAL_INVALID'));
+}
+
 export function createApiApp(
   authFactory: AuthFactory = defaultAuthFactory,
   surfaceFactory: SurfaceFactory = defaultSurfaceFactory,
@@ -137,6 +157,7 @@ export function createApiApp(
   paymentFactory: PaymentFactory = defaultPaymentFactory,
   missionFactory: MissionFactory = defaultMissionFactory,
   pushFactory: PushFactory = defaultPushFactory,
+  nodeFactory: NodeFactory = defaultNodeFactory,
 ) {
   const app = new Hono<{ Bindings: ApiBindings }>();
 
@@ -160,6 +181,12 @@ export function createApiApp(
       if (error.status === 400) return c.json({ error: error.code }, 400);
       if (error.status === 403) return c.json({ error: error.code }, 403);
       return c.json({ error: error.code }, 503);
+    }
+    if (error instanceof NodeControlError) {
+      if (error.status === 400) return c.json({ error: error.code }, 400);
+      if (error.status === 401) return c.json({ error: error.code }, 401);
+      if (error.status === 404) return c.json({ error: error.code }, 404);
+      if (error.status === 409) return c.json({ error: error.code }, 409);
     }
     if (error instanceof ProviderVerificationError) return c.json({ error: error.code }, 403);
     if (error instanceof ProviderUnavailableError) return c.json({ error: error.code }, 503);
@@ -214,6 +241,66 @@ export function createApiApp(
   app.get('/api/admin/identity', async (c) => {
     const auth = authFactory(c.env); if (!auth) return unavailable(c, 'AUTH_UNAVAILABLE');
     return c.json(await auth.requireAdmin(c.req.raw));
+  });
+
+  app.post('/api/admin/nodes/enrollment-token', async (c) => {
+    const auth = authFactory(c.env); const nodes = nodeFactory(c.env);
+    if (!auth || !nodes) return unavailable(c, 'NODE_CONTROL_UNAVAILABLE');
+    const actor = await requireAdminMutation(auth, c.req.raw);
+    const body = await c.req.json<unknown>().catch(() => null);
+    c.header('Cache-Control', 'no-store');
+    return c.json(await nodes.createEnrollmentToken(actor.id, body, new Date()), 201);
+  });
+
+  app.post('/api/node/enroll', async (c) => {
+    const nodes = nodeFactory(c.env);
+    if (!nodes) return unavailable(c, 'NODE_CONTROL_UNAVAILABLE');
+    const body = await c.req.json<{ capabilities?: unknown; publicConfig?: unknown }>().catch(() => null);
+    if (!body) return c.json({ error: 'NODE_ENROLLMENT_INVALID' }, 400);
+    c.header('Cache-Control', 'no-store');
+    return c.json(await nodes.enrollNode(
+      requireBearerSecret(c.req.raw, 'NODE_ENROLLMENT_TOKEN_INVALID'),
+      body.capabilities,
+      body.publicConfig,
+    ), 201);
+  });
+
+  app.post('/api/node/heartbeat', async (c) => {
+    const nodes = nodeFactory(c.env);
+    if (!nodes) return unavailable(c, 'NODE_CONTROL_UNAVAILABLE');
+    const principal = await requireNode(nodes, c.req.raw);
+    const body = await c.req.json<{ health?: unknown; versions?: unknown; capacity?: unknown }>().catch(() => null);
+    if (!body) return c.json({ error: 'NODE_HEARTBEAT_INVALID' }, 400);
+    return c.json(await nodes.heartbeatNode(principal.nodeId, body.health, body.versions, body.capacity));
+  });
+
+  app.get('/api/node/policy', async (c) => {
+    const nodes = nodeFactory(c.env);
+    if (!nodes) return unavailable(c, 'NODE_CONTROL_UNAVAILABLE');
+    const principal = await requireNode(nodes, c.req.raw);
+    const knownRevision = Number(c.req.query('knownRevision') ?? '0');
+    const policy = await nodes.getNodePolicy(principal.nodeId, knownRevision);
+    if (policy === null) return new Response(null, { status: 204 });
+    c.header('Cache-Control', 'no-store');
+    return c.json(policy);
+  });
+
+  app.post('/api/node/policy/ack', async (c) => {
+    const nodes = nodeFactory(c.env);
+    if (!nodes) return unavailable(c, 'NODE_CONTROL_UNAVAILABLE');
+    const principal = await requireNode(nodes, c.req.raw);
+    const body = await c.req.json<{ revision?: unknown }>().catch(() => null);
+    if (!body) return c.json({ error: 'NODE_POLICY_REVISION_INVALID' }, 400);
+    return c.json(await nodes.ackNodePolicy(principal.nodeId, Number(body.revision)));
+  });
+
+  app.post('/api/node/telemetry', async (c) => {
+    const nodes = nodeFactory(c.env);
+    if (!nodes) return unavailable(c, 'NODE_CONTROL_UNAVAILABLE');
+    const principal = await requireNode(nodes, c.req.raw);
+    const body = await c.req.json<{ reports?: unknown }>().catch(() => null);
+    if (!body) return c.json({ error: 'TELEMETRY_INVALID' }, 400);
+    return c.json(await nodes.postTelemetry(principal.nodeId, body.reports));
   });
 
   app.get('/api/account', async (c) => {
