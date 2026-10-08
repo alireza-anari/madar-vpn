@@ -96,6 +96,39 @@ describe('node control plane', () => {
     });
   });
 
+  it('retires a node by revoking its active credentials and marking it offline', async () => {
+    const store = new MemoryNodeControlStore();
+    const now = new Date('2026-10-08T12:00:00.000Z');
+    const service = createNodeControlService({
+      store,
+      now: () => now,
+      randomId: idSequence(),
+      randomSecret: secretSequence('enroll-token', 'node-credential'),
+    });
+
+    const issued = await service.createEnrollmentToken('admin-1', { name: 'Retiring edge' }, now);
+    const enrolled = await service.enrollNode(issued.rawToken, {}, publicConfig);
+    await service.heartbeatNode(
+      issued.node.id,
+      { healthy: true, ready: true },
+      { agent: '1.0.0', xray: '25.10.0' },
+      { accepting: true, activeClients: 0, maxClients: 100 },
+    );
+    await expect(service.authenticateNode(enrolled.rawCredential)).resolves.toEqual({ nodeId: issued.node.id });
+
+    await expect(service.retireNode(issued.node.id)).resolves.toEqual({
+      nodeId: issued.node.id,
+      status: 'offline',
+    });
+
+    expect(store.nodes.find((node) => node.id === issued.node.id)?.status).toBe('offline');
+    expect(store.credentials[0]?.revokedAt).toBe(now.toISOString());
+    await expect(service.authenticateNode(enrolled.rawCredential)).rejects.toMatchObject({
+      status: 401,
+      code: 'NODE_CREDENTIAL_INVALID',
+    });
+  });
+
   it('reports healthy capacity as ready only while the heartbeat is fresh', async () => {
     const store = new MemoryNodeControlStore();
     let current = new Date('2026-10-08T12:00:00.000Z');
