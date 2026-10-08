@@ -378,7 +378,9 @@ export function AdminPage({
       <Card>
         <PageHeader eyebrow="کاربران" title="حساب‌های ثبت‌شده" description="فهرست واقعی کاربران قابل مشاهده است؛ اطلاعات حساس ورود در این صفحه نمایش داده نمی‌شود." />
         <ResourceList label="کاربران ثبت‌شده">
-          {resources.users.map((user) => <ResourceValue key={user.id} primary={user.email} secondary={user.role} />)}
+          {resources.users.length === 0
+            ? <span className="empty-state">هیچ کاربر ثبت‌شده‌ای وجود ندارد.</span>
+            : resources.users.map((user) => <ResourceValue key={user.id} primary={user.email} secondary={user.role} />)}
         </ResourceList>
       </Card>
 
@@ -433,7 +435,9 @@ export function AdminPage({
         <Card>
           <PageHeader eyebrow="پلن‌ها" title="مدیریت پلن" description="ذخیره پلن فقط با CSRF معتبر فعال می‌شود." />
           <ResourceList label="پلن‌های واقعی">
-            {resources.plans.map((plan) => <span key={plan.id}>{plan.title}</span>)}
+            {resources.plans.length === 0
+              ? <span className="empty-state">هیچ پلن واقعی ثبت نشده است.</span>
+              : resources.plans.map((plan) => <span key={plan.id}>{plan.title}</span>)}
           </ResourceList>
           <form className="form-stack">
             <label className="field-label" htmlFor="admin-plan-title">عنوان پلن</label>
@@ -445,7 +449,9 @@ export function AdminPage({
         <Card>
           <PageHeader eyebrow="ماموریت‌ها" title="ویرایش ماموریت" description="ثبت ماموریت اعتبار کاربر را مستقیم افزایش نمی‌دهد؛ پاداش فقط با تأیید سمت سرور اعمال می‌شود." />
           <ResourceList label="ماموریت‌های واقعی">
-            {resources.missions.map((mission) => <span key={mission.id}>{mission.title}</span>)}
+            {resources.missions.length === 0
+              ? <span className="empty-state">هیچ ماموریت واقعی ثبت نشده است.</span>
+              : resources.missions.map((mission) => <span key={mission.id}>{mission.title}</span>)}
           </ResourceList>
           <form className="form-stack">
             <label className="field-label" htmlFor="admin-mission-title">عنوان ماموریت</label>
@@ -459,7 +465,9 @@ export function AdminPage({
         <Card>
           <PageHeader eyebrow="نودها" title="ثبت نود" description="ثبت نود فقط رکورد enrolled ایجاد می‌کند؛ مواد دسترسی تنها پس از آماده‌شدن واقعی زیرساخت مدیریت می‌شوند." />
           <ResourceList label="نودهای واقعی">
-            {resources.nodes.map((node) => <ResourceValue key={node.id} primary={node.name} secondary={node.status} />)}
+            {resources.nodes.length === 0
+              ? <span className="empty-state">هیچ نود ثبت‌شده‌ای وجود ندارد.</span>
+              : resources.nodes.map((node) => <ResourceValue key={node.id} primary={node.name} secondary={node.status} />)}
           </ResourceList>
           <form className="form-stack">
             <label className="field-label" htmlFor="admin-node-name">نام نود</label>
@@ -471,7 +479,9 @@ export function AdminPage({
         <Card>
           <PageHeader eyebrow="اعلان‌ها" title="پیش‌نویس اعلان" description="ذخیره پیش‌نویس به معنی تحویل اعلان نیست و وضعیت delivery جداگانه باقی می‌ماند." />
           <ResourceList label="پیش‌نویس‌های اعلان">
-            {resources.notificationDrafts.map((draft) => <ResourceValue key={draft.id} primary={draft.title} secondary={draft.deliveryStatus} />)}
+            {resources.notificationDrafts.length === 0
+              ? <span className="empty-state">هیچ پیش‌نویس اعلانی ثبت نشده است.</span>
+              : resources.notificationDrafts.map((draft) => <ResourceValue key={draft.id} primary={draft.title} secondary={draft.deliveryStatus} />)}
           </ResourceList>
           <form className="form-stack">
             <label className="field-label" htmlFor="admin-draft-title">عنوان اعلان</label>
@@ -527,7 +537,9 @@ export function AdminPage({
       <Card>
         <PageHeader eyebrow="Audit" title="تاریخچه عملیات" description="رویدادهای ممتاز ثبت‌شده سمت سرور برای بازبینی نمایش داده می‌شوند." />
         <ResourceList label="تاریخچه Audit">
-          {resources.audit.map((entry) => <span key={entry.id}>{entry.action}</span>)}
+          {resources.audit.length === 0
+            ? <span className="empty-state">هنوز رویداد Audit ثبت نشده است.</span>
+            : resources.audit.map((entry) => <span key={entry.id}>{entry.action}</span>)}
         </ResourceList>
       </Card>
     </div>
