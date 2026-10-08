@@ -41,6 +41,7 @@ export interface AuthStore {
   setUserSuspended(userId: string, suspended: boolean, changedAt: string): Promise<{ user: User; changed: boolean } | null>;
   saveSession(session: StoredSession): Promise<void>;
   findSessionByTokenHash(tokenHash: string, now: Date): Promise<StoredSession | null>;
+  revokeSessionByTokenHash(tokenHash: string): Promise<void>;
 }
 
 type UserSuspensionAudit = {
@@ -100,6 +101,10 @@ export class MemoryAuthStore implements AuthStore {
     const session = this.sessions.get(tokenHash);
     if (!session || new Date(session.expiresAt).getTime() <= now.getTime()) return null;
     return { ...session };
+  }
+
+  async revokeSessionByTokenHash(tokenHash: string) {
+    this.sessions.delete(tokenHash);
   }
 }
 
@@ -175,7 +180,20 @@ export function createAuthService(options: AuthOptions) {
     const user = await options.store.findUserById(session.userId);
     if (!user) throw new AuthError(401, 'AUTH_REQUIRED', 'Session user no longer exists.');
     if (user.suspendedAt) throw new AuthError(403, 'ACCOUNT_SUSPENDED', 'Account is suspended.');
-    return { user, session };
+    return { user, session, tokenHash };
+  }
+
+  async function authenticateMutation(request: Request) {
+    const origin = request.headers.get('origin');
+    if (origin !== null && origin !== new URL(request.url).origin) {
+      throw new AuthError(403, 'ORIGIN_INVALID', 'Request origin is invalid.');
+    }
+    const context = await authenticate(request);
+    const csrfToken = request.headers.get('x-csrf-token');
+    if (!csrfToken) throw new AuthError(403, 'CSRF_INVALID', 'CSRF token is required.');
+    const csrfHash = await hashSecret(csrfToken);
+    if (!constantTimeEqual(csrfHash, context.session.csrfTokenHash)) throw new AuthError(403, 'CSRF_INVALID', 'CSRF token is invalid.');
+    return context;
   }
 
   return {
@@ -213,16 +231,11 @@ export function createAuthService(options: AuthOptions) {
       return user;
     },
     async requireMutationUser(request: Request): Promise<User> {
-      const origin = request.headers.get('origin');
-      if (origin !== null && origin !== new URL(request.url).origin) {
-        throw new AuthError(403, 'ORIGIN_INVALID', 'Request origin is invalid.');
-      }
-      const { user, session } = await authenticate(request);
-      const csrfToken = request.headers.get('x-csrf-token');
-      if (!csrfToken) throw new AuthError(403, 'CSRF_INVALID', 'CSRF token is required.');
-      const csrfHash = await hashSecret(csrfToken);
-      if (!constantTimeEqual(csrfHash, session.csrfTokenHash)) throw new AuthError(403, 'CSRF_INVALID', 'CSRF token is invalid.');
-      return user;
+      return (await authenticateMutation(request)).user;
+    },
+    async revokeCurrentSession(request: Request): Promise<void> {
+      const { tokenHash } = await authenticateMutation(request);
+      await options.store.revokeSessionByTokenHash(tokenHash);
     },
     async setUserSuspension(actor: User, userId: string, suspended: boolean, reason: string) {
       if (actor.role !== 'admin') throw new AuthError(403, 'ADMIN_REQUIRED', 'Administrator role is required.');
