@@ -13,6 +13,15 @@ from .api import HttpTransport, TransientTransportError, UrlLibTransport
 
 
 SERVICE_NAME = "madar-node-agent.service"
+PUBLIC_NODE_CONFIG_FIELDS = frozenset(
+    {
+        "address",
+        "port",
+        "serverName",
+        "realityPublicKey",
+        "realityShortId",
+    }
+)
 
 
 class EnrollmentFailed(RuntimeError):
@@ -57,7 +66,7 @@ class HttpEnrollmentClient:
         *,
         api_base_url: str,
         capabilities: dict[str, object],
-        public_config: dict[str, object],
+        public_config: dict[str, object] | Callable[[], dict[str, object]],
         transport: HttpTransport | None = None,
         timeout_seconds: float = 10.0,
     ) -> None:
@@ -68,15 +77,28 @@ class HttpEnrollmentClient:
             raise ValueError("timeout_seconds is out of range")
         self.api_base_url = base
         self.capabilities = dict(capabilities)
-        self.public_config = dict(public_config)
+        if callable(public_config):
+            self._public_config_provider = public_config
+        else:
+            snapshot = dict(public_config)
+            self._public_config_provider = lambda: dict(snapshot)
         self.transport = transport or UrlLibTransport()
         self.timeout_seconds = timeout_seconds
+
+    def _public_config(self) -> dict[str, object]:
+        try:
+            raw = self._public_config_provider()
+        except Exception as error:
+            raise EnrollmentFailed("node public configuration preparation failed") from error
+        if not isinstance(raw, dict):
+            raise EnrollmentFailed("node public configuration preparation failed")
+        return {key: raw[key] for key in PUBLIC_NODE_CONFIG_FIELDS if key in raw}
 
     def enroll(self, token: str) -> str:
         if len(token) < 8 or len(token) > 4096:
             raise EnrollmentFailed("enrollment token is invalid")
         body = json.dumps(
-            {"capabilities": self.capabilities, "publicConfig": self.public_config},
+            {"capabilities": self.capabilities, "publicConfig": self._public_config()},
             separators=(",", ":"),
         ).encode("utf-8")
         try:
