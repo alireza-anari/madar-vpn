@@ -1,13 +1,12 @@
 // @vitest-environment node
 
-import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import manifestRaw from '../../public/manifest.webmanifest?raw';
+import serviceWorker from '../../public/sw.js?raw';
 
 describe('PWA assets', () => {
   it('declares an installable Persian standalone manifest', () => {
-    const manifest = JSON.parse(
-      readFileSync(new URL('../../public/manifest.webmanifest', import.meta.url), 'utf8'),
-    ) as {
+    const manifest = JSON.parse(manifestRaw) as {
       name: string;
       short_name: string;
       dir: string;
@@ -27,12 +26,10 @@ describe('PWA assets', () => {
   });
 
   it('never runtime-caches API, auth, or subscription-secret requests', () => {
-    const sw = readFileSync(new URL('../../public/sw.js', import.meta.url), 'utf8');
-
-    expect(sw).toContain("'/api/'");
-    expect(sw).toContain("'/s/'");
-    expect(sw).toContain("'/auth/'");
-    expect(sw).toMatch(/request\.method\s*!==\s*['"]GET['"]/);
-    expect(sw).toContain('isSensitiveRequest');
+    expect(serviceWorker).toContain("'/api/'");
+    expect(serviceWorker).toContain("'/s/'");
+    expect(serviceWorker).toContain("'/auth/'");
+    expect(serviceWorker).toMatch(/request\.method\s*!==\s*['"]GET['"]/);
+    expect(serviceWorker).toContain('isSensitiveRequest');
   });
 });
