@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createApiApp } from '../index';
 import { createPaymentProvider } from '../providers';
-import { MemoryPaymentStore, PaymentError, createPaymentService } from './index';
+import { MemoryPaymentStore, createPaymentService } from './index';
 
 const START = new Date('2026-10-08T08:00:00.000Z');
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -90,13 +90,13 @@ describe('orders and payment settlement', () => {
     const amountMismatch = harness({ amountMinor: 125001 });
     await amountMismatch.payments.createOrder('user-1', 'monthly');
     await expect(amountMismatch.payments.settleProviderCallback(new Request('https://madar.test/payments/callback', { method: 'POST' })))
-      .rejects.toMatchObject<Partial<PaymentError>>({ code: 'PAYMENT_ORDER_MISMATCH' });
+      .rejects.toMatchObject({ code: 'PAYMENT_ORDER_MISMATCH' });
     await expect(amountMismatch.store.getPremiumUntil('user-1')).resolves.toBeNull();
 
     const missingOrder = harness({ orderId: 'other-order' });
     await missingOrder.payments.createOrder('user-1', 'monthly');
     await expect(missingOrder.payments.settleProviderCallback(new Request('https://madar.test/payments/callback', { method: 'POST' })))
-      .rejects.toMatchObject<Partial<PaymentError>>({ code: 'PAYMENT_ORDER_MISMATCH' });
+      .rejects.toMatchObject({ code: 'PAYMENT_ORDER_MISMATCH' });
     await expect(missingOrder.store.getPremiumUntil('user-1')).resolves.toBeNull();
   });
 
