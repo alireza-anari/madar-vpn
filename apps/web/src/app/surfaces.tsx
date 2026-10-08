@@ -297,6 +297,27 @@ function ResourceValue({ primary, secondary }: { primary: string; secondary?: st
   );
 }
 
+function UnavailableAdminModule({
+  eyebrow,
+  title,
+  message,
+}: {
+  eyebrow: string;
+  title: string;
+  message: string;
+}) {
+  return (
+    <Card>
+      <PageHeader
+        eyebrow={eyebrow}
+        title={title}
+        description="این بخش فقط وضعیت واقعی backend و integration را نشان می‌دهد."
+      />
+      <p className="inline-notice">{message}</p>
+    </Card>
+  );
+}
+
 export function AdminPage({
   overview,
   resources = emptyAdminResources,
@@ -306,6 +327,8 @@ export function AdminPage({
   resources?: AdminResourcesView;
   mutationsAvailable?: boolean;
 }) {
+  const defaultUserId = resources.users[0]?.id ?? '';
+
   return (
     <div className="surface-stack">
       <Card>
@@ -359,6 +382,53 @@ export function AdminPage({
         </ResourceList>
       </Card>
 
+      <div className="surface-grid surface-grid--three">
+        <Card>
+          <PageHeader eyebrow="Free Credit" title="اعتبار رایگان" description="اصلاح دستی فقط از API ادمین، با کلید idempotency و Audit سمت سرور اعمال می‌شود." />
+          <form className="form-stack" aria-label="فرم اصلاح اعتبار رایگان">
+            <label className="field-label" htmlFor="admin-free-user">شناسه کاربر</label>
+            <input className="text-input" id="admin-free-user" defaultValue={defaultUserId} />
+            <label className="field-label" htmlFor="admin-free-seconds">ثانیه</label>
+            <input className="text-input" id="admin-free-seconds" type="number" defaultValue="900" />
+            <label className="field-label" htmlFor="admin-free-reason">دلیل</label>
+            <input className="text-input" id="admin-free-reason" defaultValue="" />
+            <label className="field-label" htmlFor="admin-free-key">کلید idempotency</label>
+            <input className="text-input" id="admin-free-key" defaultValue="" />
+            <Button disabled={!mutationsAvailable} type="submit">اعمال اعتبار رایگان</Button>
+          </form>
+        </Card>
+
+        <Card>
+          <PageHeader eyebrow="Premium" title="تنظیم پرمیوم" description="تاریخ پایان فقط با mutation محافظت‌شده و ثبت Audit تغییر می‌کند." />
+          <form className="form-stack" aria-label="فرم تنظیم پرمیوم">
+            <label className="field-label" htmlFor="admin-premium-user">شناسه کاربر</label>
+            <input className="text-input" id="admin-premium-user" defaultValue={defaultUserId} />
+            <label className="field-label" htmlFor="admin-premium-until">پایان پرمیوم</label>
+            <input className="text-input" id="admin-premium-until" type="datetime-local" />
+            <label className="field-label" htmlFor="admin-premium-reason">دلیل</label>
+            <input className="text-input" id="admin-premium-reason" defaultValue="" />
+            <label className="field-label" htmlFor="admin-premium-key">کلید idempotency</label>
+            <input className="text-input" id="admin-premium-key" defaultValue="" />
+            <Button disabled={!mutationsAvailable} type="submit">ثبت پرمیوم</Button>
+          </form>
+        </Card>
+
+        <Card>
+          <PageHeader eyebrow="User State" title="تعلیق حساب" description="تعلیق در مرز احراز هویت enforce می‌شود و session موجود را هم فوراً محدود می‌کند." />
+          <form className="form-stack" aria-label="فرم تعلیق حساب">
+            <label className="field-label" htmlFor="admin-suspension-user">شناسه کاربر</label>
+            <input className="text-input" id="admin-suspension-user" defaultValue={defaultUserId} />
+            <label className="check-row">
+              <input type="checkbox" />
+              حساب معلق باشد
+            </label>
+            <label className="field-label" htmlFor="admin-suspension-reason">دلیل</label>
+            <input className="text-input" id="admin-suspension-reason" defaultValue="" />
+            <Button disabled={!mutationsAvailable} type="submit">تغییر وضعیت حساب</Button>
+          </form>
+        </Card>
+      </div>
+
       <div className="surface-grid surface-grid--two">
         <Card>
           <PageHeader eyebrow="پلن‌ها" title="مدیریت پلن" description="ذخیره پلن فقط با CSRF معتبر فعال می‌شود." />
@@ -409,6 +479,49 @@ export function AdminPage({
             <Button disabled={!mutationsAvailable} type="submit">ذخیره پیش‌نویس</Button>
           </form>
         </Card>
+      </div>
+
+      <div className="surface-grid surface-grid--two">
+        <UnavailableAdminModule
+          eyebrow="Payments"
+          title="پرداخت‌ها"
+          message={overview.readiness.payments ? 'Provider پرداخت متصل است؛ settlement واقعی در فاز provider تکمیل می‌شود.' : 'Provider پرداخت هنوز متصل نشده؛ settlement و تأیید سفارش در دسترس نیست.'}
+        />
+        <UnavailableAdminModule
+          eyebrow="Ads"
+          title="تبلیغات"
+          message={overview.readiness.ads ? 'Provider تبلیغ آماده گزارش شده، اما settlement پاداش هنوز در این فاز فعال نیست.' : 'Provider تبلیغات هنوز متصل نشده؛ پاداش تبلیغاتی واقعی در دسترس نیست.'}
+        />
+        <UnavailableAdminModule
+          eyebrow="Rewards"
+          title="پاداش‌ها"
+          message="گردش بررسی و settlement پاداش هنوز آماده نیست؛ هیچ پاداش نمونه‌ای اعمال نمی‌شود."
+        />
+        <UnavailableAdminModule
+          eyebrow="Notifications"
+          title="Push"
+          message={overview.readiness.push ? 'Provider Push آماده گزارش شده، اما ارسال واقعی دستگاه هنوز در این فاز تأیید نشده است.' : 'Provider Push هنوز متصل نشده؛ ارسال واقعی غیرفعال است.'}
+        />
+        <UnavailableAdminModule
+          eyebrow="Health"
+          title="سلامت نود"
+          message={overview.readiness.nodes ? 'حداقل یک نود ready گزارش شده؛ تله‌متری سلامت کامل هنوز آماده نیست.' : 'تله‌متری سلامت نود هنوز آماده نیست؛ ready ساختگی نمایش داده نمی‌شود.'}
+        />
+        <UnavailableAdminModule
+          eyebrow="Capacity"
+          title="ظرفیت"
+          message="گزارش ظرفیت و headroom نودها هنوز آماده نیست و مقدار نمونه نمایش داده نمی‌شود."
+        />
+        <UnavailableAdminModule
+          eyebrow="Access"
+          title="وضعیت Subscription"
+          message="چرخه Subscription و eligibility نود هنوز آماده نیست؛ URL یا وضعیت ساختگی تولید نمی‌شود."
+        />
+        <UnavailableAdminModule
+          eyebrow="Rotation"
+          title="چرخش دسترسی"
+          message="چرخش Client ID و Subscription هنوز آماده نیست؛ تا تکمیل state machine هیچ action ساختگی ارائه نمی‌شود."
+        />
       </div>
 
       <Card>
