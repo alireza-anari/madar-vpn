@@ -16,13 +16,13 @@ DO $$
 DECLARE
   required_tables text[] := ARRAY[
     'users', 'login_tokens', 'sessions', 'credit_ledger', 'memberships',
-    'usage_sessions', 'app_settings', 'nodes', 'plans', 'missions',
-    'notification_drafts', 'audit_log', 'access_profiles', 'client_credentials',
-    'subscription_tokens', 'node_public_config', 'orders', 'payment_events',
-    'mission_submissions', 'mission_rewards', 'push_subscriptions',
-    'node_enrollment_tokens', 'node_credentials', 'node_capabilities',
-    'node_heartbeats', 'node_policies', 'node_policy_acks',
-    'node_user_policy_acks', 'telemetry_reports'
+    'usage_sessions', 'premium_adjustments', 'app_settings', 'nodes', 'plans',
+    'missions', 'notification_drafts', 'audit_log', 'access_profiles',
+    'client_credentials', 'subscription_tokens', 'node_public_configs',
+    'node_policy_acks', 'orders', 'payment_events', 'mission_submissions',
+    'verified_referrals', 'push_subscriptions', 'node_enrollment_tokens',
+    'node_credentials', 'node_capabilities', 'node_health_samples',
+    'node_policy_revisions', 'telemetry_reports'
   ];
   table_name text;
 BEGIN
