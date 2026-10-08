@@ -122,4 +122,15 @@ describe('D1AuthStore', () => {
 
     expect(db.executed.every((entry) => entry.sql.includes('?'))).toBe(true);
   });
+
+  it('revokes only the requested session with a parameterized delete', async () => {
+    const db = new FakeD1();
+    const store = new D1AuthStore(db);
+
+    await store.revokeSessionByTokenHash('session-hash');
+
+    expect(db.executed).toHaveLength(1);
+    expect(db.executed[0]).toMatchObject({ mode: 'run', values: ['session-hash'] });
+    expect(db.executed[0]!.sql).toMatch(/DELETE\s+FROM\s+sessions\s+WHERE\s+token_hash\s*=\s*\?/i);
+  });
 });
