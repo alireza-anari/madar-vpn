@@ -75,7 +75,10 @@ class NodeAgent:
 
     def fetch_policy(self) -> Policy | None:
         known_revision = self._current_policy.revision if self._current_policy else 0
-        return self.api.fetch_policy(known_revision)
+        policy = self.api.fetch_policy(known_revision)
+        if policy is None and self._current_policy is not None and not self.is_authorization_fresh(self._now()):
+            self.xray.disable_managed_access()
+        return policy
 
     def apply_policy(self, policy: Policy) -> ApplyResult:
         self._current_policy = policy
