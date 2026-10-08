@@ -58,6 +58,24 @@ describe('persistent credit and membership rules', () => {
     );
   });
 
+  it('records premium usage idempotently without debiting free credit', async () => {
+    const { credits, store } = harness();
+    store.setPremiumUntil('user-1', '2026-11-08T00:00:00.000Z');
+    await credits.getEntitlement('user-1', CURRENT_DAY);
+
+    await expect(credits.recordUsage('node-1', 'session-1', 7, 600, CURRENT_DAY)).resolves.toBe(true);
+    await expect(credits.recordUsage('node-1', 'session-1', 7, 600, CURRENT_DAY)).resolves.toBe(false);
+    await expect(credits.getEntitlement('user-1', CURRENT_DAY)).resolves.toMatchObject({
+      freeSeconds: 1800,
+      tier: 'premium',
+    });
+
+    expect(store.ledger.find((entry) => entry.uniqueKey === 'usage:node-1:session-1:7')).toMatchObject({
+      kind: 'usage',
+      deltaSeconds: 0,
+    });
+  });
+
   it('sums actual usage from concurrent sessions', async () => {
     const { credits } = harness();
     await credits.getEntitlement('user-1', CURRENT_DAY);
