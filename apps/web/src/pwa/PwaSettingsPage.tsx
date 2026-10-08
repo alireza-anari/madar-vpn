@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
 import { PageHeader } from '../components/PageHeader';
@@ -6,6 +6,10 @@ import { PageHeader } from '../components/PageHeader';
 type PermissionRequester = () => Promise<NotificationPermission>;
 type SubscribeAction = () => Promise<boolean>;
 type InstallPrompt = () => Promise<void>;
+type BrowserInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice?: Promise<{ outcome: string; platform?: string }> | undefined;
+};
 
 type Props = {
   pushAvailable: boolean;
@@ -26,22 +30,40 @@ async function defaultRequestPermission(): Promise<NotificationPermission> {
   return Notification.requestPermission();
 }
 
-async function unavailableSubscribe() {
-  return false;
-}
-
 export function PwaSettingsPage({
   pushAvailable,
   notificationSupported = defaultNotificationSupported(),
   requestPermission = defaultRequestPermission,
-  subscribe = unavailableSubscribe,
+  subscribe,
   installPrompt,
 }: Props) {
   const [notificationState, setNotificationState] = useState<NotificationState>('idle');
   const [busy, setBusy] = useState(false);
+  const [browserInstallPrompt, setBrowserInstallPrompt] = useState<InstallPrompt | null>(null);
+
+  useEffect(() => {
+    if (installPrompt || typeof window === 'undefined') return undefined;
+
+    const handleInstallPrompt = (event: Event) => {
+      const candidate = event as BrowserInstallPromptEvent;
+      if (typeof candidate.prompt !== 'function') return;
+      event.preventDefault();
+      setBrowserInstallPrompt(() => async () => {
+        await candidate.prompt();
+        if (candidate.userChoice) await candidate.userChoice.catch(() => undefined);
+        setBrowserInstallPrompt(null);
+      });
+    };
+
+    window.addEventListener('beforeinstallprompt', handleInstallPrompt);
+    return () => window.removeEventListener('beforeinstallprompt', handleInstallPrompt);
+  }, [installPrompt]);
+
+  const activeInstallPrompt = installPrompt ?? browserInstallPrompt;
+  const subscriptionReady = typeof subscribe === 'function';
 
   async function enableNotifications() {
-    if (!pushAvailable || !notificationSupported || busy) return;
+    if (!pushAvailable || !notificationSupported || !subscriptionReady || busy) return;
     setBusy(true);
     try {
       const permission = await requestPermission();
@@ -72,8 +94,8 @@ export function PwaSettingsPage({
           </section>
           <section>
             <h2 className="section-title">نصب روی Android</h2>
-            {installPrompt ? (
-              <Button type="button" onClick={() => { void installPrompt(); }}>نصب برنامه</Button>
+            {activeInstallPrompt ? (
+              <Button type="button" onClick={() => { void activeInstallPrompt(); }}>نصب برنامه</Button>
             ) : (
               <p className="muted-copy">اگر گزینه نصب مرورگر نمایش داده نشد، از «افزودن به صفحه اصلی» استفاده کنید.</p>
             )}
@@ -89,7 +111,7 @@ export function PwaSettingsPage({
         />
         <Button
           type="button"
-          disabled={!pushAvailable || !notificationSupported || busy}
+          disabled={!pushAvailable || !notificationSupported || !subscriptionReady || busy}
           onClick={() => { void enableNotifications(); }}
         >
           {busy ? 'در حال فعال‌سازی…' : 'فعال‌کردن اعلان'}
@@ -97,6 +119,9 @@ export function PwaSettingsPage({
 
         {!pushAvailable ? <p className="inline-notice">ارسال Web Push هنوز پیکربندی نشده است.</p> : null}
         {pushAvailable && !notificationSupported ? <p className="inline-notice">اعلان در این مرورگر پشتیبانی نمی‌شود.</p> : null}
+        {pushAvailable && notificationSupported && !subscriptionReady ? (
+          <p className="inline-notice">فعال‌سازی این دستگاه هنوز به نشست امن متصل نشده است.</p>
+        ) : null}
         {notificationState === 'denied' ? <p className="inline-notice">مجوز اعلان داده نشد؛ برنامه بدون اعلان قابل استفاده است.</p> : null}
         {notificationState === 'enabled' ? <p className="inline-notice" role="status">اعلان‌ها برای این دستگاه فعال شد.</p> : null}
         {notificationState === 'failed' ? <p className="inline-notice">فعال‌سازی اعلان کامل نشد؛ برنامه بدون اعلان قابل استفاده است.</p> : null}
