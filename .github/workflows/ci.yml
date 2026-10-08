@@ -19,9 +19,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - run: corepack enable
       - run: corepack prepare pnpm@12.9.1 --activate
       - run: pnpm install --frozen-lockfile
+      - run: python3 -m pip install --disable-pip-version-check -r node-agent/requirements-dev.txt
       - run: pnpm test
       - run: pnpm typecheck
       - run: pnpm build
