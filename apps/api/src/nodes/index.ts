@@ -92,6 +92,7 @@ export interface NodeControlStore {
   consumeEnrollmentToken(tokenHash: string, now: Date): Promise<NodeEnrollmentTokenRecord | null>;
   saveCredential(record: NodeCredentialRecord): Promise<void>;
   findActiveCredentialByHash(credentialHash: string): Promise<NodeCredentialRecord | null>;
+  revokeNodeCredentials(nodeId: string, revokedAt: string): Promise<void>;
   saveCapabilities(nodeId: string, capabilities: Record<string, unknown>, updatedAt: string): Promise<void>;
   savePublicConfig(nodeId: string, config: NodePublicConfig, updatedAt: string): Promise<void>;
   saveHeartbeat(record: NodeHeartbeatRecord): Promise<void>;
@@ -157,6 +158,12 @@ export class MemoryNodeControlStore implements NodeControlStore {
   async findActiveCredentialByHash(credentialHash: string) {
     const record = this.credentials.find((candidate) => candidate.credentialHash === credentialHash && candidate.revokedAt === null);
     return record ? { ...record } : null;
+  }
+
+  async revokeNodeCredentials(nodeId: string, revokedAt: string) {
+    for (const credential of this.credentials) {
+      if (credential.nodeId === nodeId && credential.revokedAt === null) credential.revokedAt = revokedAt;
+    }
   }
 
   async saveCapabilities(nodeId: string, capabilities: Record<string, unknown>, updatedAt: string) {
@@ -432,6 +439,16 @@ export function createNodeControlService(options: {
       const credential = await options.store.findActiveCredentialByHash(await hashNodeSecret(rawCredential));
       if (!credential) throw new NodeControlError(401, 'NODE_CREDENTIAL_INVALID', 'Node credential is invalid.');
       return { nodeId: credential.nodeId };
+    },
+
+    async retireNode(nodeId: string) {
+      const id = validateId(nodeId);
+      const node = await options.store.getNode(id);
+      if (!node) throw new NodeControlError(404, 'NODE_NOT_FOUND', 'Node does not exist.');
+      const retiredAt = now().toISOString();
+      await options.store.revokeNodeCredentials(id, retiredAt);
+      await options.store.saveNode({ ...node, status: 'offline' });
+      return { nodeId: id, status: 'offline' as const };
     },
 
     async heartbeatNode(nodeId: string, healthInput: unknown, versionsInput: unknown, capacityInput: unknown) {
