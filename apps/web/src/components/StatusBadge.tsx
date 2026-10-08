@@ -1,6 +1,6 @@
 type StatusBadgeProps = {
   children: string;
-  tone?: 'neutral' | 'checking' | 'unavailable';
+  tone?: 'neutral' | 'ready' | 'checking' | 'unavailable';
 };
 
 export function StatusBadge({ children, tone = 'neutral' }: StatusBadgeProps) {

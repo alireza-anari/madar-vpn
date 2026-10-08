@@ -3,17 +3,19 @@ import { StatusBadge } from './StatusBadge';
 
 type AppShellProps = {
   children: ReactNode;
-  serviceStatus?: 'checking' | 'unavailable';
+  serviceStatus?: 'ready' | 'checking' | 'unavailable';
 };
 
 const navigationItems = [
   ['/', 'خانه'],
-  ['/access', 'دسترسی VPN'],
+  ['/missions', 'ماموریت‌ها'],
   ['/premium', 'اشتراک'],
   ['/settings', 'تنظیمات'],
 ] as const;
 
 export function AppShell({ children, serviceStatus = 'checking' }: AppShellProps) {
+  const statusLabel = serviceStatus === 'ready' ? 'آنلاین' : serviceStatus === 'checking' ? 'در حال بررسی' : 'آفلاین';
+
   return (
     <div className="app-shell" dir="rtl" lang="fa">
       <header className="app-shell__topbar">
@@ -21,9 +23,7 @@ export function AppShell({ children, serviceStatus = 'checking' }: AppShellProps
           <span aria-hidden="true" className="brand__mark">م</span>
           <h1 className="brand__name">مدار</h1>
         </a>
-        <StatusBadge tone={serviceStatus}>
-          {serviceStatus === 'checking' ? 'در حال بررسی' : 'آفلاین'}
-        </StatusBadge>
+        <StatusBadge tone={serviceStatus}>{statusLabel}</StatusBadge>
       </header>
 
       {serviceStatus === 'unavailable' ? (
