@@ -8,6 +8,13 @@ const overview = {
   settings: { freeSpeedKbps: 256, notificationsEnabled: false },
 };
 
+const account = {
+  identity: { id: 'user-1', email: 'user@example.com', role: 'user' },
+  entitlement: { freeSeconds: 900, premiumUntil: null, tier: 'free' },
+  node: { ready: false, connectionStatus: 'disconnected', configAvailable: false },
+  providers: { email: false, ads: false, payments: false, push: false },
+};
+
 const resources = {
   users: [{ id: 'user-1', email: 'admin@example.com', role: 'admin' }],
   plans: [{
@@ -55,5 +62,19 @@ describe('Madar web bootstrap', () => {
     expect(await screen.findByText('ماهانه')).toBeInTheDocument();
     expect(requested).toContain('/api/admin/overview');
     expect(requested).toContain('/api/admin/resources');
+  });
+
+  it('routes /settings through the user-gesture PWA controls', async () => {
+    window.history.pushState({}, '', '/settings');
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/health') return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
+      if (url === '/api/account') return new Response(JSON.stringify(account), { status: 200 });
+      return new Response(null, { status: 404 });
+    }));
+
+    render(<App />);
+
+    expect(await screen.findByText('مرورگر فقط پس از فشردن دکمه زیر مجوز اعلان را درخواست می‌کند.')).toBeInTheDocument();
   });
 });
