@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "test": "vitest run",
+    "test:postgres": "vitest run --config vitest.postgres.config.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "vite build"
   },
