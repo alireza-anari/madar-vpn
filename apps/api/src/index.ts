@@ -556,9 +556,12 @@ export function createApiApp(
   });
 
   app.delete('/api/admin/nodes/:id', async (c) => {
-    const auth = authFactory(c.env); const surfaces = surfaceFactory(c.env);
-    if (!auth || !surfaces) return unavailable(c, 'ADMIN_UNAVAILABLE');
-    const actor = await requireAdminMutation(auth, c.req.raw); await surfaces.deleteNode(actor, c.req.param('id'));
+    const auth = authFactory(c.env); const surfaces = surfaceFactory(c.env); const nodes = nodeFactory(c.env);
+    if (!auth || !surfaces || !nodes) return unavailable(c, 'NODE_CONTROL_UNAVAILABLE');
+    const actor = await requireAdminMutation(auth, c.req.raw);
+    const nodeId = c.req.param('id');
+    await nodes.retireNode(nodeId);
+    await surfaces.deleteNode(actor, nodeId);
     return new Response(null, { status: 204 });
   });
 
