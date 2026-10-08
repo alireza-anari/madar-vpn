@@ -78,6 +78,19 @@ export class D1AccessStore implements AccessStore {
     return profile;
   }
 
+  async getProfile(userId: string) {
+    const row = await this.db
+      .prepare(
+        `SELECT id, user_id, policy_revision, created_at
+         FROM access_profiles
+         WHERE user_id = ?
+         LIMIT 1`,
+      )
+      .bind(userId)
+      .first<AccessProfileRow>();
+    return mapProfile(row);
+  }
+
   async ensureActiveClientCredential(candidate: ClientCredential) {
     const row = await this.db
       .prepare(
@@ -100,6 +113,19 @@ export class D1AccessStore implements AccessStore {
     const credential = mapCredential(row);
     if (!credential) throw new Error('Active client credential could not be ensured.');
     return credential;
+  }
+
+  async getActiveClientCredential(userId: string) {
+    const row = await this.db
+      .prepare(
+        `SELECT id, user_id, uuid, version, created_at, revoked_at
+         FROM client_credentials
+         WHERE user_id = ? AND revoked_at IS NULL
+         LIMIT 1`,
+      )
+      .bind(userId)
+      .first<ClientCredentialRow>();
+    return mapCredential(row);
   }
 
   async issueSubscriptionToken(candidate: Omit<SubscriptionTokenRecord, 'version' | 'revokedAt'>) {
@@ -130,6 +156,19 @@ export class D1AccessStore implements AccessStore {
          LIMIT 1`,
       )
       .bind(userId)
+      .first<SubscriptionTokenRow>();
+    return mapSubscriptionToken(row);
+  }
+
+  async findActiveSubscriptionTokenByHash(tokenHash: string) {
+    const row = await this.db
+      .prepare(
+        `SELECT id, user_id, token_hash, version, created_at, revoked_at
+         FROM subscription_tokens
+         WHERE token_hash = ? AND revoked_at IS NULL
+         LIMIT 1`,
+      )
+      .bind(tokenHash)
       .first<SubscriptionTokenRow>();
     return mapSubscriptionToken(row);
   }
