@@ -14,11 +14,17 @@ from .models import ManagedClient, ObservedActivity
 
 
 class XrayAdapter(Protocol):
+    def ensure_runtime(self, config: XrayRuntimeConfig) -> Path: ...
+
     def apply_clients(self, clients: list[ManagedClient]) -> None: ...
+
+    def revoke_client(self, uuid: str) -> None: ...
 
     def disable_managed_access(self) -> None: ...
 
     def collect_observed_activity(self) -> list[ObservedActivity]: ...
+
+    def health(self) -> bool: ...
 
 
 class ProcessResult(Protocol):
@@ -95,6 +101,8 @@ class PinnedXrayAdapter:
         binary: Path | None = None,
         server: RealityServerConfig | None = None,
         reload: Callable[[], None] | None = None,
+        is_active: Callable[[], bool] | None = None,
+        activity_source: Callable[[], list[ObservedActivity]] | None = None,
     ) -> None:
         self.install_root = Path(install_root)
         self.state_root = Path(state_root)
@@ -104,6 +112,9 @@ class PinnedXrayAdapter:
         self._binary = Path(binary) if binary is not None else None
         self._server = server
         self._reload = reload
+        self._is_active = is_active
+        self._activity_source = activity_source
+        self._managed_clients: list[ManagedClient] = []
 
     def ensure_runtime(self, config: XrayRuntimeConfig) -> Path:
         payload = self._download(config.download_url)
@@ -189,9 +200,38 @@ class PinnedXrayAdapter:
             candidate.replace(live)
             live.chmod(0o600)
             self._reload()
+            self._managed_clients = list(clients)
         except BaseException:
             candidate.unlink(missing_ok=True)
             raise
+
+    def revoke_client(self, uuid: str) -> None:
+        remaining = [client for client in self._managed_clients if client.client_id != uuid]
+        if len(remaining) == len(self._managed_clients):
+            return
+        self.apply_clients(remaining)
+
+    def disable_managed_access(self) -> None:
+        self.apply_clients([])
+
+    def collect_observed_activity(self) -> list[ObservedActivity]:
+        if self._activity_source is None:
+            return []
+        return list(self._activity_source())
+
+    def health(self) -> bool:
+        if self._is_active is None or not self._is_active():
+            return False
+        if self._run is None or self._binary is None:
+            return False
+        live = self.state_root / "xray-config.json"
+        if not live.is_file():
+            return False
+        result = self._run([str(self._binary), "run", "-test", "-c", str(live)])
+        if result.returncode != 0:
+            self._log("Xray live configuration health validation failed")
+            return False
+        return True
 
     def _render_config(self, clients: list[ManagedClient], private_key: str) -> dict[str, object]:
         assert self._server is not None
