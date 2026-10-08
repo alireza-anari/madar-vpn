@@ -200,6 +200,9 @@ export function createApiApp(
 
   app.get('/s/:token', async (c) => {
     c.header('Cache-Control', 'no-store');
+    c.header('Referrer-Policy', 'no-referrer');
+    c.header('X-Robots-Tag', 'noindex, nofollow, noarchive');
+    c.header('X-Content-Type-Options', 'nosniff');
     const token = c.req.param('token');
     const allowed = await consumeRateLimit(c.env?.SUBSCRIPTION_RATE_LIMITER, 'subscription', token);
     if (!allowed) {
