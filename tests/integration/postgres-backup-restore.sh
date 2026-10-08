@@ -16,12 +16,15 @@ psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -Atc \
   "SELECT COALESCE(SUM(delta_seconds), 0) FROM credit_ledger WHERE user_id = 'schema-user-1'" \
   | grep -qx '1800'
 
-pg_dump \
-  --format=custom \
-  --no-owner \
-  --no-acl \
-  --file="$backup" \
-  "$TEST_DATABASE_URL"
+# Backup tooling must match the PostgreSQL server major version. The CI service
+# is PostgreSQL 17, so use that pinned client image rather than the runner's
+# distro client, which may lag behind and refuse to dump a newer server.
+docker run --rm --network host postgres:17 \
+  pg_dump \
+    --format=custom \
+    --no-owner \
+    --no-acl \
+    "$TEST_DATABASE_URL" > "$backup"
 
 [[ -s "$backup" ]]
 mode="$(stat -c '%a' "$backup")"
@@ -39,12 +42,12 @@ SQL
 missing_after_wipe="$(psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "SELECT to_regclass('public.users') IS NULL")"
 [[ "$missing_after_wipe" == "t" ]]
 
-pg_restore \
-  --exit-on-error \
-  --no-owner \
-  --no-acl \
-  --dbname="$TEST_DATABASE_URL" \
-  "$backup" >/dev/null
+docker run --rm --network host -i postgres:17 \
+  pg_restore \
+    --exit-on-error \
+    --no-owner \
+    --no-acl \
+    --dbname="$TEST_DATABASE_URL" < "$backup" >/dev/null
 
 psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL' >/dev/null
 DO $$
