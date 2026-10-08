@@ -3,6 +3,8 @@ import { AuthError, createAuthService, serializeSessionCookie, type User } from 
 import { D1AuthStore, type D1DatabaseLike } from './auth/d1';
 import { createCreditService } from './credits';
 import { D1CreditStore } from './credits/d1';
+import { ProviderUnavailableError, ProviderVerificationError } from './providers';
+import { RewardedAdSettlementError, type RewardedAdSettlement } from './providers/rewarded-ad';
 import { createSurfaceService, SurfaceError } from './surfaces';
 import { D1SurfaceStore } from './surfaces/d1';
 
@@ -11,6 +13,7 @@ type SurfaceService = ReturnType<typeof createSurfaceService>;
 type ApiBindings = { DB?: D1DatabaseLike; ADMIN_EMAILS?: string };
 type AuthFactory = (env: ApiBindings | undefined) => AuthService | null;
 type SurfaceFactory = (env: ApiBindings | undefined) => SurfaceService | null;
+type RewardedAdFactory = (env: ApiBindings | undefined) => RewardedAdSettlement | null;
 
 function configuredAdminEmails(value: string | undefined) {
   return (value ?? '').split(',').map((email) => email.trim()).filter(Boolean);
@@ -47,6 +50,8 @@ const defaultSurfaceFactory: SurfaceFactory = (env) => {
   });
 };
 
+const defaultRewardedAdFactory: RewardedAdFactory = () => null;
+
 function unavailable(c: { json: (body: { error: string }, status: 503) => Response }, error: string) {
   return c.json({ error }, 503);
 }
@@ -57,19 +62,31 @@ async function requireAdminMutation(auth: AuthService, request: Request): Promis
   return actor;
 }
 
-export function createApiApp(authFactory: AuthFactory = defaultAuthFactory, surfaceFactory: SurfaceFactory = defaultSurfaceFactory) {
+export function createApiApp(
+  authFactory: AuthFactory = defaultAuthFactory,
+  surfaceFactory: SurfaceFactory = defaultSurfaceFactory,
+  rewardedAdFactory: RewardedAdFactory = defaultRewardedAdFactory,
+) {
   const app = new Hono<{ Bindings: ApiBindings }>();
 
   app.onError((error, c) => {
-    if (error instanceof AuthError || error instanceof SurfaceError) {
+    if (error instanceof AuthError || error instanceof SurfaceError || error instanceof RewardedAdSettlementError) {
       if (error.status === 400) return c.json({ error: error.code }, 400);
       if (error.status === 401) return c.json({ error: error.code }, 401);
       if (error.status === 403) return c.json({ error: error.code }, 403);
     }
+    if (error instanceof ProviderVerificationError) return c.json({ error: error.code }, 403);
+    if (error instanceof ProviderUnavailableError) return c.json({ error: error.code }, 503);
     return c.json({ error: 'INTERNAL_ERROR' }, 500);
   });
 
   app.get('/api/health', (c) => c.json({ status: 'ok' as const }));
+
+  app.post('/api/providers/ads/callback', async (c) => {
+    const settlement = rewardedAdFactory(c.env);
+    if (!settlement) return unavailable(c, 'ADS_UNAVAILABLE');
+    return c.json(await settlement.settle(c.req.raw));
+  });
 
   app.post('/api/auth/request', async (c) => {
     const auth = authFactory(c.env); if (!auth) return unavailable(c, 'AUTH_UNAVAILABLE');
