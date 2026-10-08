@@ -51,6 +51,7 @@ export type MissionRecord = {
   description: string;
   rewardSeconds: number;
   status: 'draft' | 'active' | 'paused';
+  verificationKind: 'evidence' | 'referral';
   createdAt: string;
   updatedAt: string;
 };
@@ -324,12 +325,17 @@ function validateMission(id: string, input: unknown, timestamp: string, existing
   if (!['draft', 'active', 'paused'].includes(String(candidate.status))) {
     throw new SurfaceError(400, 'MISSION_INVALID', 'Mission status is invalid.');
   }
+  const verificationKind = candidate.verificationKind ?? existing?.verificationKind ?? 'evidence';
+  if (!['evidence', 'referral'].includes(String(verificationKind))) {
+    throw new SurfaceError(400, 'MISSION_INVALID', 'Mission verification rule is invalid.');
+  }
   return {
     id: validateResourceId(id),
     title: requiredText(candidate.title, 'MISSION_INVALID', 120),
     description: requiredText(candidate.description, 'MISSION_INVALID', 1000),
     rewardSeconds,
     status: candidate.status as MissionRecord['status'],
+    verificationKind: verificationKind as MissionRecord['verificationKind'],
     createdAt: existing?.createdAt ?? timestamp,
     updatedAt: timestamp,
   };
@@ -508,7 +514,11 @@ export function createSurfaceService(options: {
       const existing = (await options.store.listMissions()).find((mission) => mission.id === id);
       const mission = validateMission(id, input, now().toISOString(), existing);
       await options.store.saveMission(mission);
-      await audit(actor, 'mission.upsert', { id: mission.id, status: mission.status });
+      await audit(actor, 'mission.upsert', {
+        id: mission.id,
+        status: mission.status,
+        verificationKind: mission.verificationKind,
+      });
       return mission;
     },
 
