@@ -6,6 +6,7 @@ import stat
 import sys
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -97,3 +98,68 @@ def test_ensure_runtime_rejects_checksum_mismatch_without_installing_binary(tmp_
 
     assert downloads == [AMD64_URL]
     assert not (tmp_path / "runtime" / VERSION / "xray").exists()
+
+
+def test_generate_reality_keypair_keeps_private_key_local_and_returns_only_public_data(tmp_path: Path) -> None:
+    private_key = "fixture-private-key-never-log"
+    public_key = "fixture-public-key"
+    calls: list[list[str]] = []
+    logs: list[str] = []
+
+    def run(argv: list[str]):
+        calls.append(argv)
+        return SimpleNamespace(
+            returncode=0,
+            stdout=(
+                f"PrivateKey: {private_key}\n"
+                f"Password (PublicKey): {public_key}\n"
+                "Hash32: fixture-hash\n"
+            ),
+            stderr="",
+        )
+
+    adapter = xray.PinnedXrayAdapter(
+        install_root=tmp_path / "runtime",
+        state_root=tmp_path / "state",
+        download=lambda _url: b"",
+        run=run,
+        log=logs.append,
+    )
+    binary = tmp_path / "runtime" / VERSION / "xray"
+
+    public = adapter.generate_reality_keypair(binary)
+
+    assert calls == [[str(binary), "x25519"]]
+    private_path = tmp_path / "state" / "reality.private"
+    assert private_path.read_text(encoding="utf-8") == private_key
+    assert stat.S_IMODE(private_path.stat().st_mode) == 0o600
+    assert public.public_key == public_key
+    assert private_key not in repr(public)
+    assert all(private_key not in line for line in logs)
+
+
+def test_generate_reality_keypair_redacts_private_key_when_xray_fails(tmp_path: Path) -> None:
+    private_key = "fixture-private-key-from-failed-command"
+    logs: list[str] = []
+
+    def run(_argv: list[str]):
+        return SimpleNamespace(
+            returncode=1,
+            stdout=f"PrivateKey: {private_key}\n",
+            stderr="fixture failure",
+        )
+
+    adapter = xray.PinnedXrayAdapter(
+        install_root=tmp_path / "runtime",
+        state_root=tmp_path / "state",
+        download=lambda _url: b"",
+        run=run,
+        log=logs.append,
+    )
+
+    with pytest.raises(xray.XrayRuntimeError) as exc_info:
+        adapter.generate_reality_keypair(tmp_path / "runtime" / VERSION / "xray")
+
+    assert private_key not in str(exc_info.value)
+    assert all(private_key not in line for line in logs)
+    assert not (tmp_path / "state" / "reality.private").exists()
