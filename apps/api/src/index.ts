@@ -4,7 +4,7 @@ import { D1AccessStore } from './access/d1';
 import { createSubscriptionService } from './access/subscription';
 import { D1SubscriptionNodeStore } from './access/subscription-d1';
 import { createAdminAuditService, type AdminAuditService } from './admin-audit';
-import { AuthError, createAuthService, serializeSessionCookie, type User } from './auth';
+import { AuthError, clearSessionCookie, createAuthService, serializeSessionCookie, type User } from './auth';
 import { D1AuthStore, type D1DatabaseLike } from './auth/d1';
 import { createCreditService } from './credits';
 import { D1CreditStore } from './credits/d1';
@@ -285,6 +285,13 @@ export function createApiApp(
     const session = await auth.consumeLoginToken(body.token);
     c.header('Set-Cookie', serializeSessionCookie(session.token, new Date(session.expiresAt)));
     return c.json({ csrfToken: session.csrfToken, expiresAt: session.expiresAt });
+  });
+
+  app.post('/api/auth/logout', async (c) => {
+    const auth = authFactory(c.env); if (!auth) return unavailable(c, 'AUTH_UNAVAILABLE');
+    await auth.revokeCurrentSession(c.req.raw);
+    c.header('Set-Cookie', clearSessionCookie());
+    return c.body(null, 204);
   });
 
   app.get('/api/account/identity', async (c) => {
