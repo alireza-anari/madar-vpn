@@ -13,6 +13,9 @@ import { createPaymentService, PaymentError, type PaymentService } from './payme
 import { D1PaymentStore } from './payments/d1';
 import { ProviderUnavailableError, ProviderVerificationError } from './providers';
 import { RewardedAdSettlementError, type RewardedAdSettlement } from './providers/rewarded-ad';
+import { createPushService, PushError, type PushService } from './push';
+import { D1PushStore } from './push/d1';
+import { createVapidSender } from './push/vapid';
 import { createSurfaceService, SurfaceError } from './surfaces';
 import { D1SurfaceStore } from './surfaces/d1';
 
@@ -20,16 +23,32 @@ type AuthService = ReturnType<typeof createAuthService>;
 type SurfaceService = ReturnType<typeof createSurfaceService>;
 type SubscriptionService = Pick<ReturnType<typeof createSubscriptionService>, 'renderForToken'>;
 type MissionService = ReturnType<typeof createMissionService>;
-type ApiBindings = { DB?: D1DatabaseLike; ADMIN_EMAILS?: string };
+type ApiBindings = {
+  DB?: D1DatabaseLike;
+  ADMIN_EMAILS?: string;
+  VAPID_PUBLIC_KEY?: string;
+  VAPID_PRIVATE_KEY?: string;
+  VAPID_SUBJECT?: string;
+};
 type AuthFactory = (env: ApiBindings | undefined) => AuthService | null;
 type SurfaceFactory = (env: ApiBindings | undefined) => SurfaceService | null;
 type RewardedAdFactory = (env: ApiBindings | undefined) => RewardedAdSettlement | null;
 type SubscriptionFactory = (env: ApiBindings | undefined) => SubscriptionService | null;
 type PaymentFactory = (env: ApiBindings | undefined) => PaymentService | null;
 type MissionFactory = (env: ApiBindings | undefined) => MissionService | null;
+type PushFactory = (env: ApiBindings | undefined) => PushService | null;
 
 function configuredAdminEmails(value: string | undefined) {
   return (value ?? '').split(',').map((email) => email.trim()).filter(Boolean);
+}
+
+function configuredVapid(env: ApiBindings | undefined) {
+  if (!env?.VAPID_PUBLIC_KEY || !env.VAPID_PRIVATE_KEY || !env.VAPID_SUBJECT) return null;
+  return {
+    publicKey: env.VAPID_PUBLIC_KEY,
+    privateKey: env.VAPID_PRIVATE_KEY,
+    subject: env.VAPID_SUBJECT,
+  };
 }
 
 const defaultAuthFactory: AuthFactory = (env) => {
@@ -59,7 +78,12 @@ const defaultSurfaceFactory: SurfaceFactory = (env) => {
   return createSurfaceService({
     store: new D1SurfaceStore(env.DB),
     credits: createCreditService({ store: new D1CreditStore(env.DB) }),
-    providerAvailability: { email: false, ads: false, payments: false, push: false },
+    providerAvailability: {
+      email: false,
+      ads: false,
+      payments: false,
+      push: configuredVapid(env) !== null,
+    },
   });
 };
 
@@ -85,6 +109,16 @@ const defaultMissionFactory: MissionFactory = (env) => {
   return createMissionService({ store: new D1MissionStore(env.DB) });
 };
 
+const defaultPushFactory: PushFactory = (env) => {
+  if (!env?.DB) return null;
+  const vapid = configuredVapid(env);
+  return createPushService({
+    store: new D1PushStore(env.DB),
+    publicKey: vapid?.publicKey,
+    sender: vapid ? createVapidSender(vapid) : undefined,
+  });
+};
+
 function unavailable(c: { json: (body: { error: string }, status: 503) => Response }, error: string) {
   return c.json({ error }, 503);
 }
@@ -102,6 +136,7 @@ export function createApiApp(
   subscriptionFactory: SubscriptionFactory = defaultSubscriptionFactory,
   paymentFactory: PaymentFactory = defaultPaymentFactory,
   missionFactory: MissionFactory = defaultMissionFactory,
+  pushFactory: PushFactory = defaultPushFactory,
 ) {
   const app = new Hono<{ Bindings: ApiBindings }>();
 
@@ -120,6 +155,11 @@ export function createApiApp(
       if (error.status === 403) return c.json({ error: error.code }, 403);
       if (error.status === 404) return c.json({ error: error.code }, 404);
       if (error.status === 409) return c.json({ error: error.code }, 409);
+    }
+    if (error instanceof PushError) {
+      if (error.status === 400) return c.json({ error: error.code }, 400);
+      if (error.status === 403) return c.json({ error: error.code }, 403);
+      return c.json({ error: error.code }, 503);
     }
     if (error instanceof ProviderVerificationError) return c.json({ error: error.code }, 403);
     if (error instanceof ProviderUnavailableError) return c.json({ error: error.code }, 503);
@@ -204,6 +244,38 @@ export function createApiApp(
     if (!auth || !missions) return unavailable(c, 'MISSIONS_UNAVAILABLE');
     const user = await auth.requireUser(c.req.raw);
     return c.json(await missions.getUserStatus(user.id));
+  });
+
+  app.post('/api/account/push-subscriptions', async (c) => {
+    const auth = authFactory(c.env); const push = pushFactory(c.env);
+    if (!auth || !push) return unavailable(c, 'PUSH_UNAVAILABLE');
+    const user = await auth.requireMutationUser(c.req.raw);
+    const body = await c.req.json<unknown>().catch(() => null);
+    return c.json(await push.saveSubscription(user.id, body), 201);
+  });
+
+  app.get('/api/account/push-subscriptions', async (c) => {
+    const auth = authFactory(c.env); const push = pushFactory(c.env);
+    if (!auth || !push) return unavailable(c, 'PUSH_UNAVAILABLE');
+    const user = await auth.requireUser(c.req.raw);
+    return c.json(await push.listSubscriptions(user.id));
+  });
+
+  app.delete('/api/account/push-subscriptions/:id', async (c) => {
+    const auth = authFactory(c.env); const push = pushFactory(c.env);
+    if (!auth || !push) return unavailable(c, 'PUSH_UNAVAILABLE');
+    const user = await auth.requireMutationUser(c.req.raw);
+    await push.removeSubscription(user.id, c.req.param('id'));
+    return new Response(null, { status: 204 });
+  });
+
+  app.get('/api/account/push/vapid-public-key', async (c) => {
+    const auth = authFactory(c.env); const push = pushFactory(c.env);
+    if (!auth || !push) return unavailable(c, 'PUSH_UNAVAILABLE');
+    await auth.requireUser(c.req.raw);
+    const publicKey = push.getPublicKey();
+    if (!publicKey) return unavailable(c, 'PUSH_UNAVAILABLE');
+    return c.json({ publicKey });
   });
 
   app.post('/api/admin/orders/:id/confirm', async (c) => {
