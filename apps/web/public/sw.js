@@ -10,6 +10,27 @@ function isSensitiveRequest(request) {
   );
 }
 
+function safeNotificationPath(value) {
+  return typeof value === 'string' && value.startsWith('/') && !value.startsWith('//') ? value : '/';
+}
+
+function readPushPayload(event) {
+  if (!event.data) return { title: 'مدار', body: 'اعلان جدیدی از مدار دارید.', url: '/' };
+  try {
+    const value = event.data.json();
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return { title: 'مدار', body: 'اعلان جدیدی از مدار دارید.', url: '/' };
+    }
+    return {
+      title: typeof value.title === 'string' && value.title.trim() ? value.title.trim() : 'مدار',
+      body: typeof value.body === 'string' ? value.body : '',
+      url: safeNotificationPath(value.url),
+    };
+  } catch {
+    return { title: 'مدار', body: 'اعلان جدیدی از مدار دارید.', url: '/' };
+  }
+}
+
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)).then(() => self.skipWaiting()),
@@ -22,6 +43,33 @@ self.addEventListener('activate', (event) => {
       .keys()
       .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
       .then(() => self.clients.claim()),
+  );
+});
+
+self.addEventListener('push', (event) => {
+  const payload = readPushPayload(event);
+  event.waitUntil(
+    self.registration.showNotification(payload.title, {
+      body: payload.body,
+      icon: '/icons/icon-192.png',
+      badge: '/icons/icon-192.png',
+      data: { url: payload.url },
+    }),
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const targetPath = safeNotificationPath(event.notification.data?.url);
+  const targetUrl = new URL(targetPath, self.location.origin).href;
+
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (clients) => {
+      for (const client of clients) {
+        if (client.url === targetUrl && 'focus' in client) return client.focus();
+      }
+      return self.clients.openWindow(targetPath);
+    }),
   );
 });
 
