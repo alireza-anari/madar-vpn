@@ -36,6 +36,7 @@ type ApiBindings = {
   SUBSCRIPTION_RATE_LIMITER?: RateLimitBinding;
   NODE_ENROLLMENT_RATE_LIMITER?: RateLimitBinding;
   PROVIDER_CALLBACK_RATE_LIMITER?: RateLimitBinding;
+  ADMIN_RATE_LIMITER?: RateLimitBinding;
 };
 type AuthFactory = (env: ApiBindings | undefined) => AuthService | null;
 type SurfaceFactory = (env: ApiBindings | undefined) => SurfaceService | null;
@@ -176,6 +177,16 @@ export function createApiApp(
   nodeFactory: NodeFactory = defaultNodeFactory,
 ) {
   const app = new Hono<{ Bindings: ApiBindings }>();
+
+  app.use('/api/admin/*', async (c, next) => {
+    const edgeSource = c.req.raw.headers.get('cf-connecting-ip')?.trim() || 'unknown-edge-source';
+    const allowed = await consumeRateLimit(c.env?.ADMIN_RATE_LIMITER, 'admin', edgeSource);
+    if (!allowed) {
+      c.header('Retry-After', '60');
+      return c.json({ error: 'RATE_LIMITED' }, 429);
+    }
+    await next();
+  });
 
   app.onError((error, c) => {
     if (error instanceof AuthError || error instanceof SurfaceError || error instanceof RewardedAdSettlementError) {
