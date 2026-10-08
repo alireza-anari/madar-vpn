@@ -5,6 +5,7 @@ export type User = {
   email: string;
   role: UserRole;
   verifiedAt: string;
+  suspendedAt?: string | null;
 };
 
 export type Session = {
@@ -37,9 +38,18 @@ export interface AuthStore {
   findUserByEmail(email: string): Promise<User | null>;
   findUserById(id: string): Promise<User | null>;
   saveUser(user: User): Promise<void>;
+  setUserSuspended(userId: string, suspended: boolean, changedAt: string): Promise<{ user: User; changed: boolean } | null>;
   saveSession(session: StoredSession): Promise<void>;
   findSessionByTokenHash(tokenHash: string, now: Date): Promise<StoredSession | null>;
 }
+
+type UserSuspensionAudit = {
+  actorUserId: string;
+  targetUserId: string;
+  suspended: boolean;
+  reason: string;
+  changedAt: string;
+};
 
 export class MemoryAuthStore implements AuthStore {
   readonly loginTokens = new Map<string, LoginTokenRecord>();
@@ -52,25 +62,34 @@ export class MemoryAuthStore implements AuthStore {
 
   async consumeLoginToken(tokenHash: string, now: Date) {
     const record = this.loginTokens.get(tokenHash);
-    if (!record || record.usedAt !== null || new Date(record.expiresAt).getTime() <= now.getTime()) {
-      return null;
-    }
-
+    if (!record || record.usedAt !== null || new Date(record.expiresAt).getTime() <= now.getTime()) return null;
     const consumed = { ...record, usedAt: now.toISOString() };
     this.loginTokens.set(tokenHash, consumed);
     return { ...consumed };
   }
 
   async findUserByEmail(email: string) {
-    return [...this.users.values()].find((user) => user.email === email) ?? null;
+    const user = [...this.users.values()].find((candidate) => candidate.email === email);
+    return user ? { ...user } : null;
   }
 
   async findUserById(id: string) {
-    return this.users.get(id) ?? null;
+    const user = this.users.get(id);
+    return user ? { ...user } : null;
   }
 
   async saveUser(user: User) {
     this.users.set(user.id, { ...user });
+  }
+
+  async setUserSuspended(userId: string, suspended: boolean, changedAt: string) {
+    const user = this.users.get(userId);
+    if (!user) return null;
+    const currentlySuspended = Boolean(user.suspendedAt);
+    if (currentlySuspended === suspended) return { user: { ...user }, changed: false };
+    const updated: User = { ...user, suspendedAt: suspended ? changedAt : null };
+    this.users.set(userId, updated);
+    return { user: { ...updated }, changed: true };
   }
 
   async saveSession(session: StoredSession) {
@@ -79,18 +98,12 @@ export class MemoryAuthStore implements AuthStore {
 
   async findSessionByTokenHash(tokenHash: string, now: Date) {
     const session = this.sessions.get(tokenHash);
-    if (!session || new Date(session.expiresAt).getTime() <= now.getTime()) {
-      return null;
-    }
+    if (!session || new Date(session.expiresAt).getTime() <= now.getTime()) return null;
     return { ...session };
   }
 }
 
-type LoginMessage = {
-  email: string;
-  token: string;
-  expiresAt: string;
-};
+type LoginMessage = { email: string; token: string; expiresAt: string };
 
 type AuthOptions = {
   store: AuthStore;
@@ -100,14 +113,11 @@ type AuthOptions = {
   randomToken?: (() => string) | undefined;
   loginTokenTtlMs?: number | undefined;
   sessionTtlMs?: number | undefined;
+  onUserSuspension?: ((event: UserSuspensionAudit) => Promise<void>) | undefined;
 };
 
 export class AuthError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: string,
-    message: string,
-  ) {
+  constructor(readonly status: number, readonly code: string, message: string) {
     super(message);
     this.name = 'AuthError';
   }
@@ -117,61 +127,37 @@ const SESSION_COOKIE = '__Host-madar_session';
 const LOGIN_TTL_MS = 15 * 60 * 1000;
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
-function normalizeEmail(email: string) {
-  return email.trim().toLowerCase();
-}
-
+function normalizeEmail(email: string) { return email.trim().toLowerCase(); }
 function validateEmail(email: string) {
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    throw new AuthError(400, 'EMAIL_INVALID', 'Email address is invalid.');
-  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new AuthError(400, 'EMAIL_INVALID', 'Email address is invalid.');
 }
-
 function secureRandomToken() {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  let binary = '';
-  for (const byte of bytes) binary += String.fromCharCode(byte);
+  const bytes = new Uint8Array(32); crypto.getRandomValues(bytes);
+  let binary = ''; for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
-
 async function hashSecret(secret: string) {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(secret));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
-
 function constantTimeEqual(left: string, right: string) {
   if (left.length !== right.length) return false;
-  let difference = 0;
-  for (let index = 0; index < left.length; index += 1) {
-    difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
-  }
+  let difference = 0; for (let i = 0; i < left.length; i += 1) difference |= left.charCodeAt(i) ^ right.charCodeAt(i);
   return difference === 0;
 }
-
 function parseCookies(request: Request) {
   const values = new Map<string, string>();
   for (const pair of (request.headers.get('cookie') ?? '').split(';')) {
-    const separator = pair.indexOf('=');
-    if (separator < 1) continue;
-    const name = pair.slice(0, separator).trim();
-    const value = pair.slice(separator + 1).trim();
-    try {
-      values.set(name, decodeURIComponent(value));
-    } catch {
-      // Invalid cookie encoding is treated as an absent credential.
-    }
+    const separator = pair.indexOf('='); if (separator < 1) continue;
+    const name = pair.slice(0, separator).trim(); const value = pair.slice(separator + 1).trim();
+    try { values.set(name, decodeURIComponent(value)); } catch { /* absent */ }
   }
   return values;
 }
-
 export function serializeSessionCookie(token: string, expiresAt: Date) {
   return `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; Expires=${expiresAt.toUTCString()}; HttpOnly; Secure; SameSite=Strict`;
 }
-
-export function clearSessionCookie() {
-  return `${SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict`;
-}
+export function clearSessionCookie() { return `${SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict`; }
 
 export function createAuthService(options: AuthOptions) {
   const now = options.now ?? (() => new Date());
@@ -182,112 +168,68 @@ export function createAuthService(options: AuthOptions) {
 
   async function authenticate(request: Request) {
     const rawToken = parseCookies(request).get(SESSION_COOKIE);
-    if (!rawToken) {
-      throw new AuthError(401, 'AUTH_REQUIRED', 'Authentication is required.');
-    }
-
+    if (!rawToken) throw new AuthError(401, 'AUTH_REQUIRED', 'Authentication is required.');
     const tokenHash = await hashSecret(rawToken);
     const session = await options.store.findSessionByTokenHash(tokenHash, now());
-    if (!session) {
-      throw new AuthError(401, 'AUTH_REQUIRED', 'Session is missing or expired.');
-    }
-
+    if (!session) throw new AuthError(401, 'AUTH_REQUIRED', 'Session is missing or expired.');
     const user = await options.store.findUserById(session.userId);
-    if (!user) {
-      throw new AuthError(401, 'AUTH_REQUIRED', 'Session user no longer exists.');
-    }
-
+    if (!user) throw new AuthError(401, 'AUTH_REQUIRED', 'Session user no longer exists.');
+    if (user.suspendedAt) throw new AuthError(403, 'ACCOUNT_SUSPENDED', 'Account is suspended.');
     return { user, session };
   }
 
   return {
     async requestLogin(emailInput: string): Promise<{ status: 'sent' | 'unavailable' }> {
       if (!options.sender) return { status: 'unavailable' };
-
-      const email = normalizeEmail(emailInput);
-      validateEmail(email);
-      const token = randomToken();
-      const issuedAt = now();
-      const expiresAt = new Date(issuedAt.getTime() + loginTokenTtlMs);
-      const tokenHash = await hashSecret(token);
-
-      await options.store.saveLoginToken({
-        tokenHash,
-        email,
-        expiresAt: expiresAt.toISOString(),
-        usedAt: null,
-      });
+      const email = normalizeEmail(emailInput); validateEmail(email);
+      const token = randomToken(); const issuedAt = now(); const expiresAt = new Date(issuedAt.getTime() + loginTokenTtlMs);
+      await options.store.saveLoginToken({ tokenHash: await hashSecret(token), email, expiresAt: expiresAt.toISOString(), usedAt: null });
       await options.sender({ email, token, expiresAt: expiresAt.toISOString() });
       return { status: 'sent' };
     },
 
     async consumeLoginToken(token: string): Promise<Session> {
       const consumedAt = now();
-      const tokenHash = await hashSecret(token);
-      const loginToken = await options.store.consumeLoginToken(tokenHash, consumedAt);
-      if (!loginToken) {
-        throw new AuthError(401, 'TOKEN_INVALID', 'Login token is invalid, expired, or already used.');
-      }
-
+      const loginToken = await options.store.consumeLoginToken(await hashSecret(token), consumedAt);
+      if (!loginToken) throw new AuthError(401, 'TOKEN_INVALID', 'Login token is invalid, expired, or already used.');
       let user = await options.store.findUserByEmail(loginToken.email);
+      if (user?.suspendedAt) throw new AuthError(403, 'ACCOUNT_SUSPENDED', 'Account is suspended.');
       if (!user) {
-        user = {
-          id: crypto.randomUUID(),
-          email: loginToken.email,
-          role: adminEmails.has(loginToken.email) ? 'admin' : 'user',
-          verifiedAt: consumedAt.toISOString(),
-        };
+        user = { id: crypto.randomUUID(), email: loginToken.email, role: adminEmails.has(loginToken.email) ? 'admin' : 'user', verifiedAt: consumedAt.toISOString(), suspendedAt: null };
         await options.store.saveUser(user);
       } else if (adminEmails.has(loginToken.email) && user.role !== 'admin') {
-        user = { ...user, role: 'admin' };
-        await options.store.saveUser(user);
+        user = { ...user, role: 'admin' }; await options.store.saveUser(user);
       }
-
-      const rawSessionToken = randomToken();
-      const csrfToken = randomToken();
-      const expiresAt = new Date(consumedAt.getTime() + sessionTtlMs);
-      const session: StoredSession = {
-        id: crypto.randomUUID(),
-        userId: user.id,
-        tokenHash: await hashSecret(rawSessionToken),
-        csrfTokenHash: await hashSecret(csrfToken),
-        expiresAt: expiresAt.toISOString(),
-        createdAt: consumedAt.toISOString(),
-      };
+      const rawSessionToken = randomToken(); const csrfToken = randomToken(); const expiresAt = new Date(consumedAt.getTime() + sessionTtlMs);
+      const session: StoredSession = { id: crypto.randomUUID(), userId: user.id, tokenHash: await hashSecret(rawSessionToken), csrfTokenHash: await hashSecret(csrfToken), expiresAt: expiresAt.toISOString(), createdAt: consumedAt.toISOString() };
       await options.store.saveSession(session);
-
-      return {
-        id: session.id,
-        userId: session.userId,
-        expiresAt: session.expiresAt,
-        token: rawSessionToken,
-        csrfToken,
-      };
+      return { id: session.id, userId: session.userId, expiresAt: session.expiresAt, token: rawSessionToken, csrfToken };
     },
 
-    async requireUser(request: Request): Promise<User> {
-      return (await authenticate(request)).user;
-    },
-
+    async requireUser(request: Request): Promise<User> { return (await authenticate(request)).user; },
     async requireAdmin(request: Request): Promise<User> {
       const user = (await authenticate(request)).user;
-      if (user.role !== 'admin') {
-        throw new AuthError(403, 'ADMIN_REQUIRED', 'Administrator role is required.');
-      }
+      if (user.role !== 'admin') throw new AuthError(403, 'ADMIN_REQUIRED', 'Administrator role is required.');
       return user;
     },
-
     async requireMutationUser(request: Request): Promise<User> {
       const { user, session } = await authenticate(request);
       const csrfToken = request.headers.get('x-csrf-token');
-      if (!csrfToken) {
-        throw new AuthError(403, 'CSRF_INVALID', 'CSRF token is required.');
-      }
+      if (!csrfToken) throw new AuthError(403, 'CSRF_INVALID', 'CSRF token is required.');
       const csrfHash = await hashSecret(csrfToken);
-      if (!constantTimeEqual(csrfHash, session.csrfTokenHash)) {
-        throw new AuthError(403, 'CSRF_INVALID', 'CSRF token is invalid.');
-      }
+      if (!constantTimeEqual(csrfHash, session.csrfTokenHash)) throw new AuthError(403, 'CSRF_INVALID', 'CSRF token is invalid.');
       return user;
+    },
+    async setUserSuspension(actor: User, userId: string, suspended: boolean, reason: string) {
+      if (actor.role !== 'admin') throw new AuthError(403, 'ADMIN_REQUIRED', 'Administrator role is required.');
+      if (!reason.trim() || reason.trim().length > 500) throw new AuthError(400, 'SUSPENSION_INVALID', 'Suspension reason is invalid.');
+      const changedAt = now().toISOString();
+      const result = await options.store.setUserSuspended(userId, suspended, changedAt);
+      if (!result) throw new AuthError(400, 'USER_NOT_FOUND', 'Target user does not exist.');
+      if (result.changed && options.onUserSuspension) {
+        await options.onUserSuspension({ actorUserId: actor.id, targetUserId: userId, suspended, reason: reason.trim(), changedAt });
+      }
+      return { suspended: Boolean(result.user.suspendedAt) };
     },
   };
 }

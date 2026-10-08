@@ -22,6 +22,19 @@ describe('admin user suspension', () => {
       sender: async ({ email, token }) => {
         sent.set(email, token);
       },
+      onUserSuspension: async (event) => {
+        await surfaceStore.appendAudit({
+          id: crypto.randomUUID(),
+          actorUserId: event.actorUserId,
+          action: 'user.suspension.update',
+          details: {
+            userId: event.targetUserId,
+            suspended: event.suspended,
+            reason: event.reason,
+          },
+          createdAt: event.changedAt,
+        });
+      },
     });
     const surfaces = createSurfaceService({
       store: surfaceStore,
