@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import stat
 import sys
 from pathlib import Path
@@ -8,7 +9,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from madar_agent.installer import EnrollmentFailed, InstallPaths, NodeInstaller
+from madar_agent.api import HttpResponse
+from madar_agent.installer import EnrollmentFailed, HttpEnrollmentClient, InstallPaths, NodeInstaller
 
 
 class FakeEnrollment:
@@ -22,6 +24,16 @@ class FakeEnrollment:
         if self.fail:
             raise EnrollmentFailed("enrollment rejected")
         return self.credential
+
+
+class FakeTransport:
+    def __init__(self, response: HttpResponse) -> None:
+        self.response = response
+        self.requests = []
+
+    def request(self, method, url, *, headers, body, timeout):
+        self.requests.append((method, url, dict(headers), body, timeout))
+        return self.response
 
 
 class FakeSystem:
@@ -66,6 +78,56 @@ def paths(tmp_path: Path) -> InstallPaths:
         service_source=tmp_path / "source" / "systemd" / "madar-node-agent.service",
         service_path=tmp_path / "etc" / "systemd" / "system" / "madar-node-agent.service",
     )
+
+
+def test_http_enrollment_sends_token_only_as_bearer_and_returns_issued_credential() -> None:
+    token = "one-time-enrollment-secret"
+    transport = FakeTransport(HttpResponse(
+        status=201,
+        body=b'{"rawCredential":"issued-node-credential","node":{"id":"node-1"}}',
+    ))
+    client = HttpEnrollmentClient(
+        api_base_url="https://control.example.test",
+        capabilities={"agent": "0.1.0", "xray": "unavailable"},
+        public_config={
+            "address": "203.0.113.10",
+            "port": 443,
+            "serverName": "edge.example.test",
+            "realityPublicKey": "public-key",
+            "realityShortId": "a1b2c3d4",
+        },
+        transport=transport,
+    )
+
+    assert client.enroll(token) == "issued-node-credential"
+    method, url, headers, body, _ = transport.requests[0]
+    assert method == "POST"
+    assert url == "https://control.example.test/api/node/enroll"
+    assert headers["Authorization"] == f"Bearer {token}"
+    decoded = json.loads(body)
+    assert decoded["capabilities"]["xray"] == "unavailable"
+    assert token not in json.dumps(decoded)
+
+
+def test_http_enrollment_error_does_not_echo_one_time_token() -> None:
+    token = "one-time-enrollment-secret"
+    transport = FakeTransport(HttpResponse(status=401, body=b'{"error":"NODE_ENROLLMENT_TOKEN_INVALID"}'))
+    client = HttpEnrollmentClient(
+        api_base_url="https://control.example.test",
+        capabilities={},
+        public_config={
+            "address": "203.0.113.10",
+            "port": 443,
+            "serverName": "edge.example.test",
+            "realityPublicKey": "public-key",
+            "realityShortId": "a1b2c3d4",
+        },
+        transport=transport,
+    )
+
+    with pytest.raises(EnrollmentFailed) as raised:
+        client.enroll(token)
+    assert token not in str(raised.value)
 
 
 def test_install_explains_sensitive_changes_and_never_echoes_enrollment_token(tmp_path: Path) -> None:
