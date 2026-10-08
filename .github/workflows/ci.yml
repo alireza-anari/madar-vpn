@@ -27,7 +27,8 @@ jobs:
       - run: corepack prepare pnpm@12.9.1 --activate
       - run: pnpm install --frozen-lockfile
       - run: pnpm audit --audit-level high
-      - run: python3 -m pip install --disable-pip-version-check -r node-agent/requirements-dev.txt
+      - run: python3 -m pip install --disable-pip-version-check -r node-agent/requirements-dev.txt pip-audit==2.10.1
+      - run: python3 -m pip_audit -r node-agent/requirements-dev.txt
       - run: pnpm test
       - run: pnpm typecheck
       - run: pnpm build
