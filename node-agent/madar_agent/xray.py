@@ -11,21 +11,6 @@ from typing import Protocol
 from .models import ManagedClient, ObservedActivity
 
 
-XRAY_STABLE_VERSION = "26.3.27"
-_XRAY_STABLE_RELEASES = {
-    "x86_64": XrayRuntimeConfig(
-        version=XRAY_STABLE_VERSION,
-        download_url="https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-linux-64.zip",
-        sha256="23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae",
-    ),
-    "aarch64": XrayRuntimeConfig(
-        version=XRAY_STABLE_VERSION,
-        download_url="https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-linux-arm64-v8a.zip",
-        sha256="4d30283ae614e3057f730f67cd088a42be6fdf91f8639d82cb69e48cde80413c",
-    ),
-}
-
-
 class XrayAdapter(Protocol):
     def apply_clients(self, clients: list[ManagedClient]) -> None: ...
 
@@ -43,6 +28,21 @@ class XrayRuntimeConfig:
 
 class XrayRuntimeError(RuntimeError):
     pass
+
+
+XRAY_STABLE_VERSION = "26.3.27"
+_XRAY_STABLE_RELEASES = {
+    "x86_64": XrayRuntimeConfig(
+        version=XRAY_STABLE_VERSION,
+        download_url="https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-linux-64.zip",
+        sha256="23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae",
+    ),
+    "aarch64": XrayRuntimeConfig(
+        version=XRAY_STABLE_VERSION,
+        download_url="https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-linux-arm64-v8a.zip",
+        sha256="4d30283ae614e3057f730f67cd088a42be6fdf91f8639d82cb69e48cde80413c",
+    ),
+}
 
 
 def stable_runtime_config(architecture: str) -> XrayRuntimeConfig:
