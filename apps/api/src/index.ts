@@ -18,6 +18,7 @@ import { RewardedAdSettlementError, type RewardedAdSettlement } from './provider
 import { createPushService, PushError, type PushService } from './push';
 import { D1PushStore } from './push/d1';
 import { createVapidSender } from './push/vapid';
+import { consumeRateLimit, type RateLimitBinding } from './rate-limit';
 import { createSurfaceService, SurfaceError } from './surfaces';
 import { D1SurfaceStore } from './surfaces/d1';
 
@@ -31,6 +32,8 @@ type ApiBindings = {
   VAPID_PUBLIC_KEY?: string;
   VAPID_PRIVATE_KEY?: string;
   VAPID_SUBJECT?: string;
+  LOGIN_RATE_LIMITER?: RateLimitBinding;
+  SUBSCRIPTION_RATE_LIMITER?: RateLimitBinding;
 };
 type AuthFactory = (env: ApiBindings | undefined) => AuthService | null;
 type SurfaceFactory = (env: ApiBindings | undefined) => SurfaceService | null;
@@ -197,9 +200,15 @@ export function createApiApp(
 
   app.get('/s/:token', async (c) => {
     c.header('Cache-Control', 'no-store');
+    const token = c.req.param('token');
+    const allowed = await consumeRateLimit(c.env?.SUBSCRIPTION_RATE_LIMITER, 'subscription', token);
+    if (!allowed) {
+      c.header('Retry-After', '60');
+      return c.text('Too Many Requests', 429);
+    }
     const subscriptions = subscriptionFactory(c.env);
     if (!subscriptions) return c.text('Not found', 404);
-    const rendered = await subscriptions.renderForToken(c.req.param('token'), new Date());
+    const rendered = await subscriptions.renderForToken(token, new Date());
     if (rendered === null) return c.text('Not found', 404);
     c.header('Content-Type', 'text/plain; charset=utf-8');
     return c.body(rendered);
@@ -218,9 +227,15 @@ export function createApiApp(
   });
 
   app.post('/api/auth/request', async (c) => {
-    const auth = authFactory(c.env); if (!auth) return unavailable(c, 'AUTH_UNAVAILABLE');
     const body = await c.req.json<{ email?: unknown }>().catch(() => null);
     if (!body || typeof body.email !== 'string') return c.json({ error: 'REQUEST_INVALID' }, 400);
+    const emailKey = body.email.trim().toLowerCase();
+    const allowed = await consumeRateLimit(c.env?.LOGIN_RATE_LIMITER, 'login', emailKey);
+    if (!allowed) {
+      c.header('Retry-After', '60');
+      return c.json({ error: 'RATE_LIMITED' }, 429);
+    }
+    const auth = authFactory(c.env); if (!auth) return unavailable(c, 'AUTH_UNAVAILABLE');
     return c.json(await auth.requestLogin(body.email));
   });
 
