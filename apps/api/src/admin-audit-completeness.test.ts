@@ -29,10 +29,9 @@ async function auditHarness() {
     credits: {
       async getEntitlement() {
         return {
-          mode: 'none' as const,
-          freeSecondsRemaining: 0,
+          freeSeconds: 0,
           premiumUntil: null,
-          day: '2026-10-08',
+          tier: 'free' as const,
         };
       },
       async adjustManual() { return false; },
