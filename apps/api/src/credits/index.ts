@@ -228,12 +228,14 @@ export function createCreditService(options: { store: CreditStore }) {
       }
       const userId = await options.store.resolveUsageSession(nodeId, sessionId);
       if (!userId) return false;
+      const premiumUntil = await options.store.getPremiumUntil(userId);
+      const premiumActiveAtUsage = premiumUntil !== null && new Date(premiumUntil).getTime() > occurredAt.getTime();
       return options.store.insertLedgerEntry({
         uniqueKey: `usage:${nodeId}:${sessionId}:${sequence}`,
         userId,
         kind: 'usage',
         freeDay: tehranDateKey(occurredAt),
-        deltaSeconds: -seconds,
+        deltaSeconds: premiumActiveAtUsage ? 0 : -seconds,
         occurredAt: occurredAt.toISOString(),
         nodeId,
         sessionId,
