@@ -303,7 +303,15 @@ export function createApiApp(
     const actor = await requireAdminMutation(auth, c.req.raw);
     const body = await c.req.json<unknown>().catch(() => null);
     c.header('Cache-Control', 'no-store');
-    return c.json(await nodes.createEnrollmentToken(actor.id, body, new Date()), 201);
+    const issued = await nodes.createEnrollmentToken(actor.id, body, new Date());
+    const audit = adminAuditFactory(c.env);
+    if (audit) {
+      await audit.record(actor, 'node.enrollment-token.issue', {
+        nodeId: issued.node.id,
+        expiresAt: issued.expiresAt,
+      });
+    }
+    return c.json(issued, 201);
   });
 
   app.post('/api/node/enroll', async (c) => {
