@@ -35,6 +35,7 @@ type ApiBindings = {
   LOGIN_RATE_LIMITER?: RateLimitBinding;
   SUBSCRIPTION_RATE_LIMITER?: RateLimitBinding;
   NODE_ENROLLMENT_RATE_LIMITER?: RateLimitBinding;
+  PROVIDER_CALLBACK_RATE_LIMITER?: RateLimitBinding;
 };
 type AuthFactory = (env: ApiBindings | undefined) => AuthService | null;
 type SurfaceFactory = (env: ApiBindings | undefined) => SurfaceService | null;
@@ -153,6 +154,17 @@ async function requireNode(nodes: NodeControlService, request: Request) {
   return nodes.authenticateNode(requireBearerSecret(request, 'NODE_CREDENTIAL_INVALID'));
 }
 
+async function enforceProviderCallbackRateLimit(
+  c: { env?: ApiBindings; req: { raw: Request }; header: (name: string, value: string) => void; json: (body: { error: string }, status: 429) => Response },
+  scope: 'provider-ad' | 'provider-payment',
+) {
+  const edgeSource = c.req.raw.headers.get('cf-connecting-ip')?.trim() || 'unknown-edge-source';
+  const allowed = await consumeRateLimit(c.env?.PROVIDER_CALLBACK_RATE_LIMITER, scope, edgeSource);
+  if (allowed) return null;
+  c.header('Retry-After', '60');
+  return c.json({ error: 'RATE_LIMITED' }, 429);
+}
+
 export function createApiApp(
   authFactory: AuthFactory = defaultAuthFactory,
   surfaceFactory: SurfaceFactory = defaultSurfaceFactory,
@@ -219,12 +231,16 @@ export function createApiApp(
   });
 
   app.post('/api/providers/ads/callback', async (c) => {
+    const limited = await enforceProviderCallbackRateLimit(c, 'provider-ad');
+    if (limited) return limited;
     const settlement = rewardedAdFactory(c.env);
     if (!settlement) return unavailable(c, 'ADS_UNAVAILABLE');
     return c.json(await settlement.settle(c.req.raw));
   });
 
   app.post('/api/providers/payments/callback', async (c) => {
+    const limited = await enforceProviderCallbackRateLimit(c, 'provider-payment');
+    if (limited) return limited;
     const payments = paymentFactory(c.env);
     if (!payments) return unavailable(c, 'PAYMENTS_UNAVAILABLE');
     return c.json(await payments.settleProviderCallback(c.req.raw));
