@@ -24,6 +24,7 @@ export interface CreditStore {
   sumFreeSeconds(userId: string, freeDay: string): Promise<number>;
   resolveUsageSession(nodeId: string, sessionId: string): Promise<string | null>;
   getPremiumUntil(userId: string): Promise<string | null>;
+  applyPremiumAdjustment(userId: string, uniqueKey: string, premiumUntil: string | null, occurredAt: string): Promise<boolean>;
 }
 
 export class CreditError extends Error {
@@ -39,6 +40,7 @@ export class CreditError extends Error {
 export class MemoryCreditStore implements CreditStore {
   readonly ledger: CreditLedgerEntry[] = [];
   private readonly ledgerKeys = new Set<string>();
+  private readonly premiumAdjustmentKeys = new Set<string>();
   private readonly verifiedUsers = new Map<string, string>();
   private readonly usageSessions = new Map<string, string>();
   private readonly premium = new Map<string, string | null>();
@@ -79,6 +81,13 @@ export class MemoryCreditStore implements CreditStore {
   async getPremiumUntil(userId: string) {
     return this.premium.get(userId) ?? null;
   }
+
+  async applyPremiumAdjustment(userId: string, uniqueKey: string, premiumUntil: string | null, _occurredAt: string) {
+    if (this.premiumAdjustmentKeys.has(uniqueKey)) return false;
+    this.premiumAdjustmentKeys.add(uniqueKey);
+    this.premium.set(userId, premiumUntil);
+    return true;
+  }
 }
 
 const INITIAL_FREE_SECONDS = 1800;
@@ -111,6 +120,15 @@ function validManualSeconds(seconds: number) {
 
 function validIdempotencyKey(value: string) {
   return /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,119}$/.test(value);
+}
+
+function normalizePremiumUntil(value: string | null) {
+  if (value === null) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new CreditError('PREMIUM_ADJUSTMENT_INVALID', 'Premium expiry is invalid.');
+  }
+  return parsed.toISOString();
 }
 
 export function createCreditService(options: { store: CreditStore }) {
@@ -162,12 +180,7 @@ export function createCreditService(options: { store: CreditStore }) {
       });
     },
 
-    async adjustManual(
-      userId: string,
-      idempotencyKey: string,
-      seconds: number,
-      now: Date,
-    ): Promise<boolean> {
+    async adjustManual(userId: string, idempotencyKey: string, seconds: number, now: Date): Promise<boolean> {
       if (!validIdempotencyKey(idempotencyKey) || !validManualSeconds(seconds)) {
         throw new CreditError('MANUAL_ADJUSTMENT_INVALID', 'Manual credit adjustment is invalid.');
       }
@@ -181,6 +194,26 @@ export function createCreditService(options: { store: CreditStore }) {
         deltaSeconds: seconds,
         occurredAt: now.toISOString(),
       });
+    },
+
+    async adjustPremium(
+      userId: string,
+      idempotencyKey: string,
+      premiumUntilInput: string | null,
+      now: Date,
+    ): Promise<boolean> {
+      if (!validIdempotencyKey(idempotencyKey)) {
+        throw new CreditError('PREMIUM_ADJUSTMENT_INVALID', 'Premium adjustment idempotency key is invalid.');
+      }
+      const verifiedAt = await options.store.getVerifiedAt(userId);
+      if (!verifiedAt) return false;
+      const premiumUntil = normalizePremiumUntil(premiumUntilInput);
+      return options.store.applyPremiumAdjustment(
+        userId,
+        `premium:${idempotencyKey}`,
+        premiumUntil,
+        now.toISOString(),
+      );
     },
 
     async recordUsage(

@@ -4,6 +4,7 @@ import type { Entitlement } from '../credits';
 type CreditReader = {
   getEntitlement(userId: string, now: Date): Promise<Entitlement>;
   adjustManual(userId: string, idempotencyKey: string, seconds: number, now: Date): Promise<boolean>;
+  adjustPremium(userId: string, idempotencyKey: string, premiumUntil: string | null, now: Date): Promise<boolean>;
 };
 
 export type ProviderAvailability = {
@@ -334,20 +335,40 @@ function validateMission(id: string, input: unknown, timestamp: string, existing
   };
 }
 
+function validateIdempotencyKey(value: unknown, code: string) {
+  const key = requiredText(value, code, 120);
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,119}$/.test(key)) {
+    throw new SurfaceError(400, code, 'Idempotency key is invalid.');
+  }
+  return key;
+}
+
 function validateManualCredit(input: unknown) {
   const candidate = objectInput(input, 'FREE_CREDIT_ADJUSTMENT_INVALID');
   const seconds = Number(candidate.seconds);
   if (!Number.isSafeInteger(seconds) || seconds === 0 || Math.abs(seconds) > 30 * 24 * 60 * 60) {
     throw new SurfaceError(400, 'FREE_CREDIT_ADJUSTMENT_INVALID', 'Free-credit adjustment is invalid.');
   }
-  const idempotencyKey = requiredText(candidate.idempotencyKey, 'FREE_CREDIT_ADJUSTMENT_INVALID', 120);
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,119}$/.test(idempotencyKey)) {
-    throw new SurfaceError(400, 'FREE_CREDIT_ADJUSTMENT_INVALID', 'Idempotency key is invalid.');
-  }
   return {
     seconds,
-    idempotencyKey,
+    idempotencyKey: validateIdempotencyKey(candidate.idempotencyKey, 'FREE_CREDIT_ADJUSTMENT_INVALID'),
     reason: requiredText(candidate.reason, 'FREE_CREDIT_ADJUSTMENT_INVALID', 500),
+  };
+}
+
+function validatePremiumAdjustment(input: unknown) {
+  const candidate = objectInput(input, 'PREMIUM_ADJUSTMENT_INVALID');
+  if (typeof candidate.premiumUntil !== 'string') {
+    throw new SurfaceError(400, 'PREMIUM_ADJUSTMENT_INVALID', 'Premium expiry is invalid.');
+  }
+  const premiumUntil = new Date(candidate.premiumUntil);
+  if (Number.isNaN(premiumUntil.getTime())) {
+    throw new SurfaceError(400, 'PREMIUM_ADJUSTMENT_INVALID', 'Premium expiry is invalid.');
+  }
+  return {
+    premiumUntil: premiumUntil.toISOString(),
+    idempotencyKey: validateIdempotencyKey(candidate.idempotencyKey, 'PREMIUM_ADJUSTMENT_INVALID'),
+    reason: requiredText(candidate.reason, 'PREMIUM_ADJUSTMENT_INVALID', 500),
   };
 }
 
@@ -373,6 +394,15 @@ export function createSurfaceService(options: {
       details,
       createdAt: now().toISOString(),
     });
+  }
+
+  async function requireTargetUser(userId: string) {
+    const targetUserId = validateResourceId(userId);
+    const targetExists = (await options.store.listUsers()).some((user) => user.id === targetUserId);
+    if (!targetExists) {
+      throw new SurfaceError(400, 'USER_NOT_FOUND', 'Target user does not exist.');
+    }
+    return targetUserId;
   }
 
   return {
@@ -421,11 +451,7 @@ export function createSurfaceService(options: {
     },
 
     async adjustFreeCredit(actor: User, userId: string, input: unknown) {
-      const targetUserId = validateResourceId(userId);
-      const targetExists = (await options.store.listUsers()).some((user) => user.id === targetUserId);
-      if (!targetExists) {
-        throw new SurfaceError(400, 'USER_NOT_FOUND', 'Target user does not exist.');
-      }
+      const targetUserId = await requireTargetUser(userId);
       const adjustment = validateManualCredit(input);
       const applied = await options.credits.adjustManual(
         targetUserId,
@@ -442,6 +468,26 @@ export function createSurfaceService(options: {
         });
       }
       return { applied, seconds: adjustment.seconds };
+    },
+
+    async adjustPremium(actor: User, userId: string, input: unknown) {
+      const targetUserId = await requireTargetUser(userId);
+      const adjustment = validatePremiumAdjustment(input);
+      const applied = await options.credits.adjustPremium(
+        targetUserId,
+        adjustment.idempotencyKey,
+        adjustment.premiumUntil,
+        now(),
+      );
+      if (applied) {
+        await audit(actor, 'user.premium.adjust', {
+          userId: targetUserId,
+          premiumUntil: adjustment.premiumUntil,
+          idempotencyKey: adjustment.idempotencyKey,
+          reason: adjustment.reason,
+        });
+      }
+      return { applied, premiumUntil: adjustment.premiumUntil };
     },
 
     async upsertPlan(actor: User, id: string, input: unknown) {

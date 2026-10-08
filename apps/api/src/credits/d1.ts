@@ -75,4 +75,17 @@ export class D1CreditStore implements CreditStore {
       .first<MembershipRow>();
     return row?.premium_until ?? null;
   }
+
+  async applyPremiumAdjustment(userId: string, uniqueKey: string, premiumUntil: string | null, occurredAt: string) {
+    const row = await this.db
+      .prepare(
+        `INSERT INTO premium_adjustments (unique_key, user_id, premium_until, occurred_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(unique_key) DO NOTHING
+         RETURNING unique_key`,
+      )
+      .bind(uniqueKey, userId, premiumUntil, occurredAt)
+      .first<InsertedRow>();
+    return row !== null;
+  }
 }
