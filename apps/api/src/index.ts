@@ -1,4 +1,8 @@
 import { Hono } from 'hono';
+import { createAccessService } from './access';
+import { D1AccessStore } from './access/d1';
+import { createSubscriptionService } from './access/subscription';
+import { D1SubscriptionNodeStore } from './access/subscription-d1';
 import { AuthError, createAuthService, serializeSessionCookie, type User } from './auth';
 import { D1AuthStore, type D1DatabaseLike } from './auth/d1';
 import { createCreditService } from './credits';
@@ -10,10 +14,12 @@ import { D1SurfaceStore } from './surfaces/d1';
 
 type AuthService = ReturnType<typeof createAuthService>;
 type SurfaceService = ReturnType<typeof createSurfaceService>;
+type SubscriptionService = ReturnType<typeof createSubscriptionService>;
 type ApiBindings = { DB?: D1DatabaseLike; ADMIN_EMAILS?: string };
 type AuthFactory = (env: ApiBindings | undefined) => AuthService | null;
 type SurfaceFactory = (env: ApiBindings | undefined) => SurfaceService | null;
 type RewardedAdFactory = (env: ApiBindings | undefined) => RewardedAdSettlement | null;
+type SubscriptionFactory = (env: ApiBindings | undefined) => SubscriptionService | null;
 
 function configuredAdminEmails(value: string | undefined) {
   return (value ?? '').split(',').map((email) => email.trim()).filter(Boolean);
@@ -52,6 +58,16 @@ const defaultSurfaceFactory: SurfaceFactory = (env) => {
 
 const defaultRewardedAdFactory: RewardedAdFactory = () => null;
 
+const defaultSubscriptionFactory: SubscriptionFactory = (env) => {
+  if (!env?.DB) return null;
+  const accessStore = new D1AccessStore(env.DB);
+  return createSubscriptionService({
+    accessStore,
+    access: createAccessService({ store: accessStore }),
+    nodes: new D1SubscriptionNodeStore(env.DB),
+  });
+};
+
 function unavailable(c: { json: (body: { error: string }, status: 503) => Response }, error: string) {
   return c.json({ error }, 503);
 }
@@ -66,6 +82,7 @@ export function createApiApp(
   authFactory: AuthFactory = defaultAuthFactory,
   surfaceFactory: SurfaceFactory = defaultSurfaceFactory,
   rewardedAdFactory: RewardedAdFactory = defaultRewardedAdFactory,
+  subscriptionFactory: SubscriptionFactory = defaultSubscriptionFactory,
 ) {
   const app = new Hono<{ Bindings: ApiBindings }>();
 
@@ -81,6 +98,16 @@ export function createApiApp(
   });
 
   app.get('/api/health', (c) => c.json({ status: 'ok' as const }));
+
+  app.get('/s/:token', async (c) => {
+    c.header('Cache-Control', 'no-store');
+    const subscriptions = subscriptionFactory(c.env);
+    if (!subscriptions) return c.text('Not found', 404);
+    const rendered = await subscriptions.renderForToken(c.req.param('token'), new Date());
+    if (rendered === null) return c.text('Not found', 404);
+    c.header('Content-Type', 'text/plain; charset=utf-8');
+    return c.body(rendered);
+  });
 
   app.post('/api/providers/ads/callback', async (c) => {
     const settlement = rewardedAdFactory(c.env);
