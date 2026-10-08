@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import stat
 import sys
 import zipfile
@@ -13,6 +14,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from madar_agent import xray
+from madar_agent.models import ManagedClient
 
 
 VERSION = "26.3.27"
@@ -20,6 +22,7 @@ AMD64_URL = "https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-l
 AMD64_SHA256 = "23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae"
 ARM64_URL = "https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-linux-arm64-v8a.zip"
 ARM64_SHA256 = "4d30283ae614e3057f730f67cd088a42be6fdf91f8639d82cb69e48cde80413c"
+CLIENT_ID = "27848739-7e62-4138-9fd3-098a63964b6b"
 
 
 def xray_archive(binary_payload: bytes) -> bytes:
@@ -163,3 +166,104 @@ def test_generate_reality_keypair_redacts_private_key_when_xray_fails(tmp_path: 
     assert private_key not in str(exc_info.value)
     assert all(private_key not in line for line in logs)
     assert not (tmp_path / "state" / "reality.private").exists()
+
+
+def configured_adapter(tmp_path: Path, run, reload, logs: list[str]):
+    server_config_cls = getattr(xray, "RealityServerConfig", None)
+    assert server_config_cls is not None, "Task 26 must define server-side REALITY configuration"
+    binary = tmp_path / "runtime" / VERSION / "xray"
+    server = server_config_cls(
+        port=443,
+        target="www.example.com:443",
+        server_names=("www.example.com",),
+        short_ids=("0123456789abcdef",),
+    )
+    adapter = xray.PinnedXrayAdapter(
+        install_root=tmp_path / "runtime",
+        state_root=tmp_path / "state",
+        download=lambda _url: b"",
+        run=run,
+        log=logs.append,
+        binary=binary,
+        server=server,
+        reload=reload,
+    )
+    return adapter, binary
+
+
+def test_apply_clients_validates_candidate_before_atomic_promote_and_reload(tmp_path: Path) -> None:
+    private_key = "fixture-private-key-config-only"
+    state_root = tmp_path / "state"
+    state_root.mkdir()
+    private_path = state_root / "reality.private"
+    private_path.write_text(private_key, encoding="utf-8")
+    private_path.chmod(0o600)
+    calls: list[list[str]] = []
+    reloads: list[bool] = []
+    logs: list[str] = []
+
+    def run(argv: list[str]):
+        calls.append(argv)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    adapter, binary = configured_adapter(tmp_path, run, lambda: reloads.append(True), logs)
+    adapter.apply_clients([ManagedClient(client_id=CLIENT_ID, tier="premium", speed_kbps=None)])
+
+    live_path = state_root / "xray-config.json"
+    candidate_path = state_root / "xray-config.candidate.json"
+    assert calls == [[str(binary), "run", "-test", "-c", str(candidate_path)]]
+    assert reloads == [True]
+    assert live_path.exists()
+    assert not candidate_path.exists()
+    assert stat.S_IMODE(live_path.stat().st_mode) == 0o600
+
+    config = json.loads(live_path.read_text(encoding="utf-8"))
+    inbound = config["inbounds"][0]
+    assert inbound["port"] == 443
+    assert inbound["protocol"] == "vless"
+    assert inbound["settings"]["decryption"] == "none"
+    assert inbound["settings"]["clients"] == [
+        {"id": CLIENT_ID, "flow": "xtls-rprx-vision", "email": f"madar:{CLIENT_ID}"}
+    ]
+    assert inbound["streamSettings"]["network"] == "raw"
+    assert inbound["streamSettings"]["security"] == "reality"
+    assert inbound["streamSettings"]["realitySettings"] == {
+        "show": False,
+        "target": "www.example.com:443",
+        "serverNames": ["www.example.com"],
+        "privateKey": private_key,
+        "shortIds": ["0123456789abcdef"],
+    }
+    assert all(private_key not in line for line in logs)
+
+
+def test_apply_clients_keeps_previous_config_when_validation_fails_and_redacts_output(tmp_path: Path) -> None:
+    private_key = "fixture-private-key-do-not-echo"
+    state_root = tmp_path / "state"
+    state_root.mkdir()
+    private_path = state_root / "reality.private"
+    private_path.write_text(private_key, encoding="utf-8")
+    private_path.chmod(0o600)
+    live_path = state_root / "xray-config.json"
+    live_path.write_text('{"sentinel":"previous"}', encoding="utf-8")
+    live_path.chmod(0o600)
+    reloads: list[bool] = []
+    logs: list[str] = []
+
+    def run(_argv: list[str]):
+        return SimpleNamespace(
+            returncode=1,
+            stdout=f"invalid config includes {private_key}",
+            stderr=f"private={private_key}",
+        )
+
+    adapter, _binary = configured_adapter(tmp_path, run, lambda: reloads.append(True), logs)
+
+    with pytest.raises(xray.XrayRuntimeError) as exc_info:
+        adapter.apply_clients([ManagedClient(client_id=CLIENT_ID, tier="free", speed_kbps=1024)])
+
+    assert live_path.read_text(encoding="utf-8") == '{"sentinel":"previous"}'
+    assert not (state_root / "xray-config.candidate.json").exists()
+    assert reloads == []
+    assert private_key not in str(exc_info.value)
+    assert all(private_key not in line for line in logs)
