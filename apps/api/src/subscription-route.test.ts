@@ -52,6 +52,7 @@ describe('subscription bearer route', () => {
     expect(invalid.headers.get('cache-control')).toBe('no-store');
     expect(revoked.headers.get('cache-control')).toBe('no-store');
     expect(await invalid.text()).toBe(await revoked.text());
-    expect(await app.request('/s/another-invalid-token').then((response) => response.text())).not.toMatch(/revoked|expired|user|version/i);
+    const anotherInvalid = await app.request('/s/another-invalid-token');
+    expect(await anotherInvalid.text()).not.toMatch(/revoked|expired|user|version/i);
   });
 });
