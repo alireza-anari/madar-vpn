@@ -6,6 +6,7 @@ import json
 import stat
 import sys
 import zipfile
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -14,7 +15,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from madar_agent import xray
-from madar_agent.models import ManagedClient
+from madar_agent.models import ManagedClient, ObservedActivity
 
 
 VERSION = "26.3.27"
@@ -23,6 +24,7 @@ AMD64_SHA256 = "23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae
 ARM64_URL = "https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-linux-arm64-v8a.zip"
 ARM64_SHA256 = "4d30283ae614e3057f730f67cd088a42be6fdf91f8639d82cb69e48cde80413c"
 CLIENT_ID = "27848739-7e62-4138-9fd3-098a63964b6b"
+SECOND_CLIENT_ID = "50848739-7e62-4138-9fd3-098a63964b6b"
 
 
 def xray_archive(binary_payload: bytes) -> bytes:
@@ -191,13 +193,18 @@ def configured_adapter(tmp_path: Path, run, reload, logs: list[str]):
     return adapter, binary
 
 
+def write_private_key(tmp_path: Path, value: str = "fixture-private-key") -> None:
+    state_root = tmp_path / "state"
+    state_root.mkdir(exist_ok=True)
+    private_path = state_root / "reality.private"
+    private_path.write_text(value, encoding="utf-8")
+    private_path.chmod(0o600)
+
+
 def test_apply_clients_validates_candidate_before_atomic_promote_and_reload(tmp_path: Path) -> None:
     private_key = "fixture-private-key-config-only"
+    write_private_key(tmp_path, private_key)
     state_root = tmp_path / "state"
-    state_root.mkdir()
-    private_path = state_root / "reality.private"
-    private_path.write_text(private_key, encoding="utf-8")
-    private_path.chmod(0o600)
     calls: list[list[str]] = []
     reloads: list[bool] = []
     logs: list[str] = []
@@ -239,11 +246,8 @@ def test_apply_clients_validates_candidate_before_atomic_promote_and_reload(tmp_
 
 def test_apply_clients_keeps_previous_config_when_validation_fails_and_redacts_output(tmp_path: Path) -> None:
     private_key = "fixture-private-key-do-not-echo"
+    write_private_key(tmp_path, private_key)
     state_root = tmp_path / "state"
-    state_root.mkdir()
-    private_path = state_root / "reality.private"
-    private_path.write_text(private_key, encoding="utf-8")
-    private_path.chmod(0o600)
     live_path = state_root / "xray-config.json"
     live_path.write_text('{"sentinel":"previous"}', encoding="utf-8")
     live_path.chmod(0o600)
@@ -267,3 +271,85 @@ def test_apply_clients_keeps_previous_config_when_validation_fails_and_redacts_o
     assert reloads == []
     assert private_key not in str(exc_info.value)
     assert all(private_key not in line for line in logs)
+
+
+def test_revoke_client_and_fail_closed_disable_reapply_the_managed_client_set(tmp_path: Path) -> None:
+    write_private_key(tmp_path)
+    reloads: list[bool] = []
+    logs: list[str] = []
+
+    def run(_argv: list[str]):
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    adapter, _binary = configured_adapter(tmp_path, run, lambda: reloads.append(True), logs)
+    first = ManagedClient(client_id=CLIENT_ID, tier="free", speed_kbps=1024)
+    second = ManagedClient(client_id=SECOND_CLIENT_ID, tier="premium", speed_kbps=None)
+
+    adapter.apply_clients([first, second])
+    adapter.revoke_client(CLIENT_ID)
+
+    live_path = tmp_path / "state" / "xray-config.json"
+    config = json.loads(live_path.read_text(encoding="utf-8"))
+    assert [entry["id"] for entry in config["inbounds"][0]["settings"]["clients"]] == [SECOND_CLIENT_ID]
+
+    adapter.disable_managed_access()
+    config = json.loads(live_path.read_text(encoding="utf-8"))
+    assert config["inbounds"][0]["settings"]["clients"] == []
+    assert reloads == [True, True, True]
+
+
+def test_health_requires_active_service_and_a_valid_live_config(tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+    active = [False]
+    logs: list[str] = []
+    binary = tmp_path / "runtime" / VERSION / "xray"
+    server = xray.RealityServerConfig(
+        port=443,
+        target="www.example.com:443",
+        server_names=("www.example.com",),
+        short_ids=("0123456789abcdef",),
+    )
+
+    def run(argv: list[str]):
+        calls.append(argv)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    adapter = xray.PinnedXrayAdapter(
+        install_root=tmp_path / "runtime",
+        state_root=tmp_path / "state",
+        download=lambda _url: b"",
+        run=run,
+        log=logs.append,
+        binary=binary,
+        server=server,
+        reload=lambda: None,
+        is_active=lambda: active[0],
+    )
+    live_path = tmp_path / "state" / "xray-config.json"
+    live_path.parent.mkdir(exist_ok=True)
+    live_path.write_text("{}", encoding="utf-8")
+    live_path.chmod(0o600)
+
+    assert adapter.health() is False
+    assert calls == []
+
+    active[0] = True
+    assert adapter.health() is True
+    assert calls == [[str(binary), "run", "-test", "-c", str(live_path)]]
+
+
+def test_collect_observed_activity_returns_only_the_injected_observation_source(tmp_path: Path) -> None:
+    observed = ObservedActivity(
+        client_id=CLIENT_ID,
+        window_id="window-1",
+        seconds=30,
+        timestamp=datetime(2026, 10, 8, 18, 0, tzinfo=UTC),
+    )
+    adapter = xray.PinnedXrayAdapter(
+        install_root=tmp_path / "runtime",
+        state_root=tmp_path / "state",
+        download=lambda _url: b"",
+        activity_source=lambda: [observed],
+    )
+
+    assert adapter.collect_observed_activity() == [observed]
