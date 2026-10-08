@@ -19,6 +19,14 @@
         "limit": 60,
         "period": 60
       }
+    },
+    {
+      "name": "NODE_ENROLLMENT_RATE_LIMITER",
+      "namespace_id": "910003",
+      "simple": {
+        "limit": 10,
+        "period": 60
+      }
     }
   ]
 }

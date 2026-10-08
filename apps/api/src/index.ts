@@ -34,6 +34,7 @@ type ApiBindings = {
   VAPID_SUBJECT?: string;
   LOGIN_RATE_LIMITER?: RateLimitBinding;
   SUBSCRIPTION_RATE_LIMITER?: RateLimitBinding;
+  NODE_ENROLLMENT_RATE_LIMITER?: RateLimitBinding;
 };
 type AuthFactory = (env: ApiBindings | undefined) => AuthService | null;
 type SurfaceFactory = (env: ApiBindings | undefined) => SurfaceService | null;
@@ -271,13 +272,19 @@ export function createApiApp(
   });
 
   app.post('/api/node/enroll', async (c) => {
+    c.header('Cache-Control', 'no-store');
+    const enrollmentToken = requireBearerSecret(c.req.raw, 'NODE_ENROLLMENT_TOKEN_INVALID');
+    const allowed = await consumeRateLimit(c.env?.NODE_ENROLLMENT_RATE_LIMITER, 'node-enrollment', enrollmentToken);
+    if (!allowed) {
+      c.header('Retry-After', '60');
+      return c.json({ error: 'RATE_LIMITED' }, 429);
+    }
     const nodes = nodeFactory(c.env);
     if (!nodes) return unavailable(c, 'NODE_CONTROL_UNAVAILABLE');
     const body = await c.req.json<{ capabilities?: unknown; publicConfig?: unknown }>().catch(() => null);
     if (!body) return c.json({ error: 'NODE_ENROLLMENT_INVALID' }, 400);
-    c.header('Cache-Control', 'no-store');
     return c.json(await nodes.enrollNode(
-      requireBearerSecret(c.req.raw, 'NODE_ENROLLMENT_TOKEN_INVALID'),
+      enrollmentToken,
       body.capabilities,
       body.publicConfig,
     ), 201);
