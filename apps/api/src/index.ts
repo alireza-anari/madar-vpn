@@ -14,7 +14,7 @@ import { D1SurfaceStore } from './surfaces/d1';
 
 type AuthService = ReturnType<typeof createAuthService>;
 type SurfaceService = ReturnType<typeof createSurfaceService>;
-type SubscriptionService = ReturnType<typeof createSubscriptionService>;
+type SubscriptionService = Pick<ReturnType<typeof createSubscriptionService>, 'renderForToken'>;
 type ApiBindings = { DB?: D1DatabaseLike; ADMIN_EMAILS?: string };
 type AuthFactory = (env: ApiBindings | undefined) => AuthService | null;
 type SurfaceFactory = (env: ApiBindings | undefined) => SurfaceService | null;
