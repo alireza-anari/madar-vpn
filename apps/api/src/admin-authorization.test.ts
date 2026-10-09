@@ -54,6 +54,6 @@ describe('admin mutation authorization', () => {
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({ error: 'ADMIN_REQUIRED' });
     expect(surfaceStore.audit).toHaveLength(0);
-    expect(surfaceStore.settings).toEqual({ freeSpeedKbps: 256, notificationsEnabled: false });
+    expect(surfaceStore.settings).toEqual({ freeSpeedKbps: 5000, notificationsEnabled: false });
   });
 });
