@@ -13,7 +13,7 @@ export type AccountView = {
 
 export type AdminOverviewView = {
   counts: { users: number; readyNodes: number; plans: number; missions: number };
-  readiness: { nodes: boolean; email: boolean; ads: boolean; payments: boolean; push: boolean };
+  readiness: { nodes: boolean; email: boolean; ads: boolean; payments: boolean; push: boolean; speedEnforcement: boolean };
   settings: { freeSpeedKbps: number; notificationsEnabled: boolean };
 };
 
@@ -356,6 +356,9 @@ export function AdminPage({
           <form className="form-stack">
             <label className="field-label" htmlFor="free-speed">سرعت رایگان (Kbps)</label>
             <input className="text-input" id="free-speed" type="number" min="64" max="1000000" defaultValue={overview.settings.freeSpeedKbps} />
+            {!overview.readiness.speedEnforcement ? (
+              <p className="inline-notice">این مقدار policy هدف است؛ اعمال per-client آن تا تأیید throughput روی VPS واقعی آماده نیست.</p>
+            ) : null}
             <label className="check-row">
               <input type="checkbox" defaultChecked={overview.settings.notificationsEnabled} />
               اعلان‌های مدیریتی فعال باشد
@@ -364,13 +367,14 @@ export function AdminPage({
           </form>
         </Card>
         <Card>
-          <PageHeader eyebrow="Readiness" title="آمادگی زیرساخت" description="آماده‌بودن provider از موفقیت واقعی سرویس جداست." />
+          <PageHeader eyebrow="Readiness" title="آمادگی زیرساخت" description="آمادگی integration از تنظیم policy یا موفقیت ظاهری جداست." />
           <div className="readiness-list">
             <Availability label="نود" ready={overview.readiness.nodes} />
             <Availability label="ایمیل" ready={overview.readiness.email} />
             <Availability label="تبلیغات" ready={overview.readiness.ads} />
             <Availability label="پرداخت" ready={overview.readiness.payments} />
             <Availability label="اعلان" ready={overview.readiness.push} />
+            <Availability label="اعمال محدودیت سرعت" ready={overview.readiness.speedEnforcement} />
           </div>
         </Card>
       </div>
