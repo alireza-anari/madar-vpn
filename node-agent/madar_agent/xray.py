@@ -245,6 +245,17 @@ class PinnedXrayAdapter:
         ]
         return {
             "log": {"loglevel": "warning"},
+            "api": {
+                "tag": "madar-local-api",
+                "listen": "127.0.0.1:10085",
+                "services": ["StatsService"],
+            },
+            "stats": {},
+            "policy": {
+                "levels": {
+                    "0": {"statsUserOnline": True},
+                },
+            },
             "inbounds": [
                 {
                     "listen": "0.0.0.0",
