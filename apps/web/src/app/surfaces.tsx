@@ -101,6 +101,15 @@ export type AdminPremiumResult = {
   premiumUntil: string;
 };
 
+export type AdminSuspensionInput = {
+  suspended: boolean;
+  reason: string;
+};
+
+export type AdminSuspensionResult = {
+  suspended: boolean;
+};
+
 const faNumber = new Intl.NumberFormat('fa-IR');
 const emptyAdminResources: AdminResourcesView = {
   users: [],
@@ -334,20 +343,25 @@ export function AdminPage({
   mutationsAvailable = false,
   adjustFreeCredit,
   adjustPremium,
+  adjustSuspension,
 }: {
   overview: AdminOverviewView;
   resources?: AdminResourcesView;
   mutationsAvailable?: boolean;
   adjustFreeCredit?: (userId: string, input: AdminFreeCreditInput) => Promise<AdminFreeCreditResult>;
   adjustPremium?: (userId: string, input: AdminPremiumInput) => Promise<AdminPremiumResult>;
+  adjustSuspension?: (userId: string, input: AdminSuspensionInput) => Promise<AdminSuspensionResult>;
 }) {
   const defaultUserId = resources.users[0]?.id ?? '';
   const [freeCreditPending, setFreeCreditPending] = useState(false);
   const [freeCreditNotice, setFreeCreditNotice] = useState<string | null>(null);
   const [premiumPending, setPremiumPending] = useState(false);
   const [premiumNotice, setPremiumNotice] = useState<string | null>(null);
+  const [suspensionPending, setSuspensionPending] = useState(false);
+  const [suspensionNotice, setSuspensionNotice] = useState<string | null>(null);
   const freeCreditAvailable = mutationsAvailable || adjustFreeCredit !== undefined;
   const premiumAvailable = mutationsAvailable || adjustPremium !== undefined;
+  const suspensionAvailable = mutationsAvailable || adjustSuspension !== undefined;
 
   async function submitFreeCredit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -398,6 +412,25 @@ export function AdminPage({
     }
   }
 
+  async function submitSuspension(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!adjustSuspension || suspensionPending) return;
+    const form = new FormData(event.currentTarget);
+    const userId = String(form.get('userId') ?? '').trim();
+    const suspended = form.get('suspended') === 'on';
+    const reason = String(form.get('reason') ?? '').trim();
+    setSuspensionPending(true);
+    setSuspensionNotice(null);
+    try {
+      const result = await adjustSuspension(userId, { suspended, reason });
+      setSuspensionNotice(result.suspended ? 'حساب معلق شد.' : 'تعلیق حساب برداشته شد.');
+    } catch {
+      setSuspensionNotice('تغییر وضعیت حساب انجام نشد.');
+    } finally {
+      setSuspensionPending(false);
+    }
+  }
+
   return (
     <div className="surface-stack">
       <Card>
@@ -415,7 +448,7 @@ export function AdminPage({
         <p className="muted-copy">{faNumber.format(overview.counts.readyNodes)} نود آماده</p>
       </Card>
 
-      {!mutationsAvailable && !adjustFreeCredit && !adjustPremium ? (
+      {!mutationsAvailable && !adjustFreeCredit && !adjustPremium && !adjustSuspension ? (
         <p className="inline-notice" role="status">توکن CSRF این session در دسترس نیست؛ عملیات ممتاز فقط خواندنی است.</p>
       ) : !mutationsAvailable ? (
         <p className="inline-notice">توکن CSRF هنگام عملیات متصل دریافت می‌شود؛ سایر فرم‌های ممتاز تا wiring امن فقط خواندنی‌اند.</p>
@@ -498,16 +531,19 @@ export function AdminPage({
 
         <Card>
           <PageHeader eyebrow="User State" title="تعلیق حساب" description="تعلیق در مرز احراز هویت enforce می‌شود و session موجود را هم فوراً محدود می‌کند." />
-          <form className="form-stack" aria-label="فرم تعلیق حساب">
+          <form className="form-stack" aria-label="فرم تعلیق حساب" onSubmit={submitSuspension}>
             <label className="field-label" htmlFor="admin-suspension-user">شناسه کاربر</label>
-            <input className="text-input" id="admin-suspension-user" defaultValue={defaultUserId} />
+            <input className="text-input" id="admin-suspension-user" name="userId" defaultValue={defaultUserId} />
             <label className="check-row">
-              <input type="checkbox" />
+              <input type="checkbox" name="suspended" />
               حساب معلق باشد
             </label>
             <label className="field-label" htmlFor="admin-suspension-reason">دلیل</label>
-            <input className="text-input" id="admin-suspension-reason" defaultValue="" />
-            <Button disabled={!mutationsAvailable} type="submit">تغییر وضعیت حساب</Button>
+            <input className="text-input" id="admin-suspension-reason" name="reason" defaultValue="" />
+            <Button disabled={!suspensionAvailable || suspensionPending} type="submit">
+              {suspensionPending ? 'در حال تغییر…' : 'تغییر وضعیت حساب'}
+            </Button>
+            {suspensionNotice ? <p className="inline-notice" role="status">{suspensionNotice}</p> : null}
           </form>
         </Card>
       </div>
