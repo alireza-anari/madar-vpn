@@ -23,11 +23,18 @@ export type SubscriptionTokenRecord = {
   revokedAt: string | null;
 };
 
+export type ClientCredentialRotationInput = Omit<ClientCredential, 'version' | 'revokedAt'>;
+export type ClientCredentialRotation = {
+  credential: ClientCredential;
+  policyRevision: number;
+};
+
 export interface AccessStore {
   ensureProfile(candidate: AccessProfile): Promise<AccessProfile>;
   getProfile(userId: string): Promise<AccessProfile | null>;
   ensureActiveClientCredential(candidate: ClientCredential): Promise<ClientCredential>;
   getActiveClientCredential(userId: string): Promise<ClientCredential | null>;
+  rotateClientCredential?(candidate: ClientCredentialRotationInput): Promise<ClientCredentialRotation>;
   issueSubscriptionToken(candidate: Omit<SubscriptionTokenRecord, 'version' | 'revokedAt'>): Promise<SubscriptionTokenRecord>;
   getActiveSubscriptionToken(userId: string): Promise<SubscriptionTokenRecord | null>;
   findActiveSubscriptionTokenByHash(tokenHash: string): Promise<SubscriptionTokenRecord | null>;
@@ -67,6 +74,27 @@ export class MemoryAccessStore implements AccessStore {
       (candidate) => candidate.userId === userId && candidate.revokedAt === null,
     );
     return credential ? { ...credential } : null;
+  }
+
+  async rotateClientCredential(candidate: ClientCredentialRotationInput) {
+    const profile = this.profiles.find((record) => record.userId === candidate.userId);
+    if (!profile) throw new Error('Access profile does not exist.');
+    const active = this.credentials.find(
+      (credential) => credential.userId === candidate.userId && credential.revokedAt === null,
+    );
+    if (!active) throw new Error('Active client credential does not exist.');
+    if (this.credentials.some((credential) => credential.uuid === candidate.uuid)) {
+      throw new Error('Client UUID already exists.');
+    }
+
+    const version = this.credentials
+      .filter((credential) => credential.userId === candidate.userId)
+      .reduce((highest, credential) => Math.max(highest, credential.version), 0) + 1;
+    active.revokedAt = candidate.createdAt;
+    profile.policyRevision += 1;
+    const credential: ClientCredential = { ...candidate, version, revokedAt: null };
+    this.credentials.push(credential);
+    return { credential: { ...credential }, policyRevision: profile.policyRevision };
   }
 
   async issueSubscriptionToken(candidate: Omit<SubscriptionTokenRecord, 'version' | 'revokedAt'>) {
@@ -130,6 +158,18 @@ export function createAccessService(options: {
     });
   }
 
+  async function issueSubscriptionToken(userId: string): Promise<{ rawToken: string; version: number }> {
+    await ensureAccessProfile(userId);
+    const rawToken = randomToken();
+    const record = await options.store.issueSubscriptionToken({
+      id: randomUuid(),
+      userId,
+      tokenHash: await hashAccessSecret(rawToken),
+      createdAt: now().toISOString(),
+    });
+    return { rawToken, version: record.version };
+  }
+
   return {
     ensureAccessProfile,
 
@@ -146,16 +186,24 @@ export function createAccessService(options: {
       });
     },
 
-    async issueSubscriptionToken(userId: string): Promise<{ rawToken: string; version: number }> {
+    async rotateClientCredential(userId: string): Promise<ClientCredentialRotation> {
       await ensureAccessProfile(userId);
-      const rawToken = randomToken();
-      const record = await options.store.issueSubscriptionToken({
+      if (!options.store.rotateClientCredential) {
+        throw new Error('Client credential rotation is unavailable for this persistence adapter.');
+      }
+      const createdAt = now().toISOString();
+      return options.store.rotateClientCredential({
         id: randomUuid(),
         userId,
-        tokenHash: await hashAccessSecret(rawToken),
-        createdAt: now().toISOString(),
+        uuid: randomUuid(),
+        createdAt,
       });
-      return { rawToken, version: record.version };
+    },
+
+    issueSubscriptionToken,
+
+    async rotateSubscriptionToken(userId: string): Promise<{ rawToken: string; version: number }> {
+      return issueSubscriptionToken(userId);
     },
   };
 }
