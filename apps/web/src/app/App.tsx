@@ -28,6 +28,8 @@ import {
   type AdminMissionResult,
   type AdminNodeInput,
   type AdminNodeResult,
+  type AdminNotificationDraftInput,
+  type AdminNotificationDraftResult,
   type AdminPlanInput,
   type AdminPlanResult,
   type AdminPremiumInput,
@@ -338,6 +340,35 @@ async function enrollAdminNode(input: AdminNodeInput): Promise<AdminNodeResult> 
   };
 }
 
+async function saveAdminNotificationDraft(
+  input: AdminNotificationDraftInput,
+): Promise<AdminNotificationDraftResult> {
+  const csrfToken = await getCsrfToken();
+  const response = await fetch('/api/admin/notification-drafts', {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'content-type': 'application/json',
+      'x-csrf-token': csrfToken,
+    },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const payload = (await response.json()) as Partial<AdminNotificationDraftResult>;
+  if (
+    typeof payload.id !== 'string' ||
+    typeof payload.title !== 'string' ||
+    typeof payload.body !== 'string' ||
+    typeof payload.target !== 'string' ||
+    typeof payload.createdBy !== 'string' ||
+    typeof payload.createdAt !== 'string' ||
+    payload.deliveryStatus !== 'draft'
+  ) {
+    throw new Error('Malformed notification draft response.');
+  }
+  return payload as AdminNotificationDraftResult;
+}
+
 function LoadingPanel() {
   return (
     <Card>
@@ -457,6 +488,7 @@ function AdminRoute() {
       savePlan={saveAdminPlan}
       saveMission={saveAdminMission}
       enrollNode={enrollAdminNode}
+      saveNotificationDraft={saveAdminNotificationDraft}
     />
   );
 }

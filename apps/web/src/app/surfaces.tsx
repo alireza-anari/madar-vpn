@@ -142,6 +142,14 @@ export type AdminNodeInput = {
 
 export type AdminNodeResult = AdminResourcesView['nodes'][number];
 
+export type AdminNotificationDraftInput = {
+  title: string;
+  body: string;
+  target: string;
+};
+
+export type AdminNotificationDraftResult = AdminResourcesView['notificationDrafts'][number];
+
 const faNumber = new Intl.NumberFormat('fa-IR');
 const emptyAdminResources: AdminResourcesView = {
   users: [],
@@ -380,6 +388,7 @@ export function AdminPage({
   savePlan,
   saveMission,
   enrollNode,
+  saveNotificationDraft,
 }: {
   overview: AdminOverviewView;
   resources?: AdminResourcesView;
@@ -391,10 +400,12 @@ export function AdminPage({
   savePlan?: (planId: string, input: AdminPlanInput) => Promise<AdminPlanResult>;
   saveMission?: (missionId: string, input: AdminMissionInput) => Promise<AdminMissionResult>;
   enrollNode?: (input: AdminNodeInput) => Promise<AdminNodeResult>;
+  saveNotificationDraft?: (input: AdminNotificationDraftInput) => Promise<AdminNotificationDraftResult>;
 }) {
   const defaultUserId = resources.users[0]?.id ?? '';
   const defaultPlan = resources.plans[0];
   const defaultMission = resources.missions[0];
+  const defaultDraft = resources.notificationDrafts[0];
   const [freeCreditPending, setFreeCreditPending] = useState(false);
   const [freeCreditNotice, setFreeCreditNotice] = useState<string | null>(null);
   const [premiumPending, setPremiumPending] = useState(false);
@@ -409,6 +420,8 @@ export function AdminPage({
   const [missionNotice, setMissionNotice] = useState<string | null>(null);
   const [nodePending, setNodePending] = useState(false);
   const [nodeNotice, setNodeNotice] = useState<string | null>(null);
+  const [draftPending, setDraftPending] = useState(false);
+  const [draftNotice, setDraftNotice] = useState<string | null>(null);
   const freeCreditAvailable = mutationsAvailable || adjustFreeCredit !== undefined;
   const premiumAvailable = mutationsAvailable || adjustPremium !== undefined;
   const suspensionAvailable = mutationsAvailable || adjustSuspension !== undefined;
@@ -416,6 +429,7 @@ export function AdminPage({
   const planAvailable = mutationsAvailable || savePlan !== undefined;
   const missionAvailable = mutationsAvailable || saveMission !== undefined;
   const nodeAvailable = mutationsAvailable || enrollNode !== undefined;
+  const draftAvailable = mutationsAvailable || saveNotificationDraft !== undefined;
 
   async function submitFreeCredit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -567,6 +581,29 @@ export function AdminPage({
     }
   }
 
+  async function submitNotificationDraft(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!saveNotificationDraft || draftPending) return;
+    const form = new FormData(event.currentTarget);
+    const title = String(form.get('title') ?? '').trim();
+    const body = String(form.get('body') ?? '').trim();
+    const target = String(form.get('target') ?? '').trim();
+    setDraftPending(true);
+    setDraftNotice(null);
+    try {
+      const result = await saveNotificationDraft({ title, body, target });
+      setDraftNotice(
+        result.deliveryStatus === 'draft'
+          ? 'پیش‌نویس ذخیره شد. ارسال هنوز انجام نشده است.'
+          : 'وضعیت پیش‌نویس معتبر نیست.',
+      );
+    } catch {
+      setDraftNotice('ذخیره پیش‌نویس انجام نشد.');
+    } finally {
+      setDraftPending(false);
+    }
+  }
+
   return (
     <div className="surface-stack">
       <Card>
@@ -584,7 +621,7 @@ export function AdminPage({
         <p className="muted-copy">{faNumber.format(overview.counts.readyNodes)} نود آماده</p>
       </Card>
 
-      {!mutationsAvailable && !adjustFreeCredit && !adjustPremium && !adjustSuspension && !saveSettings && !savePlan && !saveMission && !enrollNode ? (
+      {!mutationsAvailable && !adjustFreeCredit && !adjustPremium && !adjustSuspension && !saveSettings && !savePlan && !saveMission && !enrollNode && !saveNotificationDraft ? (
         <p className="inline-notice" role="status">توکن CSRF این session در دسترس نیست؛ عملیات ممتاز فقط خواندنی است.</p>
       ) : !mutationsAvailable ? (
         <p className="inline-notice">توکن CSRF هنگام عملیات متصل دریافت می‌شود؛ سایر فرم‌های ممتاز تا wiring امن فقط خواندنی‌اند.</p>
@@ -768,10 +805,17 @@ export function AdminPage({
               ? <span className="empty-state">هیچ پیش‌نویس اعلانی ثبت نشده است.</span>
               : resources.notificationDrafts.map((draft) => <ResourceValue key={draft.id} primary={draft.title} secondary={draft.deliveryStatus} />)}
           </ResourceList>
-          <form className="form-stack">
+          <form className="form-stack" aria-label="فرم پیش‌نویس اعلان" onSubmit={submitNotificationDraft}>
             <label className="field-label" htmlFor="admin-draft-title">عنوان اعلان</label>
-            <input className="text-input" id="admin-draft-title" defaultValue={resources.notificationDrafts[0]?.title ?? ''} />
-            <Button disabled={!mutationsAvailable} type="submit">ذخیره پیش‌نویس</Button>
+            <input className="text-input" id="admin-draft-title" name="title" defaultValue={defaultDraft?.title ?? ''} />
+            <label className="field-label" htmlFor="admin-draft-body">متن اعلان</label>
+            <textarea className="text-input" id="admin-draft-body" name="body" defaultValue={defaultDraft?.body ?? ''} />
+            <label className="field-label" htmlFor="admin-draft-target">مخاطب</label>
+            <input className="text-input" id="admin-draft-target" name="target" defaultValue={defaultDraft?.target ?? 'all'} />
+            <Button disabled={!draftAvailable || draftPending} type="submit">
+              {draftPending ? 'در حال ذخیره…' : 'ذخیره پیش‌نویس'}
+            </Button>
+            {draftNotice ? <p className="inline-notice" role="status">{draftNotice}</p> : null}
           </form>
         </Card>
       </div>
