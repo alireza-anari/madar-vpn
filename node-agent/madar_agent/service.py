@@ -53,9 +53,11 @@ class AgentService:
             )
             return
 
+        policy_state_valid = True
         policy = self._agent.fetch_policy()
         if policy is not None:
             result = self._agent.apply_policy(policy)
+            policy_state_valid = bool(result.applied)
             if result.applied:
                 self._active_clients = len(policy.clients)
                 self._control_plane.ack_policy(policy.revision)
@@ -67,7 +69,11 @@ class AgentService:
             self._control_plane.post_telemetry(reports)
 
         runtime_healthy = bool(self._runtime_health())
-        ready = runtime_healthy and bool(self._agent.is_authorization_fresh(self._now()))
+        ready = (
+            runtime_healthy
+            and policy_state_valid
+            and bool(self._agent.is_authorization_fresh(self._now()))
+        )
         active_clients = self._active_clients if ready else 0
         self._control_plane.heartbeat(
             health={"healthy": runtime_healthy, "ready": ready},
