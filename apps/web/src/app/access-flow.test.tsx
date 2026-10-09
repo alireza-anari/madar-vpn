@@ -17,7 +17,7 @@ describe('VPN access flow', () => {
       configurable: true,
       value: { writeText: copy },
     });
-    const requested: Array<{ url: string; init?: RequestInit }> = [];
+    const requested: Array<{ url: string; init: RequestInit | undefined }> = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       requested.push({ url, init });
