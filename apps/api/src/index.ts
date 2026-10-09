@@ -171,6 +171,12 @@ export function createApiApp(
     return c.json(await payments.settleProviderCallback(c.req.raw));
   });
 
+  app.get('/api/auth/readiness', (c) => {
+    const auth = authFactory(c.env); if (!auth) return unavailable(c, 'AUTH_UNAVAILABLE');
+    c.header('Cache-Control', 'no-store');
+    return c.json(auth.getReadiness());
+  });
+
   app.post('/api/auth/request', async (c) => {
     const body = await c.req.json<{ email?: unknown }>().catch(() => null);
     if (!body || typeof body.email !== 'string') return c.json({ error: 'REQUEST_INVALID' }, 400);
@@ -189,6 +195,7 @@ export function createApiApp(
     const body = await c.req.json<{ token?: unknown }>().catch(() => null);
     if (!body || typeof body.token !== 'string' || body.token.length === 0) return c.json({ error: 'REQUEST_INVALID' }, 400);
     const session = await auth.consumeLoginToken(body.token);
+    c.header('Cache-Control', 'no-store');
     c.header('Set-Cookie', serializeSessionCookie(session.token, new Date(session.expiresAt)));
     return c.json({ csrfToken: session.csrfToken, expiresAt: session.expiresAt });
   });
