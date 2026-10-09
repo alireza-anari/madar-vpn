@@ -5,9 +5,14 @@ import { PageHeader } from '../components/PageHeader';
 import { PwaSettingsPage } from '../pwa/PwaSettingsPage';
 import { subscribeBrowserPush } from '../pwa/push-subscription';
 import {
+  InteractiveLoginPage,
+  MagicLinkPage,
+  type LoginRequestResult,
+  type MagicLinkResult,
+} from './auth-surface';
+import {
   AdminPage,
   DashboardPage,
-  LoginPage,
   MissionsPage,
   PremiumPage,
   type AccountView,
@@ -53,6 +58,35 @@ function useApiResource<T>(url: string | null): Resource<T> {
   return resource;
 }
 
+async function requestLogin(email: string): Promise<LoginRequestResult> {
+  const response = await fetch('/api/auth/request', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const payload = (await response.json()) as { status?: unknown };
+  if (payload.status === 'sent' || payload.status === 'unavailable') return payload.status;
+  throw new Error('Malformed auth response.');
+}
+
+async function consumeMagicLink(token: string): Promise<MagicLinkResult> {
+  try {
+    const response = await fetch('/api/auth/consume', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+    if (response.ok) return 'success';
+    if (response.status === 401) return 'invalid';
+    return 'error';
+  } catch {
+    return 'error';
+  }
+}
+
 function LoadingPanel() {
   return (
     <Card>
@@ -84,6 +118,20 @@ function ErrorPanel({ admin = false }: { admin?: boolean }) {
       />
     </Card>
   );
+}
+
+function LoginRoute() {
+  const token = typeof window === 'undefined'
+    ? null
+    : new URLSearchParams(window.location.hash.replace(/^#/, '')).get('token')?.trim() || null;
+  const readiness = useApiResource<{ email: boolean }>(token ? null : '/api/auth/readiness');
+
+  if (token) return <MagicLinkPage token={token} consume={consumeMagicLink} />;
+  if (readiness.status === 'loading') return <LoadingPanel />;
+  if (readiness.status === 'ready' && readiness.data.email) {
+    return <InteractiveLoginPage emailAvailable requestLogin={requestLogin} />;
+  }
+  return <InteractiveLoginPage emailAvailable={false} />;
 }
 
 function AccountRoute({ mode }: { mode: 'dashboard' | 'premium' | 'missions' | 'settings' }) {
@@ -118,7 +166,7 @@ export function App() {
 
   switch (path) {
     case '/login':
-      content = <LoginPage emailAvailable={false} />;
+      content = <LoginRoute />;
       break;
     case '/premium':
       content = <AccountRoute mode="premium" />;
