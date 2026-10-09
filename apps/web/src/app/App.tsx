@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AppShell } from '../components/AppShell';
 import { Card } from '../components/Card';
 import { PageHeader } from '../components/PageHeader';
@@ -32,16 +32,20 @@ type Resource<T> =
   | { status: 'unavailable'; data: null }
   | { status: 'error'; data: null };
 
-function useApiResource<T>(url: string | null): Resource<T> {
+function useApiResource<T>(url: string | null, refreshKey = 0): Resource<T> {
   const [resource, setResource] = useState<Resource<T>>({ status: 'loading', data: null });
+  const previousUrl = useRef<string | null>(null);
 
   useEffect(() => {
     if (!url) {
+      previousUrl.current = null;
       setResource({ status: 'unavailable', data: null });
       return;
     }
     const controller = new AbortController();
-    setResource({ status: 'loading', data: null });
+    const isBackgroundRefresh = previousUrl.current === url;
+    previousUrl.current = url;
+    if (!isBackgroundRefresh) setResource({ status: 'loading', data: null });
     void fetch(url, { credentials: 'include', signal: controller.signal })
       .then(async (response) => {
         if (response.status === 503) {
@@ -59,7 +63,7 @@ function useApiResource<T>(url: string | null): Resource<T> {
         setResource({ status: 'error', data: null });
       });
     return () => controller.abort();
-  }, [url]);
+  }, [url, refreshKey]);
 
   return resource;
 }
@@ -195,11 +199,13 @@ function AccessRoute() {
 }
 
 function AccountRoute({ mode }: { mode: 'dashboard' | 'premium' | 'missions' | 'settings' }) {
+  const [missionStatusRefresh, setMissionStatusRefresh] = useState(0);
   const account = useApiResource<AccountView>('/api/account');
   const needsCatalog = mode === 'premium' || mode === 'missions';
   const catalog = useApiResource<AccountCatalogView>(needsCatalog ? '/api/account/catalog' : null);
   const missionStatuses = useApiResource<MissionStatusView[]>(
     mode === 'missions' ? '/api/account/missions/submissions' : null,
+    missionStatusRefresh,
   );
 
   if (account.status === 'loading') return <LoadingPanel />;
@@ -228,7 +234,11 @@ function AccountRoute({ mode }: { mode: 'dashboard' | 'premium' | 'missions' | '
       adsAvailable={account.data.providers.ads}
       missions={catalog.data.missions}
       statuses={missionStatuses.data}
-      submitEvidence={submitMissionEvidence}
+      submitEvidence={async (missionId, evidence) => {
+        const result = await submitMissionEvidence(missionId, evidence);
+        setMissionStatusRefresh((revision) => revision + 1);
+        return result;
+      }}
     />
   );
 }
