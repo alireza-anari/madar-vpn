@@ -65,7 +65,9 @@ function createReedSolomonDivisor(degree: number) {
   for (let factor = 0; factor < degree; factor += 1) {
     for (let index = 0; index < degree; index += 1) {
       divisor[index] = reedSolomonMultiply(divisor[index]!, root);
-      if (index + 1 < degree) divisor[index] ^= divisor[index + 1]!;
+      if (index + 1 < degree) {
+        divisor[index] = divisor[index]! ^ divisor[index + 1]!;
+      }
     }
     root = reedSolomonMultiply(root, 2);
   }
@@ -79,7 +81,7 @@ function createReedSolomonRemainder(data: readonly number[], divisor: readonly n
     remainder.shift();
     remainder.push(0);
     for (let index = 0; index < divisor.length; index += 1) {
-      remainder[index] ^= reedSolomonMultiply(divisor[index]!, factor);
+      remainder[index] = remainder[index]! ^ reedSolomonMultiply(divisor[index]!, factor);
     }
   }
   return remainder;
