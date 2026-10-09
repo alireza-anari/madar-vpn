@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
 import { PageHeader } from '../components/PageHeader';
@@ -19,11 +20,66 @@ export type AccountCatalogView = {
   }>;
 };
 
+export type MissionSubmissionResult = {
+  id: string;
+  status: 'pending';
+};
+
 const faNumber = new Intl.NumberFormat('fa-IR');
 
 function formatPrice(priceMinor: number, currency: string) {
   const amount = faNumber.format(priceMinor);
   return currency === 'IRR' ? `${amount} ریال` : `${amount} ${currency}`;
+}
+
+function EvidenceMissionForm({
+  mission,
+  submitEvidence,
+}: {
+  mission: AccountCatalogView['missions'][number];
+  submitEvidence: (missionId: string, evidence: string) => Promise<MissionSubmissionResult>;
+}) {
+  const [evidence, setEvidence] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  async function submit() {
+    const value = evidence.trim();
+    if (!value || submitting) return;
+    setSubmitting(true);
+    setNotice(null);
+    try {
+      const result = await submitEvidence(mission.id, value);
+      if (result.status !== 'pending') throw new Error('Unexpected mission submission state.');
+      setEvidence('');
+      setNotice('مدرک ثبت شد و در انتظار بررسی است.');
+    } catch {
+      setNotice('ارسال مدرک انجام نشد. دوباره تلاش کنید.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="form-stack">
+      <label className="field-label" htmlFor={`mission-evidence-${mission.id}`}>
+        مدرک ماموریت {mission.title}
+      </label>
+      <textarea
+        aria-label={`مدرک ماموریت ${mission.title}`}
+        className="text-input"
+        id={`mission-evidence-${mission.id}`}
+        maxLength={2000}
+        onChange={(event) => setEvidence(event.target.value)}
+        rows={4}
+        value={evidence}
+      />
+      <Button disabled={!evidence.trim() || submitting} onClick={() => { void submit(); }}>
+        {submitting ? 'در حال ارسال…' : 'ارسال مدرک'}
+      </Button>
+      {notice ? <p className="inline-notice" role="status">{notice}</p> : null}
+    </div>
+  );
 }
 
 export function PremiumCatalogPage({
@@ -69,9 +125,11 @@ export function PremiumCatalogPage({
 export function MissionsCatalogPage({
   adsAvailable,
   missions,
+  submitEvidence,
 }: {
   adsAvailable: boolean;
   missions: AccountCatalogView['missions'];
+  submitEvidence: (missionId: string, evidence: string) => Promise<MissionSubmissionResult>;
 }) {
   return (
     <div className="surface-stack">
@@ -92,7 +150,11 @@ export function MissionsCatalogPage({
           <p className="muted-copy">{mission.description}</p>
           <p className="muted-copy">پاداش: {faNumber.format(Math.floor(mission.rewardSeconds / 60))} دقیقه</p>
           <Button disabled>شروع ماموریت</Button>
-          <p className="muted-copy">ارسال مدرک از این صفحه هنوز متصل نشده است.</p>
+          {mission.verificationKind === 'evidence' ? (
+            <EvidenceMissionForm mission={mission} submitEvidence={submitEvidence} />
+          ) : (
+            <p className="muted-copy">ماموریت ارجاع فقط پس از تأیید رابطه واقعی توسط سرور قابل پاداش است.</p>
+          )}
         </Card>
       ))}
     </div>
