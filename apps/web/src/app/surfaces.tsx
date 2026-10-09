@@ -127,6 +127,15 @@ export type AdminPlanInput = {
 
 export type AdminPlanResult = AdminResourcesView['plans'][number];
 
+export type AdminMissionInput = {
+  title: string;
+  description: string;
+  rewardSeconds: number;
+  status: string;
+};
+
+export type AdminMissionResult = AdminResourcesView['missions'][number];
+
 const faNumber = new Intl.NumberFormat('fa-IR');
 const emptyAdminResources: AdminResourcesView = {
   users: [],
@@ -363,6 +372,7 @@ export function AdminPage({
   adjustSuspension,
   saveSettings,
   savePlan,
+  saveMission,
 }: {
   overview: AdminOverviewView;
   resources?: AdminResourcesView;
@@ -372,9 +382,11 @@ export function AdminPage({
   adjustSuspension?: (userId: string, input: AdminSuspensionInput) => Promise<AdminSuspensionResult>;
   saveSettings?: (input: AdminSettingsInput) => Promise<AdminSettingsResult>;
   savePlan?: (planId: string, input: AdminPlanInput) => Promise<AdminPlanResult>;
+  saveMission?: (missionId: string, input: AdminMissionInput) => Promise<AdminMissionResult>;
 }) {
   const defaultUserId = resources.users[0]?.id ?? '';
   const defaultPlan = resources.plans[0];
+  const defaultMission = resources.missions[0];
   const [freeCreditPending, setFreeCreditPending] = useState(false);
   const [freeCreditNotice, setFreeCreditNotice] = useState<string | null>(null);
   const [premiumPending, setPremiumPending] = useState(false);
@@ -385,11 +397,14 @@ export function AdminPage({
   const [settingsNotice, setSettingsNotice] = useState<string | null>(null);
   const [planPending, setPlanPending] = useState(false);
   const [planNotice, setPlanNotice] = useState<string | null>(null);
+  const [missionPending, setMissionPending] = useState(false);
+  const [missionNotice, setMissionNotice] = useState<string | null>(null);
   const freeCreditAvailable = mutationsAvailable || adjustFreeCredit !== undefined;
   const premiumAvailable = mutationsAvailable || adjustPremium !== undefined;
   const suspensionAvailable = mutationsAvailable || adjustSuspension !== undefined;
   const settingsAvailable = mutationsAvailable || saveSettings !== undefined;
   const planAvailable = mutationsAvailable || savePlan !== undefined;
+  const missionAvailable = mutationsAvailable || saveMission !== undefined;
 
   async function submitFreeCredit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -499,6 +514,27 @@ export function AdminPage({
     }
   }
 
+  async function submitMission(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!saveMission || missionPending) return;
+    const form = new FormData(event.currentTarget);
+    const missionId = String(form.get('missionId') ?? '').trim();
+    const title = String(form.get('title') ?? '').trim();
+    const description = String(form.get('description') ?? '').trim();
+    const rewardSeconds = Number(form.get('rewardSeconds'));
+    const status = String(form.get('status') ?? '').trim();
+    setMissionPending(true);
+    setMissionNotice(null);
+    try {
+      await saveMission(missionId, { title, description, rewardSeconds, status });
+      setMissionNotice('ماموریت ذخیره شد.');
+    } catch {
+      setMissionNotice('ذخیره ماموریت انجام نشد.');
+    } finally {
+      setMissionPending(false);
+    }
+  }
+
   return (
     <div className="surface-stack">
       <Card>
@@ -516,7 +552,7 @@ export function AdminPage({
         <p className="muted-copy">{faNumber.format(overview.counts.readyNodes)} نود آماده</p>
       </Card>
 
-      {!mutationsAvailable && !adjustFreeCredit && !adjustPremium && !adjustSuspension && !saveSettings && !savePlan ? (
+      {!mutationsAvailable && !adjustFreeCredit && !adjustPremium && !adjustSuspension && !saveSettings && !savePlan && !saveMission ? (
         <p className="inline-notice" role="status">توکن CSRF این session در دسترس نیست؛ عملیات ممتاز فقط خواندنی است.</p>
       ) : !mutationsAvailable ? (
         <p className="inline-notice">توکن CSRF هنگام عملیات متصل دریافت می‌شود؛ سایر فرم‌های ممتاز تا wiring امن فقط خواندنی‌اند.</p>
@@ -656,10 +692,21 @@ export function AdminPage({
               ? <span className="empty-state">هیچ ماموریت واقعی ثبت نشده است.</span>
               : resources.missions.map((mission) => <span key={mission.id}>{mission.title}</span>)}
           </ResourceList>
-          <form className="form-stack">
+          <form className="form-stack" aria-label="فرم مدیریت ماموریت" onSubmit={submitMission}>
+            <label className="field-label" htmlFor="admin-mission-id">شناسه ماموریت</label>
+            <input className="text-input" id="admin-mission-id" name="missionId" defaultValue={defaultMission?.id ?? ''} />
             <label className="field-label" htmlFor="admin-mission-title">عنوان ماموریت</label>
-            <input className="text-input" id="admin-mission-title" defaultValue={resources.missions[0]?.title ?? ''} />
-            <Button disabled={!mutationsAvailable} type="submit">ثبت ماموریت</Button>
+            <input className="text-input" id="admin-mission-title" name="title" defaultValue={defaultMission?.title ?? ''} />
+            <label className="field-label" htmlFor="admin-mission-description">توضیحات ماموریت</label>
+            <input className="text-input" id="admin-mission-description" name="description" defaultValue={defaultMission?.description ?? ''} />
+            <label className="field-label" htmlFor="admin-mission-reward">پاداش (ثانیه)</label>
+            <input className="text-input" id="admin-mission-reward" name="rewardSeconds" type="number" min="0" defaultValue={defaultMission?.rewardSeconds ?? 0} />
+            <label className="field-label" htmlFor="admin-mission-status">وضعیت ماموریت</label>
+            <input className="text-input" id="admin-mission-status" name="status" defaultValue={defaultMission?.status ?? 'active'} />
+            <Button disabled={!missionAvailable || missionPending} type="submit">
+              {missionPending ? 'در حال ذخیره…' : 'ثبت ماموریت'}
+            </Button>
+            {missionNotice ? <p className="inline-notice" role="status">{missionNotice}</p> : null}
           </form>
         </Card>
       </div>
