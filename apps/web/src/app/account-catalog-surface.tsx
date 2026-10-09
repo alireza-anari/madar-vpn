@@ -25,11 +25,44 @@ export type MissionSubmissionResult = {
   status: 'pending';
 };
 
+export type MissionStatusView = {
+  id: string;
+  missionId: string;
+  status: 'pending' | 'approved' | 'rejected';
+  submittedAt: string;
+  reviewedAt: string | null;
+  rejectionReason: string | null;
+};
+
 const faNumber = new Intl.NumberFormat('fa-IR');
 
 function formatPrice(priceMinor: number, currency: string) {
   const amount = faNumber.format(priceMinor);
   return currency === 'IRR' ? `${amount} ریال` : `${amount} ${currency}`;
+}
+
+function latestMissionStatus(statuses: MissionStatusView[], missionId: string) {
+  return statuses.reduce<MissionStatusView | null>((latest, candidate) => {
+    if (candidate.missionId !== missionId) return latest;
+    if (!latest || candidate.submittedAt > latest.submittedAt) return candidate;
+    return latest;
+  }, null);
+}
+
+function MissionStatus({ status }: { status: MissionStatusView | null }) {
+  if (!status) return null;
+  if (status.status === 'pending') {
+    return <p className="inline-notice">وضعیت: در انتظار بررسی</p>;
+  }
+  if (status.status === 'approved') {
+    return <p className="inline-notice">وضعیت: تأیید شد</p>;
+  }
+  return (
+    <>
+      <p className="inline-notice">وضعیت: رد شد</p>
+      {status.rejectionReason ? <p className="muted-copy">دلیل رد: {status.rejectionReason}</p> : null}
+    </>
+  );
 }
 
 function EvidenceMissionForm({
@@ -125,10 +158,12 @@ export function PremiumCatalogPage({
 export function MissionsCatalogPage({
   adsAvailable,
   missions,
+  statuses,
   submitEvidence,
 }: {
   adsAvailable: boolean;
   missions: AccountCatalogView['missions'];
+  statuses: MissionStatusView[];
   submitEvidence: (missionId: string, evidence: string) => Promise<MissionSubmissionResult>;
 }) {
   return (
@@ -144,19 +179,23 @@ export function MissionsCatalogPage({
 
       {missions.length === 0 ? (
         <Card><p className="empty-state">ماموریت فعال واقعی وجود ندارد.</p></Card>
-      ) : missions.map((mission) => (
-        <Card key={mission.id}>
-          <h2 className="section-title">{mission.title}</h2>
-          <p className="muted-copy">{mission.description}</p>
-          <p className="muted-copy">پاداش: {faNumber.format(Math.floor(mission.rewardSeconds / 60))} دقیقه</p>
-          <Button disabled>شروع ماموریت</Button>
-          {mission.verificationKind === 'evidence' ? (
-            <EvidenceMissionForm mission={mission} submitEvidence={submitEvidence} />
-          ) : (
-            <p className="muted-copy">ماموریت ارجاع فقط پس از تأیید رابطه واقعی توسط سرور قابل پاداش است.</p>
-          )}
-        </Card>
-      ))}
+      ) : missions.map((mission) => {
+        const status = latestMissionStatus(statuses, mission.id);
+        return (
+          <Card key={mission.id}>
+            <h2 className="section-title">{mission.title}</h2>
+            <p className="muted-copy">{mission.description}</p>
+            <p className="muted-copy">پاداش: {faNumber.format(Math.floor(mission.rewardSeconds / 60))} دقیقه</p>
+            <MissionStatus status={status} />
+            <Button disabled>شروع ماموریت</Button>
+            {mission.verificationKind === 'evidence' ? (
+              <EvidenceMissionForm mission={mission} submitEvidence={submitEvidence} />
+            ) : (
+              <p className="muted-copy">ماموریت ارجاع فقط پس از تأیید رابطه واقعی توسط سرور قابل پاداش است.</p>
+            )}
+          </Card>
+        );
+      })}
     </div>
   );
 }
