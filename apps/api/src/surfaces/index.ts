@@ -114,7 +114,7 @@ export interface SurfaceStore {
 }
 
 const DEFAULT_SETTINGS: AdminSettings = {
-  freeSpeedKbps: 256,
+  freeSpeedKbps: 5000,
   notificationsEnabled: false,
 };
 
@@ -382,6 +382,7 @@ export function createSurfaceService(options: {
   store: SurfaceStore;
   credits: CreditReader;
   providerAvailability?: ProviderAvailability;
+  speedEnforcementReady?: boolean;
   now?: () => Date;
 }) {
   const providerAvailability: ProviderAvailability = options.providerAvailability ?? {
@@ -390,6 +391,7 @@ export function createSurfaceService(options: {
     payments: false,
     push: false,
   };
+  const speedEnforcementReady = options.speedEnforcementReady ?? false;
   const now = options.now ?? (() => new Date());
 
   async function audit(actor: User, action: string, details: Record<string, unknown>) {
@@ -439,6 +441,7 @@ export function createSurfaceService(options: {
         readiness: {
           nodes: counts.readyNodes > 0,
           ...providerAvailability,
+          speedEnforcement: speedEnforcementReady,
         },
         settings,
       };
