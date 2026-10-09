@@ -110,6 +110,13 @@ export type AdminSuspensionResult = {
   suspended: boolean;
 };
 
+export type AdminSettingsInput = {
+  freeSpeedKbps: number;
+  notificationsEnabled: boolean;
+};
+
+export type AdminSettingsResult = AdminSettingsInput;
+
 const faNumber = new Intl.NumberFormat('fa-IR');
 const emptyAdminResources: AdminResourcesView = {
   users: [],
@@ -344,6 +351,7 @@ export function AdminPage({
   adjustFreeCredit,
   adjustPremium,
   adjustSuspension,
+  saveSettings,
 }: {
   overview: AdminOverviewView;
   resources?: AdminResourcesView;
@@ -351,6 +359,7 @@ export function AdminPage({
   adjustFreeCredit?: (userId: string, input: AdminFreeCreditInput) => Promise<AdminFreeCreditResult>;
   adjustPremium?: (userId: string, input: AdminPremiumInput) => Promise<AdminPremiumResult>;
   adjustSuspension?: (userId: string, input: AdminSuspensionInput) => Promise<AdminSuspensionResult>;
+  saveSettings?: (input: AdminSettingsInput) => Promise<AdminSettingsResult>;
 }) {
   const defaultUserId = resources.users[0]?.id ?? '';
   const [freeCreditPending, setFreeCreditPending] = useState(false);
@@ -359,9 +368,12 @@ export function AdminPage({
   const [premiumNotice, setPremiumNotice] = useState<string | null>(null);
   const [suspensionPending, setSuspensionPending] = useState(false);
   const [suspensionNotice, setSuspensionNotice] = useState<string | null>(null);
+  const [settingsPending, setSettingsPending] = useState(false);
+  const [settingsNotice, setSettingsNotice] = useState<string | null>(null);
   const freeCreditAvailable = mutationsAvailable || adjustFreeCredit !== undefined;
   const premiumAvailable = mutationsAvailable || adjustPremium !== undefined;
   const suspensionAvailable = mutationsAvailable || adjustSuspension !== undefined;
+  const settingsAvailable = mutationsAvailable || saveSettings !== undefined;
 
   async function submitFreeCredit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -431,6 +443,24 @@ export function AdminPage({
     }
   }
 
+  async function submitSettings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!saveSettings || settingsPending) return;
+    const form = new FormData(event.currentTarget);
+    const freeSpeedKbps = Number(form.get('freeSpeedKbps'));
+    const notificationsEnabled = form.get('notificationsEnabled') === 'on';
+    setSettingsPending(true);
+    setSettingsNotice(null);
+    try {
+      await saveSettings({ freeSpeedKbps, notificationsEnabled });
+      setSettingsNotice('تنظیمات ذخیره شد.');
+    } catch {
+      setSettingsNotice('ذخیره تنظیمات انجام نشد.');
+    } finally {
+      setSettingsPending(false);
+    }
+  }
+
   return (
     <div className="surface-stack">
       <Card>
@@ -448,7 +478,7 @@ export function AdminPage({
         <p className="muted-copy">{faNumber.format(overview.counts.readyNodes)} نود آماده</p>
       </Card>
 
-      {!mutationsAvailable && !adjustFreeCredit && !adjustPremium && !adjustSuspension ? (
+      {!mutationsAvailable && !adjustFreeCredit && !adjustPremium && !adjustSuspension && !saveSettings ? (
         <p className="inline-notice" role="status">توکن CSRF این session در دسترس نیست؛ عملیات ممتاز فقط خواندنی است.</p>
       ) : !mutationsAvailable ? (
         <p className="inline-notice">توکن CSRF هنگام عملیات متصل دریافت می‌شود؛ سایر فرم‌های ممتاز تا wiring امن فقط خواندنی‌اند.</p>
@@ -457,17 +487,20 @@ export function AdminPage({
       <div className="surface-grid surface-grid--two">
         <Card>
           <PageHeader eyebrow="Policy" title="تنظیمات رایگان" description="تغییرات نهایی فقط با session ادمین و CSRF ذخیره می‌شود." />
-          <form className="form-stack">
+          <form className="form-stack" onSubmit={submitSettings}>
             <label className="field-label" htmlFor="free-speed">سرعت رایگان (Kbps)</label>
-            <input className="text-input" id="free-speed" type="number" min="64" max="1000000" defaultValue={overview.settings.freeSpeedKbps} />
+            <input className="text-input" id="free-speed" name="freeSpeedKbps" type="number" min="64" max="1000000" defaultValue={overview.settings.freeSpeedKbps} />
             {!overview.readiness.speedEnforcement ? (
               <p className="inline-notice">این مقدار policy هدف است؛ اعمال per-client آن تا تأیید throughput روی VPS واقعی آماده نیست.</p>
             ) : null}
             <label className="check-row">
-              <input type="checkbox" defaultChecked={overview.settings.notificationsEnabled} />
+              <input type="checkbox" name="notificationsEnabled" defaultChecked={overview.settings.notificationsEnabled} />
               اعلان‌های مدیریتی فعال باشد
             </label>
-            <Button disabled={!mutationsAvailable} type="submit">ذخیره تنظیمات</Button>
+            <Button disabled={!settingsAvailable || settingsPending} type="submit">
+              {settingsPending ? 'در حال ذخیره…' : 'ذخیره تنظیمات'}
+            </Button>
+            {settingsNotice ? <p className="inline-notice" role="status">{settingsNotice}</p> : null}
           </form>
         </Card>
         <Card>
