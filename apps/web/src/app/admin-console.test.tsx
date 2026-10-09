@@ -4,8 +4,8 @@ import { AdminPage, type AdminOverviewView, type AdminResourcesView } from './su
 
 const overview: AdminOverviewView = {
   counts: { users: 1, readyNodes: 0, plans: 1, missions: 1 },
-  readiness: { nodes: false, email: false, ads: false, payments: false, push: false },
-  settings: { freeSpeedKbps: 256, notificationsEnabled: false },
+  readiness: { nodes: false, email: false, ads: false, payments: false, push: false, speedEnforcement: false },
+  settings: { freeSpeedKbps: 5000, notificationsEnabled: false },
 };
 
 const resources: AdminResourcesView = {
@@ -99,6 +99,7 @@ describe('admin resource console', () => {
     expect(screen.getByText('ظرفیت')).toBeInTheDocument();
     expect(screen.getByText('وضعیت Subscription')).toBeInTheDocument();
     expect(screen.getByText('چرخش دسترسی')).toBeInTheDocument();
+    expect(screen.getByText('اعمال محدودیت سرعت: آماده نیست')).toBeInTheDocument();
     expect(screen.getAllByText(/هنوز آماده نیست|متصل نشده/).length).toBeGreaterThanOrEqual(4);
   });
 });
