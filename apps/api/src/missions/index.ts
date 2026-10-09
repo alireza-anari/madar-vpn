@@ -24,6 +24,11 @@ export type MissionSubmission = {
   rejectionReason: string | null;
 };
 
+export type MissionUserStatus = Pick<
+  MissionSubmission,
+  'id' | 'missionId' | 'status' | 'submittedAt' | 'reviewedAt' | 'rejectionReason'
+>;
+
 export type MissionReward = {
   submissionId: string;
   userId: string;
@@ -166,9 +171,17 @@ export function createMissionService(options: {
       return structuredClone(submission);
     },
 
-    async getUserStatus(userId: string) {
+    async getUserStatus(userId: string): Promise<MissionUserStatus[]> {
       if (!validId(userId)) throw new MissionError(400, 'USER_INVALID', 'User id is invalid.');
-      return options.store.listUserSubmissions(userId);
+      const submissions = await options.store.listUserSubmissions(userId);
+      return submissions.map((submission) => ({
+        id: submission.id,
+        missionId: submission.missionId,
+        status: submission.status,
+        submittedAt: submission.submittedAt,
+        reviewedAt: submission.reviewedAt,
+        rejectionReason: submission.rejectionReason,
+      }));
     },
 
     async reviewSubmission(
