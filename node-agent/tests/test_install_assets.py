@@ -33,3 +33,18 @@ def test_systemd_unit_uses_restrictive_umask_and_never_contains_enrollment_secre
     assert "Restart=on-failure" in unit
     assert "ENROLLMENT_TOKEN" not in unit
     assert "--token" not in unit
+
+
+def test_xray_systemd_unit_uses_pinned_binary_and_requires_managed_config_before_start() -> None:
+    unit = (ROOT / "systemd" / "madar-xray.service").read_text(encoding="utf-8")
+
+    assert "ExecStartPre=/usr/bin/test -f /etc/madar-node-agent/xray-config.json" in unit
+    assert "ExecStart=/opt/madar-xray/26.3.27/xray run -c /etc/madar-node-agent/xray-config.json" in unit
+    assert "Restart=on-failure" in unit
+    assert "UMask=0077" in unit
+    assert "NoNewPrivileges=true" in unit
+    assert "PrivateTmp=true" in unit
+    assert "REALITY" not in unit
+    assert "PRIVATE" not in unit
+    assert "CREDENTIAL" not in unit
+    assert "EnvironmentFile=" not in unit

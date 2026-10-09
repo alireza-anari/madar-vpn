@@ -238,3 +238,24 @@ def test_status_update_and_remove_have_explicit_lifecycle_behavior(tmp_path: Pat
     assert ("remove_path", (str(install_paths.credential_path),)) in system.actions
     assert ("remove_path", (str(install_paths.install_root),)) in system.actions
     assert ("remove_path", (str(install_paths.service_path),)) in system.actions
+
+
+def test_xray_service_is_staged_but_not_enabled_before_policy_and_remove_cleans_runtime(tmp_path: Path) -> None:
+    enrollment = FakeEnrollment()
+    system = FakeSystem()
+    install_paths = paths(tmp_path)
+    installer = NodeInstaller(install_paths, enrollment=enrollment, system=system, output=lambda _: None)
+    xray_service_source = install_paths.service_source.parent / "madar-xray.service"
+    xray_service_path = install_paths.service_path.parent / "madar-xray.service"
+    xray_install_root = install_paths.install_root.parent / "madar-xray"
+
+    installer.install("one-time-token")
+
+    assert ("install_service", (str(xray_service_source), str(xray_service_path))) in system.actions
+    assert ("enable_and_start", ("madar-xray.service",)) not in system.actions
+
+    installer.remove()
+
+    assert ("stop_and_disable", ("madar-xray.service",)) in system.actions
+    assert ("remove_path", (str(xray_service_path),)) in system.actions
+    assert ("remove_path", (str(xray_install_root),)) in system.actions
