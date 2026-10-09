@@ -26,6 +26,8 @@ import {
   type AdminFreeCreditResult,
   type AdminMissionInput,
   type AdminMissionResult,
+  type AdminNodeInput,
+  type AdminNodeResult,
   type AdminPlanInput,
   type AdminPlanResult,
   type AdminPremiumInput,
@@ -302,6 +304,40 @@ async function saveAdminMission(missionId: string, input: AdminMissionInput): Pr
   return payload as AdminMissionResult;
 }
 
+async function enrollAdminNode(input: AdminNodeInput): Promise<AdminNodeResult> {
+  const csrfToken = await getCsrfToken();
+  const response = await fetch('/api/admin/nodes', {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'content-type': 'application/json',
+      'x-csrf-token': csrfToken,
+    },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const payload = (await response.json()) as Record<string, unknown>;
+  if ('credential' in payload || 'config' in payload) {
+    throw new Error('Unsafe node enrollment response.');
+  }
+  if (
+    typeof payload.id !== 'string' ||
+    typeof payload.name !== 'string' ||
+    payload.status !== 'enrolled' ||
+    (payload.lastSeenAt !== null && typeof payload.lastSeenAt !== 'string') ||
+    typeof payload.createdAt !== 'string'
+  ) {
+    throw new Error('Malformed node enrollment response.');
+  }
+  return {
+    id: payload.id,
+    name: payload.name,
+    status: 'enrolled',
+    lastSeenAt: payload.lastSeenAt,
+    createdAt: payload.createdAt,
+  };
+}
+
 function LoadingPanel() {
   return (
     <Card>
@@ -420,6 +456,7 @@ function AdminRoute() {
       saveSettings={saveAdminSettings}
       savePlan={saveAdminPlan}
       saveMission={saveAdminMission}
+      enrollNode={enrollAdminNode}
     />
   );
 }
