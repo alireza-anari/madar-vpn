@@ -31,10 +31,18 @@ def policy(*, revision: int = 4) -> Policy:
 
 
 class FakeAgent:
-    def __init__(self, *, next_policy: Policy | None, environment_valid: bool = True, fresh: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        next_policy: Policy | None,
+        environment_valid: bool = True,
+        fresh: bool = True,
+        apply_result: ApplyResult | None = None,
+    ) -> None:
         self.next_policy = next_policy
         self.environment_valid = environment_valid
         self.fresh = fresh
+        self.apply_result = apply_result
         self.applied: list[Policy] = []
         self.fetches = 0
         self.usage = [
@@ -59,6 +67,8 @@ class FakeAgent:
 
     def apply_policy(self, value: Policy) -> ApplyResult:
         self.applied.append(value)
+        if self.apply_result is not None:
+            return self.apply_result
         return ApplyResult(applied=True, disabled=False, reason="applied", revision=value.revision)
 
     def collect_usage(self) -> list[UsageReport]:
@@ -159,3 +169,32 @@ def test_stale_authorization_is_not_advertised_ready_even_when_runtime_is_health
     assert control.acks == []
     assert control.heartbeats[0]["health"] == {"healthy": True, "ready": False}
     assert control.heartbeats[0]["capacity"]["accepting"] is False
+
+
+def test_failed_policy_application_is_not_acked_or_advertised_ready() -> None:
+    agent = FakeAgent(
+        next_policy=policy(),
+        fresh=True,
+        apply_result=ApplyResult(
+            applied=False,
+            disabled=True,
+            reason="invalid_policy",
+            revision=4,
+        ),
+    )
+    control = FakeControlPlane()
+    service = AgentService(
+        agent=agent,
+        control_plane=control,
+        runtime_health=lambda: True,
+        disable_access=lambda: None,
+        now=lambda: NOW,
+        versions={"agent": "0.1.0", "xray": "26.3.27"},
+        max_clients=128,
+    )
+
+    service.run_cycle()
+
+    assert control.acks == []
+    assert control.heartbeats[0]["health"] == {"healthy": True, "ready": False}
+    assert control.heartbeats[0]["capacity"] == {"accepting": False, "activeClients": 0, "maxClients": 128}
