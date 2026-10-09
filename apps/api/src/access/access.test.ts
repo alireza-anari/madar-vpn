@@ -63,4 +63,32 @@ describe('access profile persistence', () => {
     expect(active).not.toHaveProperty('rawToken');
     expect(active).not.toHaveProperty('token');
   });
+
+  it('rotates the subscription URL without changing the client UUID', async () => {
+    const { store, access } = harness();
+    const credential = await access.getActiveClientCredential('user-1');
+    const first = await access.issueSubscriptionToken('user-1');
+    const second = await access.rotateSubscriptionToken('user-1');
+
+    expect(first.rawToken).not.toBe(second.rawToken);
+    expect(second.version).toBe(2);
+    await expect(store.findActiveSubscriptionTokenByHash(store.subscriptionTokens[0]!.tokenHash)).resolves.toBeNull();
+    await expect(access.getActiveClientCredential('user-1')).resolves.toEqual(credential);
+  });
+
+  it('rotates the client UUID, revokes the old credential, and advances policy revision', async () => {
+    const { store, access } = harness();
+    const original = await access.getActiveClientCredential('user-1');
+
+    const rotation = await access.rotateClientCredential('user-1');
+
+    expect(rotation.credential.uuid).not.toBe(original.uuid);
+    expect(rotation.credential.version).toBe(2);
+    expect(rotation.policyRevision).toBe(2);
+    expect(store.credentials.find((record) => record.id === original.id)?.revokedAt).toBe(NOW.toISOString());
+    expect(store.credentials.filter((record) => record.userId === 'user-1' && record.revokedAt === null)).toEqual([
+      rotation.credential,
+    ]);
+    expect(store.profiles.find((record) => record.userId === 'user-1')?.policyRevision).toBe(2);
+  });
 });
