@@ -56,7 +56,7 @@ describe('admin settings mutation wiring', () => {
     const button = await screen.findByRole('button', { name: 'ذخیره تنظیمات' });
     expect(button).toBeEnabled();
     expect(screen.getByText('اعمال محدودیت سرعت: آماده نیست')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'ثبت ماموریت' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'ثبت نود' })).toBeDisabled();
 
     fireEvent.change(screen.getByLabelText('سرعت رایگان (Kbps)'), { target: { value: '7000' } });
     fireEvent.click(screen.getByRole('checkbox', { name: 'اعلان‌های مدیریتی فعال باشد' }));
