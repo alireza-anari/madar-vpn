@@ -136,6 +136,12 @@ export type AdminMissionInput = {
 
 export type AdminMissionResult = AdminResourcesView['missions'][number];
 
+export type AdminNodeInput = {
+  name: string;
+};
+
+export type AdminNodeResult = AdminResourcesView['nodes'][number];
+
 const faNumber = new Intl.NumberFormat('fa-IR');
 const emptyAdminResources: AdminResourcesView = {
   users: [],
@@ -373,6 +379,7 @@ export function AdminPage({
   saveSettings,
   savePlan,
   saveMission,
+  enrollNode,
 }: {
   overview: AdminOverviewView;
   resources?: AdminResourcesView;
@@ -383,6 +390,7 @@ export function AdminPage({
   saveSettings?: (input: AdminSettingsInput) => Promise<AdminSettingsResult>;
   savePlan?: (planId: string, input: AdminPlanInput) => Promise<AdminPlanResult>;
   saveMission?: (missionId: string, input: AdminMissionInput) => Promise<AdminMissionResult>;
+  enrollNode?: (input: AdminNodeInput) => Promise<AdminNodeResult>;
 }) {
   const defaultUserId = resources.users[0]?.id ?? '';
   const defaultPlan = resources.plans[0];
@@ -399,12 +407,15 @@ export function AdminPage({
   const [planNotice, setPlanNotice] = useState<string | null>(null);
   const [missionPending, setMissionPending] = useState(false);
   const [missionNotice, setMissionNotice] = useState<string | null>(null);
+  const [nodePending, setNodePending] = useState(false);
+  const [nodeNotice, setNodeNotice] = useState<string | null>(null);
   const freeCreditAvailable = mutationsAvailable || adjustFreeCredit !== undefined;
   const premiumAvailable = mutationsAvailable || adjustPremium !== undefined;
   const suspensionAvailable = mutationsAvailable || adjustSuspension !== undefined;
   const settingsAvailable = mutationsAvailable || saveSettings !== undefined;
   const planAvailable = mutationsAvailable || savePlan !== undefined;
   const missionAvailable = mutationsAvailable || saveMission !== undefined;
+  const nodeAvailable = mutationsAvailable || enrollNode !== undefined;
 
   async function submitFreeCredit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -535,6 +546,27 @@ export function AdminPage({
     }
   }
 
+  async function submitNode(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!enrollNode || nodePending) return;
+    const form = new FormData(event.currentTarget);
+    const name = String(form.get('name') ?? '').trim();
+    setNodePending(true);
+    setNodeNotice(null);
+    try {
+      const result = await enrollNode({ name });
+      setNodeNotice(
+        result.status === 'enrolled'
+          ? 'نود ثبت شد و در وضعیت enrolled باقی می‌ماند.'
+          : 'پاسخ وضعیت نود معتبر نیست.',
+      );
+    } catch {
+      setNodeNotice('ثبت نود انجام نشد.');
+    } finally {
+      setNodePending(false);
+    }
+  }
+
   return (
     <div className="surface-stack">
       <Card>
@@ -552,7 +584,7 @@ export function AdminPage({
         <p className="muted-copy">{faNumber.format(overview.counts.readyNodes)} نود آماده</p>
       </Card>
 
-      {!mutationsAvailable && !adjustFreeCredit && !adjustPremium && !adjustSuspension && !saveSettings && !savePlan && !saveMission ? (
+      {!mutationsAvailable && !adjustFreeCredit && !adjustPremium && !adjustSuspension && !saveSettings && !savePlan && !saveMission && !enrollNode ? (
         <p className="inline-notice" role="status">توکن CSRF این session در دسترس نیست؛ عملیات ممتاز فقط خواندنی است.</p>
       ) : !mutationsAvailable ? (
         <p className="inline-notice">توکن CSRF هنگام عملیات متصل دریافت می‌شود؛ سایر فرم‌های ممتاز تا wiring امن فقط خواندنی‌اند.</p>
@@ -719,10 +751,13 @@ export function AdminPage({
               ? <span className="empty-state">هیچ نود ثبت‌شده‌ای وجود ندارد.</span>
               : resources.nodes.map((node) => <ResourceValue key={node.id} primary={node.name} secondary={node.status} />)}
           </ResourceList>
-          <form className="form-stack">
+          <form className="form-stack" aria-label="فرم ثبت نود" onSubmit={submitNode}>
             <label className="field-label" htmlFor="admin-node-name">نام نود</label>
-            <input className="text-input" id="admin-node-name" defaultValue="" />
-            <Button disabled={!mutationsAvailable} type="submit">ثبت نود</Button>
+            <input className="text-input" id="admin-node-name" name="name" defaultValue="" />
+            <Button disabled={!nodeAvailable || nodePending} type="submit">
+              {nodePending ? 'در حال ثبت…' : 'ثبت نود'}
+            </Button>
+            {nodeNotice ? <p className="inline-notice" role="status">{nodeNotice}</p> : null}
           </form>
         </Card>
 
