@@ -3,6 +3,7 @@ import { AppShell } from '../components/AppShell';
 import { Card } from '../components/Card';
 import { PageHeader } from '../components/PageHeader';
 import { PwaSettingsPage } from '../pwa/PwaSettingsPage';
+import { subscribeBrowserPush } from '../pwa/push-subscription';
 import {
   AdminPage,
   DashboardPage,
@@ -89,7 +90,13 @@ function AccountRoute({ mode }: { mode: 'dashboard' | 'premium' | 'missions' | '
   const account = useApiResource<AccountView>('/api/account');
   if (account.status === 'loading') return <LoadingPanel />;
   if (mode === 'settings') {
-    return <PwaSettingsPage pushAvailable={account.status === 'ready' && account.data.providers.push} />;
+    const pushAvailable = account.status === 'ready' && account.data.providers.push;
+    return (
+      <PwaSettingsPage
+        pushAvailable={pushAvailable}
+        subscribe={pushAvailable ? () => subscribeBrowserPush() : undefined}
+      />
+    );
   }
   if (account.status === 'error') return <ErrorPanel />;
   if (account.status !== 'ready') return <UnavailablePanel />;
