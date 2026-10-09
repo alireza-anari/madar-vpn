@@ -427,6 +427,33 @@ export function createSurfaceService(options: {
       };
     },
 
+    async getAccountCatalog() {
+      const [plans, missions] = await Promise.all([
+        options.store.listPlans(),
+        options.store.listMissions(),
+      ]);
+      return {
+        plans: plans
+          .filter((plan) => plan.enabled)
+          .map(({ id, title, durationDays, priceMinor, currency }) => ({
+            id,
+            title,
+            durationDays,
+            priceMinor,
+            currency,
+          })),
+        missions: missions
+          .filter((mission) => mission.status === 'active')
+          .map(({ id, title, description, rewardSeconds, verificationKind }) => ({
+            id,
+            title,
+            description,
+            rewardSeconds,
+            verificationKind,
+          })),
+      };
+    },
+
     async updateSettings(actor: User, input: unknown) {
       const settings = validateSettings(input);
       await options.store.saveSettings(settings);
