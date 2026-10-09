@@ -117,6 +117,16 @@ export type AdminSettingsInput = {
 
 export type AdminSettingsResult = AdminSettingsInput;
 
+export type AdminPlanInput = {
+  title: string;
+  durationDays: number;
+  priceMinor: number;
+  currency: string;
+  enabled: boolean;
+};
+
+export type AdminPlanResult = AdminResourcesView['plans'][number];
+
 const faNumber = new Intl.NumberFormat('fa-IR');
 const emptyAdminResources: AdminResourcesView = {
   users: [],
@@ -352,6 +362,7 @@ export function AdminPage({
   adjustPremium,
   adjustSuspension,
   saveSettings,
+  savePlan,
 }: {
   overview: AdminOverviewView;
   resources?: AdminResourcesView;
@@ -360,8 +371,10 @@ export function AdminPage({
   adjustPremium?: (userId: string, input: AdminPremiumInput) => Promise<AdminPremiumResult>;
   adjustSuspension?: (userId: string, input: AdminSuspensionInput) => Promise<AdminSuspensionResult>;
   saveSettings?: (input: AdminSettingsInput) => Promise<AdminSettingsResult>;
+  savePlan?: (planId: string, input: AdminPlanInput) => Promise<AdminPlanResult>;
 }) {
   const defaultUserId = resources.users[0]?.id ?? '';
+  const defaultPlan = resources.plans[0];
   const [freeCreditPending, setFreeCreditPending] = useState(false);
   const [freeCreditNotice, setFreeCreditNotice] = useState<string | null>(null);
   const [premiumPending, setPremiumPending] = useState(false);
@@ -370,10 +383,13 @@ export function AdminPage({
   const [suspensionNotice, setSuspensionNotice] = useState<string | null>(null);
   const [settingsPending, setSettingsPending] = useState(false);
   const [settingsNotice, setSettingsNotice] = useState<string | null>(null);
+  const [planPending, setPlanPending] = useState(false);
+  const [planNotice, setPlanNotice] = useState<string | null>(null);
   const freeCreditAvailable = mutationsAvailable || adjustFreeCredit !== undefined;
   const premiumAvailable = mutationsAvailable || adjustPremium !== undefined;
   const suspensionAvailable = mutationsAvailable || adjustSuspension !== undefined;
   const settingsAvailable = mutationsAvailable || saveSettings !== undefined;
+  const planAvailable = mutationsAvailable || savePlan !== undefined;
 
   async function submitFreeCredit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -461,6 +477,28 @@ export function AdminPage({
     }
   }
 
+  async function submitPlan(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!savePlan || planPending) return;
+    const form = new FormData(event.currentTarget);
+    const planId = String(form.get('planId') ?? '').trim();
+    const title = String(form.get('title') ?? '').trim();
+    const durationDays = Number(form.get('durationDays'));
+    const priceMinor = Number(form.get('priceMinor'));
+    const currency = String(form.get('currency') ?? '').trim();
+    const enabled = form.get('enabled') === 'on';
+    setPlanPending(true);
+    setPlanNotice(null);
+    try {
+      await savePlan(planId, { title, durationDays, priceMinor, currency, enabled });
+      setPlanNotice('پلن ذخیره شد.');
+    } catch {
+      setPlanNotice('ذخیره پلن انجام نشد.');
+    } finally {
+      setPlanPending(false);
+    }
+  }
+
   return (
     <div className="surface-stack">
       <Card>
@@ -478,7 +516,7 @@ export function AdminPage({
         <p className="muted-copy">{faNumber.format(overview.counts.readyNodes)} نود آماده</p>
       </Card>
 
-      {!mutationsAvailable && !adjustFreeCredit && !adjustPremium && !adjustSuspension && !saveSettings ? (
+      {!mutationsAvailable && !adjustFreeCredit && !adjustPremium && !adjustSuspension && !saveSettings && !savePlan ? (
         <p className="inline-notice" role="status">توکن CSRF این session در دسترس نیست؛ عملیات ممتاز فقط خواندنی است.</p>
       ) : !mutationsAvailable ? (
         <p className="inline-notice">توکن CSRF هنگام عملیات متصل دریافت می‌شود؛ سایر فرم‌های ممتاز تا wiring امن فقط خواندنی‌اند.</p>
@@ -589,10 +627,25 @@ export function AdminPage({
               ? <span className="empty-state">هیچ پلن واقعی ثبت نشده است.</span>
               : resources.plans.map((plan) => <span key={plan.id}>{plan.title}</span>)}
           </ResourceList>
-          <form className="form-stack">
+          <form className="form-stack" aria-label="فرم مدیریت پلن" onSubmit={submitPlan}>
+            <label className="field-label" htmlFor="admin-plan-id">شناسه پلن</label>
+            <input className="text-input" id="admin-plan-id" name="planId" defaultValue={defaultPlan?.id ?? ''} />
             <label className="field-label" htmlFor="admin-plan-title">عنوان پلن</label>
-            <input className="text-input" id="admin-plan-title" defaultValue={resources.plans[0]?.title ?? ''} />
-            <Button disabled={!mutationsAvailable} type="submit">ذخیره پلن</Button>
+            <input className="text-input" id="admin-plan-title" name="title" defaultValue={defaultPlan?.title ?? ''} />
+            <label className="field-label" htmlFor="admin-plan-duration">مدت (روز)</label>
+            <input className="text-input" id="admin-plan-duration" name="durationDays" type="number" min="1" defaultValue={defaultPlan?.durationDays ?? 30} />
+            <label className="field-label" htmlFor="admin-plan-price">قیمت (واحد خرد)</label>
+            <input className="text-input" id="admin-plan-price" name="priceMinor" type="number" min="0" defaultValue={defaultPlan?.priceMinor ?? 0} />
+            <label className="field-label" htmlFor="admin-plan-currency">ارز</label>
+            <input className="text-input" id="admin-plan-currency" name="currency" defaultValue={defaultPlan?.currency ?? 'IRR'} />
+            <label className="check-row">
+              <input type="checkbox" name="enabled" defaultChecked={defaultPlan?.enabled ?? true} />
+              پلن فعال باشد
+            </label>
+            <Button disabled={!planAvailable || planPending} type="submit">
+              {planPending ? 'در حال ذخیره…' : 'ذخیره پلن'}
+            </Button>
+            {planNotice ? <p className="inline-notice" role="status">{planNotice}</p> : null}
           </form>
         </Card>
 
