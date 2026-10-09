@@ -309,6 +309,14 @@ export function createApiApp(
     return c.json(await surfaces.getAccount(await auth.requireUser(c.req.raw)));
   });
 
+  app.get('/api/account/catalog', async (c) => {
+    const auth = authFactory(c.env); const surfaces = surfaceFactory(c.env);
+    if (!auth || !surfaces) return unavailable(c, 'ACCOUNT_UNAVAILABLE');
+    await auth.requireUser(c.req.raw);
+    c.header('Cache-Control', 'no-store');
+    return c.json(await surfaces.getAccountCatalog());
+  });
+
   app.get('/api/account/access', async (c) => {
     const auth = authFactory(c.env); const subscriptions = subscriptionFactory(c.env);
     if (!auth || !subscriptions?.listEligibleNodes) return unavailable(c, 'ACCESS_UNAVAILABLE');
@@ -485,7 +493,7 @@ export function createApiApp(
   app.delete('/api/admin/plans/:id', async (c) => {
     const auth = authFactory(c.env); const surfaces = surfaceFactory(c.env);
     if (!auth || !surfaces) return unavailable(c, 'ADMIN_UNAVAILABLE');
-    const actor = await requireAdminMutation(auth, c.req.raw); await surfaces.deletePlan(actor, c.req.param('id'));
+    const actor = await requireAdminMutation(auth, c.req.raw); await surfaces.deletePlan(resourceId);
     return new Response(null, { status: 204 });
   });
 
