@@ -79,6 +79,8 @@ The Xray unit is staged during install but is not treated as ready merely becaus
 
 The Node Agent cycle performs real control-plane policy fetch/apply/ack, telemetry collection/posting, Xray health checks, authorization freshness checks, and readiness/capacity heartbeat reporting. If authorization becomes stale, environment validation fails, or managed policy is invalid, managed access fails closed rather than remaining enabled on stale state.
 
+Managed Xray configuration also enables `StatsService` with `statsUserOnline` for Phase 7 field observation. The API is bound only to `127.0.0.1:10085`; it is not a public management endpoint. This observation surface is deliberately separate from billing telemetry: the installed Node Agent does not yet convert Xray online-user observations into billable seconds because the exact real-process activity semantics still require field verification.
+
 Systemd hardening includes restrictive umask/home/system protection. Xray configuration and REALITY private-key state are owner-only.
 
 ## Status and non-secret diagnosis
@@ -110,6 +112,20 @@ sudo stat -c '%a %U:%G %n' /etc/madar-node-agent/agent.env
 
 Expected secret-file mode is `600`; the node state directory remains restrictive.
 
+## Local-only Xray activity observation
+
+After a valid managed policy has been applied and Xray is running, the Phase 7 operator may inspect Xray's current online-user observation locally on the VPS:
+
+```bash
+sudo /opt/madar-xray/26.3.27/xray api statsgetallonlineusers --server=127.0.0.1:10085
+```
+
+This command is for controlled field diagnosis only. Its raw response can contain Madar client identifiers derived from VLESS client UUIDs. **Do not paste, upload, screenshot, or persist the raw response as test evidence.** Record only redacted facts such as the number of observed online users and whether the expected state transition occurred before/after connect or revoke.
+
+The local StatsService proves only that Xray exposes an observation primitive. It does **not** prove a connection-duration model, session boundaries, billable seconds, or usage-debit correctness. During the real-VPS test, compare repeated local observations with known client connect/disconnect/revoke events and document the actual semantics before any runtime adapter is permitted to turn those observations into `ObservedActivity` seconds.
+
+Do not expose port `10085` through the VPS firewall or a public bind. The managed configuration is expected to keep it on loopback only.
+
 ## Update
 
 ```bash
@@ -138,6 +154,7 @@ The automated suite is not a substitute for this field test. On a disposable sup
 - Xray accepts an authorized VLESS client credential;
 - revoked credential stops working after policy propagation;
 - real traffic/activity produces documented server-observed telemetry semantics;
+- repeated local-only StatsService observations are correlated with known connect/disconnect/revoke events without retaining raw client identifiers;
 - stale policy expires into fail-closed access;
 - no node credential or REALITY private key appears in control-plane data, logs, screenshots, or evidence.
 
@@ -148,13 +165,13 @@ Record the actual field result only in `docs/test-reports/phase-7-vps.md` after 
 - Enrollment tokens are one-time and short-lived; issue a new token instead of replaying an old one.
 - Node credentials are stored hash-only by the control plane and plaintext only on the node with restrictive permissions.
 - REALITY private keys are generated and retained locally on the VPS only.
-- Never expose the node credential, enrollment token, REALITY private key, session secrets, subscription tokens, or provider secrets in commands, screenshots, CI logs, or documentation.
+- Never expose the node credential, enrollment token, REALITY private key, session secrets, subscription tokens, provider secrets, or raw per-client StatsService output in commands shared outside the VPS, screenshots, CI logs, or documentation.
 - Do not weaken credential/key permissions to bypass environment validation.
 - Do not mark a node ready merely because systemd is active; readiness requires fresh authorization, valid policy, real Xray health, and control-plane acknowledgement state.
 - A stale authorization is a fail-closed condition, not a reason to keep managed access enabled.
 
 ## Verification scope
 
-Automated tests currently cover installer safety, lifecycle commands, credential permissions, explicit runtime configuration, pinned Xray release/checksum handling, local REALITY key generation/redaction, Xray configuration validation/promotion, client application/revocation boundaries, policy freshness/fail-closed behavior, telemetry sequencing, node enrollment/authentication, policy acknowledgements, readiness/capacity reporting, systemd staging, and secret redaction.
+Automated tests currently cover installer safety, lifecycle commands, credential permissions, explicit runtime configuration, pinned Xray release/checksum handling, local REALITY key generation/redaction, Xray configuration validation/promotion, client application/revocation boundaries, policy freshness/fail-closed behavior, telemetry sequencing, node enrollment/authentication, policy acknowledgements, readiness/capacity reporting, systemd staging, loopback-only Xray StatsService configuration, and secret redaction.
 
-Still **unverified in the real integration gate**: disposable VPS install/update/remove behavior, live Xray/VLESS/REALITY traffic, live credential revocation, exact real activity/usage observation semantics, stale-policy shutdown against a real Xray process, and real v2rayNG compatibility. Do not describe any of those as operational until their respective Phase 7/8 acceptance evidence exists.
+Still **unverified in the real integration gate**: disposable VPS install/update/remove behavior, live Xray/VLESS/REALITY traffic, live credential revocation, exact real activity/usage observation semantics, translation of verified observations into billable `ObservedActivity` seconds, stale-policy shutdown against a real Xray process, and real v2rayNG compatibility. Do not describe any of those as operational until their respective Phase 7/8 acceptance evidence exists.
