@@ -31,6 +31,12 @@ def configure_paths(monkeypatch, tmp_path: Path) -> Path:
     return state_root
 
 
+def require_online_observer():
+    observer = getattr(installer_cli, "observe_xray_online_users", None)
+    assert callable(observer), "observe_xray_online_users must be implemented"
+    return observer
+
+
 def test_install_builder_bootstraps_local_xray_and_does_not_require_reality_public_key_env(monkeypatch, tmp_path: Path) -> None:
     configure_paths(monkeypatch, tmp_path)
     configure_install_environment(monkeypatch)
@@ -94,3 +100,63 @@ def test_agent_environment_persists_only_non_secret_xray_runtime_settings(monkey
     assert "PUBLIC_KEY" not in content.upper()
     assert "ENROLLMENT" not in content.upper()
     assert "node-issued-credential" not in content
+
+
+def test_xray_observation_reports_only_managed_online_count(monkeypatch, tmp_path: Path) -> None:
+    configure_paths(monkeypatch, tmp_path)
+    raw_client_one = "user>>>madar:11111111-1111-1111-1111-111111111111>>>online"
+    raw_client_two = "user>>>madar:22222222-2222-2222-2222-222222222222>>>online"
+    calls: list[list[str]] = []
+
+    def fake_run(arguments: list[str]):
+        calls.append(arguments)
+        return SimpleNamespace(
+            returncode=0,
+            stdout='{"users":["' + raw_client_one + '","' + raw_client_two + '","user>>>other@example.test>>>online"]}',
+            stderr="",
+        )
+
+    monkeypatch.setattr(installer_cli, "_run_process", fake_run)
+    observer = require_online_observer()
+
+    assert observer() == 2
+    expected_binary = tmp_path / "opt" / "madar-xray" / "26.3.27" / "xray"
+    assert calls == [[
+        str(expected_binary),
+        "api",
+        "statsgetallonlineusers",
+        "--server=127.0.0.1:10085",
+    ]]
+
+
+def test_xray_observation_failure_never_echoes_raw_xray_output(monkeypatch, tmp_path: Path) -> None:
+    configure_paths(monkeypatch, tmp_path)
+    raw_identifier = "user>>>madar:33333333-3333-3333-3333-333333333333>>>online"
+
+    monkeypatch.setattr(
+        installer_cli,
+        "_run_process",
+        lambda _arguments: SimpleNamespace(
+            returncode=1,
+            stdout=raw_identifier,
+            stderr=f"failure near {raw_identifier}",
+        ),
+    )
+    observer = require_online_observer()
+
+    with pytest.raises(SystemExit) as captured:
+        observer()
+
+    message = str(captured.value)
+    assert message == "local Xray observation unavailable"
+    assert raw_identifier not in message
+
+
+def test_observe_command_prints_aggregate_json_only(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(installer_cli, "observe_xray_online_users", lambda: 1, raising=False)
+
+    assert installer_cli.main(["observe"]) == 0
+
+    captured = capsys.readouterr()
+    assert captured.out == '{"onlineUsers":1}\n'
+    assert captured.err == ""
