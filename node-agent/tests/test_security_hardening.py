@@ -82,6 +82,12 @@ def test_worker_disables_persistent_invocation_logs_for_subscription_bearer_urls
     assert logs.get("invocation_logs") is False, "subscription bearer URLs must not be persisted in invocation logs"
 
 
+def test_worker_production_entrypoint_uses_hyperdrive_runtime() -> None:
+    config = json.loads((ROOT / "apps" / "api" / "wrangler.jsonc").read_text(encoding="utf-8"))
+
+    assert config.get("main") == "src/worker.ts", "production Worker must use the Hyperdrive/PostgreSQL runtime entrypoint"
+
+
 def test_current_repository_contains_no_scanner_findings() -> None:
     scanner = load_security_scan_module()
     findings = scanner.scan_repository(ROOT)
