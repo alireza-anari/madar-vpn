@@ -13,6 +13,7 @@ from .api import HttpTransport, TransientTransportError, UrlLibTransport
 
 
 SERVICE_NAME = "madar-node-agent.service"
+XRAY_SERVICE_NAME = "madar-xray.service"
 PUBLIC_NODE_CONFIG_FIELDS = frozenset(
     {
         "address",
@@ -200,10 +201,23 @@ class NodeInstaller:
         self.system = system or LocalSystem()
         self.output = output
 
+    @property
+    def _xray_service_source(self) -> Path:
+        return self.paths.service_source.parent / XRAY_SERVICE_NAME
+
+    @property
+    def _xray_service_path(self) -> Path:
+        return self.paths.service_path.parent / XRAY_SERVICE_NAME
+
+    @property
+    def _xray_install_root(self) -> Path:
+        return self.paths.install_root.parent / "madar-xray"
+
     def _describe_install(self) -> None:
         self.output(f"Will copy the Madar node agent to {self.paths.install_root}.")
         self.output(f"Will request a node credential and store it at {self.paths.credential_path} with mode 0600.")
         self.output(f"Will install and enable the systemd unit {SERVICE_NAME} only after enrollment succeeds.")
+        self.output(f"Will stage {XRAY_SERVICE_NAME}; it remains stopped until a validated managed configuration exists.")
         self.output("Will not modify SSH or firewall configuration.")
 
     def _write_credential(self, credential: str) -> None:
@@ -229,10 +243,12 @@ class NodeInstaller:
         try:
             self._write_credential(credential)
             self.system.install_service(self.paths.service_source, self.paths.service_path)
+            self.system.install_service(self._xray_service_source, self._xray_service_path)
             self.system.daemon_reload()
             self.system.enable_and_start(SERVICE_NAME)
         except Exception:
             self.system.stop_and_disable(SERVICE_NAME)
+            self.system.stop_and_disable(XRAY_SERVICE_NAME)
             self.system.remove_path(self.paths.credential_path)
             raise
         self.output("Installation complete. The one-time enrollment token was not stored.")
@@ -242,18 +258,24 @@ class NodeInstaller:
 
     def update(self) -> None:
         self.output(f"Will update files under {self.paths.install_root} and restart {SERVICE_NAME}.")
+        self.output(f"Will refresh the staged {XRAY_SERVICE_NAME} unit without starting it before managed config exists.")
         self.output("Will not modify SSH or firewall configuration.")
         self.system.install_files(self.paths.source_root, self.paths.install_root)
         self.system.install_service(self.paths.service_source, self.paths.service_path)
+        self.system.install_service(self._xray_service_source, self._xray_service_path)
         self.system.daemon_reload()
         self.system.restart(SERVICE_NAME)
 
     def remove(self) -> None:
         self.output(f"Will stop {SERVICE_NAME} and remove Madar agent files and node credential from this host.")
+        self.output(f"Will also stop {XRAY_SERVICE_NAME} and remove its staged unit and runtime files.")
         self.output("Will not modify SSH or firewall configuration.")
         self.system.stop_and_disable(SERVICE_NAME)
+        self.system.stop_and_disable(XRAY_SERVICE_NAME)
         self.system.remove_path(self.paths.credential_path)
         self.system.remove_path(self.paths.install_root)
+        self.system.remove_path(self._xray_install_root)
         self.system.remove_path(self.paths.service_path)
+        self.system.remove_path(self._xray_service_path)
         self.system.remove_path(self.paths.state_root)
         self.system.daemon_reload()
