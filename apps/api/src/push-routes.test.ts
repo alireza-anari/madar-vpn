@@ -11,18 +11,22 @@ function mutationHeaders(token: string, csrfToken: string) {
   };
 }
 
+async function userSession() {
+  const sent: string[] = [];
+  let tokenNumber = 0;
+  const auth = createAuthService({
+    store: new MemoryAuthStore(),
+    randomToken: () => `push-route-${++tokenNumber}`,
+    sender: async ({ token }) => { sent.push(token); },
+  });
+  await auth.requestLogin('user@example.com');
+  const session = await auth.consumeLoginToken(sent[0]!);
+  return { auth, session };
+}
+
 describe('push subscription HTTP boundary', () => {
   it('rejects anonymous storage and binds subscription CRUD to the authenticated user', async () => {
-    const sent: string[] = [];
-    let tokenNumber = 0;
-    const auth = createAuthService({
-      store: new MemoryAuthStore(),
-      randomToken: () => `push-route-${++tokenNumber}`,
-      sender: async ({ token }) => { sent.push(token); },
-    });
-    await auth.requestLogin('user@example.com');
-    const session = await auth.consumeLoginToken(sent[0]!);
-
+    const { auth, session } = await userSession();
     const store = new MemoryPushStore();
     const push = createPushService({
       store,
@@ -76,5 +80,49 @@ describe('push subscription HTTP boundary', () => {
     });
     expect(removed.status).toBe(204);
     expect(store.subscriptions).toEqual([]);
+  });
+
+  it('returns the configured public VAPID key only to an authenticated user', async () => {
+    const { auth, session } = await userSession();
+    const push = createPushService({
+      store: new MemoryPushStore(),
+      publicKey: 'public-vapid-key',
+    });
+    const createWithPush = createApiApp as unknown as (...args: unknown[]) => ReturnType<typeof createApiApp>;
+    const app = createWithPush(
+      () => auth,
+      () => null,
+      () => null,
+      () => null,
+      () => null,
+      () => null,
+      () => push,
+    );
+
+    const anonymous = await app.request('/api/account/push-config');
+    expect(anonymous.status).toBe(401);
+
+    const configured = await app.request('/api/account/push-config', {
+      headers: { cookie: `__Host-madar_session=${session.token}` },
+    });
+    expect(configured.status).toBe(200);
+    expect(configured.headers.get('cache-control')).toBe('no-store');
+    await expect(configured.json()).resolves.toEqual({ publicKey: 'public-vapid-key' });
+
+    const unavailablePush = createPushService({ store: new MemoryPushStore() });
+    const unavailableApp = createWithPush(
+      () => auth,
+      () => null,
+      () => null,
+      () => null,
+      () => null,
+      () => null,
+      () => unavailablePush,
+    );
+    const unavailable = await unavailableApp.request('/api/account/push-config', {
+      headers: { cookie: `__Host-madar_session=${session.token}` },
+    });
+    expect(unavailable.status).toBe(503);
+    await expect(unavailable.json()).resolves.toEqual({ error: 'PUSH_UNAVAILABLE' });
   });
 });
