@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
 
@@ -54,13 +54,18 @@ describe('admin free-credit mutation wiring', () => {
 
     render(<App />);
 
-    const button = await screen.findByRole('button', { name: 'اعمال اعتبار رایگان' });
+    const form = await screen.findByRole('form', { name: 'فرم اصلاح اعتبار رایگان' });
+    const freeCredit = within(form);
+    const button = freeCredit.getByRole('button', { name: 'اعمال اعتبار رایگان' });
     expect(button).toBeEnabled();
-    fireEvent.change(screen.getByLabelText('دلیل'), { target: { value: 'جبران قطعی' } });
-    fireEvent.change(screen.getByLabelText('کلید idempotency'), { target: { value: 'support-1' } });
+    expect(screen.getByRole('button', { name: 'ثبت پرمیوم' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'ذخیره پلن' })).toBeDisabled();
+
+    fireEvent.change(freeCredit.getByLabelText('دلیل'), { target: { value: 'جبران قطعی' } });
+    fireEvent.change(freeCredit.getByLabelText('کلید idempotency'), { target: { value: 'support-1' } });
     fireEvent.click(button);
 
-    expect(await screen.findByRole('status')).toHaveTextContent('اعتبار رایگان اعمال شد.');
+    expect(await freeCredit.findByRole('status')).toHaveTextContent('اعتبار رایگان اعمال شد.');
     await waitFor(() => {
       expect(requests.map(({ url }) => url)).toContain('/api/auth/csrf');
       expect(requests.map(({ url }) => url)).toContain('/api/admin/users/user-1/free-credit');
