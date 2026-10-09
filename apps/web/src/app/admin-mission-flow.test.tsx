@@ -70,7 +70,7 @@ describe('admin mission mutation wiring', () => {
 
     const button = await screen.findByRole('button', { name: 'ثبت ماموریت' });
     expect(button).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'ثبت نود' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'ذخیره پیش‌نویس' })).toBeDisabled();
 
     const form = screen.getByRole('form', { name: 'فرم مدیریت ماموریت' });
     const mission = within(form);
