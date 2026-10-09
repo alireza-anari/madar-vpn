@@ -26,6 +26,8 @@ import {
   type AdminFreeCreditResult,
   type AdminPremiumInput,
   type AdminPremiumResult,
+  type AdminSettingsInput,
+  type AdminSettingsResult,
   type AdminSuspensionInput,
   type AdminSuspensionResult,
   type AdminOverviewView,
@@ -213,6 +215,34 @@ async function adjustAdminSuspension(
   return { suspended: payload.suspended };
 }
 
+async function saveAdminSettings(input: AdminSettingsInput): Promise<AdminSettingsResult> {
+  const csrfToken = await getCsrfToken();
+  const response = await fetch('/api/admin/settings', {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'content-type': 'application/json',
+      'x-csrf-token': csrfToken,
+    },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const payload = (await response.json()) as {
+    freeSpeedKbps?: unknown;
+    notificationsEnabled?: unknown;
+  };
+  if (
+    typeof payload.freeSpeedKbps !== 'number' ||
+    typeof payload.notificationsEnabled !== 'boolean'
+  ) {
+    throw new Error('Malformed settings response.');
+  }
+  return {
+    freeSpeedKbps: payload.freeSpeedKbps,
+    notificationsEnabled: payload.notificationsEnabled,
+  };
+}
+
 function LoadingPanel() {
   return (
     <Card>
@@ -328,6 +358,7 @@ function AdminRoute() {
       adjustFreeCredit={adjustAdminFreeCredit}
       adjustPremium={adjustAdminPremium}
       adjustSuspension={adjustAdminSuspension}
+      saveSettings={saveAdminSettings}
     />
   );
 }
