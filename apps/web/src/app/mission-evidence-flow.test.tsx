@@ -35,6 +35,7 @@ describe('mission evidence flow', () => {
       if (url === '/api/health') return Response.json({ status: 'ok' });
       if (url === '/api/account') return Response.json(account);
       if (url === '/api/account/catalog') return Response.json(catalog);
+      if (url === '/api/account/missions/submissions') return Response.json([]);
       if (url === '/api/auth/csrf') return Response.json({ csrfToken: 'mission-csrf' });
       if (url === '/api/account/missions/profile-proof/submissions') {
         expect(init).toMatchObject({
