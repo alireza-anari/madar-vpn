@@ -33,6 +33,7 @@ function stubCatalogApi() {
     if (url === '/api/health') return Response.json({ status: 'ok' });
     if (url === '/api/account') return Response.json(account);
     if (url === '/api/account/catalog') return Response.json(catalog);
+    if (url === '/api/account/missions/submissions') return Response.json([]);
     return new Response(null, { status: 404 });
   }));
   return requested;
@@ -65,5 +66,6 @@ describe('user catalog wiring', () => {
     expect(screen.getByText('پاداش: ۱۵ دقیقه')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'شروع ماموریت' })).toBeDisabled();
     expect(requested).toContain('/api/account/catalog');
+    expect(requested).toContain('/api/account/missions/submissions');
   });
 });
