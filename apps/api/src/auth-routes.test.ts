@@ -67,6 +67,60 @@ describe('auth HTTP boundary', () => {
     });
   });
 
+  it('issues a fresh CSRF token for an authenticated session after reload', async () => {
+    const sent: string[] = [];
+    let number = 0;
+    const auth = createAuthService({
+      store: new MemoryAuthStore(),
+      randomToken: () => `csrf-secret-${++number}`,
+      sender: async ({ token }) => {
+        sent.push(token);
+      },
+    });
+    const app = createApiApp(() => auth);
+
+    await app.request('/api/auth/request', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'user@example.com' }),
+    });
+    const consume = await app.request('/api/auth/consume', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: sent[0] }),
+    });
+    const original = (await consume.json()) as { csrfToken: string };
+    const sessionCookie = cookiePair(consume.headers.get('set-cookie') ?? '');
+
+    const bootstrap = await app.request('/api/auth/csrf', {
+      headers: { cookie: sessionCookie },
+    });
+    expect(bootstrap.status).toBe(200);
+    expect(bootstrap.headers.get('cache-control')).toBe('no-store');
+    await expect(bootstrap.json()).resolves.toEqual({ csrfToken: 'csrf-secret-4' });
+
+    const stale = await app.request('/api/auth/logout', {
+      method: 'POST',
+      headers: {
+        cookie: sessionCookie,
+        origin: 'http://localhost',
+        'x-csrf-token': original.csrfToken,
+      },
+    });
+    expect(stale.status).toBe(403);
+    await expect(stale.json()).resolves.toEqual({ error: 'CSRF_INVALID' });
+
+    const current = await app.request('/api/auth/logout', {
+      method: 'POST',
+      headers: {
+        cookie: sessionCookie,
+        origin: 'http://localhost',
+        'x-csrf-token': 'csrf-secret-4',
+      },
+    });
+    expect(current.status).toBe(204);
+  });
+
   it('revokes the current server-side session on logout and rejects replay of the old cookie', async () => {
     const sent: string[] = [];
     let number = 0;
