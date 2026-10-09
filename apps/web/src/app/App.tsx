@@ -6,6 +6,11 @@ import { PwaSettingsPage } from '../pwa/PwaSettingsPage';
 import { subscribeBrowserPush } from '../pwa/push-subscription';
 import { AccessPage, type AccessReadiness, type IssuedAccess } from './access-surface';
 import {
+  type AccountCatalogView,
+  MissionsCatalogPage,
+  PremiumCatalogPage,
+} from './account-catalog-surface';
+import {
   InteractiveLoginPage,
   MagicLinkPage,
   type LoginRequestResult,
@@ -14,8 +19,6 @@ import {
 import {
   AdminPage,
   DashboardPage,
-  MissionsPage,
-  PremiumPage,
   type AccountView,
   type AdminOverviewView,
   type AdminResourcesView,
@@ -168,6 +171,9 @@ function AccessRoute() {
 
 function AccountRoute({ mode }: { mode: 'dashboard' | 'premium' | 'missions' | 'settings' }) {
   const account = useApiResource<AccountView>('/api/account');
+  const needsCatalog = mode === 'premium' || mode === 'missions';
+  const catalog = useApiResource<AccountCatalogView>(needsCatalog ? '/api/account/catalog' : null);
+
   if (account.status === 'loading') return <LoadingPanel />;
   if (mode === 'settings') {
     const pushAvailable = account.status === 'ready' && account.data.providers.push;
@@ -177,8 +183,15 @@ function AccountRoute({ mode }: { mode: 'dashboard' | 'premium' | 'missions' | '
   if (account.status === 'error') return <ErrorPanel />;
   if (account.status !== 'ready') return <UnavailablePanel />;
   if (mode === 'dashboard') return <DashboardPage account={account.data} />;
-  if (mode === 'premium') return <PremiumPage paymentAvailable={account.data.providers.payments} plans={[]} />;
-  return <MissionsPage adsAvailable={account.data.providers.ads} missions={[]} />;
+
+  if (catalog.status === 'loading') return <LoadingPanel />;
+  if (catalog.status === 'error') return <ErrorPanel />;
+  if (catalog.status !== 'ready') return <UnavailablePanel />;
+
+  if (mode === 'premium') {
+    return <PremiumCatalogPage paymentAvailable={account.data.providers.payments} plans={catalog.data.plans} />;
+  }
+  return <MissionsCatalogPage adsAvailable={account.data.providers.ads} missions={catalog.data.missions} />;
 }
 
 function AdminRoute() {
