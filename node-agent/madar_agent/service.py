@@ -1,17 +1,22 @@
 from __future__ import annotations
 
 import signal
+import subprocess
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from threading import Event
 from typing import Callable
 
+from .agent import NodeAgent
 from .api import ControlPlaneClient, PermanentApiError
-from .config import load_config
+from .config import load_config, load_runtime_config
 from .retry import RetryExhausted
+from .xray import PinnedXrayAdapter, RealityServerConfig
 
 
 STOP = Event()
+AGENT_VERSION = "0.1.0"
+XRAY_SERVICE_NAME = "madar-xray.service"
 
 
 class AgentService:
@@ -84,6 +89,68 @@ class AgentService:
                 "maxClients": self._max_clients,
             },
         )
+
+
+def _run_process(arguments: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        arguments,
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+
+def _restart_xray() -> None:
+    result = _run_process(["systemctl", "restart", XRAY_SERVICE_NAME])
+    if result.returncode != 0:
+        raise RuntimeError("managed Xray restart failed")
+
+
+def _xray_is_active() -> bool:
+    return _run_process(["systemctl", "is-active", "--quiet", XRAY_SERVICE_NAME]).returncode == 0
+
+
+def _runtime_download_forbidden(_url: str) -> bytes:
+    raise RuntimeError("Xray runtime download is installer-only")
+
+
+def build_agent_service() -> AgentService:
+    config = load_config()
+    runtime = load_runtime_config()
+    client = ControlPlaneClient(config)
+    server = RealityServerConfig(
+        port=runtime.port,
+        target=runtime.reality_target,
+        server_names=(runtime.server_name,),
+        short_ids=(runtime.reality_short_id,),
+    )
+    xray = PinnedXrayAdapter(
+        install_root=runtime.binary.parents[1],
+        state_root=config.credential_path.parent,
+        download=_runtime_download_forbidden,
+        run=_run_process,
+        binary=runtime.binary,
+        server=server,
+        reload=_restart_xray,
+        is_active=_xray_is_active,
+    )
+    now = lambda: datetime.now(UTC)
+    agent = NodeAgent(
+        config,
+        api=client,
+        xray=xray,
+        now=now,
+    )
+    return AgentService(
+        agent=agent,
+        control_plane=client,
+        runtime_health=xray.health,
+        disable_access=xray.disable_managed_access,
+        now=now,
+        versions={"agent": AGENT_VERSION, "xray": runtime.version},
+        max_clients=runtime.max_clients,
+    )
 
 
 def _stop(_signum, _frame) -> None:
