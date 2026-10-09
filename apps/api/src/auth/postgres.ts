@@ -191,6 +191,15 @@ export class PostgresAuthStore implements AuthStore {
     return mapSession(result.rows[0]);
   }
 
+  async replaceSessionCsrfHash(tokenHash: string, csrfTokenHash: string) {
+    await this.db.query(
+      `UPDATE sessions
+       SET csrf_token_hash = $2
+       WHERE token_hash = $1`,
+      [tokenHash, csrfTokenHash],
+    );
+  }
+
   async revokeSessionByTokenHash(tokenHash: string) {
     await this.db.query('DELETE FROM sessions WHERE token_hash = $1', [tokenHash]);
   }
