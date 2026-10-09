@@ -20,8 +20,8 @@ const account: AccountView = {
 
 const overview: AdminOverviewView = {
   counts: { users: 7, readyNodes: 0, plans: 0, missions: 0 },
-  readiness: { nodes: false, email: false, ads: false, payments: false, push: false },
-  settings: { freeSpeedKbps: 256, notificationsEnabled: false },
+  readiness: { nodes: false, email: false, ads: false, payments: false, push: false, speedEnforcement: false },
+  settings: { freeSpeedKbps: 5000, notificationsEnabled: false },
 };
 
 describe('approved account surfaces', () => {
@@ -67,9 +67,10 @@ describe('approved account surfaces', () => {
 
     expect(screen.getByText('۷')).toBeInTheDocument();
     expect(screen.getByText(/۰ نود آماده/)).toBeInTheDocument();
-    expect(screen.getByLabelText(/سرعت رایگان/)).toHaveValue(256);
+    expect(screen.getByLabelText(/سرعت رایگان/)).toHaveValue(5000);
     expect(screen.getByRole('button', { name: /ذخیره تنظیمات/ })).toBeInTheDocument();
     expect(screen.getByText(/ایمیل: آماده نیست/)).toBeInTheDocument();
     expect(screen.getByText(/پرداخت: آماده نیست/)).toBeInTheDocument();
+    expect(screen.getByText(/اعمال محدودیت سرعت: آماده نیست/)).toBeInTheDocument();
   });
 });
