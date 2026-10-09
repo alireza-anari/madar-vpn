@@ -47,9 +47,14 @@ describe('VPN access flow', () => {
     expect(linkField).toHaveValue(subscriptionUrl);
     expect(linkField).toHaveAttribute('readonly');
 
+    const qr = screen.getByRole('img', { name: 'QR لینک اشتراک' });
+    expect(qr).toHaveAttribute('src', expect.stringMatching(/^data:image\/svg\+xml,/));
+    expect(qr.getAttribute('src')).not.toContain(subscriptionUrl);
+
     fireEvent.click(screen.getByRole('button', { name: 'کپی لینک' }));
     await waitFor(() => expect(copy).toHaveBeenCalledWith(subscriptionUrl));
     expect(requested.map(({ url }) => url)).toContain('/api/account/access/subscription-url');
+    expect(requested.every(({ url }) => url.startsWith('/api/'))).toBe(true);
   });
 
   it('keeps issuance disabled and explains unavailable access when no eligible node exists', async () => {
