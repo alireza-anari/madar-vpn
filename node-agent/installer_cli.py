@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import platform
 import subprocess
@@ -18,6 +19,7 @@ XRAY_INSTALL_ROOT = Path("/opt/madar-xray")
 STATE_ROOT = Path("/etc/madar-node-agent")
 CREDENTIAL_PATH = STATE_ROOT / "node.credential"
 SERVICE_PATH = Path("/etc/systemd/system/madar-node-agent.service")
+XRAY_OBSERVATION_SERVER = "127.0.0.1:10085"
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +115,35 @@ def _run_process(arguments: list[str]) -> subprocess.CompletedProcess[str]:
     )
 
 
+def observe_xray_online_users() -> int:
+    binary = XRAY_INSTALL_ROOT / XRAY_STABLE_VERSION / "xray"
+    result = _run_process(
+        [
+            str(binary),
+            "api",
+            "statsgetallonlineusers",
+            f"--server={XRAY_OBSERVATION_SERVER}",
+        ]
+    )
+    if result.returncode != 0:
+        raise SystemExit("local Xray observation unavailable")
+
+    try:
+        payload = json.loads(result.stdout)
+        if not isinstance(payload, dict):
+            raise ValueError
+        users = payload.get("users", [])
+        if not isinstance(users, list) or not all(isinstance(user, str) for user in users):
+            raise ValueError
+    except (json.JSONDecodeError, TypeError, ValueError):
+        raise SystemExit("local Xray observation unavailable") from None
+
+    return sum(
+        user.startswith("user>>>madar:") and user.endswith(">>>online")
+        for user in users
+    )
+
+
 def bootstrap_xray() -> XrayBootstrapResult:
     runtime = stable_runtime_config(_xray_architecture())
     adapter = PinnedXrayAdapter(
@@ -188,6 +219,9 @@ def main(argv: list[str] | None = None) -> int:
     if command == "install":
         build_install_installer().install(read_enrollment_token())
         return 0
+    if command == "observe":
+        print(json.dumps({"onlineUsers": observe_xray_online_users()}, separators=(",", ":")))
+        return 0
 
     installer = build_lifecycle_installer()
     if command == "status":
@@ -199,7 +233,7 @@ def main(argv: list[str] | None = None) -> int:
     if command == "remove":
         installer.remove()
         return 0
-    raise SystemExit("usage: installer_cli.py {install|status|update|remove}")
+    raise SystemExit("usage: installer_cli.py {install|status|observe|update|remove}")
 
 
 if __name__ == "__main__":
