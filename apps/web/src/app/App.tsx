@@ -22,6 +22,8 @@ import {
   AdminPage,
   DashboardPage,
   type AccountView,
+  type AdminFreeCreditInput,
+  type AdminFreeCreditResult,
   type AdminOverviewView,
   type AdminResourcesView,
 } from './surfaces';
@@ -141,6 +143,28 @@ async function submitMissionEvidence(missionId: string, evidence: string): Promi
   return { id: payload.id, status: 'pending' };
 }
 
+async function adjustAdminFreeCredit(
+  userId: string,
+  input: AdminFreeCreditInput,
+): Promise<AdminFreeCreditResult> {
+  const csrfToken = await getCsrfToken();
+  const response = await fetch(`/api/admin/users/${encodeURIComponent(userId)}/free-credit`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'content-type': 'application/json',
+      'x-csrf-token': csrfToken,
+    },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const payload = (await response.json()) as { applied?: unknown; seconds?: unknown };
+  if (typeof payload.applied !== 'boolean' || typeof payload.seconds !== 'number') {
+    throw new Error('Malformed free-credit adjustment response.');
+  }
+  return { applied: payload.applied, seconds: payload.seconds };
+}
+
 function LoadingPanel() {
   return (
     <Card>
@@ -249,7 +273,13 @@ function AdminRoute() {
   if (overview.status === 'loading' || resources.status === 'loading') return <LoadingPanel />;
   if (overview.status === 'error' || resources.status === 'error') return <ErrorPanel admin />;
   if (overview.status !== 'ready' || resources.status !== 'ready') return <UnavailablePanel admin />;
-  return <AdminPage overview={overview.data} resources={resources.data} />;
+  return (
+    <AdminPage
+      overview={overview.data}
+      resources={resources.data}
+      adjustFreeCredit={adjustAdminFreeCredit}
+    />
+  );
 }
 
 export function App() {
