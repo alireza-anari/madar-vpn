@@ -114,15 +114,23 @@ Expected secret-file mode is `600`; the node state directory remains restrictive
 
 ## Local-only Xray activity observation
 
-After a valid managed policy has been applied and Xray is running, the Phase 7 operator may inspect Xray's current online-user observation locally on the VPS:
+After a valid managed policy has been applied and Xray is running, use the installer wrapper for Phase 7 observation:
 
 ```bash
-sudo /opt/madar-xray/26.3.27/xray api statsgetallonlineusers --server=127.0.0.1:10085
+sudo ./install.sh observe
 ```
 
-This command is for controlled field diagnosis only. Its raw response can contain Madar client identifiers derived from VLESS client UUIDs. **Do not paste, upload, screenshot, or persist the raw response as test evidence.** Record only redacted facts such as the number of observed online users and whether the expected state transition occurred before/after connect or revoke.
+The command invokes the pinned local Xray CLI against `127.0.0.1:10085`, filters observations to Madar-managed online-user entries, and emits only an aggregate JSON count such as:
 
-The local StatsService proves only that Xray exposes an observation primitive. It does **not** prove a connection-duration model, session boundaries, billable seconds, or usage-debit correctness. During the real-VPS test, compare repeated local observations with known client connect/disconnect/revoke events and document the actual semantics before any runtime adapter is permitted to turn those observations into `ObservedActivity` seconds.
+```json
+{"onlineUsers":1}
+```
+
+The wrapper intentionally does not print Xray's raw `statsgetallonlineusers` response because that response can contain client identifiers derived from VLESS UUIDs. On command failure or malformed Xray output, it returns only the generic error `local Xray observation unavailable`; captured Xray stdout/stderr is not echoed.
+
+For the real-VPS field test, take aggregate observations before connection, while exactly one disposable test client is known to be connected, after disconnect, and after revoke/policy propagation. Record only the aggregate count and expected state transition. Do not run or preserve the raw Xray StatsService command as test evidence, and do not copy per-client identifiers into screenshots, chat, tickets, logs, or reports.
+
+The aggregate observation command proves only that Xray exposes a server-observed online-state primitive. It does **not** prove a connection-duration model, session boundaries, billable seconds, or usage-debit correctness. The real-VPS test must establish the actual transition semantics before any runtime adapter is permitted to translate observations into `ObservedActivity` seconds.
 
 Do not expose port `10085` through the VPS firewall or a public bind. The managed configuration is expected to keep it on loopback only.
 
@@ -154,7 +162,7 @@ The automated suite is not a substitute for this field test. On a disposable sup
 - Xray accepts an authorized VLESS client credential;
 - revoked credential stops working after policy propagation;
 - real traffic/activity produces documented server-observed telemetry semantics;
-- repeated local-only StatsService observations are correlated with known connect/disconnect/revoke events without retaining raw client identifiers;
+- repeated `sudo ./install.sh observe` aggregate observations are correlated with known connect/disconnect/revoke events without retaining raw client identifiers;
 - stale policy expires into fail-closed access;
 - no node credential or REALITY private key appears in control-plane data, logs, screenshots, or evidence.
 
@@ -172,6 +180,6 @@ Record the actual field result only in `docs/test-reports/phase-7-vps.md` after 
 
 ## Verification scope
 
-Automated tests currently cover installer safety, lifecycle commands, credential permissions, explicit runtime configuration, pinned Xray release/checksum handling, local REALITY key generation/redaction, Xray configuration validation/promotion, client application/revocation boundaries, policy freshness/fail-closed behavior, telemetry sequencing, node enrollment/authentication, policy acknowledgements, readiness/capacity reporting, systemd staging, loopback-only Xray StatsService configuration, and secret redaction.
+Automated tests currently cover installer safety, lifecycle commands, credential permissions, explicit runtime configuration, pinned Xray release/checksum handling, local REALITY key generation/redaction, Xray configuration validation/promotion, client application/revocation boundaries, policy freshness/fail-closed behavior, telemetry sequencing, node enrollment/authentication, policy acknowledgements, readiness/capacity reporting, systemd staging, loopback-only Xray StatsService configuration, the aggregate-only observation wrapper, and secret/redaction behavior.
 
 Still **unverified in the real integration gate**: disposable VPS install/update/remove behavior, live Xray/VLESS/REALITY traffic, live credential revocation, exact real activity/usage observation semantics, translation of verified observations into billable `ObservedActivity` seconds, stale-policy shutdown against a real Xray process, and real v2rayNG compatibility. Do not describe any of those as operational until their respective Phase 7/8 acceptance evidence exists.
