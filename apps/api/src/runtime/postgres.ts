@@ -57,6 +57,7 @@ export async function createPostgresRequestRuntime(
   const creditStore = new PostgresCreditStore(database);
   const credits = createCreditService({ store: creditStore });
   const accessStore = new PostgresAccessStore(database);
+  const access = createAccessService({ store: accessStore });
   const vapid = configuredVapid(env);
 
   const auth = createAuthService({
@@ -79,6 +80,7 @@ export async function createPostgresRequestRuntime(
 
   return {
     auth,
+    access,
     surfaces: createSurfaceService({
       store: surfaceStore,
       credits,
@@ -92,7 +94,7 @@ export async function createPostgresRequestRuntime(
     rewardedAds: null,
     subscriptions: createSubscriptionService({
       accessStore,
-      access: createAccessService({ store: accessStore }),
+      access,
       nodes: new PostgresSubscriptionNodeStore(database),
     }),
     payments: createPaymentService({ store: new PostgresPaymentStore(database) }),
