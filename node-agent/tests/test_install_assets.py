@@ -13,7 +13,7 @@ def test_shell_entrypoint_supports_lifecycle_and_reads_token_without_echo() -> N
     script = (ROOT / "install.sh").read_text(encoding="utf-8")
     lowered = script.lower()
 
-    for command in ("install", "status", "update", "remove"):
+    for command in ("install", "status", "observe", "update", "remove"):
         assert command in script
     assert "read -r -s" in script
     assert "MADAR_ENROLLMENT_TOKEN" not in script
