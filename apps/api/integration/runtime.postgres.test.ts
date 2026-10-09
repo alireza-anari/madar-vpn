@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createDefaultApiApp } from '../src/index';
+import { createDefaultApiApp } from '../src/worker';
 import type { PgClientFactory, PgQueryClient } from '../src/postgres/client';
 
 class FakePgClient implements PgQueryClient {
