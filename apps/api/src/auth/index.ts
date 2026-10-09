@@ -204,6 +204,10 @@ export function createAuthService(options: AuthOptions) {
   }
 
   return {
+    getReadiness() {
+      return { email: Boolean(options.sender) };
+    },
+
     async requestLogin(emailInput: string): Promise<{ status: 'sent' | 'unavailable' }> {
       if (!options.sender) return { status: 'unavailable' };
       const email = normalizeEmail(emailInput); validateEmail(email);
