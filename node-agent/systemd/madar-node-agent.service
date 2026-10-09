@@ -1,7 +1,7 @@
 [Unit]
 Description=Madar Node Agent
-After=network-online.target
-Wants=network-online.target
+After=network-online.target madar-xray.service
+Wants=network-online.target madar-xray.service
 
 [Service]
 Type=simple

@@ -2,6 +2,7 @@
 Description=Madar Xray Runtime
 After=network-online.target
 Wants=network-online.target
+ConditionPathExists=/etc/madar-node-agent/xray-config.json
 
 [Service]
 Type=simple
