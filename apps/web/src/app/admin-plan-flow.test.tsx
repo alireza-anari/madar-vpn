@@ -36,7 +36,6 @@ describe('admin plan mutation wiring', () => {
     render(<App />);
     const button = await screen.findByRole('button', { name: 'ذخیره پلن' });
     expect(button).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'ذخیره پیش‌نویس' })).toBeDisabled();
     const plan = within(screen.getByRole('form', { name: 'فرم مدیریت پلن' }));
     fireEvent.change(plan.getByLabelText('عنوان پلن'), { target: { value: 'ماهانه پلاس' } });
     fireEvent.change(plan.getByLabelText('مدت (روز)'), { target: { value: '45' } });

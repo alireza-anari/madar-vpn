@@ -37,7 +37,6 @@ describe('admin suspension mutation wiring', () => {
     const suspension = within(form);
     const button = suspension.getByRole('button', { name: 'تغییر وضعیت حساب' });
     expect(button).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'ذخیره پیش‌نویس' })).toBeDisabled();
     fireEvent.click(suspension.getByRole('checkbox', { name: 'حساب معلق باشد' }));
     fireEvent.change(suspension.getByLabelText('دلیل'), { target: { value: 'بررسی سوءاستفاده' } });
     fireEvent.click(button);

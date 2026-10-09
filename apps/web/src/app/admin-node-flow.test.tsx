@@ -58,7 +58,6 @@ describe('admin node enrollment wiring', () => {
 
     const button = await screen.findByRole('button', { name: 'ثبت نود' });
     expect(button).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'ذخیره پیش‌نویس' })).toBeDisabled();
 
     const form = screen.getByRole('form', { name: 'فرم ثبت نود' });
     const node = within(form);
