@@ -161,21 +161,16 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
 
-    config = load_config()
-    client = ControlPlaneClient(config)
+    service = build_agent_service()
 
     while not STOP.is_set():
         try:
-            client.heartbeat(
-                health={"healthy": True, "ready": False},
-                versions={"agent": "0.1.0", "xray": "unavailable"},
-                capacity={"accepting": False, "activeClients": 0, "maxClients": 1},
-            )
+            service.run_cycle()
         except PermanentApiError as error:
-            print(f"node-agent heartbeat rejected: HTTP {error.status}", file=sys.stderr)
+            print(f"node-agent cycle rejected: HTTP {error.status}", file=sys.stderr)
             return 2
         except RetryExhausted:
-            print("node-agent heartbeat temporarily unavailable", file=sys.stderr)
+            print("node-agent cycle temporarily unavailable", file=sys.stderr)
 
         STOP.wait(30.0)
 
