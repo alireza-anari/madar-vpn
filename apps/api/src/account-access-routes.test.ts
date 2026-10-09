@@ -28,11 +28,12 @@ describe('authenticated account access HTTP boundary', () => {
   it('reports eligibility from the subscription filter and issues a no-store bearer URL', async () => {
     const { auth, session } = await userSession();
     const accessStore = new MemoryAccessStore();
+    const now = new Date();
     let uuidNumber = 0;
     let subscriptionNumber = 0;
     const access = createAccessService({
       store: accessStore,
-      now: () => new Date('2026-10-09T09:00:00.000Z'),
+      now: () => now,
       randomUuid: () => `access-id-${++uuidNumber}`,
       randomToken: () => `subscription-secret-${++subscriptionNumber}`,
     });
@@ -41,7 +42,7 @@ describe('authenticated account access HTTP boundary', () => {
       id: 'node-1',
       name: 'تهران ۱',
       status: 'ready',
-      lastSeenAt: '2026-10-09T08:59:30.000Z',
+      lastSeenAt: new Date(now.getTime() - 30_000).toISOString(),
       ackedRevisionByUser: { [session.userId]: 1 },
       publicConfig: {
         address: '203.0.113.10',
@@ -95,11 +96,12 @@ describe('authenticated account access HTTP boundary', () => {
   it('requires CSRF and atomically invalidates the previous subscription URL on re-issue', async () => {
     const { auth, session } = await userSession();
     const accessStore = new MemoryAccessStore();
+    const now = new Date();
     let uuidNumber = 0;
     let subscriptionNumber = 0;
     const access = createAccessService({
       store: accessStore,
-      now: () => new Date('2026-10-09T09:00:00.000Z'),
+      now: () => now,
       randomUuid: () => `access-id-${++uuidNumber}`,
       randomToken: () => `subscription-secret-${++subscriptionNumber}`,
     });
@@ -108,7 +110,7 @@ describe('authenticated account access HTTP boundary', () => {
       id: 'node-1',
       name: 'تهران ۱',
       status: 'ready',
-      lastSeenAt: '2026-10-09T08:59:30.000Z',
+      lastSeenAt: new Date(now.getTime() - 30_000).toISOString(),
       ackedRevisionByUser: { [session.userId]: 1 },
       publicConfig: {
         address: '203.0.113.10',
@@ -143,12 +145,14 @@ describe('authenticated account access HTTP boundary', () => {
       method: 'POST',
       headers: mutationHeaders(session.token, session.csrfToken),
     });
+    expect(first.status).toBe(201);
     const firstUrl = (await first.json() as { subscriptionUrl: string }).subscriptionUrl;
 
     const second = await app.request('/api/account/access/subscription-url', {
       method: 'POST',
       headers: mutationHeaders(session.token, session.csrfToken),
     });
+    expect(second.status).toBe(201);
     const secondUrl = (await second.json() as { subscriptionUrl: string }).subscriptionUrl;
 
     expect(firstUrl).not.toBe(secondUrl);
