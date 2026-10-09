@@ -52,6 +52,7 @@ export function createDefaultApiApp(options: DefaultApiOptions = {}) {
       () => runtime?.push ?? null,
       () => runtime?.nodes ?? null,
       () => runtime?.adminAudit ?? null,
+      () => runtime?.access ?? null,
     );
 
     return router.fetch(request, env as never);
