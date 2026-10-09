@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { type FormEvent, type ReactNode, useState } from 'react';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
 import { PageHeader } from '../components/PageHeader';
@@ -79,6 +79,17 @@ export type MissionView = {
   sample?: boolean;
 };
 
+export type AdminFreeCreditInput = {
+  seconds: number;
+  reason: string;
+  idempotencyKey: string;
+};
+
+export type AdminFreeCreditResult = {
+  applied: boolean;
+  seconds: number;
+};
+
 const faNumber = new Intl.NumberFormat('fa-IR');
 const emptyAdminResources: AdminResourcesView = {
   users: [],
@@ -134,9 +145,7 @@ export function DashboardPage({ account }: { account: AccountView }) {
             title="وضعیت اتصال"
             description="این وضعیت از session ثبت‌شده نود می‌آید؛ دکمه اتصال ساختگی در مرورگر وجود ندارد."
           />
-          <p className="metric-value">
-            {account.node.connectionStatus === 'connected' ? 'متصل' : 'قطع'}
-          </p>
+          <p className="metric-value">{account.node.connectionStatus === 'connected' ? 'متصل' : 'قطع'}</p>
           <p className="muted-copy">{account.node.ready ? 'حداقل یک نود آماده است.' : 'نود آماده‌ای گزارش نشده است.'}</p>
         </Card>
 
@@ -144,11 +153,9 @@ export function DashboardPage({ account }: { account: AccountView }) {
           <PageHeader
             eyebrow="پیکربندی"
             title="دسترسی VPN"
-            description={
-              account.node.configAvailable
-                ? 'پیکربندی تأییدشده حساب از سرور آماده است.'
-                : 'پیکربندی VPN هنوز آماده نیست؛ تا آماده‌شدن نود، مقدار نمونه تولید نمی‌شود.'
-            }
+            description={account.node.configAvailable
+              ? 'پیکربندی تأییدشده حساب از سرور آماده است.'
+              : 'پیکربندی VPN هنوز آماده نیست؛ تا آماده‌شدن نود، مقدار نمونه تولید نمی‌شود.'}
           />
           <div className="dashboard-actions dashboard-actions--start">
             <Button disabled={!account.node.configAvailable}>کپی پیکربندی</Button>
@@ -297,15 +304,7 @@ function ResourceValue({ primary, secondary }: { primary: string; secondary?: st
   );
 }
 
-function UnavailableAdminModule({
-  eyebrow,
-  title,
-  message,
-}: {
-  eyebrow: string;
-  title: string;
-  message: string;
-}) {
+function UnavailableAdminModule({ eyebrow, title, message }: { eyebrow: string; title: string; message: string }) {
   return (
     <Card>
       <PageHeader
@@ -322,12 +321,37 @@ export function AdminPage({
   overview,
   resources = emptyAdminResources,
   mutationsAvailable = false,
+  adjustFreeCredit,
 }: {
   overview: AdminOverviewView;
   resources?: AdminResourcesView;
   mutationsAvailable?: boolean;
+  adjustFreeCredit?: (userId: string, input: AdminFreeCreditInput) => Promise<AdminFreeCreditResult>;
 }) {
   const defaultUserId = resources.users[0]?.id ?? '';
+  const [freeCreditPending, setFreeCreditPending] = useState(false);
+  const [freeCreditNotice, setFreeCreditNotice] = useState<string | null>(null);
+  const freeCreditAvailable = mutationsAvailable || adjustFreeCredit !== undefined;
+
+  async function submitFreeCredit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!adjustFreeCredit || freeCreditPending) return;
+    const form = new FormData(event.currentTarget);
+    const userId = String(form.get('userId') ?? '').trim();
+    const seconds = Number(form.get('seconds'));
+    const reason = String(form.get('reason') ?? '').trim();
+    const idempotencyKey = String(form.get('idempotencyKey') ?? '').trim();
+    setFreeCreditPending(true);
+    setFreeCreditNotice(null);
+    try {
+      const result = await adjustFreeCredit(userId, { seconds, reason, idempotencyKey });
+      setFreeCreditNotice(result.applied ? 'اعتبار رایگان اعمال شد.' : 'این درخواست قبلاً اعمال شده است.');
+    } catch {
+      setFreeCreditNotice('اعمال اعتبار رایگان انجام نشد.');
+    } finally {
+      setFreeCreditPending(false);
+    }
+  }
 
   return (
     <div className="surface-stack">
@@ -346,8 +370,10 @@ export function AdminPage({
         <p className="muted-copy">{faNumber.format(overview.counts.readyNodes)} نود آماده</p>
       </Card>
 
-      {!mutationsAvailable ? (
+      {!mutationsAvailable && !adjustFreeCredit ? (
         <p className="inline-notice" role="status">توکن CSRF این session در دسترس نیست؛ عملیات ممتاز فقط خواندنی است.</p>
+      ) : !mutationsAvailable ? (
+        <p className="inline-notice">توکن CSRF هنگام عملیات متصل دریافت می‌شود؛ سایر فرم‌های ممتاز تا wiring امن فقط خواندنی‌اند.</p>
       ) : null}
 
       <div className="surface-grid surface-grid--two">
@@ -391,16 +417,19 @@ export function AdminPage({
       <div className="surface-grid surface-grid--three">
         <Card>
           <PageHeader eyebrow="Free Credit" title="اعتبار رایگان" description="اصلاح دستی فقط از API ادمین، با کلید idempotency و Audit سمت سرور اعمال می‌شود." />
-          <form className="form-stack" aria-label="فرم اصلاح اعتبار رایگان">
+          <form className="form-stack" aria-label="فرم اصلاح اعتبار رایگان" onSubmit={submitFreeCredit}>
             <label className="field-label" htmlFor="admin-free-user">شناسه کاربر</label>
-            <input className="text-input" id="admin-free-user" defaultValue={defaultUserId} />
+            <input className="text-input" id="admin-free-user" name="userId" defaultValue={defaultUserId} />
             <label className="field-label" htmlFor="admin-free-seconds">ثانیه</label>
-            <input className="text-input" id="admin-free-seconds" type="number" defaultValue="900" />
+            <input className="text-input" id="admin-free-seconds" name="seconds" type="number" defaultValue="900" />
             <label className="field-label" htmlFor="admin-free-reason">دلیل</label>
-            <input className="text-input" id="admin-free-reason" defaultValue="" />
+            <input className="text-input" id="admin-free-reason" name="reason" defaultValue="" />
             <label className="field-label" htmlFor="admin-free-key">کلید idempotency</label>
-            <input className="text-input" id="admin-free-key" defaultValue="" />
-            <Button disabled={!mutationsAvailable} type="submit">اعمال اعتبار رایگان</Button>
+            <input className="text-input" id="admin-free-key" name="idempotencyKey" defaultValue="" />
+            <Button disabled={!freeCreditAvailable || freeCreditPending} type="submit">
+              {freeCreditPending ? 'در حال اعمال…' : 'اعمال اعتبار رایگان'}
+            </Button>
+            {freeCreditNotice ? <p className="inline-notice" role="status">{freeCreditNotice}</p> : null}
           </form>
         </Card>
 
