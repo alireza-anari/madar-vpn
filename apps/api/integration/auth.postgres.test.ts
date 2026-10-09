@@ -93,7 +93,7 @@ describe('PostgresAuthStore integration', () => {
     ).resolves.toMatchObject({ changed: false, user: { suspendedAt: '2026-10-09T00:05:00.000Z' } });
   });
 
-  it('stores only session hashes and revokes the selected session', async () => {
+  it('stores only session hashes, rotates CSRF hash, and revokes the selected session', async () => {
     await store.saveUser({
       id: 'user-session',
       email: 'session@example.com',
@@ -118,9 +118,16 @@ describe('PostgresAuthStore integration', () => {
       { token_hash: 'session-token-hash', csrf_token_hash: 'csrf-token-hash' },
     ]);
 
+    await store.replaceSessionCsrfHash('session-token-hash', 'csrf-token-hash-rotated');
+    const rotated = await client.query(
+      'SELECT csrf_token_hash FROM sessions WHERE id = $1',
+      ['session-1'],
+    );
+    expect(rotated.rows).toEqual([{ csrf_token_hash: 'csrf-token-hash-rotated' }]);
+
     await expect(
       store.findSessionByTokenHash('session-token-hash', new Date('2026-10-09T00:01:00.000Z')),
-    ).resolves.toMatchObject({ id: 'session-1', userId: 'user-session' });
+    ).resolves.toMatchObject({ id: 'session-1', userId: 'user-session', csrfTokenHash: 'csrf-token-hash-rotated' });
 
     await store.revokeSessionByTokenHash('session-token-hash');
     await expect(
