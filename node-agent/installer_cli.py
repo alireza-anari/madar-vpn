@@ -1,17 +1,30 @@
 from __future__ import annotations
 
 import os
+import platform
+import subprocess
 import sys
+import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 
 from madar_agent.installer import HttpEnrollmentClient, InstallPaths, NodeInstaller
+from madar_agent.xray import PinnedXrayAdapter, XRAY_STABLE_VERSION, stable_runtime_config
 
 
 ROOT = Path(__file__).resolve().parent
 INSTALL_ROOT = Path("/opt/madar-node-agent")
+XRAY_INSTALL_ROOT = Path("/opt/madar-xray")
 STATE_ROOT = Path("/etc/madar-node-agent")
 CREDENTIAL_PATH = STATE_ROOT / "node.credential"
 SERVICE_PATH = Path("/etc/systemd/system/madar-node-agent.service")
+
+
+@dataclass(frozen=True, slots=True)
+class XrayBootstrapResult:
+    version: str
+    public_key: str
+    binary: Path
 
 
 class UnusedEnrollment:
@@ -53,22 +66,73 @@ def write_agent_environment(api_base_url: str) -> None:
         os.close(descriptor)
 
 
+def _xray_architecture() -> str:
+    machine = platform.machine().strip().lower()
+    aliases = {
+        "amd64": "x86_64",
+        "x64": "x86_64",
+        "arm64": "aarch64",
+    }
+    return aliases.get(machine, machine)
+
+
+def _download_xray(url: str) -> bytes:
+    with urllib.request.urlopen(url, timeout=30) as response:
+        return response.read()
+
+
+def _run_process(arguments: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        arguments,
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+
+def bootstrap_xray() -> XrayBootstrapResult:
+    runtime = stable_runtime_config(_xray_architecture())
+    adapter = PinnedXrayAdapter(
+        install_root=XRAY_INSTALL_ROOT,
+        state_root=STATE_ROOT,
+        download=_download_xray,
+        run=_run_process,
+    )
+    binary = adapter.ensure_runtime(runtime)
+    reality = adapter.generate_reality_keypair(binary)
+    return XrayBootstrapResult(
+        version=runtime.version,
+        public_key=reality.public_key,
+        binary=binary,
+    )
+
+
 def build_install_installer() -> NodeInstaller:
     api_base_url = required("MADAR_API_BASE_URL").rstrip("/")
     try:
         port = int(required("MADAR_NODE_PORT"))
     except ValueError as error:
         raise SystemExit("MADAR_NODE_PORT must be an integer") from error
+
+    address = required("MADAR_NODE_ADDRESS")
+    server_name = required("MADAR_NODE_SERVER_NAME")
+    short_id = required("MADAR_REALITY_SHORT_ID")
+
+    def public_config() -> dict[str, object]:
+        xray = bootstrap_xray()
+        return {
+            "address": address,
+            "port": port,
+            "serverName": server_name,
+            "realityPublicKey": xray.public_key,
+            "realityShortId": short_id,
+        }
+
     enrollment = HttpEnrollmentClient(
         api_base_url=api_base_url,
-        capabilities={"agent": "0.1.0", "xray": "unavailable"},
-        public_config={
-            "address": required("MADAR_NODE_ADDRESS"),
-            "port": port,
-            "serverName": required("MADAR_NODE_SERVER_NAME"),
-            "realityPublicKey": required("MADAR_REALITY_PUBLIC_KEY"),
-            "realityShortId": required("MADAR_REALITY_SHORT_ID"),
-        },
+        capabilities={"agent": "0.1.0", "xray": XRAY_STABLE_VERSION},
+        public_config=public_config,
     )
     write_agent_environment(api_base_url)
     return NodeInstaller(install_paths(), enrollment=enrollment)
