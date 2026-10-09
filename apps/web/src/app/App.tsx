@@ -26,6 +26,8 @@ import {
   type AdminFreeCreditResult,
   type AdminPremiumInput,
   type AdminPremiumResult,
+  type AdminSuspensionInput,
+  type AdminSuspensionResult,
   type AdminOverviewView,
   type AdminResourcesView,
 } from './surfaces';
@@ -189,6 +191,28 @@ async function adjustAdminPremium(
   return { applied: payload.applied, premiumUntil: payload.premiumUntil };
 }
 
+async function adjustAdminSuspension(
+  userId: string,
+  input: AdminSuspensionInput,
+): Promise<AdminSuspensionResult> {
+  const csrfToken = await getCsrfToken();
+  const response = await fetch(`/api/admin/users/${encodeURIComponent(userId)}/suspension`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'content-type': 'application/json',
+      'x-csrf-token': csrfToken,
+    },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const payload = (await response.json()) as { suspended?: unknown };
+  if (typeof payload.suspended !== 'boolean') {
+    throw new Error('Malformed suspension response.');
+  }
+  return { suspended: payload.suspended };
+}
+
 function LoadingPanel() {
   return (
     <Card>
@@ -303,6 +327,7 @@ function AdminRoute() {
       resources={resources.data}
       adjustFreeCredit={adjustAdminFreeCredit}
       adjustPremium={adjustAdminPremium}
+      adjustSuspension={adjustAdminSuspension}
     />
   );
 }
