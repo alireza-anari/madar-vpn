@@ -24,6 +24,8 @@ import {
   type AccountView,
   type AdminFreeCreditInput,
   type AdminFreeCreditResult,
+  type AdminMissionInput,
+  type AdminMissionResult,
   type AdminPlanInput,
   type AdminPlanResult,
   type AdminPremiumInput,
@@ -273,6 +275,33 @@ async function saveAdminPlan(planId: string, input: AdminPlanInput): Promise<Adm
   return payload as AdminPlanResult;
 }
 
+async function saveAdminMission(missionId: string, input: AdminMissionInput): Promise<AdminMissionResult> {
+  const csrfToken = await getCsrfToken();
+  const response = await fetch(`/api/admin/missions/${encodeURIComponent(missionId)}`, {
+    method: 'PUT',
+    credentials: 'include',
+    headers: {
+      'content-type': 'application/json',
+      'x-csrf-token': csrfToken,
+    },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const payload = (await response.json()) as Partial<AdminMissionResult>;
+  if (
+    typeof payload.id !== 'string' ||
+    typeof payload.title !== 'string' ||
+    typeof payload.description !== 'string' ||
+    typeof payload.rewardSeconds !== 'number' ||
+    typeof payload.status !== 'string' ||
+    typeof payload.createdAt !== 'string' ||
+    typeof payload.updatedAt !== 'string'
+  ) {
+    throw new Error('Malformed mission response.');
+  }
+  return payload as AdminMissionResult;
+}
+
 function LoadingPanel() {
   return (
     <Card>
@@ -390,6 +419,7 @@ function AdminRoute() {
       adjustSuspension={adjustAdminSuspension}
       saveSettings={saveAdminSettings}
       savePlan={saveAdminPlan}
+      saveMission={saveAdminMission}
     />
   );
 }
