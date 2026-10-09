@@ -4,6 +4,7 @@ import { Card } from '../components/Card';
 import { PageHeader } from '../components/PageHeader';
 import { PwaSettingsPage } from '../pwa/PwaSettingsPage';
 import { subscribeBrowserPush } from '../pwa/push-subscription';
+import { AccessPage, type AccessReadiness, type IssuedAccess } from './access-surface';
 import {
   InteractiveLoginPage,
   MagicLinkPage,
@@ -87,6 +88,27 @@ async function consumeMagicLink(token: string): Promise<MagicLinkResult> {
   }
 }
 
+async function issueAccessSubscriptionUrl(): Promise<IssuedAccess> {
+  const csrfResponse = await fetch('/api/auth/csrf', { credentials: 'include' });
+  if (!csrfResponse.ok) throw new Error(`HTTP ${csrfResponse.status}`);
+  const csrfPayload = (await csrfResponse.json()) as { csrfToken?: unknown };
+  if (typeof csrfPayload.csrfToken !== 'string' || csrfPayload.csrfToken.length === 0) {
+    throw new Error('Malformed CSRF response.');
+  }
+
+  const response = await fetch('/api/account/access/subscription-url', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'x-csrf-token': csrfPayload.csrfToken },
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const payload = (await response.json()) as { subscriptionUrl?: unknown; version?: unknown };
+  if (typeof payload.subscriptionUrl !== 'string' || typeof payload.version !== 'number') {
+    throw new Error('Malformed access response.');
+  }
+  return { subscriptionUrl: payload.subscriptionUrl, version: payload.version };
+}
+
 function LoadingPanel() {
   return (
     <Card>
@@ -136,6 +158,14 @@ function LoginRoute() {
   return <InteractiveLoginPage emailAvailable={false} />;
 }
 
+function AccessRoute() {
+  const access = useApiResource<AccessReadiness>('/api/account/access');
+  if (access.status === 'loading') return <LoadingPanel />;
+  if (access.status === 'error') return <ErrorPanel />;
+  if (access.status !== 'ready') return <UnavailablePanel />;
+  return <AccessPage readiness={access.data} issue={issueAccessSubscriptionUrl} />;
+}
+
 function AccountRoute({ mode }: { mode: 'dashboard' | 'premium' | 'missions' | 'settings' }) {
   const account = useApiResource<AccountView>('/api/account');
   if (account.status === 'loading') return <LoadingPanel />;
@@ -170,6 +200,9 @@ export function App() {
     case '/login':
       content = <LoginRoute />;
       break;
+    case '/access':
+      content = <AccessRoute />;
+      break;
     case '/premium':
       content = <AccountRoute mode="premium" />;
       break;
@@ -182,7 +215,6 @@ export function App() {
     case '/admin':
       content = <AdminRoute />;
       break;
-    case '/access':
     case '/':
     default:
       content = <AccountRoute mode="dashboard" />;
