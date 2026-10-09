@@ -41,6 +41,7 @@ export interface AuthStore {
   setUserSuspended(userId: string, suspended: boolean, changedAt: string): Promise<{ user: User; changed: boolean } | null>;
   saveSession(session: StoredSession): Promise<void>;
   findSessionByTokenHash(tokenHash: string, now: Date): Promise<StoredSession | null>;
+  replaceSessionCsrfHash(tokenHash: string, csrfTokenHash: string): Promise<void>;
   revokeSessionByTokenHash(tokenHash: string): Promise<void>;
 }
 
@@ -101,6 +102,12 @@ export class MemoryAuthStore implements AuthStore {
     const session = this.sessions.get(tokenHash);
     if (!session || new Date(session.expiresAt).getTime() <= now.getTime()) return null;
     return { ...session };
+  }
+
+  async replaceSessionCsrfHash(tokenHash: string, csrfTokenHash: string) {
+    const session = this.sessions.get(tokenHash);
+    if (!session) return;
+    this.sessions.set(tokenHash, { ...session, csrfTokenHash });
   }
 
   async revokeSessionByTokenHash(tokenHash: string) {
@@ -224,6 +231,12 @@ export function createAuthService(options: AuthOptions) {
       return { id: session.id, userId: session.userId, expiresAt: session.expiresAt, token: rawSessionToken, csrfToken };
     },
 
+    async issueCsrfToken(request: Request): Promise<string> {
+      const { tokenHash } = await authenticate(request);
+      const csrfToken = randomToken();
+      await options.store.replaceSessionCsrfHash(tokenHash, await hashSecret(csrfToken));
+      return csrfToken;
+    },
     async requireUser(request: Request): Promise<User> { return (await authenticate(request)).user; },
     async requireAdmin(request: Request): Promise<User> {
       const user = (await authenticate(request)).user;
