@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { createAccessService } from './access';
 import { createSubscriptionService } from './access/subscription';
 import type { AdminAuditService } from './admin-audit';
 import { AuthError, clearSessionCookie, createAuthService, serializeSessionCookie, type User } from './auth';
@@ -12,8 +13,10 @@ import { consumeRateLimit, type RateLimitBinding } from './rate-limit';
 import { createSurfaceService, SurfaceError } from './surfaces';
 
 type AuthService = ReturnType<typeof createAuthService>;
+type AccessService = Pick<ReturnType<typeof createAccessService>, 'rotateSubscriptionToken'>;
 type SurfaceService = ReturnType<typeof createSurfaceService>;
-type SubscriptionService = Pick<ReturnType<typeof createSubscriptionService>, 'renderForToken'>;
+type FullSubscriptionService = ReturnType<typeof createSubscriptionService>;
+type SubscriptionService = Pick<FullSubscriptionService, 'renderForToken'> & Partial<Pick<FullSubscriptionService, 'listEligibleNodes'>>;
 type MissionService = ReturnType<typeof createMissionService>;
 type ApiBindings = {
   ADMIN_EMAILS?: string;
@@ -27,6 +30,7 @@ type ApiBindings = {
   ADMIN_RATE_LIMITER?: RateLimitBinding;
 };
 type AuthFactory = (env: ApiBindings | undefined) => AuthService | null;
+type AccessFactory = (env: ApiBindings | undefined) => AccessService | null;
 type SurfaceFactory = (env: ApiBindings | undefined) => SurfaceService | null;
 type RewardedAdFactory = (env: ApiBindings | undefined) => RewardedAdSettlement | null;
 type SubscriptionFactory = (env: ApiBindings | undefined) => SubscriptionService | null;
@@ -37,6 +41,7 @@ type NodeFactory = (env: ApiBindings | undefined) => NodeControlService | null;
 type AdminAuditFactory = (env: ApiBindings | undefined) => AdminAuditService | null;
 
 const unavailableAuthFactory: AuthFactory = () => null;
+const unavailableAccessFactory: AccessFactory = () => null;
 const unavailableSurfaceFactory: SurfaceFactory = () => null;
 const unavailableRewardedAdFactory: RewardedAdFactory = () => null;
 const unavailableSubscriptionFactory: SubscriptionFactory = () => null;
@@ -89,6 +94,7 @@ export function createApiApp(
   pushFactory: PushFactory = unavailablePushFactory,
   nodeFactory: NodeFactory = unavailableNodeFactory,
   adminAuditFactory: AdminAuditFactory = unavailableAdminAuditFactory,
+  accessFactory: AccessFactory = unavailableAccessFactory,
 ) {
   const app = new Hono<{ Bindings: ApiBindings }>();
 
@@ -301,6 +307,28 @@ export function createApiApp(
     const auth = authFactory(c.env); const surfaces = surfaceFactory(c.env);
     if (!auth || !surfaces) return unavailable(c, 'ACCOUNT_UNAVAILABLE');
     return c.json(await surfaces.getAccount(await auth.requireUser(c.req.raw)));
+  });
+
+  app.get('/api/account/access', async (c) => {
+    const auth = authFactory(c.env); const subscriptions = subscriptionFactory(c.env);
+    if (!auth || !subscriptions?.listEligibleNodes) return unavailable(c, 'ACCESS_UNAVAILABLE');
+    const user = await auth.requireUser(c.req.raw);
+    const eligibleNodes = await subscriptions.listEligibleNodes(user.id, new Date());
+    c.header('Cache-Control', 'no-store');
+    return c.json({ ready: eligibleNodes.length > 0, eligibleNodeCount: eligibleNodes.length });
+  });
+
+  app.post('/api/account/access/subscription-url', async (c) => {
+    const auth = authFactory(c.env); const subscriptions = subscriptionFactory(c.env); const access = accessFactory(c.env);
+    if (!auth || !access || !subscriptions?.listEligibleNodes) return unavailable(c, 'ACCESS_UNAVAILABLE');
+    const user = await auth.requireMutationUser(c.req.raw);
+    const eligibleNodes = await subscriptions.listEligibleNodes(user.id, new Date());
+    c.header('Cache-Control', 'no-store');
+    c.header('Referrer-Policy', 'no-referrer');
+    if (eligibleNodes.length === 0) return c.json({ error: 'ACCESS_NOT_READY' }, 409);
+    const issued = await access.rotateSubscriptionToken(user.id);
+    const subscriptionUrl = new URL(`/s/${encodeURIComponent(issued.rawToken)}`, c.req.url).toString();
+    return c.json({ subscriptionUrl, version: issued.version }, 201);
   });
 
   app.post('/api/account/orders', async (c) => {
