@@ -132,7 +132,7 @@ describe('account and administration surfaces', () => {
     });
   });
 
-  it('returns actual admin counts and readiness without sample success', async () => {
+  it('returns actual admin counts, the approved default speed policy, and honest readiness', async () => {
     const { app, cookie, surfaceStore } = await authenticatedHarness('admin');
     surfaceStore.setCounts({ users: 7, readyNodes: 2, plans: 3, missions: 4 });
 
@@ -146,8 +146,9 @@ describe('account and administration surfaces', () => {
         ads: false,
         payments: false,
         push: false,
+        speedEnforcement: false,
       },
-      settings: { freeSpeedKbps: 256, notificationsEnabled: false },
+      settings: { freeSpeedKbps: 5000, notificationsEnabled: false },
     });
   });
 });
