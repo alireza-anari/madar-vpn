@@ -46,6 +46,7 @@ jobs:
       - run: corepack enable
       - run: corepack prepare pnpm@12.9.1 --activate
       - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @madar/api test:postgres:restore-smoke
       - run: pnpm --filter @madar/api exec node scripts/postgres-runtime-smoke.mjs
       - run: pnpm --filter @madar/api test:postgres
       - run: pnpm audit --audit-level high
