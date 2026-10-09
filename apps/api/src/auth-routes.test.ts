@@ -7,6 +7,23 @@ function cookiePair(setCookie: string) {
 }
 
 describe('auth HTTP boundary', () => {
+  it('reports email readiness from the actual sender configuration', async () => {
+    const unavailable = createApiApp(() => createAuthService({ store: new MemoryAuthStore() }));
+    const unavailableResponse = await unavailable.request('/api/auth/readiness');
+    expect(unavailableResponse.status).toBe(200);
+    expect(unavailableResponse.headers.get('cache-control')).toBe('no-store');
+    await expect(unavailableResponse.json()).resolves.toEqual({ email: false });
+
+    const configured = createApiApp(() => createAuthService({
+      store: new MemoryAuthStore(),
+      sender: async () => undefined,
+    }));
+    const configuredResponse = await configured.request('/api/auth/readiness');
+    expect(configuredResponse.status).toBe(200);
+    expect(configuredResponse.headers.get('cache-control')).toBe('no-store');
+    await expect(configuredResponse.json()).resolves.toEqual({ email: true });
+  });
+
   it('reports login as unavailable when no email provider is configured', async () => {
     const auth = createAuthService({ store: new MemoryAuthStore() });
     const app = createApiApp(() => auth);
