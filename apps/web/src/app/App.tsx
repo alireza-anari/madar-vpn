@@ -24,6 +24,8 @@ import {
   type AccountView,
   type AdminFreeCreditInput,
   type AdminFreeCreditResult,
+  type AdminPremiumInput,
+  type AdminPremiumResult,
   type AdminOverviewView,
   type AdminResourcesView,
 } from './surfaces';
@@ -165,6 +167,28 @@ async function adjustAdminFreeCredit(
   return { applied: payload.applied, seconds: payload.seconds };
 }
 
+async function adjustAdminPremium(
+  userId: string,
+  input: AdminPremiumInput,
+): Promise<AdminPremiumResult> {
+  const csrfToken = await getCsrfToken();
+  const response = await fetch(`/api/admin/users/${encodeURIComponent(userId)}/premium`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'content-type': 'application/json',
+      'x-csrf-token': csrfToken,
+    },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const payload = (await response.json()) as { applied?: unknown; premiumUntil?: unknown };
+  if (typeof payload.applied !== 'boolean' || typeof payload.premiumUntil !== 'string') {
+    throw new Error('Malformed premium adjustment response.');
+  }
+  return { applied: payload.applied, premiumUntil: payload.premiumUntil };
+}
+
 function LoadingPanel() {
   return (
     <Card>
@@ -278,6 +302,7 @@ function AdminRoute() {
       overview={overview.data}
       resources={resources.data}
       adjustFreeCredit={adjustAdminFreeCredit}
+      adjustPremium={adjustAdminPremium}
     />
   );
 }
