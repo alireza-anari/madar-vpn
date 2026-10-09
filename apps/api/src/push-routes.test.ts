@@ -99,10 +99,10 @@ describe('push subscription HTTP boundary', () => {
       () => push,
     );
 
-    const anonymous = await app.request('/api/account/push-config');
+    const anonymous = await app.request('/api/account/push/vapid-public-key');
     expect(anonymous.status).toBe(401);
 
-    const configured = await app.request('/api/account/push-config', {
+    const configured = await app.request('/api/account/push/vapid-public-key', {
       headers: { cookie: `__Host-madar_session=${session.token}` },
     });
     expect(configured.status).toBe(200);
@@ -119,7 +119,7 @@ describe('push subscription HTTP boundary', () => {
       () => null,
       () => unavailablePush,
     );
-    const unavailable = await unavailableApp.request('/api/account/push-config', {
+    const unavailable = await unavailableApp.request('/api/account/push/vapid-public-key', {
       headers: { cookie: `__Host-madar_session=${session.token}` },
     });
     expect(unavailable.status).toBe(503);
