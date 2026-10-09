@@ -58,7 +58,7 @@ describe('admin free-credit mutation wiring', () => {
     const freeCredit = within(form);
     const button = freeCredit.getByRole('button', { name: 'اعمال اعتبار رایگان' });
     expect(button).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'ثبت نود' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'ذخیره پیش‌نویس' })).toBeDisabled();
 
     fireEvent.change(freeCredit.getByLabelText('دلیل'), { target: { value: 'جبران قطعی' } });
     fireEvent.change(freeCredit.getByLabelText('کلید idempotency'), { target: { value: 'support-1' } });
