@@ -193,6 +193,12 @@ export function createApiApp(
     return c.json({ csrfToken: session.csrfToken, expiresAt: session.expiresAt });
   });
 
+  app.get('/api/auth/csrf', async (c) => {
+    const auth = authFactory(c.env); if (!auth) return unavailable(c, 'AUTH_UNAVAILABLE');
+    c.header('Cache-Control', 'no-store');
+    return c.json({ csrfToken: await auth.issueCsrfToken(c.req.raw) });
+  });
+
   app.post('/api/auth/logout', async (c) => {
     const auth = authFactory(c.env); if (!auth) return unavailable(c, 'AUTH_UNAVAILABLE');
     await auth.revokeCurrentSession(c.req.raw);
@@ -343,6 +349,7 @@ export function createApiApp(
     await auth.requireUser(c.req.raw);
     const publicKey = push.getPublicKey();
     if (!publicKey) return unavailable(c, 'PUSH_UNAVAILABLE');
+    c.header('Cache-Control', 'no-store');
     return c.json({ publicKey });
   });
 
