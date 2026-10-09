@@ -5,6 +5,7 @@
   "scripts": {
     "test": "vitest run",
     "test:postgres": "vitest run --config vitest.postgres.config.ts",
+    "test:postgres:restore-smoke": "vitest run --config vitest.restore.config.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "vite build"
   },
