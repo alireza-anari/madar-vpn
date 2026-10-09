@@ -72,7 +72,7 @@ describe('admin plan mutation wiring', () => {
 
     const button = await screen.findByRole('button', { name: 'ذخیره پلن' });
     expect(button).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'ثبت ماموریت' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'ثبت نود' })).toBeDisabled();
 
     const form = screen.getByRole('form', { name: 'فرم مدیریت پلن' });
     const plan = within(form);
