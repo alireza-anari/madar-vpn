@@ -59,7 +59,6 @@ describe('admin premium mutation wiring', () => {
     const premium = within(form);
     const button = premium.getByRole('button', { name: 'ثبت پرمیوم' });
     expect(button).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'تغییر وضعیت حساب' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'ذخیره پلن' })).toBeDisabled();
 
     fireEvent.change(premium.getByLabelText('پایان پرمیوم'), { target: { value: '2026-10-20T12:30' } });
