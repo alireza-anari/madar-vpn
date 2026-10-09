@@ -8,6 +8,7 @@ import { AccessPage, type AccessReadiness, type IssuedAccess } from './access-su
 import {
   type AccountCatalogView,
   MissionsCatalogPage,
+  type MissionSubmissionResult,
   PremiumCatalogPage,
 } from './account-catalog-surface';
 import {
@@ -91,18 +92,22 @@ async function consumeMagicLink(token: string): Promise<MagicLinkResult> {
   }
 }
 
-async function issueAccessSubscriptionUrl(): Promise<IssuedAccess> {
-  const csrfResponse = await fetch('/api/auth/csrf', { credentials: 'include' });
-  if (!csrfResponse.ok) throw new Error(`HTTP ${csrfResponse.status}`);
-  const csrfPayload = (await csrfResponse.json()) as { csrfToken?: unknown };
-  if (typeof csrfPayload.csrfToken !== 'string' || csrfPayload.csrfToken.length === 0) {
+async function getCsrfToken() {
+  const response = await fetch('/api/auth/csrf', { credentials: 'include' });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const payload = (await response.json()) as { csrfToken?: unknown };
+  if (typeof payload.csrfToken !== 'string' || payload.csrfToken.length === 0) {
     throw new Error('Malformed CSRF response.');
   }
+  return payload.csrfToken;
+}
 
+async function issueAccessSubscriptionUrl(): Promise<IssuedAccess> {
+  const csrfToken = await getCsrfToken();
   const response = await fetch('/api/account/access/subscription-url', {
     method: 'POST',
     credentials: 'include',
-    headers: { 'x-csrf-token': csrfPayload.csrfToken },
+    headers: { 'x-csrf-token': csrfToken },
   });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const payload = (await response.json()) as { subscriptionUrl?: unknown; version?: unknown };
@@ -110,6 +115,25 @@ async function issueAccessSubscriptionUrl(): Promise<IssuedAccess> {
     throw new Error('Malformed access response.');
   }
   return { subscriptionUrl: payload.subscriptionUrl, version: payload.version };
+}
+
+async function submitMissionEvidence(missionId: string, evidence: string): Promise<MissionSubmissionResult> {
+  const csrfToken = await getCsrfToken();
+  const response = await fetch(`/api/account/missions/${encodeURIComponent(missionId)}/submissions`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'content-type': 'application/json',
+      'x-csrf-token': csrfToken,
+    },
+    body: JSON.stringify({ kind: 'text', value: evidence }),
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const payload = (await response.json()) as { id?: unknown; status?: unknown };
+  if (typeof payload.id !== 'string' || payload.status !== 'pending') {
+    throw new Error('Malformed mission submission response.');
+  }
+  return { id: payload.id, status: 'pending' };
 }
 
 function LoadingPanel() {
@@ -191,7 +215,13 @@ function AccountRoute({ mode }: { mode: 'dashboard' | 'premium' | 'missions' | '
   if (mode === 'premium') {
     return <PremiumCatalogPage paymentAvailable={account.data.providers.payments} plans={catalog.data.plans} />;
   }
-  return <MissionsCatalogPage adsAvailable={account.data.providers.ads} missions={catalog.data.missions} />;
+  return (
+    <MissionsCatalogPage
+      adsAvailable={account.data.providers.ads}
+      missions={catalog.data.missions}
+      submitEvidence={submitMissionEvidence}
+    />
+  );
 }
 
 function AdminRoute() {
