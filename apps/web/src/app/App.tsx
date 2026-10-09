@@ -121,9 +121,11 @@ function ErrorPanel({ admin = false }: { admin?: boolean }) {
 }
 
 function LoginRoute() {
-  const token = typeof window === 'undefined'
-    ? null
-    : new URLSearchParams(window.location.hash.replace(/^#/, '')).get('token')?.trim() || null;
+  const [token] = useState(() => (
+    typeof window === 'undefined'
+      ? null
+      : new URLSearchParams(window.location.hash.replace(/^#/, '')).get('token')?.trim() || null
+  ));
   const readiness = useApiResource<{ email: boolean }>(token ? null : '/api/auth/readiness');
 
   if (token) return <MagicLinkPage token={token} consume={consumeMagicLink} />;
