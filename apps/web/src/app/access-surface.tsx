@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
 import { PageHeader } from '../components/PageHeader';
+import { createQrSvgDataUri } from './qr';
 
 export type AccessReadiness = {
   ready: boolean;
@@ -18,10 +19,19 @@ type AccessPageProps = {
   issue: () => Promise<IssuedAccess>;
 };
 
+function createSubscriptionQr(subscriptionUrl: string) {
+  try {
+    return createQrSvgDataUri(subscriptionUrl);
+  } catch {
+    return null;
+  }
+}
+
 export function AccessPage({ readiness, issue }: AccessPageProps) {
   const [issued, setIssued] = useState<IssuedAccess | null>(null);
   const [issuing, setIssuing] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const qrDataUri = issued ? createSubscriptionQr(issued.subscriptionUrl) : null;
 
   async function issueSubscription() {
     setIssuing(true);
@@ -68,6 +78,16 @@ export function AccessPage({ readiness, issue }: AccessPageProps) {
       {issued ? (
         <Card>
           <h3 className="section-title">لینک اشتراک</h3>
+          {qrDataUri ? (
+            <img
+              alt="QR لینک اشتراک"
+              height={260}
+              src={qrDataUri}
+              width={260}
+            />
+          ) : (
+            <p className="muted-copy">نمایش QR برای این لینک در دسترس نیست؛ از کپی لینک استفاده کنید.</p>
+          )}
           <div className="form-stack">
             <label className="field-label" htmlFor="subscription-url">لینک اشتراک</label>
             <input
