@@ -8,6 +8,7 @@ import { AccessPage, type AccessReadiness, type IssuedAccess } from './access-su
 import {
   type AccountCatalogView,
   MissionsCatalogPage,
+  type MissionStatusView,
   type MissionSubmissionResult,
   PremiumCatalogPage,
 } from './account-catalog-surface';
@@ -197,6 +198,9 @@ function AccountRoute({ mode }: { mode: 'dashboard' | 'premium' | 'missions' | '
   const account = useApiResource<AccountView>('/api/account');
   const needsCatalog = mode === 'premium' || mode === 'missions';
   const catalog = useApiResource<AccountCatalogView>(needsCatalog ? '/api/account/catalog' : null);
+  const missionStatuses = useApiResource<MissionStatusView[]>(
+    mode === 'missions' ? '/api/account/missions/submissions' : null,
+  );
 
   if (account.status === 'loading') return <LoadingPanel />;
   if (mode === 'settings') {
@@ -215,10 +219,15 @@ function AccountRoute({ mode }: { mode: 'dashboard' | 'premium' | 'missions' | '
   if (mode === 'premium') {
     return <PremiumCatalogPage paymentAvailable={account.data.providers.payments} plans={catalog.data.plans} />;
   }
+
+  if (missionStatuses.status === 'loading') return <LoadingPanel />;
+  if (missionStatuses.status === 'error') return <ErrorPanel />;
+  if (missionStatuses.status !== 'ready') return <UnavailablePanel />;
   return (
     <MissionsCatalogPage
       adsAvailable={account.data.providers.ads}
       missions={catalog.data.missions}
+      statuses={missionStatuses.data}
       submitEvidence={submitMissionEvidence}
     />
   );
