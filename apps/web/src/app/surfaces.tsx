@@ -90,6 +90,17 @@ export type AdminFreeCreditResult = {
   seconds: number;
 };
 
+export type AdminPremiumInput = {
+  premiumUntil: string;
+  reason: string;
+  idempotencyKey: string;
+};
+
+export type AdminPremiumResult = {
+  applied: boolean;
+  premiumUntil: string;
+};
+
 const faNumber = new Intl.NumberFormat('fa-IR');
 const emptyAdminResources: AdminResourcesView = {
   users: [],
@@ -322,16 +333,21 @@ export function AdminPage({
   resources = emptyAdminResources,
   mutationsAvailable = false,
   adjustFreeCredit,
+  adjustPremium,
 }: {
   overview: AdminOverviewView;
   resources?: AdminResourcesView;
   mutationsAvailable?: boolean;
   adjustFreeCredit?: (userId: string, input: AdminFreeCreditInput) => Promise<AdminFreeCreditResult>;
+  adjustPremium?: (userId: string, input: AdminPremiumInput) => Promise<AdminPremiumResult>;
 }) {
   const defaultUserId = resources.users[0]?.id ?? '';
   const [freeCreditPending, setFreeCreditPending] = useState(false);
   const [freeCreditNotice, setFreeCreditNotice] = useState<string | null>(null);
+  const [premiumPending, setPremiumPending] = useState(false);
+  const [premiumNotice, setPremiumNotice] = useState<string | null>(null);
   const freeCreditAvailable = mutationsAvailable || adjustFreeCredit !== undefined;
+  const premiumAvailable = mutationsAvailable || adjustPremium !== undefined;
 
   async function submitFreeCredit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -353,6 +369,35 @@ export function AdminPage({
     }
   }
 
+  async function submitPremium(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!adjustPremium || premiumPending) return;
+    const form = new FormData(event.currentTarget);
+    const userId = String(form.get('userId') ?? '').trim();
+    const premiumUntilValue = String(form.get('premiumUntil') ?? '').trim();
+    const reason = String(form.get('reason') ?? '').trim();
+    const idempotencyKey = String(form.get('idempotencyKey') ?? '').trim();
+    const premiumUntil = new Date(premiumUntilValue);
+    if (Number.isNaN(premiumUntil.getTime())) {
+      setPremiumNotice('تاریخ پایان پرمیوم معتبر نیست.');
+      return;
+    }
+    setPremiumPending(true);
+    setPremiumNotice(null);
+    try {
+      const result = await adjustPremium(userId, {
+        premiumUntil: premiumUntil.toISOString(),
+        reason,
+        idempotencyKey,
+      });
+      setPremiumNotice(result.applied ? 'پرمیوم ثبت شد.' : 'این درخواست قبلاً اعمال شده است.');
+    } catch {
+      setPremiumNotice('ثبت پرمیوم انجام نشد.');
+    } finally {
+      setPremiumPending(false);
+    }
+  }
+
   return (
     <div className="surface-stack">
       <Card>
@@ -370,7 +415,7 @@ export function AdminPage({
         <p className="muted-copy">{faNumber.format(overview.counts.readyNodes)} نود آماده</p>
       </Card>
 
-      {!mutationsAvailable && !adjustFreeCredit ? (
+      {!mutationsAvailable && !adjustFreeCredit && !adjustPremium ? (
         <p className="inline-notice" role="status">توکن CSRF این session در دسترس نیست؛ عملیات ممتاز فقط خواندنی است.</p>
       ) : !mutationsAvailable ? (
         <p className="inline-notice">توکن CSRF هنگام عملیات متصل دریافت می‌شود؛ سایر فرم‌های ممتاز تا wiring امن فقط خواندنی‌اند.</p>
@@ -435,16 +480,19 @@ export function AdminPage({
 
         <Card>
           <PageHeader eyebrow="Premium" title="تنظیم پرمیوم" description="تاریخ پایان فقط با mutation محافظت‌شده و ثبت Audit تغییر می‌کند." />
-          <form className="form-stack" aria-label="فرم تنظیم پرمیوم">
+          <form className="form-stack" aria-label="فرم تنظیم پرمیوم" onSubmit={submitPremium}>
             <label className="field-label" htmlFor="admin-premium-user">شناسه کاربر</label>
-            <input className="text-input" id="admin-premium-user" defaultValue={defaultUserId} />
+            <input className="text-input" id="admin-premium-user" name="userId" defaultValue={defaultUserId} />
             <label className="field-label" htmlFor="admin-premium-until">پایان پرمیوم</label>
-            <input className="text-input" id="admin-premium-until" type="datetime-local" />
+            <input className="text-input" id="admin-premium-until" name="premiumUntil" type="datetime-local" />
             <label className="field-label" htmlFor="admin-premium-reason">دلیل</label>
-            <input className="text-input" id="admin-premium-reason" defaultValue="" />
+            <input className="text-input" id="admin-premium-reason" name="reason" defaultValue="" />
             <label className="field-label" htmlFor="admin-premium-key">کلید idempotency</label>
-            <input className="text-input" id="admin-premium-key" defaultValue="" />
-            <Button disabled={!mutationsAvailable} type="submit">ثبت پرمیوم</Button>
+            <input className="text-input" id="admin-premium-key" name="idempotencyKey" defaultValue="" />
+            <Button disabled={!premiumAvailable || premiumPending} type="submit">
+              {premiumPending ? 'در حال ثبت…' : 'ثبت پرمیوم'}
+            </Button>
+            {premiumNotice ? <p className="inline-notice" role="status">{premiumNotice}</p> : null}
           </form>
         </Card>
 
