@@ -36,6 +36,8 @@ def required(name: str) -> str:
     value = os.environ.get(name, "").strip()
     if not value:
         raise SystemExit(f"{name} is required for install")
+    if any(character in value for character in ("\n", "\r", "\0")):
+        raise SystemExit(f"{name} contains invalid characters")
     return value
 
 
@@ -50,16 +52,36 @@ def install_paths() -> InstallPaths:
     )
 
 
-def write_agent_environment(api_base_url: str) -> None:
+def write_agent_environment(
+    api_base_url: str,
+    *,
+    port: int,
+    server_name: str,
+    reality_target: str,
+    short_id: str,
+) -> None:
     STATE_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
     STATE_ROOT.chmod(0o700)
     env_path = STATE_ROOT / "agent.env"
-    descriptor = os.open(env_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(env_path, flags, 0o600)
     try:
         os.fchmod(descriptor, 0o600)
+        xray_binary = XRAY_INSTALL_ROOT / XRAY_STABLE_VERSION / "xray"
+        lines = (
+            f"MADAR_API_BASE_URL={api_base_url.rstrip('/')}\n",
+            f"MADAR_NODE_CREDENTIAL_PATH={CREDENTIAL_PATH}\n",
+            f"MADAR_XRAY_BINARY={xray_binary}\n",
+            f"MADAR_XRAY_VERSION={XRAY_STABLE_VERSION}\n",
+            f"MADAR_NODE_PORT={port}\n",
+            f"MADAR_NODE_SERVER_NAME={server_name}\n",
+            f"MADAR_REALITY_TARGET={reality_target}\n",
+            f"MADAR_REALITY_SHORT_ID={short_id}\n",
+        )
         with os.fdopen(descriptor, "w", encoding="utf-8", closefd=False) as handle:
-            handle.write(f"MADAR_API_BASE_URL={api_base_url.rstrip('/')}\n")
-            handle.write(f"MADAR_NODE_CREDENTIAL_PATH={CREDENTIAL_PATH}\n")
+            handle.writelines(lines)
             handle.flush()
             os.fsync(handle.fileno())
     finally:
@@ -117,6 +139,7 @@ def build_install_installer() -> NodeInstaller:
 
     address = required("MADAR_NODE_ADDRESS")
     server_name = required("MADAR_NODE_SERVER_NAME")
+    reality_target = required("MADAR_REALITY_TARGET")
     short_id = required("MADAR_REALITY_SHORT_ID")
 
     def public_config() -> dict[str, object]:
@@ -134,7 +157,13 @@ def build_install_installer() -> NodeInstaller:
         capabilities={"agent": "0.1.0", "xray": XRAY_STABLE_VERSION},
         public_config=public_config,
     )
-    write_agent_environment(api_base_url)
+    write_agent_environment(
+        api_base_url,
+        port=port,
+        server_name=server_name,
+        reality_target=reality_target,
+        short_id=short_id,
+    )
     return NodeInstaller(install_paths(), enrollment=enrollment)
 
 
