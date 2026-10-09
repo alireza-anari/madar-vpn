@@ -88,6 +88,28 @@ def test_worker_production_entrypoint_uses_hyperdrive_runtime() -> None:
     assert config.get("main") == "src/worker.ts", "production Worker must use the Hyperdrive/PostgreSQL runtime entrypoint"
 
 
+def test_api_runtime_contains_no_legacy_d1_persistence_artifacts() -> None:
+    api_root = ROOT / "apps" / "api"
+    source_root = api_root / "src"
+    legacy_source_files = sorted(
+        path.relative_to(ROOT).as_posix()
+        for path in source_root.rglob("*.ts")
+        if path.name in {"d1.ts", "d1.test.ts", "subscription-d1.ts", "subscription-d1.test.ts"}
+    )
+    assert legacy_source_files == [], f"legacy D1 source files remain: {legacy_source_files}"
+
+    legacy_migrations = sorted(
+        path.relative_to(ROOT).as_posix()
+        for path in (api_root / "migrations").glob("*.sql")
+    )
+    assert legacy_migrations == [], f"legacy D1 migrations remain: {legacy_migrations}"
+
+    router_source = (source_root / "index.ts").read_text(encoding="utf-8")
+    assert "/d1'" not in router_source and '/d1"' not in router_source, "API router still imports D1 stores"
+    assert "D1DatabaseLike" not in router_source, "API router still exposes a D1 database type"
+    assert "DB?:" not in router_source, "API bindings still expose the legacy D1 DB binding"
+
+
 def test_current_repository_contains_no_scanner_findings() -> None:
     scanner = load_security_scan_module()
     findings = scanner.scan_repository(ROOT)
