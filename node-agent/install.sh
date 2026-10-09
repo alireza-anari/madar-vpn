@@ -22,6 +22,9 @@ case "${COMMAND}" in
   status)
     python3 "${SCRIPT_DIR}/installer_cli.py" status
     ;;
+  observe)
+    python3 "${SCRIPT_DIR}/installer_cli.py" observe
+    ;;
   update)
     python3 "${SCRIPT_DIR}/installer_cli.py" update
     ;;
@@ -29,7 +32,7 @@ case "${COMMAND}" in
     python3 "${SCRIPT_DIR}/installer_cli.py" remove
     ;;
   *)
-    echo "Usage: $0 {install|status|update|remove}" >&2
+    echo "Usage: $0 {install|status|observe|update|remove}" >&2
     exit 2
     ;;
 esac
