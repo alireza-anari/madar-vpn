@@ -55,7 +55,7 @@ function mutationHeaders(session: Session) {
 }
 
 describe('mission HTTP boundary', () => {
-  it('lets an authenticated user submit evidence and read only their mission status', async () => {
+  it('lets an authenticated user submit evidence and reads only a safe user-facing mission status DTO', async () => {
     const { app, user } = await missionHarness();
 
     const submit = await app.request('/api/account/missions/proof-task/submissions', {
@@ -71,7 +71,14 @@ describe('mission HTTP boundary', () => {
     });
     expect(status.status).toBe(200);
     await expect(status.json()).resolves.toEqual([
-      expect.objectContaining({ id: 'submission-1', status: 'pending' }),
+      {
+        id: 'submission-1',
+        missionId: 'proof-task',
+        status: 'pending',
+        submittedAt: '2026-10-08T09:00:00.000Z',
+        reviewedAt: null,
+        rejectionReason: null,
+      },
     ]);
   });
 
