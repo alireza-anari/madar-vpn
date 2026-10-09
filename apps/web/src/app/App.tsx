@@ -91,12 +91,8 @@ function AccountRoute({ mode }: { mode: 'dashboard' | 'premium' | 'missions' | '
   if (account.status === 'loading') return <LoadingPanel />;
   if (mode === 'settings') {
     const pushAvailable = account.status === 'ready' && account.data.providers.push;
-    return (
-      <PwaSettingsPage
-        pushAvailable={pushAvailable}
-        subscribe={pushAvailable ? () => subscribeBrowserPush() : undefined}
-      />
-    );
+    if (!pushAvailable) return <PwaSettingsPage pushAvailable={false} />;
+    return <PwaSettingsPage pushAvailable subscribe={() => subscribeBrowserPush()} />;
   }
   if (account.status === 'error') return <ErrorPanel />;
   if (account.status !== 'ready') return <UnavailablePanel />;
