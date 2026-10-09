@@ -56,8 +56,8 @@ describe('Madar login flow', () => {
     expect(screen.getByText(/سرویس ایمیل هنوز متصل نشده/)).toBeInTheDocument();
   });
 
-  it('consumes a magic-link token, clears it from the URL, and shows an authenticated handoff', async () => {
-    window.history.pushState({}, '', '/login?token=magic-secret-value');
+  it('consumes a magic-link token from the URL fragment, clears it, and shows an authenticated handoff', async () => {
+    window.history.pushState({}, '', '/login#token=magic-secret-value');
     const replaceSpy = vi.spyOn(window.history, 'replaceState');
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -82,7 +82,7 @@ describe('Madar login flow', () => {
   });
 
   it('shows an expired/invalid state without leaking the magic token', async () => {
-    window.history.pushState({}, '', '/login?token=expired-secret-value');
+    window.history.pushState({}, '', '/login#token=expired-secret-value');
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === '/api/health') return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
