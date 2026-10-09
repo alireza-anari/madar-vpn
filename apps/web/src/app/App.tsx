@@ -24,6 +24,8 @@ import {
   type AccountView,
   type AdminFreeCreditInput,
   type AdminFreeCreditResult,
+  type AdminPlanInput,
+  type AdminPlanResult,
   type AdminPremiumInput,
   type AdminPremiumResult,
   type AdminSettingsInput,
@@ -243,6 +245,34 @@ async function saveAdminSettings(input: AdminSettingsInput): Promise<AdminSettin
   };
 }
 
+async function saveAdminPlan(planId: string, input: AdminPlanInput): Promise<AdminPlanResult> {
+  const csrfToken = await getCsrfToken();
+  const response = await fetch(`/api/admin/plans/${encodeURIComponent(planId)}`, {
+    method: 'PUT',
+    credentials: 'include',
+    headers: {
+      'content-type': 'application/json',
+      'x-csrf-token': csrfToken,
+    },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const payload = (await response.json()) as Partial<AdminPlanResult>;
+  if (
+    typeof payload.id !== 'string' ||
+    typeof payload.title !== 'string' ||
+    typeof payload.durationDays !== 'number' ||
+    typeof payload.priceMinor !== 'number' ||
+    typeof payload.currency !== 'string' ||
+    typeof payload.enabled !== 'boolean' ||
+    typeof payload.createdAt !== 'string' ||
+    typeof payload.updatedAt !== 'string'
+  ) {
+    throw new Error('Malformed plan response.');
+  }
+  return payload as AdminPlanResult;
+}
+
 function LoadingPanel() {
   return (
     <Card>
@@ -359,6 +389,7 @@ function AdminRoute() {
       adjustPremium={adjustAdminPremium}
       adjustSuspension={adjustAdminSuspension}
       saveSettings={saveAdminSettings}
+      savePlan={saveAdminPlan}
     />
   );
 }
