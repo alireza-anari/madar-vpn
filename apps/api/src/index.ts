@@ -493,7 +493,7 @@ export function createApiApp(
   app.delete('/api/admin/plans/:id', async (c) => {
     const auth = authFactory(c.env); const surfaces = surfaceFactory(c.env);
     if (!auth || !surfaces) return unavailable(c, 'ADMIN_UNAVAILABLE');
-    const actor = await requireAdminMutation(auth, c.req.raw); await surfaces.deletePlan(resourceId);
+    const actor = await requireAdminMutation(auth, c.req.raw); await surfaces.deletePlan(actor, c.req.param('id'));
     return new Response(null, { status: 204 });
   });
 
