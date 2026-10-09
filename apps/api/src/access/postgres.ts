@@ -132,6 +132,60 @@ export class PostgresAccessStore implements AccessStore {
     return mapCredential(result.rows[0]);
   }
 
+  async rotateClientCredential(candidate: Omit<ClientCredential, 'version' | 'revokedAt'>) {
+    return this.db.transaction(async (transaction) => {
+      const profileResult = await transaction.query<AccessProfileRow>(
+        `SELECT id, user_id, policy_revision, created_at
+         FROM access_profiles
+         WHERE user_id = $1
+         FOR UPDATE`,
+        [candidate.userId],
+      );
+      const currentProfile = mapProfile(profileResult.rows[0]);
+      if (!currentProfile) throw new Error('Access profile does not exist.');
+
+      const versionResult = await transaction.query<VersionRow>(
+        `SELECT COALESCE(MAX(version), 0) + 1 AS next_version
+         FROM client_credentials
+         WHERE user_id = $1`,
+        [candidate.userId],
+      );
+      const nextVersion = versionResult.rows[0]?.next_version;
+      if (typeof nextVersion !== 'number') throw new Error('Client credential version could not be allocated.');
+
+      const revoked = await transaction.query<Record<string, unknown> & { id: string }>(
+        `UPDATE client_credentials
+         SET revoked_at = $2
+         WHERE user_id = $1 AND revoked_at IS NULL
+         RETURNING id`,
+        [candidate.userId, candidate.createdAt],
+      );
+      if (!revoked.rows[0]) throw new Error('Active client credential does not exist.');
+
+      const profileUpdate = await transaction.query<AccessProfileRow>(
+        `UPDATE access_profiles
+         SET policy_revision = policy_revision + 1
+         WHERE user_id = $1
+         RETURNING id, user_id, policy_revision, created_at`,
+        [candidate.userId],
+      );
+      const profile = mapProfile(profileUpdate.rows[0]);
+      if (!profile) throw new Error('Access policy revision could not be advanced.');
+
+      const credentialResult = await transaction.query<ClientCredentialRow>(
+        `INSERT INTO client_credentials (
+           id, user_id, uuid, version, created_at, revoked_at
+         ) VALUES ($1, $2, $3, $4, $5, NULL)
+         RETURNING id, user_id, uuid, version, created_at, revoked_at`,
+        [candidate.id, candidate.userId, candidate.uuid, nextVersion, candidate.createdAt],
+      );
+      const credential = mapCredential(credentialResult.rows[0]);
+      if (!credential) throw new Error('Rotated client credential could not be created.');
+
+      return { credential, policyRevision: profile.policyRevision };
+    });
+  }
+
   async issueSubscriptionToken(candidate: Omit<SubscriptionTokenRecord, 'version' | 'revokedAt'>) {
     return this.db.transaction(async (transaction) => {
       const lock = await transaction.query<Record<string, unknown> & { id: string }>(
