@@ -83,3 +83,34 @@ def test_build_agent_service_wires_control_plane_node_agent_and_pinned_xray(monk
     assert agent.xray is created["xray"]
     assert built._versions == {"agent": "0.1.0", "xray": "26.3.27"}
     assert built._max_clients == 128
+
+
+def test_main_runs_real_agent_service_cycle_instead_of_placeholder_heartbeat(monkeypatch) -> None:
+    calls: list[object] = []
+
+    class FakeStop:
+        def __init__(self) -> None:
+            self.checks = 0
+
+        def is_set(self) -> bool:
+            self.checks += 1
+            return self.checks > 1
+
+        def wait(self, seconds: float) -> None:
+            calls.append(("wait", seconds))
+
+    class FakeService:
+        def run_cycle(self) -> None:
+            calls.append("cycle")
+
+    monkeypatch.setattr(service_module, "STOP", FakeStop())
+    monkeypatch.setattr(service_module.signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(service_module, "build_agent_service", lambda: FakeService())
+    monkeypatch.setattr(
+        service_module,
+        "load_config",
+        lambda: (_ for _ in ()).throw(AssertionError("placeholder path must not be used")),
+    )
+
+    assert service_module.main() == 0
+    assert calls == ["cycle", ("wait", 30.0)]
