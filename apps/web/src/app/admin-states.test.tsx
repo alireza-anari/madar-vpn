@@ -5,8 +5,8 @@ import { AdminPage, type AdminOverviewView, type AdminResourcesView } from './su
 
 const overview: AdminOverviewView = {
   counts: { users: 0, readyNodes: 0, plans: 0, missions: 0 },
-  readiness: { nodes: false, email: false, ads: false, payments: false, push: false },
-  settings: { freeSpeedKbps: 256, notificationsEnabled: false },
+  readiness: { nodes: false, email: false, ads: false, payments: false, push: false, speedEnforcement: false },
+  settings: { freeSpeedKbps: 5000, notificationsEnabled: false },
 };
 
 const emptyResources: AdminResourcesView = {
@@ -65,5 +65,12 @@ describe('admin state handling', () => {
     expect(screen.getByText('هیچ نود ثبت‌شده‌ای وجود ندارد.')).toBeInTheDocument();
     expect(screen.getByText('هیچ پیش‌نویس اعلانی ثبت نشده است.')).toBeInTheDocument();
     expect(screen.getByText('هنوز رویداد Audit ثبت نشده است.')).toBeInTheDocument();
+  });
+
+  it('labels the configured free-speed policy separately from unverified enforcement', () => {
+    render(<AdminPage overview={overview} resources={emptyResources} mutationsAvailable={false} />);
+
+    expect(screen.getByDisplayValue('5000')).toBeInTheDocument();
+    expect(screen.getByText('اعمال محدودیت سرعت: آماده نیست')).toBeInTheDocument();
   });
 });
