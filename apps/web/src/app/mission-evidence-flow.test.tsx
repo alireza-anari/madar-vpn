@@ -26,16 +26,26 @@ afterEach(() => {
 });
 
 describe('mission evidence flow', () => {
-  it('submits text evidence with the current CSRF token and reports pending review', async () => {
+  it('submits text evidence with the current CSRF token and refreshes authoritative pending status', async () => {
     window.history.pushState({}, '', '/missions');
     const requests: Array<{ url: string; init: RequestInit | undefined }> = [];
+    let submitted = false;
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       requests.push({ url, init });
       if (url === '/api/health') return Response.json({ status: 'ok' });
       if (url === '/api/account') return Response.json(account);
       if (url === '/api/account/catalog') return Response.json(catalog);
-      if (url === '/api/account/missions/submissions') return Response.json([]);
+      if (url === '/api/account/missions/submissions') {
+        return Response.json(submitted ? [{
+          id: 'submission-1',
+          missionId: 'profile-proof',
+          status: 'pending',
+          submittedAt: '2026-10-08T09:00:00.000Z',
+          reviewedAt: null,
+          rejectionReason: null,
+        }] : []);
+      }
       if (url === '/api/auth/csrf') return Response.json({ csrfToken: 'mission-csrf' });
       if (url === '/api/account/missions/profile-proof/submissions') {
         expect(init).toMatchObject({
@@ -47,6 +57,7 @@ describe('mission evidence flow', () => {
           },
         });
         expect(JSON.parse(String(init?.body))).toEqual({ kind: 'text', value: 'proof-value' });
+        submitted = true;
         return Response.json({ id: 'submission-1', status: 'pending' }, { status: 201 });
       }
       return new Response(null, { status: 404 });
@@ -59,7 +70,9 @@ describe('mission evidence flow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'ارسال مدرک' }));
 
     expect(await screen.findByRole('status')).toHaveTextContent('مدرک ثبت شد و در انتظار بررسی است.');
+    expect(await screen.findByText('وضعیت: در انتظار بررسی')).toBeInTheDocument();
     await waitFor(() => {
+      expect(requests.filter(({ url }) => url === '/api/account/missions/submissions')).toHaveLength(2);
       expect(requests.map(({ url }) => url)).toContain('/api/account/missions/profile-proof/submissions');
     });
   });
