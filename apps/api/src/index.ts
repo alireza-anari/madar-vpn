@@ -1,34 +1,21 @@
 import { Hono } from 'hono';
-import { createAccessService } from './access';
-import { D1AccessStore } from './access/d1';
 import { createSubscriptionService } from './access/subscription';
-import { D1SubscriptionNodeStore } from './access/subscription-d1';
-import { createAdminAuditService, type AdminAuditService } from './admin-audit';
+import type { AdminAuditService } from './admin-audit';
 import { AuthError, clearSessionCookie, createAuthService, serializeSessionCookie, type User } from './auth';
-import { D1AuthStore, type D1DatabaseLike } from './auth/d1';
-import { createCreditService } from './credits';
-import { D1CreditStore } from './credits/d1';
 import { createMissionService, MissionError } from './missions';
-import { D1MissionStore } from './missions/d1';
-import { createNodeControlService, NodeControlError, type NodeControlService } from './nodes';
-import { D1NodeControlStore } from './nodes/d1';
-import { createPaymentService, PaymentError, type PaymentService } from './payments';
-import { D1PaymentStore } from './payments/d1';
+import { NodeControlError, type NodeControlService } from './nodes';
+import { PaymentError, type PaymentService } from './payments';
 import { ProviderUnavailableError, ProviderVerificationError } from './providers';
 import { RewardedAdSettlementError, type RewardedAdSettlement } from './providers/rewarded-ad';
-import { createPushService, PushError, type PushService } from './push';
-import { D1PushStore } from './push/d1';
-import { createVapidSender } from './push/vapid';
+import { PushError, type PushService } from './push';
 import { consumeRateLimit, type RateLimitBinding } from './rate-limit';
 import { createSurfaceService, SurfaceError } from './surfaces';
-import { D1SurfaceStore } from './surfaces/d1';
 
 type AuthService = ReturnType<typeof createAuthService>;
 type SurfaceService = ReturnType<typeof createSurfaceService>;
 type SubscriptionService = Pick<ReturnType<typeof createSubscriptionService>, 'renderForToken'>;
 type MissionService = ReturnType<typeof createMissionService>;
 type ApiBindings = {
-  DB?: D1DatabaseLike;
   ADMIN_EMAILS?: string;
   VAPID_PUBLIC_KEY?: string;
   VAPID_PRIVATE_KEY?: string;
@@ -49,96 +36,15 @@ type PushFactory = (env: ApiBindings | undefined) => PushService | null;
 type NodeFactory = (env: ApiBindings | undefined) => NodeControlService | null;
 type AdminAuditFactory = (env: ApiBindings | undefined) => AdminAuditService | null;
 
-function configuredAdminEmails(value: string | undefined) {
-  return (value ?? '').split(',').map((email) => email.trim()).filter(Boolean);
-}
-
-function configuredVapid(env: ApiBindings | undefined) {
-  if (!env?.VAPID_PUBLIC_KEY || !env.VAPID_PRIVATE_KEY || !env.VAPID_SUBJECT) return null;
-  return {
-    publicKey: env.VAPID_PUBLIC_KEY,
-    privateKey: env.VAPID_PRIVATE_KEY,
-    subject: env.VAPID_SUBJECT,
-  };
-}
-
-const defaultAuthFactory: AuthFactory = (env) => {
-  if (!env?.DB) return null;
-  const auditStore = new D1SurfaceStore(env.DB);
-  return createAuthService({
-    store: new D1AuthStore(env.DB),
-    adminEmails: configuredAdminEmails(env.ADMIN_EMAILS),
-    onUserSuspension: async (event) => {
-      await auditStore.appendAudit({
-        id: crypto.randomUUID(),
-        actorUserId: event.actorUserId,
-        action: 'user.suspension.update',
-        details: {
-          userId: event.targetUserId,
-          suspended: event.suspended,
-          reason: event.reason,
-        },
-        createdAt: event.changedAt,
-      });
-    },
-  });
-};
-
-const defaultSurfaceFactory: SurfaceFactory = (env) => {
-  if (!env?.DB) return null;
-  return createSurfaceService({
-    store: new D1SurfaceStore(env.DB),
-    credits: createCreditService({ store: new D1CreditStore(env.DB) }),
-    providerAvailability: {
-      email: false,
-      ads: false,
-      payments: false,
-      push: configuredVapid(env) !== null,
-    },
-  });
-};
-
-const defaultRewardedAdFactory: RewardedAdFactory = () => null;
-
-const defaultSubscriptionFactory: SubscriptionFactory = (env) => {
-  if (!env?.DB) return null;
-  const accessStore = new D1AccessStore(env.DB);
-  return createSubscriptionService({
-    accessStore,
-    access: createAccessService({ store: accessStore }),
-    nodes: new D1SubscriptionNodeStore(env.DB),
-  });
-};
-
-const defaultPaymentFactory: PaymentFactory = (env) => {
-  if (!env?.DB) return null;
-  return createPaymentService({ store: new D1PaymentStore(env.DB) });
-};
-
-const defaultMissionFactory: MissionFactory = (env) => {
-  if (!env?.DB) return null;
-  return createMissionService({ store: new D1MissionStore(env.DB) });
-};
-
-const defaultPushFactory: PushFactory = (env) => {
-  if (!env?.DB) return null;
-  const vapid = configuredVapid(env);
-  return createPushService({
-    store: new D1PushStore(env.DB),
-    publicKey: vapid?.publicKey,
-    sender: vapid ? createVapidSender(vapid) : undefined,
-  });
-};
-
-const defaultNodeFactory: NodeFactory = (env) => {
-  if (!env?.DB) return null;
-  return createNodeControlService({ store: new D1NodeControlStore(env.DB) });
-};
-
-const defaultAdminAuditFactory: AdminAuditFactory = (env) => {
-  if (!env?.DB) return null;
-  return createAdminAuditService({ store: new D1SurfaceStore(env.DB) });
-};
+const unavailableAuthFactory: AuthFactory = () => null;
+const unavailableSurfaceFactory: SurfaceFactory = () => null;
+const unavailableRewardedAdFactory: RewardedAdFactory = () => null;
+const unavailableSubscriptionFactory: SubscriptionFactory = () => null;
+const unavailablePaymentFactory: PaymentFactory = () => null;
+const unavailableMissionFactory: MissionFactory = () => null;
+const unavailablePushFactory: PushFactory = () => null;
+const unavailableNodeFactory: NodeFactory = () => null;
+const unavailableAdminAuditFactory: AdminAuditFactory = () => null;
 
 function unavailable(c: { json: (body: { error: string }, status: 503) => Response }, error: string) {
   return c.json({ error }, 503);
@@ -174,15 +80,15 @@ async function enforceProviderCallbackRateLimit(
 }
 
 export function createApiApp(
-  authFactory: AuthFactory = defaultAuthFactory,
-  surfaceFactory: SurfaceFactory = defaultSurfaceFactory,
-  rewardedAdFactory: RewardedAdFactory = defaultRewardedAdFactory,
-  subscriptionFactory: SubscriptionFactory = defaultSubscriptionFactory,
-  paymentFactory: PaymentFactory = defaultPaymentFactory,
-  missionFactory: MissionFactory = defaultMissionFactory,
-  pushFactory: PushFactory = defaultPushFactory,
-  nodeFactory: NodeFactory = defaultNodeFactory,
-  adminAuditFactory: AdminAuditFactory = defaultAdminAuditFactory,
+  authFactory: AuthFactory = unavailableAuthFactory,
+  surfaceFactory: SurfaceFactory = unavailableSurfaceFactory,
+  rewardedAdFactory: RewardedAdFactory = unavailableRewardedAdFactory,
+  subscriptionFactory: SubscriptionFactory = unavailableSubscriptionFactory,
+  paymentFactory: PaymentFactory = unavailablePaymentFactory,
+  missionFactory: MissionFactory = unavailableMissionFactory,
+  pushFactory: PushFactory = unavailablePushFactory,
+  nodeFactory: NodeFactory = unavailableNodeFactory,
+  adminAuditFactory: AdminAuditFactory = unavailableAdminAuditFactory,
 ) {
   const app = new Hono<{ Bindings: ApiBindings }>();
 
