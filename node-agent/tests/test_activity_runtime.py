@@ -168,6 +168,7 @@ def test_main_starts_and_stops_activity_sampling_around_control_plane_loop(monke
 
     monkeypatch.setattr(service_module, "STOP", FakeStop())
     monkeypatch.setattr(service_module.signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(service_module, "_stop_xray", lambda: None)
     monkeypatch.setattr(service_module, "build_agent_service", lambda: FakeService())
 
     assert service_module.main() == 0
