@@ -13,7 +13,7 @@ import { consumeRateLimit, type RateLimitBinding } from './rate-limit';
 import { createSurfaceService, SurfaceError } from './surfaces';
 
 type AuthService = ReturnType<typeof createAuthService>;
-type AccessService = Pick<ReturnType<typeof createAccessService>, 'rotateSubscriptionToken'>;
+type AccessService = Pick<ReturnType<typeof createAccessService>, 'rotateClientCredential' | 'rotateSubscriptionToken'>;
 type SurfaceService = ReturnType<typeof createSurfaceService>;
 type FullSubscriptionService = ReturnType<typeof createSubscriptionService>;
 type SubscriptionService = Pick<FullSubscriptionService, 'renderForToken'> & Partial<Pick<FullSubscriptionService, 'listEligibleNodes'>>;
@@ -345,6 +345,22 @@ export function createApiApp(
     const issued = await access.rotateSubscriptionToken(user.id);
     const subscriptionUrl = new URL(`/s/${encodeURIComponent(issued.rawToken)}`, c.req.url).toString();
     return c.json({ subscriptionUrl, version: issued.version }, 201);
+  });
+
+  app.post('/api/account/access/client-id/rotate', async (c) => {
+    const auth = authFactory(c.env); const access = accessFactory(c.env);
+    if (!auth || !access) return unavailable(c, 'ACCESS_UNAVAILABLE');
+    const user = await auth.requireMutationUser(c.req.raw);
+    const rotated = await access.rotateClientCredential(user.id);
+    c.header('Cache-Control', 'no-store');
+    c.header('Referrer-Policy', 'no-referrer');
+    const result = {
+      policyRevision: rotated.policyRevision,
+      version: rotated.credential.version,
+    };
+    const audit = adminAuditFactory(c.env);
+    if (audit) await audit.record(user, 'access.client-credential.rotate', result);
+    return c.json(result, 201);
   });
 
   app.post('/api/account/orders', async (c) => {
