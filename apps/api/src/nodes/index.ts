@@ -1,3 +1,10 @@
+import {
+  parseActiveSecondsHex,
+  parseTrafficWindowId,
+  popcount60,
+  type TelemetrySettlement,
+} from '../usage';
+
 export type NodeStatus = 'enrolled' | 'ready' | 'offline' | 'error';
 
 export type NodeRecord = {
@@ -83,6 +90,7 @@ export type TelemetryReport = {
   observedFrom?: string | undefined;
   observedTo?: string | undefined;
   sessionId?: string | undefined;
+  activeSecondsHex?: string | undefined;
 };
 
 export interface NodeControlStore {
@@ -364,11 +372,28 @@ function validateTelemetry(nodeId: string, input: unknown): TelemetryReport {
   if (observedFrom !== undefined) base.observedFrom = observedFrom;
   if (observedTo !== undefined) base.observedTo = observedTo;
   if (sessionId !== undefined) base.sessionId = sessionId;
+
+  if (candidate.activeSecondsHex !== undefined) {
+    if (typeof candidate.activeSecondsHex !== 'string') {
+      throw new NodeControlError(400, 'TELEMETRY_INVALID', 'Active-second telemetry is invalid.');
+    }
+    try {
+      const mask = parseActiveSecondsHex(candidate.activeSecondsHex);
+      parseTrafficWindowId(base.windowId);
+      if (popcount60(mask) !== seconds) {
+        throw new Error('Telemetry seconds do not match active-second bitmap.');
+      }
+    } catch {
+      throw new NodeControlError(400, 'TELEMETRY_INVALID', 'Active-second telemetry is invalid.');
+    }
+    base.activeSecondsHex = candidate.activeSecondsHex;
+  }
   return base;
 }
 
 export function createNodeControlService(options: {
   store: NodeControlStore;
+  telemetrySettlement?: TelemetrySettlement;
   now?: () => Date;
   randomId?: () => string;
   randomSecret?: () => string;
@@ -516,6 +541,15 @@ export function createNodeControlService(options: {
       let duplicates = 0;
       for (const input of reportsInput) {
         const report = validateTelemetry(id, input);
+        if (options.telemetrySettlement) {
+          const result = await options.telemetrySettlement.accept(report);
+          if (result === 'accepted') accepted += 1;
+          else if (result === 'duplicate') duplicates += 1;
+          else {
+            throw new NodeControlError(409, 'TELEMETRY_IDENTITY_CONFLICT', 'Telemetry delivery identity conflicts with persisted evidence.');
+          }
+          continue;
+        }
         if (await options.store.insertTelemetry(report)) accepted += 1;
         else duplicates += 1;
       }
