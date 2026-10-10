@@ -116,3 +116,22 @@ def test_main_runs_real_agent_service_cycle_instead_of_placeholder_heartbeat(mon
 
     assert service_module.main() == 0
     assert calls == ["cycle", ("wait", 30.0)]
+
+
+def test_main_stops_managed_xray_when_runtime_build_fails_without_leaking_error(monkeypatch, capsys) -> None:
+    calls: list[object] = []
+    sensitive_detail = "fixture-client-id-should-not-be-logged"
+
+    monkeypatch.setattr(service_module.signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(
+        service_module,
+        "build_agent_service",
+        lambda: (_ for _ in ()).throw(RuntimeError(sensitive_detail)),
+    )
+    monkeypatch.setattr(service_module, "_stop_xray", lambda: calls.append("stop-xray"), raising=False)
+
+    assert service_module.main() == 3
+    assert calls == ["stop-xray"]
+    captured = capsys.readouterr()
+    assert sensitive_detail not in captured.err
+    assert captured.err.strip() == "node-agent startup unavailable; managed Xray disabled"
