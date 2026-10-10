@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  billableMaskForMinute,
   formatActiveSecondsHex,
   parseActiveSecondsHex,
   parseTrafficWindowId,
@@ -45,5 +46,86 @@ describe('active-second telemetry contract', () => {
     ]) {
       expect(() => parseTrafficWindowId(value)).toThrow(/traffic window/i);
     }
+  });
+});
+
+describe('observed-time Premium billability', () => {
+  const minuteStart = new Date('2026-10-10T08:00:00.000Z');
+  const epoch = new Date('2026-10-10T07:00:00.000Z');
+
+  it('bills a free bucket and suppresses a bucket that is Premium at its start', () => {
+    expect(billableMaskForMinute({
+      minuteStart,
+      candidateMask: 1n,
+      accountingEpoch: epoch,
+      entitlementEvents: [],
+    })).toBe(1n);
+
+    expect(billableMaskForMinute({
+      minuteStart,
+      candidateMask: 1n,
+      accountingEpoch: epoch,
+      entitlementEvents: [{
+        eventOrder: 1n,
+        effectiveAt: new Date('2026-10-10T07:59:00.000Z'),
+        premiumUntil: '2026-10-10T09:00:00.000Z',
+      }],
+    })).toBe(0n);
+  });
+
+  it('conservatively suppresses a bucket when Premium starts or expires midway through the second', () => {
+    const startsMidway = billableMaskForMinute({
+      minuteStart,
+      candidateMask: 1n,
+      accountingEpoch: epoch,
+      entitlementEvents: [{
+        eventOrder: 1n,
+        effectiveAt: new Date('2026-10-10T08:00:00.500Z'),
+        premiumUntil: '2026-10-10T09:00:00.000Z',
+      }],
+    });
+    expect(startsMidway).toBe(0n);
+
+    const expiresMidway = billableMaskForMinute({
+      minuteStart,
+      candidateMask: 1n,
+      accountingEpoch: epoch,
+      entitlementEvents: [{
+        eventOrder: 1n,
+        effectiveAt: new Date('2026-10-10T07:59:00.000Z'),
+        premiumUntil: '2026-10-10T08:00:00.500Z',
+      }],
+    });
+    expect(expiresMidway).toBe(0n);
+  });
+
+  it('does not bill a bucket that starts before the active-second accounting epoch', () => {
+    expect(billableMaskForMinute({
+      minuteStart,
+      candidateMask: 1n,
+      accountingEpoch: new Date('2026-10-10T08:00:00.500Z'),
+      entitlementEvents: [],
+    })).toBe(0n);
+  });
+
+  it('resolves equal-time entitlement events by event_order without inventing an intermediate state', () => {
+    const events = [
+      {
+        eventOrder: 10n,
+        effectiveAt: new Date('2026-10-10T08:00:00.000Z'),
+        premiumUntil: '2026-10-10T09:00:00.000Z',
+      },
+      {
+        eventOrder: 11n,
+        effectiveAt: new Date('2026-10-10T08:00:00.000Z'),
+        premiumUntil: null,
+      },
+    ];
+    expect(billableMaskForMinute({
+      minuteStart,
+      candidateMask: 1n,
+      accountingEpoch: epoch,
+      entitlementEvents: events,
+    })).toBe(1n);
   });
 });
