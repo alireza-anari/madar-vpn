@@ -28,6 +28,12 @@ class EnvironmentProbe(Protocol):
     def architecture(self) -> str: ...
 
 
+class TelemetryOutboxApi(Protocol):
+    def prepare_reports(self) -> list[UsageReport]: ...
+
+    def acknowledge(self, reports: list[UsageReport]) -> None: ...
+
+
 SUPPORTED_UBUNTU_LTS = frozenset({"22.04", "24.04", "26.04"})
 SUPPORTED_ARCHITECTURES = frozenset({"x86_64", "amd64", "aarch64", "arm64"})
 
@@ -41,12 +47,14 @@ class NodeAgent:
         xray: XrayAdapter,
         environment: EnvironmentProbe | None = None,
         now: Callable[[], datetime],
+        outbox: TelemetryOutboxApi | None = None,
     ) -> None:
         self.config = config
         self.api = api
         self.xray = xray
         self.environment = environment or SystemEnvironment()
         self._now = now
+        self._outbox = outbox
         self._current_policy: Policy | None = None
         self._window_sequences: dict[str, int] = {}
 
@@ -139,6 +147,9 @@ class NodeAgent:
         )
 
     def collect_usage(self) -> list[UsageReport]:
+        if self._outbox is not None:
+            return self._outbox.prepare_reports()
+
         reports: list[UsageReport] = []
         for activity in self.xray.collect_observed_activity():
             self._validate_activity(activity)
@@ -157,6 +168,10 @@ class NodeAgent:
                 )
             )
         return reports
+
+    def acknowledge_usage(self, reports: list[UsageReport]) -> None:
+        if self._outbox is not None:
+            self._outbox.acknowledge(reports)
 
     def is_authorization_fresh(self, now: datetime) -> bool:
         return self._current_policy is not None and now < self._current_policy.valid_until
