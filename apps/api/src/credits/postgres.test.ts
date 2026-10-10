@@ -76,11 +76,13 @@ describe('PostgresCreditStore', () => {
     expect(client.calls[2]!.text).toMatch(/FROM\s+memberships/i);
   });
 
-  it('applies premium adjustment and membership update in one transaction', async () => {
+  it('locks the user and records premium projection plus entitlement history in one transaction', async () => {
     const client = new FakePgClient();
     const store = new PostgresCreditStore(new PgDatabase(client));
 
+    client.results.push({ rowCount: 1, rows: [{ id: 'user-1' }] });
     client.results.push({ rowCount: 1, rows: [{ unique_key: 'premium:manual-1' }] });
+    client.results.push({ rowCount: 1, rows: [] });
     client.results.push({ rowCount: 1, rows: [] });
 
     await expect(
@@ -94,19 +96,30 @@ describe('PostgresCreditStore', () => {
 
     expect(client.calls.map((call) => call.text.trim().split(/\s+/)[0])).toEqual([
       'BEGIN',
+      'SELECT',
+      'INSERT',
       'INSERT',
       'INSERT',
       'COMMIT',
     ]);
-    expect(client.calls[1]!.text).toMatch(/INSERT\s+INTO\s+premium_adjustments/i);
-    expect(client.calls[1]!.text).toMatch(/ON\s+CONFLICT\s*\(unique_key\)\s+DO\s+NOTHING/i);
-    expect(client.calls[2]!.text).toMatch(/INSERT\s+INTO\s+memberships/i);
-    expect(client.calls[2]!.text).toMatch(/ON\s+CONFLICT\s*\(user_id\)\s+DO\s+UPDATE/i);
+    expect(client.calls[1]!.text).toMatch(/FROM\s+users.*FOR\s+UPDATE/is);
+    expect(client.calls[2]!.text).toMatch(/INSERT\s+INTO\s+premium_adjustments/i);
+    expect(client.calls[2]!.text).toMatch(/ON\s+CONFLICT\s*\(unique_key\)\s+DO\s+NOTHING/i);
+    expect(client.calls[3]!.text).toMatch(/INSERT\s+INTO\s+memberships/i);
+    expect(client.calls[3]!.text).toMatch(/ON\s+CONFLICT\s*\(user_id\)\s+DO\s+UPDATE/i);
+    expect(client.calls[4]!.text).toMatch(/INSERT\s+INTO\s+premium_entitlement_events/i);
+    expect(client.calls[4]!.values).toEqual([
+      'user-1',
+      'adjustment:premium:manual-1',
+      '2026-10-09T08:00:00.000Z',
+      '2026-11-09T00:00:00.000Z',
+    ]);
   });
 
-  it('does not rewrite membership when a premium idempotency key is duplicated', async () => {
+  it('does not rewrite membership or history when a premium idempotency key is duplicated', async () => {
     const client = new FakePgClient();
     const store = new PostgresCreditStore(new PgDatabase(client));
+    client.results.push({ rowCount: 1, rows: [{ id: 'user-1' }] });
     client.results.push({ rowCount: 0, rows: [] });
 
     await expect(
@@ -118,7 +131,13 @@ describe('PostgresCreditStore', () => {
       ),
     ).resolves.toBe(false);
 
-    expect(client.calls.map((call) => call.text.trim().split(/\s+/)[0])).toEqual(['BEGIN', 'INSERT', 'COMMIT']);
+    expect(client.calls.map((call) => call.text.trim().split(/\s+/)[0])).toEqual([
+      'BEGIN',
+      'SELECT',
+      'INSERT',
+      'COMMIT',
+    ]);
     expect(client.calls.some((call) => /INSERT\s+INTO\s+memberships/i.test(call.text))).toBe(false);
+    expect(client.calls.some((call) => /premium_entitlement_events/i.test(call.text))).toBe(false);
   });
 });
