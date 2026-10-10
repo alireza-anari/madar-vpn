@@ -10,6 +10,14 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-10-usage-and-premium-single-session-design.md`
 
+## Execution status
+
+Repository/CI implementation for Tasks 1-7 is complete. Documentation reconciliation/preparation in Task 8 is complete except for the final CI evidence line, which must be recorded only after the reconciled documentation head passes the full workflow.
+
+The **real-VPS checklist remains open** and is a Phase 7 field gate, not something CI can satisfy. This plan therefore does not mark Phase 7 PASS.
+
+Premium single-active-client/device ownership is outside this implementation plan and remains an unresolved separate design/release gate.
+
 ## Scope boundary
 
 This plan implements only the **Free active-second accounting** subsystem of the approved specification. Premium single-active-client/device ownership is a separate subsystem whose stable client-instance identity is not yet designed; it requires a separate brainstorming/spike and implementation plan. Nothing here may claim or simulate Premium single-client enforcement.
@@ -82,11 +90,11 @@ This plan implements only the **Free active-second accounting** subsystem of the
 - `usage_debit_events(node_id, window_id, sequence, user_id, minute_start, observed_mask, new_mask, debited_mask, debit_seconds, created_at)` keyed/FK'd to raw telemetry identity.
 - `telemetry_reports.active_seconds_hex text NULL` and `settlement_status` in `legacy|settled|unmapped`; non-null bitmap must match `^0[0-9a-f]{15}$` and must not be all zero.
 
-- [ ] **Step 1 — RED schema tests:** make the clean-schema CI test apply `packages/database/src/migrations/*.sql` in lexical order, assert the new tables/columns/constraints, assert `2^60` masks fail, and assert invalid/zero bitmap text fails. Add an isolated upgrade fixture that applies `0001`, seeds an existing `memberships` row, then applies `0002`; verify one baseline entitlement event is created at the exact `active_second_epoch` with the existing `premium_until`.
-- [ ] **Step 2 — Verify RED:** run `bash tests/integration/postgres-schema.sh`; expect failure because 0002 does not exist.
-- [ ] **Step 3 — GREEN migration:** implement transactional 0002 without editing/replaying 0001. `CURRENT_TIMESTAMP` is one consistent rollout epoch for the singleton config and migration baseline events. Existing raw telemetry remains bitmap-null/status `legacy`.
-- [ ] **Step 4 — Restore witness:** seed raw telemetry + settled-minute + debit-event witness and prove destructive PostgreSQL 17 backup/restore preserves it exactly.
-- [ ] **Step 5 — Verify/commit:** run schema + backup/restore tests; commit `feat: add active-second accounting schema`.
+- [x] **Step 1 — RED schema tests:** make the clean-schema CI test apply `packages/database/src/migrations/*.sql` in lexical order, assert the new tables/columns/constraints, assert `2^60` masks fail, and assert invalid/zero bitmap text fails. Add an isolated upgrade fixture that applies `0001`, seeds an existing `memberships` row, then applies `0002`; verify one baseline entitlement event is created at the exact `active_second_epoch` with the existing `premium_until`.
+- [x] **Step 2 — Verify RED:** run `bash tests/integration/postgres-schema.sh`; expect failure because 0002 does not exist.
+- [x] **Step 3 — GREEN migration:** implement transactional 0002 without editing/replaying 0001. `CURRENT_TIMESTAMP` is one consistent rollout epoch for the singleton config and migration baseline events. Existing raw telemetry remains bitmap-null/status `legacy`.
+- [x] **Step 4 — Restore witness:** seed raw telemetry + settled-minute + debit-event witness and prove destructive PostgreSQL 17 backup/restore preserves it exactly.
+- [x] **Step 5 — Verify/commit:** run schema + backup/restore tests; commit `feat: add active-second accounting schema`.
 
 **Deployment note:** the CI lexical loop is a fresh-schema verifier, not a production migration ledger. On an existing 0001 database, apply only `0002_active_second_accounting.sql` after backup/preflight. Task 8 records this explicitly so nobody reruns 0001 against an existing DB.
 
@@ -104,11 +112,11 @@ This plan implements only the **Free active-second accounting** subsystem of the
 - `TelemetryReport.activeSecondsHex?: string`
 - `TelemetrySettlement.accept(report): Promise<'accepted'|'duplicate'|'conflict'>`
 
-- [ ] **Step 1 — RED domain tests:** pin `0000000000000001` (bit 0), `0800000000000000` (bit 59), multi-bit popcount, invalid case/length/high nibble/all-zero, impossible calendar minute, and `seconds != popcount`. Legacy reports without bitmap keep existing aggregate validation and may keep noncanonical historical window ids.
-- [ ] **Step 2 — Verify RED:** `pnpm --filter @madar/api test -- usage.test.ts node-routes.test.ts`.
-- [ ] **Step 3 — GREEN contract:** implement all mask operations with `bigint`. For masked reports, billing identity comes only from canonical `windowId + activeSecondsHex`; timestamps remain diagnostic. `conflict` becomes `NodeControlError(409, 'TELEMETRY_IDENTITY_CONFLICT', ...)`.
-- [ ] **Step 4 — Existing behavior:** prove old no-bitmap route requests still return accepted/duplicate and no unknown secret field is persisted.
-- [ ] **Step 5 — Commit:** `feat: define active-second telemetry contract`.
+- [x] **Step 1 — RED domain tests:** pin `0000000000000001` (bit 0), `0800000000000000` (bit 59), multi-bit popcount, invalid case/length/high nibble/all-zero, impossible calendar minute, and `seconds != popcount`. Legacy reports without bitmap keep existing aggregate validation and may keep noncanonical historical window ids.
+- [x] **Step 2 — Verify RED:** `pnpm --filter @madar/api test -- usage.test.ts node-routes.test.ts`.
+- [x] **Step 3 — GREEN contract:** implement all mask operations with `bigint`. For masked reports, billing identity comes only from canonical `windowId + activeSecondsHex`; timestamps remain diagnostic. `conflict` becomes `NodeControlError(409, 'TELEMETRY_IDENTITY_CONFLICT', ...)`.
+- [x] **Step 4 — Existing behavior:** prove old no-bitmap route requests still return accepted/duplicate and no unknown secret field is persisted.
+- [x] **Step 5 — Commit:** `feat: define active-second telemetry contract`.
 
 ---
 
@@ -123,11 +131,11 @@ This plan implements only the **Free active-second accounting** subsystem of the
 - Payment store evolves to preserve **both** provider/source occurrence time and server settlement time: provider time stays in `payment_events.occurred_at`; `orders.settled_at`, membership extension, and entitlement-history `effective_at` use server `now()`.
 - Produce `billableMaskForMinute({ minuteStart, candidateMask, accountingEpoch, entitlementEvents }): bigint`.
 
-- [ ] **Step 1 — RED mutation/history tests:** admin Premium adjustment locks the user row, updates membership, appends one history row, and replay appends none. Payment settlement uses `max(serverSettlementNow,currentPremiumUntil)` even when a verified provider callback carries an older `occurredAt`; duplicate provider/manual event creates no second history row.
-- [ ] **Step 2 — RED bucket tests:** Free bucket is billable; Premium at bucket start is not; Premium starting midway or expiring midway makes the whole bucket non-billable; pre-epoch bucket is non-billable; equal-time events resolve by `event_order`.
-- [ ] **Step 3 — Verify RED:** run focused credits/payment/usage unit tests and PostgreSQL integration tests.
-- [ ] **Step 4 — GREEN implementation:** all Premium mutation paths lock `users.id FOR UPDATE` before membership/history changes. Never infer delayed historical state from current `memberships`; it remains only the current projection.
-- [ ] **Step 5 — Verify/commit:** commit `feat: record premium entitlement history`.
+- [x] **Step 1 — RED mutation/history tests:** admin Premium adjustment locks the user row, updates membership, appends one history row, and replay appends none. Payment settlement uses `max(serverSettlementNow,currentPremiumUntil)` even when a verified provider callback carries an older `occurredAt`; duplicate provider/manual event creates no second history row.
+- [x] **Step 2 — RED bucket tests:** Free bucket is billable; Premium at bucket start is not; Premium starting midway or expiring midway makes the whole bucket non-billable; pre-epoch bucket is non-billable; equal-time events resolve by `event_order`.
+- [x] **Step 3 — Verify RED:** run focused credits/payment/usage unit tests and PostgreSQL integration tests.
+- [x] **Step 4 — GREEN implementation:** all Premium mutation paths lock `users.id FOR UPDATE` before membership/history changes. Never infer delayed historical state from current `memberships`; it remains only the current projection.
+- [x] **Step 5 — Verify/commit:** commit `feat: record premium entitlement history`.
 
 ---
 
@@ -137,12 +145,12 @@ This plan implements only the **Free active-second accounting** subsystem of the
 
 **Rules:** credential mapping is `client_credentials.uuid = clientId` including revoked credentials; global overlap is keyed by user, not credential; exact duplicates compare the complete normalized raw payload (`clientId`, window, sequence, seconds, timestamp, nullable observed bounds/session, bitmap).
 
-- [ ] **Step 1 — RED integration matrix:** prove: one ten-bit report -> exactly `-10`; exact retry -> zero additional; contradictory retry -> conflict; two nodes same ten bits -> total `-10`; two nodes disjoint five bits -> `-10`; two credentials for same user overlapping -> once; revoked credential delayed report maps; unknown credential persists `unmapped` with zero debit; legacy report persists `legacy` with zero debit; Premium-period report arriving after expiry -> zero free debit; prior Tehran-day report arriving after midnight affects only prior day; injected SQL failure after raw insert leaves no raw/mask/debit/ledger state.
-- [ ] **Step 2 — Verify RED:** `pnpm --filter @madar/api test:postgres -- usage.postgres.test.ts`.
-- [ ] **Step 3 — GREEN transaction:** for each new report: insert raw or compare existing; resolve user; lock user `FOR UPDATE`; read epoch/history; lock/create `usage_active_minutes`; compute `newMask = incoming & ~settled`; OR **all** incoming bits into settled state, including Premium/non-billable bits; compute billable bits second-by-second; group ledger debit by `tehranDateKey(bucketStart)`; insert immutable debit evidence and one usage-ledger row per non-empty day group; update settlement status; commit. Any error rolls everything back.
-- [ ] **Step 4 — Precision:** pass PostgreSQL mask values as BigInt-safe decimal/string values; never cast 60-bit masks through JS `number`. Test bit 59 in PostgreSQL, not only pure code.
-- [ ] **Step 5 — Runtime wiring:** production `createPostgresRequestRuntime()` injects `PostgresUsageSettlementStore` into node control. Keep `PostgresNodeControlStore.insertTelemetry()` only as legacy/unit raw adapter; it is not the production debit path.
-- [ ] **Step 6 — Verify/commit:** run usage/nodes/runtime PostgreSQL integration; commit `feat: settle active-second usage atomically`.
+- [x] **Step 1 — RED integration matrix:** prove: one ten-bit report -> exactly `-10`; exact retry -> zero additional; contradictory retry -> conflict; two nodes same ten bits -> total `-10`; two nodes disjoint five bits -> `-10`; two credentials for same user overlapping -> once; revoked credential delayed report maps; unknown credential persists `unmapped` with zero debit; legacy report persists `legacy` with zero debit; Premium-period report arriving after expiry -> zero free debit; prior Tehran-day report arriving after midnight affects only prior day; injected SQL failure after raw insert leaves no raw/mask/debit/ledger state.
+- [x] **Step 2 — Verify RED:** `pnpm --filter @madar/api test:postgres -- usage.postgres.test.ts`.
+- [x] **Step 3 — GREEN transaction:** for each new report: insert raw or compare existing; resolve user; lock user `FOR UPDATE`; read epoch/history; lock/create `usage_active_minutes`; compute `newMask = incoming & ~settled`; OR **all** incoming bits into settled state, including Premium/non-billable bits; compute billable bits second-by-second; group ledger debit by `tehranDateKey(bucketStart)`; insert immutable debit evidence and one usage-ledger row per non-empty day group; update settlement status; commit. Any error rolls everything back.
+- [x] **Step 4 — Precision:** pass PostgreSQL mask values as BigInt-safe decimal/string values; never cast 60-bit masks through JS `number`. Test bit 59 in PostgreSQL, not only pure code.
+- [x] **Step 5 — Runtime wiring:** production `createPostgresRequestRuntime()` injects `PostgresUsageSettlementStore` into node control. Keep `PostgresNodeControlStore.insertTelemetry()` only as legacy/unit raw adapter; it is not the production debit path.
+- [x] **Step 6 — Verify/commit:** run usage/nodes/runtime PostgreSQL integration; commit `feat: settle active-second usage atomically`.
 
 `unmapped` masked telemetry is durable server evidence, not a successful accounting claim. It must be observable in DB/acceptance checks, and any occurrence on a managed field client blocks Phase 7 PASS until explained/resolved.
 
@@ -158,11 +166,11 @@ This plan implements only the **Free active-second accounting** subsystem of the
 - exact bucket start is `bucket_end - 1s`
 - default allowed post-boundary observation skew: `0.75s` (field-measured later)
 
-- [ ] **Step 1 — RED cadence tests:** `12:00:00.123Z -> 12:00:01Z`; an exact boundary schedules the next second; first sample baseline only; positive delta across consecutive scheduled boundaries marks exactly the preceding bucket; unchanged=zero; reset/decrease=zero+rebaseline; nonconsecutive target, backward clock, query failure, or >0.75s skew breaks continuity and next sample is baseline-only.
-- [ ] **Step 2 — RED worker test:** delayed worker iteration recomputes wall-clock target and skips missed buckets rather than catch-up/replay.
-- [ ] **Step 3 — Verify RED:** run `test_activity_source.py`, `test_activity_runtime.py`, `test_service_runtime.py`.
-- [ ] **Step 4 — GREEN:** scheduled UTC identity determines the bit; actual wake/query time only determines trustworthiness. No sub-second packet reconstruction.
-- [ ] **Step 5 — Verify/commit:** commit `feat: align Xray activity to UTC buckets`.
+- [x] **Step 1 — RED cadence tests:** `12:00:00.123Z -> 12:00:01Z`; an exact boundary schedules the next second; first sample baseline only; positive delta across consecutive scheduled boundaries marks exactly the preceding bucket; unchanged=zero; reset/decrease=zero+rebaseline; nonconsecutive target, backward clock, query failure, or >0.75s skew breaks continuity and next sample is baseline-only.
+- [x] **Step 2 — RED worker test:** delayed worker iteration recomputes wall-clock target and skips missed buckets rather than catch-up/replay.
+- [x] **Step 3 — Verify RED:** run `test_activity_source.py`, `test_activity_runtime.py`, `test_service_runtime.py`.
+- [x] **Step 4 — GREEN:** scheduled UTC identity determines the bit; actual wake/query time only determines trustworthiness. No sub-second packet reconstruction.
+- [x] **Step 5 — Verify/commit:** commit `feat: align Xray activity to UTC buckets`.
 
 ---
 
@@ -176,11 +184,11 @@ This plan implements only the **Free active-second accounting** subsystem of the
 - accepted local schema `PRAGMA user_version = 2`
 - new activity rows store low-60-bit integer `active_mask`; pending reports persist nullable bitmap.
 
-- [ ] **Step 1 — RED v2 tests:** :00 -> `0000000000000001`; :59 -> `0800000000000000`; duplicate same bucket ORs idempotently; multiple buckets produce one mask/popcount; masked pending survives reopen with identical identity/payload; ACK comparison includes bitmap; file/parent permissions remain restrictive; unsupported future schema version fails closed.
-- [ ] **Step 2 — RED migration fixtures:** an actual v1 DB with existing pending rows migrates them unchanged with bitmap `None`; v1 aggregate `activity_windows` becomes immutable **legacy** pending report(s) with newly allocated monotonic sequence(s), never guessed bits; `window_sequences` remains monotonic.
-- [ ] **Step 3 — Verify RED:** run outbox/durable runtime tests.
-- [ ] **Step 4 — GREEN migration:** detect fresh vs v1 before creating v2 tables; perform v1->v2 transactionally; SQLite integer is safe for low 60 bits; encode 16-char hex only when freezing a pending report. Existing pending continues to block preparation of later accumulated activity until ACK.
-- [ ] **Step 5 — Verify/commit:** commit `feat: persist active-second telemetry bitmaps`.
+- [x] **Step 1 — RED v2 tests:** :00 -> `0000000000000001`; :59 -> `0800000000000000`; duplicate same bucket ORs idempotently; multiple buckets produce one mask/popcount; masked pending survives reopen with identical identity/payload; ACK comparison includes bitmap; file/parent permissions remain restrictive; unsupported future schema version fails closed.
+- [x] **Step 2 — RED migration fixtures:** an actual v1 DB with existing pending rows migrates them unchanged with bitmap `None`; v1 aggregate `activity_windows` becomes immutable **legacy** pending report(s) with newly allocated monotonic sequence(s), never guessed bits; `window_sequences` remains monotonic.
+- [x] **Step 3 — Verify RED:** run outbox/durable runtime tests.
+- [x] **Step 4 — GREEN migration:** detect fresh vs v1 before creating v2 tables; perform v1->v2 transactionally; SQLite integer is safe for low 60 bits; encode 16-char hex only when freezing a pending report. Existing pending continues to block preparation of later accumulated activity until ACK.
+- [x] **Step 5 — Verify/commit:** commit `feat: persist active-second telemetry bitmaps`.
 
 ---
 
@@ -193,12 +201,17 @@ This plan implements only the **Free active-second accounting** subsystem of the
 - `ControlPlaneClient.supports_active_second_telemetry() -> bool`; authenticated 404 means `False`, not a fatal Agent error.
 - New reports serialize `activeSecondsHex`; migrated legacy reports omit it.
 
-- [ ] **Step 1 — RED capability tests:** new endpoint requires node bearer auth and returns the capability. Old-server fixture returns 404; new Agent must not POST a pending masked report and must leave it byte-for-byte intact. Once capability becomes true, it posts that exact report. Legacy pending reports may still be posted to an old server.
-- [ ] **Step 2 — RED transport tests:** new payload carries lowercase bitmap with matching popcount; server-first rollout accepts old Agent reports; malformed/incomplete 2xx response leaves pending masked report; duplicate response after committed server settlement ACKs/removes it.
-- [ ] **Step 3 — Verify RED:** run listed Python tests + `node-routes.test.ts`.
-- [ ] **Step 4 — GREEN wiring:** source -> outbox -> `UsageReport` -> HTTP -> validated PostgreSQL settlement. Do not add session IDs. Keep 30-second posting cadence; one-second sampler only creates durable evidence. Probe capability before any batch containing a bitmap; if capability is absent/unavailable, do not ACK or downgrade/strip the bitmap.
-- [ ] **Step 5 — Full repository verification:** PostgreSQL schema/backup/restore/runtime/integration, JS/Python dependency audits, `pnpm test`, `pnpm typecheck`, `pnpm build`, `pnpm test:python`, secret scan.
-- [ ] **Step 6 — Commit:** `feat: wire active-second telemetry end to end`.
+- [x] **Step 1 — RED capability tests:** new endpoint requires node bearer auth and returns the capability. Old-server fixture returns 404; new Agent must not POST a pending masked report and must leave it byte-for-byte intact. Once capability becomes true, it posts that exact report. Legacy pending reports may still be posted to an old server.
+- [x] **Step 2 — RED transport tests:** new payload carries lowercase bitmap with matching popcount; server-first rollout accepts old Agent reports; malformed/incomplete 2xx response leaves pending masked report; duplicate response after committed server settlement ACKs/removes it.
+- [x] **Step 3 — Verify RED:** run listed Python tests + `node-routes.test.ts`.
+- [x] **Step 4 — GREEN wiring:** source -> outbox -> `UsageReport` -> HTTP -> validated PostgreSQL settlement. Do not add session IDs. Keep 30-second posting cadence; one-second sampler only creates durable evidence. Probe capability before any batch containing a bitmap; if capability is absent/unavailable, do not ACK or downgrade/strip the bitmap.
+- [x] **Step 5 — Full repository verification:** PostgreSQL schema/backup/restore/runtime/integration, JS/Python dependency audits, `pnpm test`, `pnpm typecheck`, `pnpm build`, `pnpm test:python`, secret scan.
+- [x] **Step 6 — Commit:** `feat: wire active-second telemetry end to end`.
+
+Repository/CI evidence for the final Task 7 code head before documentation reconciliation:
+
+- head: `6636ff407e5636e8a1664a9a10337c4775e4f0cc`
+- full CI: `38059810580` — SUCCESS.
 
 ---
 
@@ -206,19 +219,19 @@ This plan implements only the **Free active-second accounting** subsystem of the
 
 **Files:** update the approved spec status, older clean-start spec/plan, Xray accounting ADR, node-install runbook, Phase 7 report, and this plan completion boxes.
 
-- [ ] **Step 1 — Source-of-truth reconciliation:** mark 2026-10-10 spec Approved. Replace old “distinct simultaneous sessions multiply free usage” text with account-level active-second semantics and point to the amendment. Keep Premium single-client enforcement unresolved.
-- [ ] **Step 2 — ADR/runbook:** state stock-Xray session multiplicity is no longer a free-billing blocker but still does not solve Premium device identity. Document existing-DB migration as backup/preflight -> apply **0002 only** -> deploy control plane -> verify capability -> upgrade Agents. Do not rerun 0001 against an existing DB.
-- [ ] **Step 3 — Preserve history:** never rewrite earlier field evidence as though bitmap billing was tested then. Historical identifier-bearing journals remain preserved per the existing user decision.
-- [ ] **Step 4 — Exact real-VPS checklist on one current head:** pinned Xray managed counters; sustained direct VLESS+REALITY traffic creates expected UTC bitmap and exactly-once PG debit; idle open connection creates no bits/debit; simultaneous overlapping connections do not multiply debit; reset/restart/gap creates no inferred bits; restart Agent before local ACK preserves exact `(windowId,sequence,seconds,activeSecondsHex)` and retry debits once; malformed acceptance leaves pending; outbox permissions/log privacy remain correct; current boot ordering proves no stale Xray authorization; no masked report is `unmapped`; delayed Premium/day behavior is proven at least at real control-plane integration level. Cross-node overlap remains a later multi-node gate unless a second real node is available.
-- [ ] **Step 5 — Final CI evidence:** record exact head SHA/run only after full success. Do **not** mark Phase 7 PASS until the real VPS checklist passes.
-- [ ] **Step 6 — Commit:** `docs: reconcile active-second accounting acceptance`.
+- [x] **Step 1 — Source-of-truth reconciliation:** mark 2026-10-10 spec Approved. Replace old “distinct simultaneous sessions multiply free usage” text with account-level active-second semantics and point to the amendment. Keep Premium single-client enforcement unresolved.
+- [x] **Step 2 — ADR/runbook:** state stock-Xray session multiplicity is no longer a free-billing blocker but still does not solve Premium device identity. Document existing-DB migration as backup/preflight -> apply **0002 only** -> deploy control plane -> verify capability -> upgrade Agents. Do not rerun 0001 against an existing DB.
+- [x] **Step 3 — Preserve history:** never rewrite earlier field evidence as though bitmap billing was tested then. Historical identifier-bearing journals remain preserved per the existing user decision.
+- [ ] **Step 4 — Execute exact real-VPS checklist on one current head:** pinned Xray managed counters; sustained direct VLESS+REALITY traffic creates expected UTC bitmap and exactly-once PG debit; idle open connection creates no bits/debit; simultaneous overlapping connections do not multiply debit; reset/restart/gap creates no inferred bits; restart Agent before local ACK preserves exact `(windowId,sequence,seconds,activeSecondsHex)` and retry debits once; malformed acceptance leaves pending; outbox permissions/log privacy remain correct; current boot ordering proves no stale Xray authorization; no masked report is `unmapped`; delayed Premium/day behavior is proven at least at real control-plane integration level. Cross-node overlap remains a later multi-node gate unless a second real node is available.
+- [ ] **Step 5 — Final reconciled-docs CI evidence:** record exact reconciled documentation head SHA/run only after full success. Do **not** mark Phase 7 PASS until the real VPS checklist passes.
+- [x] **Step 6 — Documentation reconciliation commit(s):** approved spec, baseline design/plan, ADR, runbook, Phase 7 report, and this execution-status update are committed without rewriting historical field evidence as current evidence.
 
 ---
 
 ## Completion gates
 
-Repository/CI implementation is complete only after Tasks 1-8 are green on one exact head and documentation cleanly separates automated evidence from field evidence.
+**Repository/CI implementation:** Tasks 1-7 are complete. Task 8 documentation preparation is complete, pending the final reconciled-docs CI evidence check.
 
-Phase 7 completes only after that exact deployed head passes the real-VPS checklist. Green CI alone is not Phase 7 PASS.
+**Phase 7 field gate:** remains open until the exact deployed head passes the real-VPS checklist in Task 8 Step 4. Green CI alone is not Phase 7 PASS.
 
-Premium single-active-client enforcement remains explicitly out of scope and is a separate unresolved design/release gate; no work in this plan may be used to claim that Premium device locking is operational.
+**Premium gate:** single-active-client enforcement remains explicitly out of scope and is a separate unresolved design/release gate; no work in this plan may be used to claim that Premium device locking is operational.
