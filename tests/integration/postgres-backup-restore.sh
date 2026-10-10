@@ -14,9 +14,12 @@ psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -Atc \
   | grep -qx 'ok'
 psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -Atc \
   "SELECT COALESCE(SUM(delta_seconds), 0) FROM credit_ledger WHERE user_id = 'schema-user-1'" \
-  | grep -qx '1798'
+  | grep -qx '1800'
 psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -Atc \
-  "SELECT settled_mask FROM usage_active_minutes WHERE user_id = 'schema-user-1' AND minute_start = '2026-10-08T12:02:00.000Z'" \
+  "SELECT COALESCE(SUM(delta_seconds), 0) FROM credit_ledger WHERE user_id = 'schema-usage-user-1'" \
+  | grep -qx -- '-2'
+psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -Atc \
+  "SELECT settled_mask FROM usage_active_minutes WHERE user_id = 'schema-usage-user-1' AND minute_start = '2026-10-08T12:02:00.000Z'" \
   | grep -qx '3'
 psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -Atc \
   "SELECT observed_mask || ':' || new_mask || ':' || debited_mask || ':' || debit_seconds FROM usage_debit_events WHERE node_id = 'schema-node-1' AND window_id = 'xray-traffic:2026-10-08T12:02Z' AND sequence = 10" \
@@ -60,6 +63,7 @@ DO $$
 DECLARE
   restored_email text;
   restored_credit bigint;
+  restored_usage_credit bigint;
   restored_speed integer;
   restored_mask bigint;
   restored_observed bigint;
@@ -78,8 +82,16 @@ BEGIN
     INTO restored_credit
     FROM credit_ledger
     WHERE user_id = 'schema-user-1';
-  IF restored_credit <> 1798 THEN
+  IF restored_credit <> 1800 THEN
     RAISE EXCEPTION 'restored ledger witness mismatch';
+  END IF;
+
+  SELECT COALESCE(SUM(delta_seconds), 0)
+    INTO restored_usage_credit
+    FROM credit_ledger
+    WHERE user_id = 'schema-usage-user-1';
+  IF restored_usage_credit <> -2 THEN
+    RAISE EXCEPTION 'restored usage ledger witness mismatch';
   END IF;
 
   SELECT free_speed_kbps INTO restored_speed FROM app_settings WHERE id = 1;
@@ -90,7 +102,7 @@ BEGIN
   SELECT settled_mask
     INTO restored_mask
     FROM usage_active_minutes
-    WHERE user_id = 'schema-user-1'
+    WHERE user_id = 'schema-usage-user-1'
       AND minute_start = '2026-10-08T12:02:00.000Z';
   IF restored_mask IS DISTINCT FROM 3 THEN
     RAISE EXCEPTION 'restored active-minute mask mismatch';
