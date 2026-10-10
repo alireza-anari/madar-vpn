@@ -52,6 +52,12 @@ class ManagedClient:
 
 
 @dataclass(frozen=True, slots=True)
+class UserTrafficCounters:
+    uplink_bytes: int
+    downlink_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
 class ApplyResult:
     applied: bool
     disabled: bool
