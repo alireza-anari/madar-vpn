@@ -249,14 +249,18 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
 
+    # Persisted Xray config is never authorization for a fresh Agent process.
+    # Stop the runtime before reading local state or contacting the control plane;
+    # the first cycle will promote/restart only a freshly validated managed config.
+    try:
+        _stop_xray()
+    except Exception:
+        print("node-agent startup unavailable; managed Xray stop failed", file=sys.stderr)
+        return 4
+
     try:
         service = build_agent_service()
     except Exception:
-        try:
-            _stop_xray()
-        except Exception:
-            print("node-agent startup unavailable; managed Xray stop failed", file=sys.stderr)
-            return 4
         print("node-agent startup unavailable; managed Xray disabled", file=sys.stderr)
         return 3
 
