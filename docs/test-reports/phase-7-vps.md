@@ -5,111 +5,132 @@ Branch: `impl/phase-1`
 
 ## Status
 
-**Phase 7: INCOMPLETE after real-VPS execution. Do not mark PASS.**
+**Phase 7: INCOMPLETE after real-VPS execution and post-field activity-source implementation. Do not mark PASS.**
 
-Task 27 was exercised on a real disposable AWS EC2 Ubuntu VPS. Real installation/enrollment, systemd health, reboot, direct external VLESS+REALITY traffic, aggregate observation, credential revocation, and control-plane-outage expiry were observed. The first field run exposed access-log identifier leakage and a fail-open expiry path; narrow fixes were made and retested. The phase remains incomplete: online connection presence is not active-traffic duration, the installed service still has no verified `ObservedActivity` source, and no live telemetry/debit claim is justified. Earlier client-identifying journal entries are retained at the user's explicit request. Phase 8 was not started.
+A real disposable AWS EC2 Ubuntu VPS already verified installation/enrollment, systemd health, two reboot scenarios, direct external VLESS+REALITY traffic, aggregate online observation, live credential revocation/replacement, and control-plane-outage expiry after a fail-closed fix. The field run also exposed and fixed client-UUID access-log leakage.
+
+After that field run, the branch gained a conservative server-observed activity source based on Xray per-user cumulative uplink/downlink byte counters, a one-second sampler, and in-memory telemetry-batch retry. Those changes are fully automated/CI verified but **have not yet been deployed and exercised against real traffic on the VPS**. Therefore no new live telemetry/debit claim is made here, Phase 7 remains incomplete, and Phase 8 remains unstarted.
+
+Earlier client-identifying journal entries remain on the disposable VPS at the user's explicit request; later fixed logs were separately checked without deleting history.
 
 ## Real field environment and scope
 
-- VPS: AWS EC2 `t3.micro`, Stockholm (`eu-north-1`), Ubuntu `24.04`, `x86_64`, Python `3.12.3`; sudo and systemd `running` verified over SSH.
-- Checkout: `alireza-anari/madar-vpn`, branch `impl/phase-1`, baseline commit `12e1f5c754a29da7cdb463db4d378eb56b8d8777`, plus the documented field fixes. The installer lacked its executable Git mode at baseline (`100644`); it was corrected to `100755` and direct wrapper execution was verified.
-- The user confirmed no control plane had been deployed and explicitly selected a disposable control plane on this VPS. The existing `createDefaultApiApp` Worker assembly and real PostgreSQL stores were bundled into a Node HTTPS host. Its PostgreSQL connection was supplied through the production runtime's Hyperdrive-shaped connection-string binding. This does not exercise Cloudflare Workers or an actual Hyperdrive service.
-- A fresh PostgreSQL database used the repository's authoritative schema. Disposable admin/user records and a hashed one-time login bootstrap were provisioned in this isolated database; the real auth consume and CSRF-protected admin enrollment-token routes were then used. This is not a real email-provider/signup acceptance test.
-- HTTPS was served only on `127.0.0.1:8443` with a disposable CA explicitly trusted on the VPS. Certificate/hostname verification stayed enabled. PostgreSQL listened only on `127.0.0.1:5432`; Xray StatsService listened only on `127.0.0.1:10085`.
-- The pinned Linux Xray `26.3.27` was installed by the real installer and verified against the repository digest. The external Windows client used the official same-version release archive, verified against GitHub's SHA-256 asset digest `d004c39288ce9ada487c6f398c7c545f7d749e44bdfdd59dbc9f865afba4e1ad`.
-- The VLESS listener was port `443`, with AWS ingress restricted to the test computer's source address. Successful Windows probes used direct VLESS+REALITY to the VPS; their returned public egress address matched the VPS. SSH forwarding was used only for a failed diagnostic comparison, not for the successful external traffic evidence.
-- Policies were explicitly published into the real revisioned PostgreSQL policy table by the disposable field operator; the node fetched and ACKed them through its real HTTPS API. This proves that field path, not an automated production policy-publication scheduler. Credential issuance/rotation used the real `AccessService`/PostgreSQL adapter.
+- VPS: AWS EC2 `t3.micro`, Stockholm (`eu-north-1`), Ubuntu `24.04`, `x86_64`, Python `3.12.3`; sudo/systemd verified over SSH.
+- Baseline checkout for the first field run: branch `impl/phase-1`, commit `12e1f5c754a29da7cdb463db4d378eb56b8d8777`, followed by the documented field fixes through `e0ff90bec6fbd4f13d4a90cdddd48fd3a27e568a`.
+- The installer executable Git mode was corrected from `100644` to `100755` and direct wrapper execution was verified.
+- No production control plane existed, so the approved disposable field environment hosted the existing API assembly plus real PostgreSQL stores on the VPS. It used the production runtime's Hyperdrive-shaped connection-string binding but did **not** exercise an actual Cloudflare Worker/Hyperdrive deployment.
+- A fresh PostgreSQL database used the repository authoritative schema. Disposable auth/admin/user data and a hashed one-time login bootstrap were used to obtain the real CSRF-protected admin enrollment flow. This is not real email-provider acceptance.
+- Disposable HTTPS was loopback-only with certificate/hostname verification enabled; PostgreSQL and Xray StatsService were loopback-only.
+- Pinned Linux Xray `26.3.27` came from the real installer and repository checksum. The external Windows test client used the official matching release and verified asset digest.
+- Direct VLESS+REALITY success used port `443` with ingress restricted to the test computer. Successful probes returned the VPS public egress address.
+- Real revisioned PostgreSQL policies were published by the disposable field operator and fetched/ACKed through the node HTTPS API. This proves that field path, not a production scheduler.
 
 ## Field observations (UTC, 2026-10-10)
 
 | Check | Actual evidence | Result / limit |
 | --- | --- | --- |
-| Real installer and enrollment | `./install.sh install` executed on Ubuntu; fresh token obtained through the authenticated admin API and passed only in memory/stdin; replay returned HTTP `401` | PASS |
-| Secret permissions | `node.credential`, `reality.private`, and `agent.env` each mode `0600` | PASS |
-| Real policy and service health | Revision 1 ACKed; Node Agent/Xray active; heartbeat `healthy=true`, `ready=true`, `accepting=true` | PASS |
-| Reboot | Boot identity changed after real reboot; control plane, agent and Xray active again; fresh policy ACK/readiness returned | PASS for the observed environment |
-| Fixed startup during outage | A second reboot with the control-plane unit disabled changed boot identity again; agent/Xray active but managed clients `0`; external credential probe denied at `06:12:04` before the control plane was re-enabled | PASS for the observed post-startup state; no claim about an instantaneous pre-first-cycle boot boundary |
-| Direct external traffic | `05:41:16` and subsequent Windows probes traversed direct VLESS+REALITY; public egress matched the VPS | PASS |
-| Before / during transfer | Aggregate `0` before sustained transfer, `1` during the first valid active-transfer samples; later samples had scheduling gaps and the transfer had ended | Presence transition observed; delayed samples not used to infer duration |
-| Idle open connection | `05:52:43`, `05:52:51`, `05:53:11`, `05:53:41`: aggregate `1` while the controlled HTTP connection stayed open without response payload; actual elapsed samples approximately `4.52`, `12.84`, `32.41`, `62.61` seconds | Online includes idle open connections |
-| Disconnect | Client terminated at `05:53:41`; aggregate `0` at `05:53:44`, and again through `05:54:44` | Disconnect transition observed; no exact sub-sample boundary claimed |
-| Live revoke | Live transfer online count `1` at `06:06:58`; real credential rotation and replacement policy published at `06:07:01`; revision 5 ACKed by `06:07:21`, old transfer closed, aggregate `0` | PASS for controlled policy propagation |
-| Old vs replacement credential | Old credential fresh connection denied at `06:08:06`; replacement direct probe succeeded at `06:08:41` with VPS egress | PASS |
-| Baseline outage expiry | Revision 2 short policy ACKed then the real control-plane service stopped; at `06:00:06`, policy `fresh=false` but managed client count still `1`; external traffic also succeeded after expiry | FAIL reproduced; prompted the expiry fix |
-| Fixed outage expiry | Repeat with revision 3: at `06:04:48`, policy `fresh=false`, managed client count `0`; external credential probe denied at `06:05:50` while the control plane remained stopped | PASS after fix; cycle/request-bound enforcement, not an instantaneous deadline timer |
-| Control-plane secret audit | Actual stored data scanned in memory: raw node credential and REALITY private key absent | PASS for the observed snapshot |
-| Baseline log privacy | Runtime journal contained the disposable client UUID via Xray's default access logger even at warning level; no raw identifier copied into this report/chat | FAIL reproduced; historical journal retained by user instruction |
-| Fixed log privacy | New runtime logs since `05:57:30` scanned in memory: no node credential, REALITY private key, client UUID, admin session/CSRF secret, bearer pattern or PEM private key | PASS for the bounded post-fix log interval; not a claim that historical journal is clean |
-| Live telemetry/debit | Real database still contained `0` telemetry reports and `0` reported seconds; installed `activity_source` is absent | NOT IMPLEMENTED / NOT PASS |
+| Real installer and enrollment | `./install.sh install`; fresh token through authenticated admin API; replay HTTP `401` | PASS |
+| Secret permissions | `node.credential`, `reality.private`, `agent.env` each `0600` | PASS |
+| Real policy and service health | Revision ACKed; Node Agent/Xray active; heartbeat healthy/ready/accepting | PASS |
+| Reboot | Boot identity changed; control plane, agent, Xray recovered; fresh policy/readiness returned | PASS for observed environment |
+| Startup with control plane disabled | Second reboot; agent/Xray active with managed clients `0`; external credential denied before control plane re-enabled | PASS for observed post-startup state |
+| Direct external traffic | Multiple direct VLESS+REALITY probes traversed VPS; public egress matched VPS | PASS |
+| Aggregate during transfer | Aggregate online changed from `0` to `1` during valid active-transfer samples | Presence observed; not duration evidence |
+| Idle open connection | Aggregate stayed `1` for samples through roughly 62 seconds while controlled HTTP connection remained open without response payload | Proves online != active traffic |
+| Disconnect | Aggregate returned to `0` after client termination | Transition observed |
+| Live revoke | Active old credential revoked/replaced through real policy propagation; old transfer closed and aggregate became `0` | PASS |
+| Old vs replacement credential | Old credential denied; replacement credential succeeded with VPS egress | PASS |
+| Baseline outage expiry | Initial run reproduced stale managed access after policy expiry while control plane unavailable | FAIL reproduced; prompted fix |
+| Fixed outage expiry | After fix, expired authorization produced managed client count `0` and fresh traffic denial while control plane remained stopped | PASS; cycle/request-bound rather than exact wall-clock timer |
+| Control-plane secret audit | Raw node credential and REALITY private key absent from inspected stored control-plane data | PASS for observed snapshot |
+| Baseline log privacy | Xray default access logger exposed disposable client UUID | FAIL reproduced; historical journal intentionally retained |
+| Fixed log privacy | Bounded post-fix runtime logs contained no node credential, REALITY private key, client UUID, admin session/CSRF secret, bearer pattern, or PEM private key | PASS for bounded post-fix interval |
+| Live telemetry/debit at first field run | PostgreSQL contained `0` telemetry reports and `0` reported seconds because no activity source was wired at that time | NOT PASS; branch implementation has since changed but field rerun is pending |
 
-Ordinary TLS success did not establish REALITY suitability: `www.microsoft.com:443` passed verified TLS 1.3 both directly and through Xray fallback, while matching Linux and Windows REALITY clients failed with EOF. The same keys/client worked after changing the explicit target and matching SNI to `www.cloudflare.com`. This is consistent with [upstream issue 6356](https://github.com/XTLS/Xray-core/issues/6356); this test did not enable raw REALITY debug output or prove the upstream internal certificate-record length itself.
+Ordinary TLS success did not prove REALITY suitability. `www.microsoft.com:443` passed ordinary verified TLS but the pinned REALITY clients failed with EOF; the same keys/client worked when target and SNI were changed to `www.cloudflare.com`. This is consistent with upstream Xray issue 6356 but the field test did not enable raw REALITY debug output or establish an upstream root cause.
 
-## Field fixes and regression verification
+## Field fixes from the first real-VPS run
 
-- Installer Git executable mode restored so the runbook's direct invocation works.
-- Xray managed configurations explicitly set `log.access` to `none`. The new assertion failed against the baseline (`None` rather than `none`), then passed after the minimal configuration change. Real post-fix logs were separately scanned; old logs were not erased or described as clean.
-- `NodeAgent.fetch_policy` closes absent/expired authorization before starting the network request and rechecks expiry in `finally`, including when HTTP/retry raises. New tests failed for expiry before retry, expiry during retry, and startup with unavailable control plane. The full Python suite subsequently passed: **58 tests** on the real Ubuntu host. The actual outage was independently rerun, with access closing and fresh traffic denied.
-- A separate static review of the narrow source changes reported no critical/important findings; that review did not independently execute the field tests.
-- Deployed `agent.py` and `xray.py` were refreshed from the published checkout and their SHA-256 values matched the checkout files exactly; the full Ubuntu Python suite again passed **58 tests**.
+- Restored installer executable mode.
+- Set managed Xray `log.access` to `none`; the regression assertion failed against baseline then passed after the narrow fix. Historical logs were not erased.
+- Hardened `NodeAgent.fetch_policy` so absent/expired authorization closes access before the request and expiry is rechecked in `finally`, including retry failure. Real outage behavior was rerun and verified.
+- The full Python suite passed **58 tests** on the real Ubuntu host for those field fixes.
+- Deployed `agent.py`/`xray.py` hashes were matched to the published checkout before the final field rerun.
 
-## Full CI evidence
+The field-fix source/evidence commit `7806a1a63f624d593a1c9b25232b72d802aa2435` passed the complete GitHub Actions workflow in run `38030266011`. The later evidence/documentation head `e0ff90b...` also passed full CI in run `38030473290`.
 
-Implementation/evidence commit `7806a1a63f624d593a1c9b25232b72d802aa2435` passed the complete GitHub Actions workflow: [run 38030266011](https://github.com/alireza-anari/madar-vpn/actions/runs/38030266011), **SUCCESS**.
+## Post-field server-observed activity implementation
 
-All required gates completed successfully: repository secret scan; PostgreSQL schema and destructive backup/restore; restored-Worker HTTP smoke; PostgreSQL driver/rollback smoke and integration suite; JavaScript and Python dependency audits; full JavaScript/TypeScript tests; typecheck; production build; and the full Python suite. This is CI evidence for the actual source fixes; it does not turn the remaining live activity/telemetry/privacy limitations into PASS.
+The idle experiment invalidated `onlineUsers` as a billing clock. The branch now uses Xray cumulative per-user traffic bytes instead.
 
-## Safe end-of-test state
+### Implemented algorithm
 
-Revision 6 with an empty client list was published and ACKed through the real node API. Managed client count and aggregate online count were both `0`; Node Agent, Xray and the loopback-only control plane remained active. The second reboot with the control plane disabled separately demonstrated startup access denial; re-enabling the control plane restored fresh-policy connectivity before the empty cleanup policy was published. The disposable EC2 instance remains allocated for inspection; it was not terminated and historical journals were not erased.
+Managed Xray config now enables `statsUserUplink` and `statsUserDownlink` in addition to the existing online diagnostic stat. A redacted adapter query reads only Madar-managed cumulative counters from the loopback StatsService.
 
-## Verified observation semantics and remaining gate
+A dedicated background sampler runs at approximately one-second cadence:
 
-`sudo ./install.sh observe` exposes aggregate server-observed **online connection presence**. The controlled idle experiment shows that `onlineUsers=1` is compatible with no ongoing response payload. The aggregate count cannot assign duration to an individual client, reveal exact connect/disconnect boundaries, distinguish billable active traffic from idle connections, or establish debit correctness. No raw StatsService/per-client observation was retained as evidence.
+- first sample: baseline only, zero seconds;
+- positive uplink or downlink byte delta across adjacent valid samples: exactly one `ObservedActivity` second;
+- unchanged counters: idle, zero seconds;
+- missing/new client, counter decrease/reset, non-monotonic time, query failure, or gap `>2.5s`: continuity is discarded/rebaselined and no seconds are invented across the ambiguous interval;
+- observations aggregate by client + UTC-minute window ID;
+- no synthetic `sessionId` is created.
 
-Do not generate `ObservedActivity.seconds` from this count by assuming the whole polling interval was active. A separate, verified runtime activity source/algorithm and its telemetry behavior are still required. Real v2rayNG/PWA/provider/production deployment gates are outside this field result. Historical identifier-bearing journal entries remain on the disposable VPS by explicit user choice.
+The Node Agent's existing `ObservedActivity -> UsageReport -> POST /api/node/telemetry` route is now wired to this sampler. If posting a telemetry batch fails, the same report objects/sequences are retained **in memory** and retried before newly drained activity is sent, so an ambiguous retry can rely on existing server-side idempotency rather than generating a second sequence/debit.
 
-## Historical automated evidence completed before the field run
+### TDD / CI evidence
 
-- Pinned Xray runtime configuration exists for supported architectures and downloaded archives are SHA-256 verified before installation.
-- REALITY private key material is generated and retained only in node-local state; the adapter returns only client-safe public parameters.
-- Candidate Xray configuration is validated before atomic promotion and service reload.
-- Managed-client apply, revoke, fail-closed disable, health and observation contracts are covered by Python tests.
-- Enrollment public configuration is resolved lazily and filtered to an explicit client-safe allowlist.
-- Node Agent/Xray systemd startup is configured so reboot does not falsely require a pre-existing running process; Xray waits for managed configuration and the agent requests the managed service during startup.
-- Managed Xray configuration exposes a `StatsService` observation surface only on `127.0.0.1:10085` and enables `statsUserOnline` for controlled Phase 7 field diagnosis.
-- The installer now exposes `sudo ./install.sh observe`, which returns only an aggregate Madar online-user count and never intentionally prints raw StatsService identifiers or captured Xray stdout/stderr.
-- The StatsService/observer changes deliberately do not invent billable-seconds semantics. The installed service still does not convert Xray online-user observations into `ObservedActivity` seconds until real-VPS observations establish the exact runtime behavior.
-- Logs/tests do not intentionally emit the REALITY private key or node credential.
+1. **Per-user Xray counters**
+   - RED: `567c1ff3fefb649a8aebabde8caedb4cb5c75164`, CI `38033610112` failed at Python after preceding gates passed.
+   - Implementation: `616aa4fa263b9223a1ad4d33cdbea3fd3c455f54` + `7735ea986340ab6ac7086bddf5bee76c55f5ffbc`.
+   - Updated obsolete online-only regression expectation: `1ec1565e75ea34bdc609763c877ba6744f5b0132`.
+   - Full CI `38033870204`: **SUCCESS**.
 
-## TDD evidence for local Xray observation
+2. **Conservative traffic-delta activity semantics**
+   - RED: `d718d1f97f2338d083c68db297473dea4a380ac5`, CI `38034002217` failed at Python after preceding gates passed.
+   - Implementation: `62d30c0cb6565127efa6a6a064519c140ce8df9d`.
+   - Full CI `38034115187`: **SUCCESS**.
 
-The first observation-surface regression test was added in commit `3f6e8428322911126ce081cc2148596d7fc9f6d6` (`test: require local Xray observation API`). GitHub Actions run `37973859930` failed at `pnpm test:python` while the preceding repository/security/PostgreSQL/JavaScript/typecheck/build gates passed. The minimum loopback StatsService implementation followed in commit `db31ad49a229c57b93ad3d765a0866868f6ee4b0` (`feat: expose local Xray observation API`), and GitHub Actions run `37974137357` completed successfully.
+3. **One-second background runtime wiring**
+   - RED: `cbd3d2eabfd54c6a11774729ef3017257ec89727`, CI `38034249001` failed at Python after preceding gates passed.
+   - Implementation: `fe528bf72e680fdb1f16b3ddb4dc874b4bd86b1d`.
+   - Full CI `38034380248`: **SUCCESS**.
 
-A second RED cycle added operator-safety tests in commits `0819ad4101f094f2ac8eaf0767b0ccea3e5775bb` (`test: require redacted Xray observation command`) and `0cb4a2d18d86b30c282a4401c45f8af2e237b80b` (`test: expose safe Xray observation through installer entrypoint`). GitHub Actions run `37975197221` passed secret scanning, PostgreSQL checks, dependency audits, JavaScript/TypeScript tests, typecheck and build, then failed at `pnpm test:python` as expected because the safe observer command did not yet exist.
+4. **Telemetry batch retention across post failure**
+   - Review found that destructively drained reports could be lost if a telemetry POST exhausted retries.
+   - RED: `c4f6fdb3040d09e100a01a8fb87ca53c54bad897`, CI `38034563851` failed at Python after preceding gates passed.
+   - Implementation: `b63ed461d5fb41c69c820cc00509ac1f1cb296b2`.
+   - Full CI `38034665943`: **SUCCESS**.
 
-The minimum implementation followed in commits `c5b35875309143e38281a9ffcb657b6d7b7c2efb` (`feat: add redacted Xray observation command`) and `98cbbc822af25b039ac22e28ac605a0d656455a4` (`feat: expose safe Xray observation entrypoint`). GitHub Actions run `37975520891` completed successfully, including secret scan, PostgreSQL schema and destructive backup/restore, restored Worker smoke, PostgreSQL integration tests, JavaScript and Python dependency audits, full JavaScript/TypeScript tests, typecheck, production build, and the Python suite.
+Each successful workflow includes repository secret scan, PostgreSQL schema + destructive backup/restore, restored Worker smoke, PostgreSQL integration suite, JavaScript/Python dependency audits, full JS/TS tests, typecheck, production build, and Python tests.
 
-The field-facing observer invokes the pinned Xray CLI locally, counts only Madar-managed online-user entries, and prints compact aggregate JSON such as `{"onlineUsers":1}`. If Xray observation fails or returns malformed data, the wrapper emits only `local Xray observation unavailable`; it does not include captured Xray output in the error. Raw `statsgetallonlineusers` output can contain client identifiers derived from VLESS UUIDs and must not be copied into reports, screenshots, chat, tickets, or persistent test artifacts.
+## What the new automated evidence does NOT prove
 
-## Other recent Phase 7 preparation
+The current implementation is intentionally conservative, but it is not yet a field PASS:
 
-- `28fddaaa2035842539a68689c2ea3673ee854dd6` — `feat: run real node service cycle`
-- `c93149fa3a62094b7dba42cb0791cc96bf160ec6` — `docs: update node install runbook for Xray bootstrap`
-- `9f8449834b92add0dd7a67533b0d49fed3654cfb` — `test: require reboot-safe Xray startup`
-- `6c7356240a82efbd5cfc661935f8b3891bb3248c` — `feat: make Xray startup reboot-safe`
-- GitHub Actions run `37967785745` on `6c735624...` — PASS
+- The new per-user byte-counter sampler has not yet been deployed to the real VPS and correlated with real transfer/idle behavior.
+- No real post-field telemetry row or free-credit debit has yet been produced by this sampler.
+- Pending activity/reports are retained in memory only; a Node Agent/VPS restart can still discard unsent in-memory evidence. Crash-durable accounting is not claimed.
+- Xray's traffic counters are aggregate per VLESS client UUID. If two simultaneous connections use the same UUID, this sampler cannot distinguish their individual durations and currently counts at most one activity tick per client per sampling interval. Therefore the product rule requiring combined debit for simultaneous same-credential sessions remains unresolved.
+- Real v2rayNG, Cloudflare/Hyperdrive target deployment, providers, PWA devices, and Production Ready are outside this evidence.
 
-These commits improve the automated/systemd/runtime preparation but are not substitutes for Task 27 field evidence.
+## Safe end-of-first-field-test state
 
-## Acceptance still required after the field run
+The first field run ended with an empty client policy that was ACKed through the real node API. Managed client count and aggregate online count were both `0`. The disposable EC2 instance remained allocated/running for inspection, historical journals were preserved, and Phase 8 was not started.
 
-The install/enrollment, direct protocol traffic, aggregate-presence, revoke and corrected outage-expiry checks above were run against real processes. Remaining gates are:
+## Remaining Phase 7 acceptance
 
-- define and implement a verified per-client activity source and its explicit observation-window algorithm without treating an idle online connection as proof of active traffic;
-- demonstrate the resulting real `ObservedActivity`/telemetry path and separately verify debit behavior before claiming usage correctness;
-- resolve the retained historical identifier-bearing journal before making a clean-environment privacy claim; do not silently erase logs against the user's instruction;
-- validate actual Cloudflare/Hyperdrive deployment and complete the independent v2rayNG/production gates in their proper phases.
+The next real-VPS pass must use the current branch and prove all of the following before Phase 7 can become PASS:
+
+1. Real pinned Xray exposes the expected Madar per-user uplink/downlink counters under the deployed managed config.
+2. A controlled sustained direct VLESS+REALITY transfer causes positive server-observed activity ticks, real telemetry POSTs, accepted PostgreSQL telemetry rows, and the expected free-credit debit exactly once.
+3. A controlled idle open connection with unchanged byte counters causes no new activity report/debit.
+4. Xray reset/restart or an observation gap does not create inferred seconds across the ambiguous interval.
+5. A transient/ambiguous telemetry POST retry sends the same window/sequence batch and does not double debit.
+6. Same-credential concurrent-session accounting is resolved or explicitly proven with a mechanism capable of combined actual usage; aggregate per-user byte counters alone are insufficient.
+7. Decide whether a crash/reboot-durable local telemetry outbox is required by the production accounting gate; if required, implement and field-test it.
+8. Historical identifier-bearing journal retention remains documented; do not silently erase those logs against the user's instruction.
 
 ## Release gate
 
-Phase 7 is not complete. The direct VLESS+REALITY transport and the bounded checks above now have field evidence, but they do not establish live usage-debit correctness, real v2rayNG compatibility, or Production Ready status. Phase 8 was not started and must not be marked started/completed from this partial field result.
+**Phase 7 remains INCOMPLETE.** Direct VLESS+REALITY transport, revoke, reboot, and corrected stale-policy behavior have genuine field evidence. The new traffic-derived activity algorithm has strong automated evidence but still needs real telemetry/debit validation and does not yet solve same-credential concurrent-session multiplicity or crash-durable unsent telemetry. Do not start Phase 8 or claim live usage-debit correctness / Production Ready from this state.
