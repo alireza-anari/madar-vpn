@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import socket
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Callable, Protocol
 from urllib.parse import urlencode
 
@@ -31,24 +32,21 @@ class HttpTransport(Protocol):
     ) -> HttpResponse: ...
 
 
+class TransientApiError(RuntimeError):
+    def __init__(self, status: int) -> None:
+        self.status = status
+        super().__init__(f"transient control-plane HTTP {status}")
+
+
 class TransientTransportError(RuntimeError):
     pass
 
 
-class TransientApiError(RuntimeError):
-    def __init__(self, status: int) -> None:
-        super().__init__(f"control-plane request temporarily failed with HTTP {status}")
-        self.status = status
-
-
 class PermanentApiError(RuntimeError):
-    def __init__(self, status: int, code: str | None = None) -> None:
-        message = f"control-plane request failed with HTTP {status}"
-        if code:
-            message += f" ({code})"
-        super().__init__(message)
+    def __init__(self, status: int, code: str) -> None:
         self.status = status
         self.code = code
+        super().__init__(f"control-plane request rejected: HTTP {status} {code}")
 
 
 class UrlLibTransport:
@@ -61,101 +59,96 @@ class UrlLibTransport:
         body: bytes | None,
         timeout: float,
     ) -> HttpResponse:
-        request = urllib.request.Request(url, data=body, headers=headers, method=method)
+        request = urllib.request.Request(
+            url,
+            data=body,
+            headers=headers,
+            method=method,
+        )
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 return HttpResponse(status=response.status, body=response.read())
         except urllib.error.HTTPError as error:
-            return HttpResponse(status=error.code, body=error.read())
-        except (urllib.error.URLError, TimeoutError, OSError) as error:
-            raise TransientTransportError("control-plane transport failed") from error
+            try:
+                payload = error.read()
+            except OSError:
+                payload = b""
+            return HttpResponse(status=error.code, body=payload)
+        except (urllib.error.URLError, TimeoutError, socket.timeout, OSError) as error:
+            raise TransientTransportError("control-plane transport unavailable") from error
+
+
+def _is_transient_status(status: int) -> bool:
+    return status == 429 or 500 <= status <= 599
 
 
 def _decode_json(response: HttpResponse) -> object:
-    if not response.body:
-        return None
     try:
         return json.loads(response.body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise PermanentApiError(response.status, "RESPONSE_INVALID") from error
 
 
-def _error_code(response: HttpResponse) -> str | None:
+def _error_code(response: HttpResponse) -> str:
     try:
         decoded = _decode_json(response)
     except PermanentApiError:
-        return None
+        return "REQUEST_REJECTED"
     if isinstance(decoded, dict):
-        code = decoded.get("error")
-        return code if isinstance(code, str) else None
-    return None
+        value = decoded.get("error")
+        if isinstance(value, str) and value:
+            return value[:128]
+    return "REQUEST_REJECTED"
 
 
-def _is_transient_status(status: int) -> bool:
-    return status in {408, 425, 429} or 500 <= status <= 599
-
-
-def _parse_iso(value: object) -> datetime:
-    if not isinstance(value, str):
-        raise PermanentApiError(200, "POLICY_INVALID")
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError as error:
-        raise PermanentApiError(200, "POLICY_INVALID") from error
-    if parsed.tzinfo is None:
-        raise PermanentApiError(200, "POLICY_INVALID")
-    return parsed.astimezone(timezone.utc)
+def _parse_timestamp(value: object) -> datetime:
+    if not isinstance(value, str) or not value:
+        raise ValueError("timestamp must be a non-empty string")
+    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("timestamp must be timezone-aware")
+    return parsed
 
 
 def _parse_policy(payload: object) -> Policy:
     if not isinstance(payload, dict):
-        raise PermanentApiError(200, "POLICY_INVALID")
-    revision = payload.get("revision")
-    clients = payload.get("clients")
-    if not isinstance(revision, int) or revision < 1 or not isinstance(clients, list):
-        raise PermanentApiError(200, "POLICY_INVALID")
-
-    parsed_clients: list[PolicyClient] = []
-    for raw in clients:
-        if not isinstance(raw, dict):
-            raise PermanentApiError(200, "POLICY_INVALID")
-        user_id = raw.get("userId")
-        policy_revision = raw.get("policyRevision")
-        client_id = raw.get("clientId")
-        tier = raw.get("tier")
-        speed_kbps = raw.get("speedKbps")
-        if (
-            not isinstance(user_id, str)
-            or not user_id
-            or not isinstance(policy_revision, int)
-            or policy_revision < 1
-            or not isinstance(client_id, str)
-            or not client_id
-            or tier not in {"free", "premium"}
-            or (speed_kbps is not None and (not isinstance(speed_kbps, int) or speed_kbps <= 0))
-        ):
-            raise PermanentApiError(200, "POLICY_INVALID")
-        parsed_clients.append(
-            PolicyClient(
-                user_id=user_id,
-                policy_revision=policy_revision,
-                client_id=client_id,
-                tier=tier,
-                speed_kbps=speed_kbps,
+        raise PermanentApiError(200, "RESPONSE_INVALID")
+    try:
+        revision = payload["revision"]
+        valid_until = _parse_timestamp(payload["validUntil"])
+        raw_clients = payload["clients"]
+        if not isinstance(revision, int) or revision < 0 or not isinstance(raw_clients, list):
+            raise ValueError("invalid policy shape")
+        clients: list[PolicyClient] = []
+        for raw in raw_clients:
+            if not isinstance(raw, dict):
+                raise ValueError("invalid client shape")
+            speed = raw.get("speedKbps")
+            if speed is not None and (not isinstance(speed, int) or speed <= 0):
+                raise ValueError("invalid speed")
+            clients.append(
+                PolicyClient(
+                    user_id=str(raw["userId"]),
+                    policy_revision=int(raw["policyRevision"]),
+                    client_id=str(raw["clientId"]),
+                    tier=str(raw["tier"]),
+                    speed_kbps=speed,
+                )
             )
+        return Policy(
+            revision=revision,
+            valid_until=valid_until,
+            clients=tuple(clients),
         )
-
-    return Policy(
-        revision=revision,
-        valid_until=_parse_iso(payload.get("validUntil")),
-        clients=tuple(parsed_clients),
-    )
+    except (KeyError, TypeError, ValueError) as error:
+        raise PermanentApiError(200, "RESPONSE_INVALID") from error
 
 
-def _iso_z(value: datetime) -> str:
-    if value.tzinfo is None:
-        raise ValueError("datetime must be timezone-aware")
-    return value.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+def _serialize_timestamp(value: datetime) -> str:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("timestamp must be timezone-aware")
+    return value.isoformat().replace("+00:00", "Z")
 
 
 def _serialize_usage(report: UsageReport) -> dict[str, object]:
@@ -164,12 +157,12 @@ def _serialize_usage(report: UsageReport) -> dict[str, object]:
         "windowId": report.window_id,
         "sequence": report.sequence,
         "seconds": report.seconds,
-        "timestamp": _iso_z(report.timestamp),
+        "timestamp": _serialize_timestamp(report.timestamp),
     }
     if report.observed_from is not None:
-        payload["observedFrom"] = _iso_z(report.observed_from)
+        payload["observedFrom"] = _serialize_timestamp(report.observed_from)
     if report.observed_to is not None:
-        payload["observedTo"] = _iso_z(report.observed_to)
+        payload["observedTo"] = _serialize_timestamp(report.observed_to)
     if report.session_id is not None:
         payload["sessionId"] = report.session_id
     return payload
@@ -278,5 +271,16 @@ class ControlPlaneClient:
         )
         decoded = _decode_json(response)
         if not isinstance(decoded, dict):
+            raise PermanentApiError(response.status, "RESPONSE_INVALID")
+
+        accepted = decoded.get("accepted")
+        duplicates = decoded.get("duplicates")
+        if (
+            type(accepted) is not int
+            or type(duplicates) is not int
+            or accepted < 0
+            or duplicates < 0
+            or accepted + duplicates != len(reports)
+        ):
             raise PermanentApiError(response.status, "RESPONSE_INVALID")
         return decoded
