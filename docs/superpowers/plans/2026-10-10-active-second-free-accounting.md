@@ -12,7 +12,9 @@
 
 ## Execution status
 
-Repository/CI implementation for Tasks 1-7 is complete. Documentation reconciliation/preparation in Task 8 is complete except for the final CI evidence line, which must be recorded only after the reconciled documentation head passes the full workflow.
+Repository/CI implementation for Tasks 1-7 is complete. Task 8 documentation reconciliation/preparation is also complete at repository/CI level.
+
+The reconciled documentation/code head `647fd930c627e715b71ffff0d1e0dffbec2d6fb6` passed the complete GitHub Actions workflow in run `38060536286`.
 
 The **real-VPS checklist remains open** and is a Phase 7 field gate, not something CI can satisfy. This plan therefore does not mark Phase 7 PASS.
 
@@ -223,14 +225,14 @@ Repository/CI evidence for the final Task 7 code head before documentation recon
 - [x] **Step 2 — ADR/runbook:** state stock-Xray session multiplicity is no longer a free-billing blocker but still does not solve Premium device identity. Document existing-DB migration as backup/preflight -> apply **0002 only** -> deploy control plane -> verify capability -> upgrade Agents. Do not rerun 0001 against an existing DB.
 - [x] **Step 3 — Preserve history:** never rewrite earlier field evidence as though bitmap billing was tested then. Historical identifier-bearing journals remain preserved per the existing user decision.
 - [ ] **Step 4 — Execute exact real-VPS checklist on one current head:** pinned Xray managed counters; sustained direct VLESS+REALITY traffic creates expected UTC bitmap and exactly-once PG debit; idle open connection creates no bits/debit; simultaneous overlapping connections do not multiply debit; reset/restart/gap creates no inferred bits; restart Agent before local ACK preserves exact `(windowId,sequence,seconds,activeSecondsHex)` and retry debits once; malformed acceptance leaves pending; outbox permissions/log privacy remain correct; current boot ordering proves no stale Xray authorization; no masked report is `unmapped`; delayed Premium/day behavior is proven at least at real control-plane integration level. Cross-node overlap remains a later multi-node gate unless a second real node is available.
-- [ ] **Step 5 — Final reconciled-docs CI evidence:** record exact reconciled documentation head SHA/run only after full success. Do **not** mark Phase 7 PASS until the real VPS checklist passes.
+- [x] **Step 5 — Final reconciled-docs CI evidence:** reconciled head `647fd930c627e715b71ffff0d1e0dffbec2d6fb6` passed complete CI run `38060536286`. This does **not** mark Phase 7 PASS because Step 4 is a real-VPS gate.
 - [x] **Step 6 — Documentation reconciliation commit(s):** approved spec, baseline design/plan, ADR, runbook, Phase 7 report, and this execution-status update are committed without rewriting historical field evidence as current evidence.
 
 ---
 
 ## Completion gates
 
-**Repository/CI implementation:** Tasks 1-7 are complete. Task 8 documentation preparation is complete, pending the final reconciled-docs CI evidence check.
+**Repository/CI implementation:** complete for this plan. Tasks 1-7 and Task 8 documentation/CI preparation are green.
 
 **Phase 7 field gate:** remains open until the exact deployed head passes the real-VPS checklist in Task 8 Step 4. Green CI alone is not Phase 7 PASS.
 
