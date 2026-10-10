@@ -32,7 +32,12 @@ export interface PaymentStore {
   getPlan(id: string): Promise<PaymentPlan | null>;
   saveOrder(order: PaymentOrder): Promise<void>;
   getOrder(id: string): Promise<PaymentOrder | null>;
-  settlePendingOrder(orderId: string, sourceKey: string, settledAt: string): Promise<PaymentSettlement | null>;
+  settlePendingOrder(
+    orderId: string,
+    sourceKey: string,
+    sourceOccurredAt: string,
+    settledAt?: string,
+  ): Promise<PaymentSettlement | null>;
   getPremiumUntil(userId: string): Promise<string | null>;
 }
 
@@ -65,7 +70,12 @@ export class MemoryPaymentStore implements PaymentStore {
     return order ? { ...order } : null;
   }
 
-  async settlePendingOrder(orderId: string, sourceKey: string, settledAt: string): Promise<PaymentSettlement | null> {
+  async settlePendingOrder(
+    orderId: string,
+    sourceKey: string,
+    _sourceOccurredAt: string,
+    settledAt?: string,
+  ): Promise<PaymentSettlement | null> {
     const order = this.orders.find((candidate) => candidate.id === orderId);
     if (!order) return null;
 
@@ -74,14 +84,15 @@ export class MemoryPaymentStore implements PaymentStore {
       return { applied: false, premiumUntil: currentPremiumUntil };
     }
 
-    const settledTime = new Date(settledAt).getTime();
+    const effectiveSettledAt = settledAt ?? _sourceOccurredAt;
+    const settledTime = new Date(effectiveSettledAt).getTime();
     const currentTime = currentPremiumUntil ? new Date(currentPremiumUntil).getTime() : Number.NEGATIVE_INFINITY;
     const baseTime = Math.max(settledTime, Number.isNaN(currentTime) ? Number.NEGATIVE_INFINITY : currentTime);
     const premiumUntil = new Date(baseTime + order.durationDays * DAY_MS).toISOString();
 
     this.settlementKeys.add(sourceKey);
     order.status = 'settled';
-    order.settledAt = settledAt;
+    order.settledAt = effectiveSettledAt;
     this.premium.set(order.userId, premiumUntil);
     return { applied: true, premiumUntil };
   }
@@ -125,11 +136,20 @@ export function createPaymentService(options: {
     return order;
   }
 
-  async function settle(orderId: string, sourceKey: string, settledAt: Date) {
-    if (!validId(sourceKey) || Number.isNaN(settledAt.getTime())) {
+  async function settle(orderId: string, sourceKey: string, sourceOccurredAt: Date, settledAt: Date) {
+    if (
+      !validId(sourceKey) ||
+      Number.isNaN(sourceOccurredAt.getTime()) ||
+      Number.isNaN(settledAt.getTime())
+    ) {
       throw new PaymentError(400, 'ORDER_INVALID', 'Payment settlement input is invalid.');
     }
-    const result = await options.store.settlePendingOrder(orderId, sourceKey, settledAt.toISOString());
+    const result = await options.store.settlePendingOrder(
+      orderId,
+      sourceKey,
+      sourceOccurredAt.toISOString(),
+      settledAt.toISOString(),
+    );
     if (!result) {
       throw new PaymentError(404, 'PAYMENT_ORDER_MISMATCH', 'Payment does not match a server-created order.');
     }
@@ -172,7 +192,8 @@ export function createPaymentService(options: {
       if (!validId(confirmationId)) {
         throw new PaymentError(400, 'ORDER_INVALID', 'Confirmation id is invalid.');
       }
-      return settle(orderId, `manual:${confirmationId}`, now());
+      const settledAt = now();
+      return settle(orderId, `manual:${confirmationId}`, settledAt, settledAt);
     },
 
     async settleProviderCallback(request: Request) {
@@ -189,7 +210,7 @@ export function createPaymentService(options: {
       if (Number.isNaN(occurredAt.getTime())) {
         throw new PaymentError(400, 'PAYMENT_ORDER_MISMATCH', 'Verified payment timestamp is invalid.');
       }
-      return settle(order.id, `provider:${event.provider}:${event.eventId}`, occurredAt);
+      return settle(order.id, `provider:${event.provider}:${event.eventId}`, occurredAt, now());
     },
   };
 }
