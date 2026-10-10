@@ -102,7 +102,143 @@ def test_adjacent_active_samples_aggregate_within_the_same_utc_minute_window() -
     source.sample()
     source.sample()
     source.sample()
+    observed = source.drain()
 
-    assert source.drain() == [
-        pytest.approx(source.drain()[0]) if False else source_class  # unreachable sentinel removed below
+    assert len(observed) == 1
+    assert observed[0].client_id == CLIENT_A
+    assert observed[0].window_id == WINDOW
+    assert observed[0].seconds == 2
+    assert observed[0].observed_from == START
+    assert observed[0].observed_to == START + timedelta(seconds=2)
+    assert observed[0].timestamp == START + timedelta(seconds=2)
+
+
+def test_counter_reset_rebaselines_without_charging_the_reset_interval() -> None:
+    source = source_class()(
+        read_counters=SequenceReader(
+            [
+                {CLIENT_A: counters(100, 100)},
+                {CLIENT_A: counters(20, 10)},
+                {CLIENT_A: counters(30, 10)},
+            ]
+        ),
+        now=SequenceClock([START, START + timedelta(seconds=1), START + timedelta(seconds=2)]),
+    )
+
+    source.sample()
+    source.sample()
+    assert source.drain() == []
+
+    source.sample()
+    observed = source.drain()
+    assert len(observed) == 1
+    assert observed[0].seconds == 1
+    assert observed[0].observed_from == START + timedelta(seconds=1)
+    assert observed[0].observed_to == START + timedelta(seconds=2)
+
+
+def test_sampling_gap_rebaselines_instead_of_inventing_seconds_across_gap() -> None:
+    source = source_class()(
+        read_counters=SequenceReader(
+            [
+                {CLIENT_A: counters(0, 0)},
+                {CLIENT_A: counters(900, 0)},
+                {CLIENT_A: counters(901, 0)},
+            ]
+        ),
+        now=SequenceClock([START, START + timedelta(seconds=4), START + timedelta(seconds=5)]),
+        max_gap_seconds=2.5,
+    )
+
+    source.sample()
+    source.sample()
+    assert source.drain() == []
+
+    source.sample()
+    observed = source.drain()
+    assert len(observed) == 1
+    assert observed[0].seconds == 1
+    assert observed[0].observed_from == START + timedelta(seconds=4)
+    assert observed[0].observed_to == START + timedelta(seconds=5)
+
+
+def test_multiple_clients_are_observed_independently() -> None:
+    source = source_class()(
+        read_counters=SequenceReader(
+            [
+                {CLIENT_A: counters(1, 1), CLIENT_B: counters(5, 5)},
+                {CLIENT_A: counters(2, 1), CLIENT_B: counters(5, 5)},
+                {CLIENT_A: counters(2, 1), CLIENT_B: counters(5, 9)},
+            ]
+        ),
+        now=SequenceClock([START, START + timedelta(seconds=1), START + timedelta(seconds=2)]),
+    )
+
+    source.sample()
+    source.sample()
+    source.sample()
+    observed = source.drain()
+
+    assert [(item.client_id, item.seconds) for item in observed] == [
+        (CLIENT_A, 1),
+        (CLIENT_B, 1),
     ]
+
+
+def test_invalidate_breaks_continuity_but_keeps_already_observed_pending_activity() -> None:
+    source = source_class()(
+        read_counters=SequenceReader(
+            [
+                {CLIENT_A: counters(0, 0)},
+                {CLIENT_A: counters(1, 0)},
+                {CLIENT_A: counters(100, 0)},
+                {CLIENT_A: counters(101, 0)},
+            ]
+        ),
+        now=SequenceClock(
+            [
+                START,
+                START + timedelta(seconds=1),
+                START + timedelta(seconds=3),
+                START + timedelta(seconds=4),
+            ]
+        ),
+    )
+
+    source.sample()
+    source.sample()
+    source.invalidate()
+    source.sample()
+    source.sample()
+    observed = source.drain()
+
+    assert len(observed) == 1
+    assert observed[0].seconds == 2
+    assert observed[0].observed_from == START
+    assert observed[0].observed_to == START + timedelta(seconds=4)
+
+
+def test_drain_is_destructive_and_later_activity_in_same_window_is_incremental() -> None:
+    source = source_class()(
+        read_counters=SequenceReader(
+            [
+                {CLIENT_A: counters(0, 0)},
+                {CLIENT_A: counters(1, 0)},
+                {CLIENT_A: counters(2, 0)},
+            ]
+        ),
+        now=SequenceClock([START, START + timedelta(seconds=1), START + timedelta(seconds=2)]),
+    )
+
+    source.sample()
+    source.sample()
+    first = source.drain()
+    assert len(first) == 1
+    assert first[0].seconds == 1
+    assert source.drain() == []
+
+    source.sample()
+    second = source.drain()
+    assert len(second) == 1
+    assert second[0].window_id == first[0].window_id == WINDOW
+    assert second[0].seconds == 1
