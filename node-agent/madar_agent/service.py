@@ -4,9 +4,10 @@ import signal
 import subprocess
 import sys
 from datetime import UTC, datetime
-from threading import Event
+from threading import Event, Thread
 from typing import Callable
 
+from .activity import XrayTrafficActivitySource
 from .agent import NodeAgent
 from .api import ControlPlaneClient, PermanentApiError
 from .config import load_config, load_runtime_config
@@ -17,6 +18,56 @@ from .xray import PinnedXrayAdapter, RealityServerConfig
 STOP = Event()
 AGENT_VERSION = "0.1.0"
 XRAY_SERVICE_NAME = "madar-xray.service"
+
+
+class ActivitySamplerWorker:
+    def __init__(
+        self,
+        *,
+        source,
+        interval_seconds: float = 1.0,
+    ) -> None:
+        if interval_seconds <= 0:
+            raise ValueError("interval_seconds must be positive")
+        self._source = source
+        self._interval_seconds = interval_seconds
+        self._stop = Event()
+        self._thread: Thread | None = None
+
+    @property
+    def running(self) -> bool:
+        thread = self._thread
+        return bool(thread is not None and thread.is_alive())
+
+    def start(self) -> None:
+        if self.running:
+            return
+        self._stop.clear()
+        thread = Thread(
+            target=self._run,
+            name="madar-xray-activity-sampler",
+            daemon=True,
+        )
+        self._thread = thread
+        thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        thread = self._thread
+        if thread is None:
+            return
+        thread.join(timeout=max(5.0, self._interval_seconds + 1.0))
+        if thread.is_alive():
+            raise RuntimeError("activity sampler did not stop")
+        self._thread = None
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                self._source.sample()
+            except Exception:
+                self._source.invalidate()
+            self._stop.wait(self._interval_seconds)
 
 
 class AgentService:
@@ -30,6 +81,7 @@ class AgentService:
         now: Callable[[], datetime],
         versions: dict[str, object],
         max_clients: int,
+        activity_worker=None,
     ) -> None:
         if max_clients <= 0:
             raise ValueError("max_clients must be positive")
@@ -41,6 +93,15 @@ class AgentService:
         self._versions = dict(versions)
         self._max_clients = max_clients
         self._active_clients = 0
+        self._activity_worker = activity_worker
+
+    def start_activity_sampling(self) -> None:
+        if self._activity_worker is not None:
+            self._activity_worker.start()
+
+    def stop_activity_sampling(self) -> None:
+        if self._activity_worker is not None:
+            self._activity_worker.stop()
 
     def run_cycle(self) -> None:
         environment = self._agent.validate_environment()
@@ -125,6 +186,16 @@ def build_agent_service() -> AgentService:
         server_names=(runtime.server_name,),
         short_ids=(runtime.reality_short_id,),
     )
+    now = lambda: datetime.now(UTC)
+    xray_holder: dict[str, PinnedXrayAdapter] = {}
+
+    def read_counters():
+        return xray_holder["adapter"].read_user_traffic_counters()
+
+    activity_source = XrayTrafficActivitySource(
+        read_counters=read_counters,
+        now=now,
+    )
     xray = PinnedXrayAdapter(
         install_root=runtime.binary.parents[1],
         state_root=config.credential_path.parent,
@@ -134,8 +205,13 @@ def build_agent_service() -> AgentService:
         server=server,
         reload=_restart_xray,
         is_active=_xray_is_active,
+        activity_source=activity_source.drain,
     )
-    now = lambda: datetime.now(UTC)
+    xray_holder["adapter"] = xray
+    activity_worker = ActivitySamplerWorker(
+        source=activity_source,
+        interval_seconds=1.0,
+    )
     agent = NodeAgent(
         config,
         api=client,
@@ -150,6 +226,7 @@ def build_agent_service() -> AgentService:
         now=now,
         versions={"agent": AGENT_VERSION, "xray": runtime.version},
         max_clients=runtime.max_clients,
+        activity_worker=activity_worker,
     )
 
 
@@ -162,17 +239,25 @@ def main() -> int:
     signal.signal(signal.SIGINT, _stop)
 
     service = build_agent_service()
+    start_activity_sampling = getattr(service, "start_activity_sampling", None)
+    stop_activity_sampling = getattr(service, "stop_activity_sampling", None)
+    if callable(start_activity_sampling):
+        start_activity_sampling()
 
-    while not STOP.is_set():
-        try:
-            service.run_cycle()
-        except PermanentApiError as error:
-            print(f"node-agent cycle rejected: HTTP {error.status}", file=sys.stderr)
-            return 2
-        except RetryExhausted:
-            print("node-agent cycle temporarily unavailable", file=sys.stderr)
+    try:
+        while not STOP.is_set():
+            try:
+                service.run_cycle()
+            except PermanentApiError as error:
+                print(f"node-agent cycle rejected: HTTP {error.status}", file=sys.stderr)
+                return 2
+            except RetryExhausted:
+                print("node-agent cycle temporarily unavailable", file=sys.stderr)
 
-        STOP.wait(30.0)
+            STOP.wait(30.0)
+    finally:
+        if callable(stop_activity_sampling):
+            stop_activity_sampling()
 
     return 0
 
