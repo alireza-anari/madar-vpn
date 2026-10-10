@@ -111,6 +111,24 @@ describe('orders and payment settlement', () => {
     await expect(store.getPremiumUntil('user-1')).resolves.toBe(firstExpiry);
   });
 
+  it('uses server settlement time when a verified provider occurrence timestamp is older', async () => {
+    const providerOccurredAt = new Date(START.getTime() - 10 * DAY_MS);
+    const { payments, store, setNow } = harness({ occurredAt: providerOccurredAt.toISOString() });
+    await payments.createOrder('user-1', 'monthly');
+    const serverSettledAt = new Date(START.getTime() + 5 * DAY_MS);
+    setNow(serverSettledAt);
+
+    await expect(
+      payments.settleProviderCallback(new Request('https://madar.test/payments/callback', { method: 'POST' })),
+    ).resolves.toEqual({
+      applied: true,
+      premiumUntil: new Date(serverSettledAt.getTime() + 30 * DAY_MS).toISOString(),
+    });
+    await expect(store.getPremiumUntil('user-1')).resolves.toBe(
+      new Date(serverSettledAt.getTime() + 30 * DAY_MS).toISOString(),
+    );
+  });
+
   it('extends a renewal from the later of now or the current Premium expiry', async () => {
     const { payments, store, setNow } = harness();
     const firstOrder = await payments.createOrder('user-1', 'monthly');
