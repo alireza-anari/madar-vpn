@@ -309,10 +309,10 @@ export class PostgresNodeControlStore implements NodeControlStore {
     const result = await this.db.query<ReturnedNodeRow>(
       `INSERT INTO telemetry_reports (
          node_id, client_id, window_id, sequence, seconds, timestamp,
-         observed_from, observed_to, session_id
+         observed_from, observed_to, session_id, active_seconds_hex, settlement_status
        ) VALUES (
          $1, $2, $3, $4, $5, $6::timestamptz,
-         $7::timestamptz, $8::timestamptz, $9
+         $7::timestamptz, $8::timestamptz, $9, $10, $11
        )
        ON CONFLICT (node_id, window_id, sequence) DO NOTHING
        RETURNING node_id`,
@@ -326,6 +326,8 @@ export class PostgresNodeControlStore implements NodeControlStore {
         report.observedFrom ?? null,
         report.observedTo ?? null,
         report.sessionId ?? null,
+        report.activeSecondsHex ?? null,
+        report.activeSecondsHex === undefined ? 'legacy' : 'unmapped',
       ],
     );
     return result.rows.length > 0;
