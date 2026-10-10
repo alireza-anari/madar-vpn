@@ -69,11 +69,20 @@ def test_build_agent_service_wires_xray_counter_source_drain_and_one_second_work
             created["client_config"] = config
 
     class FakeSource:
-        def __init__(self, *, read_counters, now, max_gap_seconds=2.5, record_activity=None) -> None:
+        def __init__(
+            self,
+            *,
+            read_counters,
+            now,
+            max_gap_seconds=2.5,
+            record_activity=None,
+            record_active_bucket=None,
+        ) -> None:
             self.read_counters = read_counters
             self.now = now
             self.max_gap_seconds = max_gap_seconds
             self.record_activity = record_activity
+            self.record_active_bucket = record_active_bucket
             created["source"] = self
 
         def sample(self, *, bucket_end=None) -> None:
@@ -134,12 +143,13 @@ def test_build_agent_service_wires_xray_counter_source_drain_and_one_second_work
     assert source.read_counters() == {
         "fixture-client": UserTrafficCounters(uplink_bytes=1, downlink_bytes=2)
     }
-    assert callable(source.record_activity)
+    assert source.record_activity is None
+    assert callable(source.record_active_bucket)
     assert xray.kwargs["activity_source"]() == []
     assert getattr(xray.kwargs["activity_source"], "__self__", None) is source
     assert worker.source is source
     assert worker.interval_seconds == 1.0
-    assert agent.outbox is getattr(source.record_activity, "__self__", None)
+    assert agent.outbox is getattr(source.record_active_bucket, "__self__", None)
     assert built._activity_worker is worker
 
 
