@@ -170,7 +170,13 @@ def test_generate_reality_keypair_redacts_private_key_when_xray_fails(tmp_path: 
     assert not (tmp_path / "state" / "reality.private").exists()
 
 
-def configured_adapter(tmp_path: Path, run, reload, logs: list[str]):
+def configured_adapter(
+    tmp_path: Path,
+    run,
+    reload,
+    logs: list[str],
+    lifecycle_events: list[str] | None = None,
+):
     server_config_cls = getattr(xray, "RealityServerConfig", None)
     assert server_config_cls is not None, "Task 26 must define server-side REALITY configuration"
     binary = tmp_path / "runtime" / VERSION / "xray"
@@ -180,6 +186,7 @@ def configured_adapter(tmp_path: Path, run, reload, logs: list[str]):
         server_names=("www.example.com",),
         short_ids=("0123456789abcdef",),
     )
+    events = lifecycle_events if lifecycle_events is not None else []
     adapter = xray.PinnedXrayAdapter(
         install_root=tmp_path / "runtime",
         state_root=tmp_path / "state",
@@ -188,7 +195,11 @@ def configured_adapter(tmp_path: Path, run, reload, logs: list[str]):
         log=logs.append,
         binary=binary,
         server=server,
+        authorize_runtime=lambda: events.append("authorize"),
+        revoke_runtime_authorization=lambda: events.append("revoke"),
         reload=reload,
+        is_active=lambda: True,
+        disable_runtime=lambda: events.append("disable"),
     )
     return adapter, binary
 
@@ -218,7 +229,10 @@ def test_apply_clients_validates_candidate_before_atomic_promote_and_reload(tmp_
 
     live_path = state_root / "xray-config.json"
     candidate_path = state_root / "xray-config.candidate.json"
-    assert calls == [[str(binary), "run", "-test", "-c", str(candidate_path)]]
+    assert calls == [
+        [str(binary), "run", "-test", "-c", str(candidate_path)],
+        [str(binary), "run", "-test", "-c", str(live_path)],
+    ]
     assert reloads == [True]
     assert live_path.exists()
     assert not candidate_path.exists()
@@ -273,15 +287,22 @@ def test_apply_clients_keeps_previous_config_when_validation_fails_and_redacts_o
     assert all(private_key not in line for line in logs)
 
 
-def test_revoke_client_and_fail_closed_disable_reapply_the_managed_client_set(tmp_path: Path) -> None:
+def test_revoke_client_reapplies_remaining_set_and_fail_closed_disable_stops_without_empty_reapply(tmp_path: Path) -> None:
     write_private_key(tmp_path)
     reloads: list[bool] = []
     logs: list[str] = []
+    lifecycle_events: list[str] = []
 
     def run(_argv: list[str]):
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-    adapter, _binary = configured_adapter(tmp_path, run, lambda: reloads.append(True), logs)
+    adapter, _binary = configured_adapter(
+        tmp_path,
+        run,
+        lambda: reloads.append(True),
+        logs,
+        lifecycle_events=lifecycle_events,
+    )
     first = ManagedClient(client_id=CLIENT_ID, tier="free", speed_kbps=1024)
     second = ManagedClient(client_id=SECOND_CLIENT_ID, tier="premium", speed_kbps=None)
 
@@ -291,11 +312,14 @@ def test_revoke_client_and_fail_closed_disable_reapply_the_managed_client_set(tm
     live_path = tmp_path / "state" / "xray-config.json"
     config = json.loads(live_path.read_text(encoding="utf-8"))
     assert [entry["id"] for entry in config["inbounds"][0]["settings"]["clients"]] == [SECOND_CLIENT_ID]
+    before_disable = live_path.read_text(encoding="utf-8")
 
     adapter.disable_managed_access()
-    config = json.loads(live_path.read_text(encoding="utf-8"))
-    assert config["inbounds"][0]["settings"]["clients"] == []
-    assert reloads == [True, True, True]
+
+    assert live_path.read_text(encoding="utf-8") == before_disable
+    assert adapter._managed_clients == []
+    assert reloads == [True, True]
+    assert lifecycle_events == ["authorize", "authorize", "revoke", "disable"]
 
 
 def test_health_requires_active_service_and_a_valid_live_config(tmp_path: Path) -> None:

@@ -39,7 +39,11 @@ def _configured_adapter(tmp_path: Path, run, logs: list[str]):
         log=logs.append,
         binary=binary,
         server=server,
+        authorize_runtime=lambda: None,
+        revoke_runtime_authorization=lambda: None,
         reload=lambda: None,
+        is_active=lambda: True,
+        disable_runtime=lambda: None,
     )
 
 

@@ -39,7 +39,11 @@ def test_managed_config_exposes_stats_service_on_loopback_only(tmp_path: Path) -
         run=run,
         binary=binary,
         server=server,
+        authorize_runtime=lambda: None,
+        revoke_runtime_authorization=lambda: None,
         reload=lambda: None,
+        is_active=lambda: True,
+        disable_runtime=lambda: None,
     )
 
     adapter.apply_clients(
