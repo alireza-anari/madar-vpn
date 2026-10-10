@@ -18,6 +18,12 @@ The current project brief overrides historical delivery/status claims in the sta
 
 Any administrator key or secret found in prior documentation is considered compromised/historical and must not be reused.
 
+### Approved accounting amendment
+
+The approved focused amendment `docs/superpowers/specs/2026-10-10-usage-and-premium-single-session-design.md` supersedes this baseline wherever this document previously required distinct simultaneous VPN sessions to multiply Free-credit usage.
+
+Under the amendment, Free credit is charged by account-level server-observed active traffic time: at most one second per account per UTC second bucket, regardless of how many connections, devices, credentials, or nodes overlap in that bucket. Premium separately requires one active client instance per configuration, but that device/client-instance enforcement remains a distinct unresolved technical/release gate until a privacy-safe server-verifiable identity mechanism is approved and field-tested.
+
 ## 3. Product identity and UX
 
 - Product name: **مدار**.
@@ -93,11 +99,13 @@ When extending Premium, the new expiration is calculated from the later of `now`
 
 While Premium is active, free credit is not consumed.
 
-### Concurrent usage accounting
+### Active-usage accounting
 
-Distinct simultaneous VPN sessions consume their **actual combined observed usage**, as required by the execution plan. For example, two independent active sessions lasting 60 seconds each may consume 120 seconds of free credit.
+Free usage is charged at most once per account for each server-observed UTC second bucket containing authenticated traffic. Overlapping connections, devices, credentials, or nodes in the same bucket do not multiply the Free debit. An idle open connection with no positive byte delta consumes no Free time.
 
-What must never be charged twice is the same telemetry evidence: retries, duplicate reports, replayed event identities, or repeated processing of the same session/window sequence are idempotent and add no second debit.
+The same telemetry evidence must also never be charged twice: retries, duplicate reports, replayed delivery identities, overlapping node reports, or repeated processing of already-settled active-second bits add no second debit.
+
+Premium usage remains expiration-based rather than Free-credit-based. The separately approved Premium concurrency rule allows a configuration to exist on multiple devices but requires at most one distinct active client instance at a time; this is not equivalent to raw Xray connection count or source IP and remains a separate implementation/release gate.
 
 ### Speed policy
 
@@ -270,9 +278,9 @@ Node credentials are hash-only in the control plane. REALITY private keys never 
 
 ### Usage
 
-`telemetry_reports`, `usage_session_buckets`, `usage_debit_events`.
+Authoritative usage state includes raw `telemetry_reports`, account-level settled UTC-minute active-second masks, Premium entitlement history used for observed-time billing decisions, and immutable `usage_debit_events`/credit-ledger evidence.
 
-Raw telemetry has an idempotency identity equivalent to `(node_id, window_id, sequence)`. Settlement preserves distinct simultaneous sessions while rejecting repeated processing of the same telemetry identity.
+Raw telemetry has an idempotency identity equivalent to `(node_id, window_id, sequence)`. A contradictory replay under the same identity is a conflict. Free debit uniqueness is account-level UTC second identity, so overlapping evidence from multiple connections, nodes, or credential rotations settles once rather than multiplying usage.
 
 ### Push
 
@@ -330,7 +338,7 @@ The REALITY private key is generated and retained only on the VPS. The control p
 
 ## 13. Telemetry and free-credit debit
 
-Minimum telemetry payload:
+Legacy/minimum telemetry identity includes:
 
 - `nodeId`
 - `clientId`
@@ -339,17 +347,20 @@ Minimum telemetry payload:
 - `seconds`
 - `timestamp`
 
-The implementation may additionally send `observedFrom`, `observedTo`, and a stable server-observed session identity when the selected Xray telemetry mechanism can provide one reliably.
+New aligned Free-account telemetry additionally carries `activeSecondsHex`, a canonical 60-bit per-UTC-minute active-second bitmap. `seconds` must equal its population count. Optional diagnostic bounds such as `observedFrom` and `observedTo` do not replace the canonical bucket identity.
 
 Backend requirements:
 
-- duplicate report: no second debit;
-- out-of-order report: accepted/reconciled correctly;
-- previous Tehran-day report: cannot debit today's free balance;
-- distinct simultaneous sessions: their actual observed usage is summed;
-- retry/replay of the same session/window sequence: no duplicate debit.
+- exact duplicate delivery: no second debit;
+- contradictory replay under the same delivery identity: conflict;
+- out-of-order non-conflicting evidence: accepted/reconciled correctly;
+- previous Tehran-day bucket: cannot debit today's Free balance;
+- Premium-at-observed-time bucket: cannot debit Free credit later;
+- overlapping connections/devices/credentials/nodes in the same account UTC bucket: charged once;
+- distinct non-overlapping active UTC buckets: each previously unseen bucket may debit one second;
+- ambiguous sampler intervals: no inferred seconds.
 
-If Xray does not provide sufficiently accurate connection timing, actual server-observed activity on a real VPS is measured and documented. No invented connection-state signal is allowed.
+Actual server-observed activity on the pinned Xray/VPS must be measured and documented. No invented connection-state or device-identity signal is allowed.
 
 ## 14. Multi-node subscriptions
 
@@ -457,7 +468,7 @@ Gate: server-authoritative auth behavior is tested; missing email provider is ho
 
 ### Phase 2 — Account Ledger + Free/Premium rules
 
-TDD for one-time 1,800-second grant, 900-second ad grant, replay prevention, Tehran reset boundary, Premium survival/extension, concurrent mutation, prior-day telemetry, distinct concurrent-session settlement, and duplicate-report replay prevention.
+TDD for one-time 1,800-second grant, 900-second ad grant, replay prevention, Tehran reset boundary, Premium survival/extension, concurrent mutation, prior-day telemetry, account-level active-second de-duplication, observed-time Premium handling, and duplicate/contradictory telemetry replay behavior.
 
 Gate: all credit mutations are transactional and idempotent.
 
@@ -481,7 +492,7 @@ Enrollment, heartbeat, policy, stale behavior, telemetry sequencing, installer s
 
 ### Phase 7 — Xray/VLESS/REALITY integration
 
-Disposable real VPS, pinned Xray, REALITY setup, real add/remove/revoke, actual traffic, activity telemetry investigation.
+Disposable real VPS, pinned Xray, REALITY setup, real add/remove/revoke, actual traffic, UTC active-second telemetry/debit validation, idle no-debit, retry/restart durability, and current fail-closed boot behavior.
 
 ### Phase 8 — v2rayNG E2E
 
@@ -489,11 +500,11 @@ Create account → verify email → get free credit → obtain subscription → 
 
 ### Phase 9 — Multi-node + speed enforcement
 
-Second real node, multi-node subscription, unhealthy filtering, cross-node rotation, concurrent telemetry, real Free/Premium throughput tests.
+Second real node, multi-node subscription, unhealthy filtering, cross-node rotation, cross-node active-second de-duplication, real Free/Premium throughput tests.
 
 ### Phase 10 — Production readiness
 
-Security review, failure-mode review, backup/restore, recovery, installer update/remove, logging/redaction, abuse controls, real Android/iPhone PWA checks and real Web Push.
+Security review, failure-mode review, backup/restore, recovery, installer update/remove, logging/redaction, abuse controls, real Android/iPhone PWA checks, real Web Push, and resolution/real-client proof of the Premium single-active-client gate.
 
 ## 21. Development workflow
 
@@ -521,9 +532,10 @@ The project is not production-ready until all of the following have passed with 
 - import subscription in real v2rayNG;
 - establish a real VPN connection;
 - pass traffic through the VPS;
-- decrement free time only during observed activity;
-- stop decrementing after disconnect/inactivity;
-- verify distinct simultaneous sessions consume their real combined usage without duplicate replay debit;
+- decrement Free time only during trusted server-observed active UTC buckets;
+- stop decrementing during idle/inactivity;
+- verify overlapping connections for the same account do not multiply Free debit and duplicate/replayed evidence adds no second debit;
+- verify the Premium single-active-client rule with the approved real client-instance mechanism once implemented, including two devices behind the same NAT;
 - add exactly 15 minutes after a valid rewarded-ad callback;
 - reset Free at Tehran midnight;
 - keep Premium across midnight;
@@ -535,6 +547,7 @@ The project is not production-ready until all of the following have passed with 
 - add a second node;
 - return multiple nodes in the subscription;
 - exclude unhealthy nodes;
+- verify cross-node overlap de-duplicates the same account UTC seconds;
 - enforce and measure the Free speed cap;
 - verify no Madar application speed cap for Premium;
 - install PWA on Android;
@@ -548,4 +561,5 @@ The project is not production-ready until all of the following have passed with 
 - no fabricated provider success;
 - no claim of production readiness before real VPS/v2rayNG/device tests;
 - no reuse of prior-project secrets, code, schema, or infrastructure decisions;
-- no premature commitment to an unverified Xray speed-enforcement mechanism.
+- no premature commitment to an unverified Xray speed-enforcement mechanism;
+- no IP-based or raw-connection-based substitute for Premium client-instance identity.
