@@ -1,16 +1,26 @@
 # Madar node installation and lifecycle
 
-This runbook documents the Madar Node Agent installer, pinned Xray/VLESS/REALITY runtime, UTC-aligned server-observed activity sampling, durable bitmap telemetry outbox, and the Phase 7 field gate.
+This runbook documents the current repository behavior for the Madar Node Agent, pinned Xray/VLESS/REALITY runtime, UTC active-second Free accounting, durable telemetry, PostgreSQL settlement, and the Phase 7 field gate.
 
-A disposable Ubuntu VPS was exercised on 2026-10-10 for installation/enrollment, systemd health, earlier reboot behavior, direct VLESS+REALITY traffic, credential revoke/replacement, stale-policy behavior, and bounded log privacy. A later exact-head field pass also exercised UTC bitmap accounting, outbox persistence, capability negotiation, and PostgreSQL settlement. It reproduced a startup stop-failure blocker: Agent exit does not stop the independent already-running Xray process. Phase 7 remains incomplete; see the new field section in `../test-reports/phase-7-vps.md`.
+Repository lifecycle remediation is implemented and CI-verified, but the new lifecycle has **not yet been rerun on the real VPS**. The historical Gate J failure remains valid field evidence. Phase 7 is still INCOMPLETE.
 
-Real v2rayNG acceptance is a separate later gate. Premium single-active-client enforcement is also a separate unresolved release gate and must not be inferred from the Free accounting implementation.
+Premium single-active-client/device enforcement is a separate unresolved release gate and must not be inferred from Free accounting or this lifecycle work.
 
 ## Supported environment
 
-The agent validates Ubuntu LTS `22.04`, `24.04`, or `26.04` on `x86_64`/`amd64` or `aarch64`/`arm64`.
+The Agent validates Ubuntu LTS `22.04`, `24.04`, or `26.04` on `x86_64`/`amd64` or `aarch64`/`arm64`.
 
-Run the installer as `root`. Madar files live under `/opt/madar-node-agent`, pinned Xray under `/opt/madar-xray`, state under `/etc/madar-node-agent`, and systemd units under `/etc/systemd/system`.
+Run the installer as `root`.
+
+Managed paths:
+
+```text
+/opt/madar-node-agent
+/opt/madar-xray
+/etc/madar-node-agent
+/etc/systemd/system
+/run/madar-node-agent
+```
 
 The installer intentionally does **not** modify SSH or firewall configuration.
 
@@ -25,11 +35,11 @@ export MADAR_REALITY_TARGET='origin.example.com:443'
 export MADAR_REALITY_SHORT_ID='<public-client-safe-value>'
 ```
 
-`MADAR_REALITY_TARGET` is explicit. Ordinary TLS success alone does not prove REALITY compatibility. During the first real field run, `www.microsoft.com:443` passed ordinary verified TLS but the pinned REALITY clients failed with EOF; the same keys/client worked after switching target/SNI to `www.cloudflare.com`.
+`MADAR_REALITY_TARGET` must be explicitly compatible with REALITY. Ordinary TLS success alone is insufficient; the historical field run observed a target that passed normal TLS but failed REALITY, while another target succeeded.
 
-Do **not** set a REALITY private key or public key manually. The installer verifies the reviewed pinned Xray release, generates X25519 material locally, keeps the private key VPS-only, and enrolls only public client-safe values.
+Do not supply a REALITY private key manually. The installer verifies the pinned Xray release, generates X25519 material locally, keeps the private key VPS-only, and enrolls only public client-safe values.
 
-Never place the one-time enrollment token in an environment variable, command-line argument, shell history, documentation, logs, source control, or chat. The wrapper reads it silently and passes it to Python on file descriptor 3.
+Never put the one-time enrollment token in an environment variable, command-line argument, shell history, source control, documentation, logs, screenshots, or chat. The install wrapper reads it silently and passes it to Python through a file descriptor.
 
 ## Install
 
@@ -39,7 +49,18 @@ From the checked-out `node-agent` directory:
 sudo -E ./install.sh install
 ```
 
-Installation stages the Node Agent, verifies pinned Xray, generates REALITY keys locally, enrolls with the one-time token, stores the node credential with restrictive permissions, stages systemd units, and starts the Node Agent only after successful enrollment.
+Installation:
+
+1. stages Node Agent files;
+2. verifies/installs pinned Xray;
+3. generates REALITY keys locally;
+4. enrolls with the one-time token;
+5. stores the node credential with restrictive permissions;
+6. stages both systemd units;
+7. reloads systemd;
+8. starts only `madar-node-agent.service`.
+
+Xray is not independently enabled by the installer.
 
 Sensitive/local state:
 
@@ -50,9 +71,9 @@ Sensitive/local state:
 /etc/madar-node-agent/telemetry-outbox.sqlite3
 ```
 
-Sensitive files and the telemetry outbox are owner-only `0600`; the state directory is `0700`. `agent.env` contains configuration paths/public runtime values, never the raw node credential or REALITY private key. The outbox rejects an existing symlink or non-regular path.
+Sensitive files and the telemetry outbox are owner-only `0600`; the persistent state directory is `0700`. `agent.env` contains paths/public runtime values, never the raw node credential or REALITY private key. The outbox rejects an existing symlink/non-regular path.
 
-## Service behavior
+## Current fail-closed service lifecycle
 
 Node Agent:
 
@@ -66,99 +87,207 @@ Managed Xray:
 /opt/madar-xray/26.3.27/xray run -c /etc/madar-node-agent/xray-config.json
 ```
 
-The Agent validates candidate Xray config before atomic promotion and restarts Xray only after valid managed configuration is promoted. Xray access logging is disabled with `log.access = "none"`.
+### Persisted config is not authorization
 
-A persisted `xray-config.json` is **not** authorization for a fresh Agent process. The Agent unit depends only on `network-online.target`; it does not `Wants`/`After` the Xray service. Every fresh Agent process first stops managed Xray before runtime/outbox construction. If that stop fails, startup is refused. If later runtime/outbox construction fails, Xray remains stopped and only a generic error is logged. A fresh control-plane policy cycle must re-establish authorized managed state before Xray can be promoted/restarted.
+A persisted:
 
-This current boot ordering is repository/CI verified and still requires a real reboot rerun.
+```text
+/etc/madar-node-agent/xray-config.json
+```
 
-The current-head field test additionally proved that a failed startup stop command leaves the prior Xray process and real client access alive while the Agent exits with status 4. Do not treat that exit status as proof of closed access. The field run explicitly stopped both services and applied an empty policy when collecting the test; lifecycle remediation and the complete current-head reboot/failure matrix remain open.
+is not sufficient to authorize a fresh Xray process.
 
-The 30-second control-plane cycle performs policy fetch/apply/ack, pending usage delivery, Xray health, authorization freshness, and heartbeat/readiness. Managed access fails closed when authorization is absent/stale, environment validation fails, or policy is invalid. Expiry enforcement is cycle/request-bound, not an exact wall-clock timer.
+Each Agent service activation owns an ephemeral runtime directory:
 
-## Server-observed Free activity sampler
+```text
+/run/madar-node-agent
+```
 
-Managed Xray exposes `StatsService` only on loopback `127.0.0.1:10085` and enables:
+with restrictive mode and non-preserving restart semantics. Current Xray authorization is represented by:
 
-- `statsUserOnline` only for aggregate operator diagnosis;
-- `statsUserUplink` and `statsUserDownlink` for cumulative per-managed-credential traffic observation.
+```text
+/run/madar-node-agent/xray-authorized
+```
 
-`onlineUsers`, unique online IPs, raw transport-connection count, browser state, and access logs are **not** billing clocks.
+The marker is fixed non-secret content, mode `0600`, and exists only for the current authorized Agent activation.
 
-The approved Free rule is account-level active traffic time: at most one Free second per account per server-observed UTC second bucket, regardless of how many connections, devices, credentials, or nodes overlap in that bucket.
+### Agent systemd unit
 
-The Node Agent uses a UTC-aligned one-second sampler:
+The Agent unit:
 
-- first valid sample establishes a baseline and creates zero activity;
-- a positive uplink or downlink byte delta across consecutive trusted scheduled boundaries marks exactly the preceding UTC second bucket active;
-- unchanged counters mark idle and create zero activity;
-- a new/missing client, counter decrease/reset, query failure, non-monotonic time, missed boundary, or observation later than the allowed post-boundary skew breaks continuity and creates zero inferred activity across the ambiguous interval;
-- delayed worker execution recomputes the next UTC boundary and skips missed seconds instead of replaying/catching up;
+- depends on `network-online.target`;
+- does **not** `Wants=` or `Requires=` Xray;
+- owns `RuntimeDirectory=madar-node-agent`;
+- sets `RuntimeDirectoryMode=0700`;
+- sets `RuntimeDirectoryPreserve=no`.
+
+Restarting/stopping the Agent therefore discards the prior activation's runtime authorization.
+
+### Xray systemd unit
+
+The Xray unit:
+
+- uses `BindsTo=madar-node-agent.service`;
+- is ordered after the Agent;
+- requires the live Xray config;
+- requires `/run/madar-node-agent/xray-authorized` through both a systemd condition and pre-start check;
+- has no independent `[Install]` target;
+- retains `Restart=on-failure`, bounded stop timeout, and control-group cleanup.
+
+If the Agent becomes inactive/failed/stopped, systemd is expected to pull Xray down independently of application cleanup.
+
+### Verified startup closure
+
+Every fresh Agent process first proves managed Xray inactive before constructing the runtime/outbox or contacting the control plane.
+
+It does **not** trust a stop command exit code. It queries:
+
+```bash
+systemctl show madar-xray.service \
+  --property=ActiveState \
+  --property=SubState \
+  --property=MainPID \
+  --no-pager
+```
+
+Safe closed state requires parseable:
+
+- `ActiveState=inactive` or `failed`; and
+- `MainPID=0`.
+
+Active/transitioning state, nonzero PID, malformed/missing properties, or unqueryable state are not accepted as closed.
+
+If ordinary stop does not produce verified inactivity, the lifecycle performs bounded systemd control-group force-stop recovery and verifies state again. If inactivity still cannot be proven, Agent exits before normal runtime construction with a generic non-secret error.
+
+### Fresh policy authorization
+
+For a fresh valid policy, Xray activation order is:
+
+1. render candidate config;
+2. validate candidate with pinned Xray;
+3. atomically promote to live config;
+4. create current authorization marker;
+5. controlled authorized Xray restart;
+6. verify Xray active;
+7. validate live config for health;
+8. only then treat managed state as healthy/ready.
+
+If marker grant, restart, or health verification fails, authorization is revoked and Xray is driven inactive. The live config may remain on disk, but it is not authorization by itself.
+
+### Stale/no authorization versus fresh empty policy
+
+These cases are intentionally different:
+
+- stale/missing/invalid authorization => clear managed-client state, revoke marker, stop Xray;
+- fresh explicit empty policy => validate/promote a zero-client config, create marker, start and health-check Xray.
+
+Do not use a zero-client config as a substitute for closing stale authorization.
+
+### Agent shutdown and failure
+
+Normal stop, fatal API exit, and sampler-cleanup failure all reach best-effort lifecycle disable. Sampler cleanup errors cannot skip marker revocation/Xray stop. The systemd `BindsTo` relationship remains the independent safety layer if application cleanup itself fails.
+
+## Xray logging and local observation
+
+Xray access logging is disabled:
+
+```text
+log.access = "none"
+```
+
+Managed `StatsService` is loopback-only at:
+
+```text
+127.0.0.1:10085
+```
+
+Enabled managed-user stats:
+
+- `statsUserOnline` only for aggregate diagnosis;
+- `statsUserUplink`;
+- `statsUserDownlink`.
+
+Raw per-client StatsService output must not be copied into tickets, chat, screenshots, CI logs, or reports.
+
+## Approved Free accounting rule
+
+Free usage is account-level server-observed active traffic time:
+
+- at most one Free second per account per UTC second bucket;
+- overlapping connections/devices/credentials/nodes do not multiply debit for the same bucket;
+- positive authenticated Xray uplink/downlink delta can mark a bucket active;
+- unchanged counters are idle and bill zero;
+- reset/decrease, missing/new client, query failure, non-monotonic time, missed boundary, restart gap, or excessive observation skew create zero inferred usage across ambiguity;
 - no `sessionId` is fabricated.
 
-The current default post-boundary observation-skew tolerance is `0.75s`. It is automated-tested and must be field-measured/validated before Phase 7 PASS.
+`onlineUsers`, public IP count, raw transport-connection count, browser state, and access logs are not billing clocks.
 
-The sampler never intentionally emits raw StatsService output. Raw per-client stats may contain credential-derived identifiers and must not be copied to chat, tickets, screenshots, CI output, or reports.
+The sampler uses UTC-aligned one-second boundaries. The current automated post-boundary skew tolerance is `0.75s`; real field validation remains required.
 
 ## Durable telemetry outbox v2
 
-Every trusted active UTC bucket is persisted immediately to:
+Outbox:
 
 ```text
 /etc/madar-node-agent/telemetry-outbox.sqlite3
 ```
 
-The current local schema uses `PRAGMA user_version = 2`.
+Current local schema version:
 
-For new aligned activity, the outbox stores a per-client/per-UTC-minute low-60-bit bitmap. Bit `0` represents second `:00`; bit `59` represents `:59`. When a pending report is frozen, the bitmap is serialized as exactly 16 lowercase hexadecimal characters in `activeSecondsHex`, and `seconds` equals the bit population count.
+```text
+PRAGMA user_version = 2
+```
+
+For new aligned activity the outbox stores per-client/per-UTC-minute low-60-bit masks. Pending reports freeze:
+
+- `windowId`;
+- `sequence`;
+- `seconds`;
+- `activeSecondsHex`;
+- observation timestamps.
+
+Pending identity survives Agent restart until complete acknowledgement.
+
+`activeSecondsHex` is exactly 16 lowercase hex characters for new bitmap reports and `seconds` equals the bit population count. ACK identity includes the bitmap.
 
 The outbox:
 
 - ORs repeated evidence for the same exact bucket idempotently;
-- transactionally allocates monotonic per-window `sequence` values;
-- freezes immutable pending reports including `activeSecondsHex`;
-- returns the exact same pending `(windowId, sequence, seconds, activeSecondsHex, timestamps)` after Agent restart until acknowledgement;
-- compares the bitmap as part of ACK identity;
-- keeps pending reports until the control plane accounts for the complete submitted batch;
-- accepts complete settlement when exact integer `accepted + duplicates == submitted report count`;
-- leaves pending data intact for malformed, partial, contradictory, boolean/string count, or otherwise ambiguous responses;
-- keeps the DB `0600` and parent state directory `0700`;
+- allocates monotonic sequence numbers transactionally;
+- keeps pending rows on malformed/partial/ambiguous responses;
+- only ACKs after exact integer `accepted + duplicates == submitted count`;
+- keeps DB `0600` and state directory `0700`;
+- rejects symlink/non-regular DB paths;
 - fails closed on unsupported future local schema versions.
 
-### Upgrade from the old local outbox
+Migration from older aggregate outbox state preserves historical pending/aggregate rows as legacy telemetry without inventing active-second bit positions.
 
-The deployed older outbox had aggregate `seconds` without exact bucket positions. Migration to v2 preserves existing pending reports with `activeSecondsHex = null` and preserves accumulated old aggregate activity as legacy reports. It **never invents bitmap bits** for historical aggregate seconds.
-
-Legacy reports may still be delivered/ACKed for durability during mixed-version rollout, but they do not create new active-second Free debit in the new authoritative settlement path.
-
-Sampling continuity itself is not persisted. The first Xray counter observation after Agent restart is baseline-only, so an ambiguous restart gap creates zero inferred usage.
-
-If a durable bucket write fails, sampler continuity is invalidated and the next valid observation is baseline-only.
+Sampling continuity itself is not persisted. First counter sample after Agent restart is baseline-only.
 
 ## Telemetry capability negotiation
 
-The new control plane exposes an authenticated node endpoint:
+Authenticated endpoint:
 
 ```text
 GET /api/node/telemetry/capabilities
 ```
 
-The current response advertises:
+Current capability:
 
 ```json
 {"activeSecondsV1":true}
 ```
 
-A new Agent must probe this capability before any batch containing `activeSecondsHex`.
+A new Agent does not send bitmap telemetry until support is explicitly advertised.
 
-- capability true: send the exact pending masked report;
-- authenticated `404` from an older server: treat active-second telemetry as unsupported and keep the masked report pending unchanged;
-- missing/invalid capability response: do not downgrade, strip, ACK, or fabricate the bitmap;
-- legacy pending reports without a bitmap may still be sent to an older server.
+- supported => submit exact pending bitmap report;
+- authenticated old-server `404` => keep masked report pending unchanged;
+- invalid/missing capability => no downgrade/strip/fabricated ACK;
+- legacy no-bitmap report may still be delivered to an older server.
 
-This makes **server-first deployment** the supported rollout order and prevents an accidental Agent-first overlap from silently losing active-second evidence.
+Supported deployment order remains server-first.
 
-## Authoritative PostgreSQL settlement
+## PostgreSQL settlement
 
 Migration:
 
@@ -166,28 +295,13 @@ Migration:
 packages/database/src/migrations/0002_active_second_accounting.sql
 ```
 
-The control plane stores raw telemetry identity, account-level settled minute masks, Premium entitlement history, and immutable usage-debit evidence. New masked settlement is atomic: raw telemetry acceptance, account mapping, unseen-bit de-duplication, observed-time entitlement evaluation, debit evidence, and Free ledger mutation commit or roll back together.
+On an existing database with `0001_core.sql`, do **not** replay `0001`. Take a verified backup/preflight and apply only `0002_active_second_accounting.sql` using the intended schema-owner role. Verify the API role can access the new tables/identity sequence before upgrading Agents.
 
-Global Free debit uniqueness is account-level UTC second identity, not connection/session multiplicity. Overlap from two nodes or two credential versions for the same account is charged once.
+Masked settlement atomically covers raw telemetry, credential/account mapping, account-level UTC-second de-duplication, observed-time Premium evaluation, Tehran-day grouping, debit evidence and Free-ledger mutation.
 
-Telemetry for an unknown managed credential is preserved as `unmapped` evidence with zero debit and blocks Phase 7 acceptance until explained/resolved.
+Unknown managed credential telemetry is preserved as `unmapped` with zero debit and blocks acceptance until explained.
 
-Premium is evaluated at the observed bucket time. A bucket observed while Premium was active cannot debit Free credit merely because telemetry arrives after Premium expiry. Tehran-day attribution also uses the observed bucket, so delayed prior-day evidence cannot debit the new day's Free balance.
-
-## Existing PostgreSQL deployment order
-
-For an existing database that already has migration `0001_core.sql`, **do not rerun 0001**.
-
-Supported rollout order:
-
-1. take and verify a PostgreSQL backup/preflight;
-2. apply **only** `0002_active_second_accounting.sql` to the existing database, using the intended schema-owner role; verify that the API role can access the new accounting tables and identity sequence before upgrading Agents. A privileged migration session can otherwise leave new tables owned by a different role and cause telemetry HTTP `500` / PostgreSQL `42501`;
-3. deploy the new control plane;
-4. authenticate as a node and verify the telemetry-capabilities endpoint reports active-second support;
-5. only then upgrade/restart Node Agents;
-6. verify no masked field telemetry becomes `unmapped` before proceeding broadly.
-
-The CI migration loop that applies all migration files lexically is a fresh-schema verifier; it is not an instruction to replay `0001` against an existing production database.
+Premium is evaluated at the observed bucket time; delayed Premium-period evidence cannot later debit Free simply because the report arrived after expiry. Tehran-day attribution also uses observed bucket time.
 
 ## Status and non-secret diagnosis
 
@@ -201,9 +315,9 @@ sudo journalctl -u madar-node-agent.service --since '15 minutes ago' --no-pager
 sudo journalctl -u madar-xray.service --since '15 minutes ago' --no-pager
 ```
 
-Before sharing logs, inspect/redact bearer values. Never `cat` `node.credential`, `reality.private`, or the SQLite outbox as evidence.
+Do not `cat` secrets or the outbox as evidence.
 
-Permission checks without revealing contents:
+Permission checks without exposing contents:
 
 ```bash
 sudo stat -c '%a %U:%G %n' /etc/madar-node-agent/node.credential
@@ -211,11 +325,12 @@ sudo stat -c '%a %U:%G %n' /etc/madar-node-agent/reality.private
 sudo stat -c '%a %U:%G %n' /etc/madar-node-agent/agent.env
 sudo stat -c '%a %U:%G %n' /etc/madar-node-agent/telemetry-outbox.sqlite3
 sudo stat -c '%a %U:%G %n' /etc/madar-node-agent
+sudo stat -c '%a %U:%G %n' /run/madar-node-agent/xray-authorized
 ```
 
-Expected file mode is `600`; expected state-directory mode is `700`.
+Expected persistent sensitive-file/outbox mode is `600`; persistent state-directory mode is `700`. The runtime marker, when current authorization exists, is also owner-only.
 
-## Aggregate online-state diagnosis
+## Aggregate diagnosis
 
 For controlled diagnosis only:
 
@@ -223,13 +338,13 @@ For controlled diagnosis only:
 sudo ./install.sh observe
 ```
 
-Example output:
+Example:
 
 ```json
 {"onlineUsers":1}
 ```
 
-This uses loopback Xray StatsService and emits only the aggregate Madar online count. It is useful for connect/disconnect/revoke correlation only and is **not** the billing source. Never expose port `10085` publicly.
+This is aggregate presence diagnosis only, not billing evidence. Never expose port `10085` publicly.
 
 ## Update
 
@@ -237,7 +352,15 @@ This uses loopback Xray StatsService and emits only the aggregate Madar online c
 sudo ./install.sh update
 ```
 
-The lifecycle command refreshes checked-out Agent/service assets and restarts `madar-node-agent.service`. On restart, the Agent first stops managed Xray and re-establishes authorized managed state.
+Current updater ordering is regression-tested:
+
+1. refresh Agent files;
+2. stage Agent unit;
+3. stage Xray unit;
+4. `daemon-reload`;
+5. restart **Agent only**.
+
+It never independently enables/starts/restarts Xray. Agent restart invalidates the old runtime marker, the bound Xray lifetime closes with the old activation, and the replacement Agent must obtain fresh authorization before Xray may serve again.
 
 ## Remove
 
@@ -245,63 +368,76 @@ The lifecycle command refreshes checked-out Agent/service assets and restarts `m
 sudo ./install.sh remove
 ```
 
-Removal stops/disables both Madar services and removes Madar-managed credentials, agent/runtime files, units, and state. It does not change SSH/firewall configuration.
+Removal stops/disables Madar services and removes Madar-managed credential/runtime/unit/state paths. It does not modify SSH or firewall configuration.
 
-## Historical first field pass
+## Repository evidence for Gate J remediation
 
-Already field-verified on 2026-10-10 under the then-current code:
+Repository code head before documentation reconciliation:
 
-- real installer + one-time enrollment;
-- original sensitive-file permissions;
-- real systemd/Xray health and two reboot scenarios under the older unit/runtime ordering;
-- direct external VLESS+REALITY traffic with VPS egress;
-- aggregate online presence including the controlled idle-open experiment;
-- live credential revoke/replacement;
-- stale-policy/control-plane-outage fail-closed after the field fix;
-- bounded post-fix log privacy.
+```text
+1b7dee80fd068b76beaaf1ac27d9dbd0cd531c94
+```
 
-These are historical observations. They do **not** prove the later UTC-bitmap sampler, v2 outbox, capability negotiation, atomic debit settlement, or current boot ordering on the real VPS.
+Full CI:
 
-Historical identifier-bearing journal entries remain preserved by explicit user decision. Do not erase or reinterpret them as clean history.
+```text
+38070242737 — SUCCESS
+```
 
-## Current Phase 7 field acceptance
+Coverage includes lifecycle marker/state handling, Xray authorization order/failure cleanup, systemd lifetime binding, Agent startup/shutdown matrix, updater ordering, secret scan, database gates, dependency audits, full application tests, typecheck, build and Python tests.
 
-The next real-VPS pass must deploy one exact current head and prove all of the following before Phase 7 can become PASS:
+This evidence does **not** prove the new lifecycle on the real VPS.
 
-1. the pinned Xray managed configuration exposes the expected per-user uplink/downlink cumulative counters;
-2. sustained direct VLESS+REALITY traffic creates the expected UTC active-second bitmap, durable local report, accepted PostgreSQL telemetry, and exactly-once Free debit;
-3. an idle open connection with unchanged counters creates no new bitmap bits or debit;
-4. multiple overlapping connections in the same UTC seconds do not multiply Free debit;
-5. Xray reset/restart, missed boundary, observation failure, or excessive skew creates no inferred active seconds across the ambiguous interval;
-6. restart the Agent before local ACK in an ambiguous-delivery scenario and prove the exact same `(windowId, sequence, seconds, activeSecondsHex)` returns and settles/debits once; server duplicate classification must safely clear that same report;
-7. a malformed/incomplete telemetry acceptance response leaves the pending report intact;
-8. outbox/state permissions remain `0600`/`0700` and no client identifiers, secrets, raw stats, or outbox contents leak to logs;
-9. reboot/restart the **current** Agent/systemd code and prove persisted stale Xray client access never becomes available before fresh authorization/policy;
-10. no masked field report is left `unmapped`;
-11. delayed Premium-period and Tehran-day behavior is proven at least against the real disposable control-plane/PostgreSQL integration used for the field pass.
+Companion repository remediation report:
 
-Cross-node overlap de-duplication remains a later multi-node field gate unless a second real node is available during this rerun.
+```text
+docs/test-reports/phase-7-vps-gate-j-remediation.md
+```
 
-The former blocker requiring combined Free debit for same-UUID simultaneous sessions is removed because that is no longer the approved Free product rule.
+Historical real field evidence remains in:
+
+```text
+docs/test-reports/phase-7-vps.md
+```
+
+## Real Phase 7 / Gate J rerun
+
+The next lifecycle field pass must deploy one exact final head and prove:
+
+1. original controlled startup stop-command failure no longer leaves serving Xray;
+2. repeated direct external VLESS+REALITY probes fail while Agent is failed/unfresh;
+3. manual Xray start with Agent inactive/no marker cannot serve;
+4. Agent crash/kill pulls Xray down through systemd binding;
+5. Agent restart with control plane unavailable leaves old marker gone/Xray down;
+6. fresh policy can authorize a new marker and restore healthy access;
+7. runtime/outbox initialization failure leaves Xray down;
+8. reboot exposes no stale access before fresh authorization;
+9. marker is ephemeral across stop/restart/reboot and restrictive while present;
+10. bounded logs/privacy and existing state-file permissions remain intact.
+
+Only that real pass can close Gate J.
+
+## Historical evidence boundary
+
+The 2026-10-10 real field pass already proved substantial transport/accounting behavior but also reproduced Gate J: injected startup stop failure caused Agent exit while the previously running Xray process remained active and two direct external probes still succeeded. That historical failure is intentionally preserved and is not overwritten by repository automation.
+
+Historical identifier-bearing journal entries also remain preserved by explicit user decision.
 
 ## Premium concurrency remains separate
 
-Premium still requires one active client instance/device per copied configuration. Stock Xray transport/session count and public IP are not sufficient device identity. This is not implemented by the Free accounting path and must receive a separate approved design plus real v2rayNG acceptance before Production Ready.
+Premium still requires one active client instance/device per copied configuration. Stock Xray transport-session count and public IP are not trustworthy device identity and are not approved substitutes. This is not implemented by Free accounting or the Gate J lifecycle work.
 
-Do not advertise or claim Premium single-device enforcement until that gate is solved.
+Do not advertise Premium single-device enforcement until a separate design plus real client acceptance passes.
 
-## Safety rules
+## Safety/release status
 
-- Enrollment tokens are one-time and short-lived.
-- Node credentials are hash-only in the control plane and plaintext only on the node with restrictive permissions.
-- REALITY private keys remain VPS-only.
-- Never expose raw node credentials, enrollment tokens, REALITY private keys, session/subscription/provider secrets, raw per-client StatsService output, or SQLite outbox contents in shared commands/logs/screenshots/reports.
-- Do not weaken key/credential/outbox permissions to bypass validation.
-- A systemd-active node is not necessarily ready; readiness requires fresh authorization, valid policy, real Xray health, and acknowledged control-plane state.
-- Stale authorization is always fail-closed.
-
-## Verification scope
-
-Repository/CI coverage now includes installer/lifecycle safety, credential permissions, pinned Xray/checksums, REALITY local-key handling, Xray validation/promotion, apply/revoke/fail-closed, policy freshness, telemetry sequencing, enrollment/auth, policy acknowledgements, readiness/capacity, loopback-only StatsService, per-user traffic-counter parsing, deterministic UTC one-second sampling, ambiguous-gap zero inference, local bitmap outbox v2 and v1 migration, immutable bitmap retry identity, complete ACK response validation, authenticated capability negotiation, safe old-server behavior, atomic PostgreSQL active-second settlement, cross-node/account-level overlap de-duplication, observed-time Premium evaluation, Tehran-day attribution, startup fail-closed behavior, and systemd ordering.
-
-Automation still does **not** establish live updated-VPS traffic/debit correctness, live idle no-debit, real crash/reboot durability of the bitmap outbox/current boot ordering, real multi-node overlap, Premium single-client enforcement, real v2rayNG E2E, actual Cloudflare/Hyperdrive production deployment, or Production Ready status.
+- enrollment tokens are one-time and short-lived;
+- node credentials are hash-only in control plane and plaintext only on node with restrictive permissions;
+- REALITY private keys remain VPS-only;
+- stale authorization is fail-closed;
+- systemd-active does not automatically mean ready;
+- repository lifecycle remediation is implemented/CI-verified;
+- real Gate J rerun is still required;
+- Phase 7 is **INCOMPLETE**;
+- Phase 8 is unstarted;
+- Production Ready is not claimed.
