@@ -294,6 +294,14 @@ export function createApiApp(
     return c.json(await nodes.ackNodePolicy(principal.nodeId, Number(body.revision)));
   });
 
+  app.get('/api/node/telemetry/capabilities', async (c) => {
+    const nodes = nodeFactory(c.env);
+    if (!nodes) return unavailable(c, 'NODE_CONTROL_UNAVAILABLE');
+    await requireNode(nodes, c.req.raw);
+    c.header('Cache-Control', 'no-store');
+    return c.json({ activeSecondsV1: true as const });
+  });
+
   app.post('/api/node/telemetry', async (c) => {
     const nodes = nodeFactory(c.env);
     if (!nodes) return unavailable(c, 'NODE_CONTROL_UNAVAILABLE');
