@@ -25,12 +25,14 @@ class XrayTrafficActivitySource:
         read_counters: Callable[[], dict[str, UserTrafficCounters]],
         now: Callable[[], datetime],
         max_gap_seconds: float = 2.5,
+        record_activity: Callable[..., None] | None = None,
     ) -> None:
         if max_gap_seconds <= 0:
             raise ValueError("max_gap_seconds must be positive")
         self._read_counters = read_counters
         self._now = now
         self._max_gap_seconds = max_gap_seconds
+        self._record_activity = record_activity
         self._lock = Lock()
         self._previous_counters: dict[str, UserTrafficCounters] | None = None
         self._previous_at: datetime | None = None
@@ -55,25 +57,33 @@ class XrayTrafficActivitySource:
             if elapsed <= 0 or elapsed > self._max_gap_seconds:
                 return
 
-            for client_id, current in counters.items():
-                prior = previous.get(client_id)
-                if prior is None:
-                    continue
-                if (
-                    current.uplink_bytes < prior.uplink_bytes
-                    or current.downlink_bytes < prior.downlink_bytes
-                ):
-                    continue
-                if (
-                    current.uplink_bytes == prior.uplink_bytes
-                    and current.downlink_bytes == prior.downlink_bytes
-                ):
-                    continue
-                self._record_active_tick(
-                    client_id=client_id,
-                    observed_from=previous_at,
-                    observed_to=observed_at,
-                )
+            try:
+                for client_id, current in counters.items():
+                    prior = previous.get(client_id)
+                    if prior is None:
+                        continue
+                    if (
+                        current.uplink_bytes < prior.uplink_bytes
+                        or current.downlink_bytes < prior.downlink_bytes
+                    ):
+                        continue
+                    if (
+                        current.uplink_bytes == prior.uplink_bytes
+                        and current.downlink_bytes == prior.downlink_bytes
+                    ):
+                        continue
+                    self._record_active_tick(
+                        client_id=client_id,
+                        observed_from=previous_at,
+                        observed_to=observed_at,
+                    )
+            except Exception:
+                # A failed durable write makes this interval ambiguous. Break the
+                # counter baseline so the next sample is baseline-only rather than
+                # risking a duplicate or invented second on retry.
+                self._previous_counters = None
+                self._previous_at = None
+                raise
 
     def invalidate(self) -> None:
         with self._lock:
@@ -109,6 +119,18 @@ class XrayTrafficActivitySource:
         observed_to: datetime,
     ) -> None:
         window_id = self._window_id(observed_to)
+        if self._record_activity is not None:
+            self._record_activity(
+                client_id=client_id,
+                window_id=window_id,
+                seconds=1,
+                timestamp=observed_to,
+                observed_from=observed_from,
+                observed_to=observed_to,
+                session_id=None,
+            )
+            return
+
         key = (client_id, window_id)
         current = self._pending.get(key)
         if current is None:
