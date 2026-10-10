@@ -55,7 +55,13 @@ def test_managed_config_exposes_stats_service_on_loopback_only(tmp_path: Path) -
     }
     assert config["stats"] == {}
     assert config["policy"] == {
-        "levels": {"0": {"statsUserOnline": True}},
+        "levels": {
+            "0": {
+                "statsUserOnline": True,
+                "statsUserUplink": True,
+                "statsUserDownlink": True,
+            }
+        },
     }
     assert config["api"]["listen"].startswith("127.0.0.1:")
     # The real Xray process emits its client's email/UUID through the default
