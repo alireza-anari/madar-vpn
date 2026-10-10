@@ -22,7 +22,8 @@ def test_background_sampler_invalidates_failed_observation_and_keeps_running() -
             self.samples = 0
             self.invalidations = 0
 
-        def sample(self) -> None:
+        def sample(self, *, bucket_end) -> None:
+            assert bucket_end.tzinfo is not None
             self.samples += 1
             if self.samples == 1:
                 raise RuntimeError("fixture Xray observation failure")
@@ -32,10 +33,10 @@ def test_background_sampler_invalidates_failed_observation_and_keeps_running() -
             self.invalidations += 1
 
     source = FakeSource()
-    worker = worker_cls(source=source, interval_seconds=0.01)
+    worker = worker_cls(source=source, interval_seconds=1.0)
 
     worker.start()
-    assert succeeded.wait(1.0), "sampler must continue after an observation failure"
+    assert succeeded.wait(2.5), "sampler must continue after an observation failure"
     worker.stop()
 
     assert source.invalidations == 1
@@ -75,7 +76,7 @@ def test_build_agent_service_wires_xray_counter_source_drain_and_one_second_work
             self.record_activity = record_activity
             created["source"] = self
 
-        def sample(self) -> None:
+        def sample(self, *, bucket_end=None) -> None:
             return None
 
         def invalidate(self) -> None:
