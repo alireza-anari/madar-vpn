@@ -87,7 +87,7 @@ def test_build_agent_service_wires_control_plane_node_agent_and_pinned_xray(monk
     assert built._max_clients == 128
 
 
-def test_main_runs_real_agent_service_cycle_instead_of_placeholder_heartbeat(monkeypatch) -> None:
+def test_main_stops_managed_xray_before_building_runtime_and_running_cycle(monkeypatch) -> None:
     calls: list[object] = []
 
     class FakeStop:
@@ -105,9 +105,14 @@ def test_main_runs_real_agent_service_cycle_instead_of_placeholder_heartbeat(mon
         def run_cycle(self) -> None:
             calls.append("cycle")
 
+    def build() -> FakeService:
+        calls.append("build")
+        return FakeService()
+
     monkeypatch.setattr(service_module, "STOP", FakeStop())
     monkeypatch.setattr(service_module.signal, "signal", lambda *_args: None)
-    monkeypatch.setattr(service_module, "build_agent_service", lambda: FakeService())
+    monkeypatch.setattr(service_module, "_stop_xray", lambda: calls.append("stop-xray"))
+    monkeypatch.setattr(service_module, "build_agent_service", build)
     monkeypatch.setattr(
         service_module,
         "load_config",
@@ -115,23 +120,46 @@ def test_main_runs_real_agent_service_cycle_instead_of_placeholder_heartbeat(mon
     )
 
     assert service_module.main() == 0
-    assert calls == ["cycle", ("wait", 30.0)]
+    assert calls == ["stop-xray", "build", "cycle", ("wait", 30.0)]
 
 
-def test_main_stops_managed_xray_when_runtime_build_fails_without_leaking_error(monkeypatch, capsys) -> None:
+def test_main_keeps_xray_stopped_when_runtime_build_fails_without_leaking_error(monkeypatch, capsys) -> None:
     calls: list[object] = []
     sensitive_detail = "fixture-client-id-should-not-be-logged"
 
+    def build():
+        calls.append("build")
+        raise RuntimeError(sensitive_detail)
+
     monkeypatch.setattr(service_module.signal, "signal", lambda *_args: None)
-    monkeypatch.setattr(
-        service_module,
-        "build_agent_service",
-        lambda: (_ for _ in ()).throw(RuntimeError(sensitive_detail)),
-    )
-    monkeypatch.setattr(service_module, "_stop_xray", lambda: calls.append("stop-xray"), raising=False)
+    monkeypatch.setattr(service_module, "_stop_xray", lambda: calls.append("stop-xray"))
+    monkeypatch.setattr(service_module, "build_agent_service", build)
 
     assert service_module.main() == 3
-    assert calls == ["stop-xray"]
+    assert calls == ["stop-xray", "build"]
     captured = capsys.readouterr()
     assert sensitive_detail not in captured.err
     assert captured.err.strip() == "node-agent startup unavailable; managed Xray disabled"
+
+
+def test_main_refuses_to_build_runtime_when_prestart_xray_stop_fails(monkeypatch, capsys) -> None:
+    calls: list[object] = []
+    sensitive_detail = "fixture-systemctl-detail-should-not-be-logged"
+
+    def stop_xray() -> None:
+        calls.append("stop-xray")
+        raise RuntimeError(sensitive_detail)
+
+    def build():
+        calls.append("build")
+        raise AssertionError("runtime must not build if Xray could not be stopped")
+
+    monkeypatch.setattr(service_module.signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(service_module, "_stop_xray", stop_xray)
+    monkeypatch.setattr(service_module, "build_agent_service", build)
+
+    assert service_module.main() == 4
+    assert calls == ["stop-xray"]
+    captured = capsys.readouterr()
+    assert sensitive_detail not in captured.err
+    assert captured.err.strip() == "node-agent startup unavailable; managed Xray stop failed"
