@@ -110,12 +110,13 @@ def test_gap_late_wake_reset_and_query_failure_never_infer_ambiguous_seconds() -
             {CLIENT: counters(20)},
             {CLIENT: counters(21)},
         ]),
+        # A failed counter query returns before the observation clock is read, so
+        # there is intentionally no clock instant for the failing query itself.
         now=SequenceClock([
             START + timedelta(seconds=1, milliseconds=10),
             START + timedelta(seconds=4, milliseconds=10),
             START + timedelta(seconds=5, milliseconds=900),
             START + timedelta(seconds=6, milliseconds=10),
-            START + timedelta(seconds=7, milliseconds=10),
             START + timedelta(seconds=8, milliseconds=10),
             START + timedelta(seconds=9, milliseconds=10),
         ]),
