@@ -48,6 +48,8 @@ class FakeAgent:
         self.applied: list[Policy] = []
         self.fetches = 0
         self.collects = 0
+        self.acknowledged: list[list[UsageReport]] = []
+        self._pending_usage: list[UsageReport] | None = None
         self.usage = [
             UsageReport(
                 client_id=CLIENT_ID,
@@ -76,7 +78,15 @@ class FakeAgent:
 
     def collect_usage(self) -> list[UsageReport]:
         self.collects += 1
-        return list(self.usage)
+        if self._pending_usage is None:
+            self._pending_usage = list(self.usage)
+        return list(self._pending_usage)
+
+    def acknowledge_usage(self, reports: list[UsageReport]) -> None:
+        assert self._pending_usage is not None
+        assert reports == self._pending_usage
+        self.acknowledged.append(list(reports))
+        self._pending_usage = None
 
     def is_authorization_fresh(self, now: datetime) -> bool:
         assert now == NOW
@@ -133,6 +143,7 @@ def test_cycle_applies_policy_acks_posts_telemetry_and_reports_real_readiness() 
     assert agent.applied == [policy()]
     assert control.acks == [4]
     assert control.telemetry == [agent.usage]
+    assert agent.acknowledged == [agent.usage]
     assert disabled == []
     assert control.heartbeats == [
         {
@@ -173,11 +184,13 @@ def test_failed_telemetry_post_retries_the_same_batch_before_draining_new_usage(
     service.run_cycle()
 
     assert attempts == [original, original]
-    assert agent.collects == 1
+    assert agent.acknowledged == [original]
+    assert agent.collects == 2
 
     service.run_cycle()
     assert attempts[-1] == agent.usage
-    assert agent.collects == 2
+    assert agent.acknowledged[-1] == agent.usage
+    assert agent.collects == 3
 
 
 def test_invalid_environment_fails_closed_without_fetching_or_acking_policy() -> None:
