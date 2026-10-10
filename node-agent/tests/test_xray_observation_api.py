@@ -58,3 +58,6 @@ def test_managed_config_exposes_stats_service_on_loopback_only(tmp_path: Path) -
         "levels": {"0": {"statsUserOnline": True}},
     }
     assert config["api"]["listen"].startswith("127.0.0.1:")
+    # The real Xray process emits its client's email/UUID through the default
+    # access logger even when the error log level is warning.
+    assert config["log"].get("access") == "none"

@@ -244,7 +244,7 @@ class PinnedXrayAdapter:
             for client in clients
         ]
         return {
-            "log": {"loglevel": "warning"},
+            "log": {"loglevel": "warning", "access": "none"},
             "api": {
                 "tag": "madar-local-api",
                 "listen": "127.0.0.1:10085",

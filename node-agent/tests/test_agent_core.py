@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import stat
 import sys
+import pytest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -9,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from madar_agent.agent import NodeAgent
 from madar_agent.models import AgentConfig, ObservedActivity, Policy, PolicyClient
+from madar_agent.retry import RetryExhausted
 
 
 UTC = timezone.utc
@@ -195,3 +197,41 @@ def test_collect_usage_assigns_monotonic_sequence_per_window(tmp_path: Path) -> 
     assert [report.sequence for report in second] == [3, 4]
     assert {report.client_id for report in first} == {"client-free", "client-premium"}
     assert all(report.window_id == "window-2026-10-08T13:00Z" for report in first)
+
+
+@pytest.mark.parametrize("expire_during_request", [False, True])
+def test_policy_fetch_outage_cannot_leave_expired_access_enabled(tmp_path: Path, expire_during_request: bool) -> None:
+    current = NOW
+    xray = FakeXray()
+
+    class UnavailableApi:
+        def fetch_policy(self, known_revision: int) -> Policy | None:
+            nonlocal current
+            assert known_revision == 4
+            if not expire_during_request:
+                assert xray.disable_calls == 1, "expired access must close before network retry"
+            current = NOW + timedelta(seconds=61)
+            raise RetryExhausted("control plane unavailable")
+
+    agent = make_agent(tmp_path, xray=xray, api=UnavailableApi(), now=lambda: current)
+    agent.apply_policy(policy(valid_for=60))
+    if not expire_during_request:
+        current = NOW + timedelta(seconds=61)
+    with pytest.raises(RetryExhausted):
+        agent.fetch_policy()
+    assert xray.disable_calls == 1
+
+
+def test_startup_closes_persisted_access_before_policy_network_request(tmp_path: Path) -> None:
+    xray = FakeXray()
+
+    class UnavailableApi:
+        def fetch_policy(self, known_revision: int) -> Policy | None:
+            assert known_revision == 0
+            assert xray.disable_calls == 1
+            raise RetryExhausted("control plane unavailable")
+
+    agent = make_agent(tmp_path, xray=xray, api=UnavailableApi())
+    with pytest.raises(RetryExhausted):
+        agent.fetch_policy()
+    assert xray.disable_calls == 1

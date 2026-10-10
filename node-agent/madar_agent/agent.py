@@ -75,10 +75,18 @@ class NodeAgent:
 
     def fetch_policy(self) -> Policy | None:
         known_revision = self._current_policy.revision if self._current_policy else 0
-        policy = self.api.fetch_policy(known_revision)
-        if policy is None and self._current_policy is not None and not self.is_authorization_fresh(self._now()):
+        # Persisted Xray state is not authorization after a service restart.
+        # Expired state must close before a network call can block or retry.
+        disabled = not self.is_authorization_fresh(self._now())
+        if disabled:
             self.xray.disable_managed_access()
-        return policy
+        try:
+            return self.api.fetch_policy(known_revision)
+        finally:
+            # The deadline can pass during the HTTP/retry budget, including
+            # when that operation raises and the service skips its heartbeat.
+            if not disabled and not self.is_authorization_fresh(self._now()):
+                self.xray.disable_managed_access()
 
     def apply_policy(self, policy: Policy) -> ApplyResult:
         self._current_policy = policy
