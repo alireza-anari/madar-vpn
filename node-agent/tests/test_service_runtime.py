@@ -47,11 +47,12 @@ def test_build_agent_service_wires_control_plane_node_agent_and_pinned_xray(monk
             created["disabled"] = True
 
     class FakeNodeAgent:
-        def __init__(self, config, *, api, xray, environment=None, now) -> None:
+        def __init__(self, config, *, api, xray, environment=None, now, outbox=None) -> None:
             self.config = config
             self.api = api
             self.xray = xray
             self.now = now
+            self.outbox = outbox
             created["agent"] = self
 
     monkeypatch.setattr(service_module, "load_config", lambda: agent_config)
@@ -81,6 +82,7 @@ def test_build_agent_service_wires_control_plane_node_agent_and_pinned_xray(monk
     assert agent.config == agent_config
     assert agent.api is built._control_plane
     assert agent.xray is created["xray"]
+    assert agent.outbox is not None
     assert built._versions == {"agent": "0.1.0", "xray": "26.3.27"}
     assert built._max_clients == 128
 
