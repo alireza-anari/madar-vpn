@@ -1,18 +1,16 @@
 # Madar node installation and lifecycle
 
-This runbook documents the current automated node installer and the automated portion of Phase 7 Xray/VLESS/REALITY integration. It **does not** claim that real VPS traffic or v2rayNG connectivity has been verified. Those remain separate field gates.
+This runbook documents the Madar Node Agent installer, Xray/VLESS/REALITY runtime, and the current Phase 7 server-observed traffic sampler. Real installation, enrollment, reboot, direct VLESS+REALITY traffic, revoke, and stale-policy fail-closed behavior were exercised on a disposable Ubuntu VPS on 2026-10-10. The newer traffic-to-telemetry sampler is automated/CI verified but still requires a second real-VPS field pass before Phase 7 can be marked complete. Real v2rayNG compatibility is a separate Phase 8 gate.
 
 ## Supported environment
 
 The agent validates Ubuntu LTS `22.04`, `24.04`, or `26.04` on `x86_64`/`amd64` or `aarch64`/`arm64`.
 
-Run the installer as `root`. The installer writes Madar files under `/opt/madar-node-agent`, the pinned Xray runtime under `/opt/madar-xray`, state under `/etc/madar-node-agent`, and systemd units under `/etc/systemd/system`.
+Run the installer as `root`. Madar files live under `/opt/madar-node-agent`, the pinned Xray runtime under `/opt/madar-xray`, state under `/etc/madar-node-agent`, and systemd units under `/etc/systemd/system`.
 
-The installer intentionally **does not change SSH or firewall configuration**.
+The installer intentionally does **not** modify SSH or firewall configuration.
 
 ## Required install inputs
-
-Set only the public/control-plane and non-secret runtime values before running `install.sh install`:
 
 ```bash
 export MADAR_API_BASE_URL='https://control.example.com'
@@ -23,13 +21,11 @@ export MADAR_REALITY_TARGET='origin.example.com:443'
 export MADAR_REALITY_SHORT_ID='<public-client-safe-value>'
 ```
 
-`MADAR_REALITY_TARGET` is required explicitly. The installer does not invent a target.
+`MADAR_REALITY_TARGET` is explicit; the installer does not invent one. Choose and test it with the pinned runtime. Ordinary TLS success alone does not prove REALITY compatibility. In the 2026-10-10 field run, `www.microsoft.com:443` passed ordinary TLS validation but REALITY failed with EOF, while the same keys/client worked after switching target/SNI to `www.cloudflare.com`.
 
-Do **not** set `MADAR_REALITY_PUBLIC_KEY`. The installer downloads the reviewed pinned Xray release for the current supported architecture, verifies its pinned SHA-256 digest, generates the REALITY X25519 keypair locally, retains the private key only on the VPS, and sends only the generated public client-safe value during node enrollment.
+Do **not** set a REALITY private key or public key manually. The installer downloads the reviewed pinned Xray release, verifies its SHA-256 digest, generates the X25519 keypair locally, keeps the private key VPS-only, and enrolls only public client-safe values.
 
-Do not place the one-time enrollment token in an environment variable, command-line argument, shell history, documentation, logs, or source control. The wrapper reads it silently from the terminal and passes it to the Python installer on file descriptor 3.
-
-The REALITY private key and raw node credential are VPS-only secrets. They must never be pasted into tickets/chat, copied into Git, or sent to the control plane as configuration.
+Never place the one-time enrollment token in an environment variable, command-line argument, shell history, documentation, logs, or source control. The wrapper reads it silently and passes it to Python on file descriptor 3.
 
 ## Install
 
@@ -39,63 +35,76 @@ From the checked-out `node-agent` directory:
 sudo -E ./install.sh install
 ```
 
-The installer explains the sensitive changes before prompting for the one-time token. During installation it:
+Installation:
 
-1. stages the Madar Node Agent;
-2. downloads the pinned Xray runtime for the host architecture and verifies its checksum;
-3. generates the REALITY keypair locally;
-4. enrolls through the one-time token using only public node parameters;
-5. stores the issued node credential with restrictive permissions;
-6. stages both systemd units;
+1. stages the Node Agent;
+2. downloads and verifies pinned Xray;
+3. generates REALITY key material locally;
+4. enrolls with the one-time token;
+5. stores the node credential with restrictive permissions;
+6. stages Node Agent and Xray systemd units;
 7. starts the Node Agent only after successful enrollment.
 
-The node credential is stored at:
+Sensitive state:
 
 ```text
 /etc/madar-node-agent/node.credential
+/etc/madar-node-agent/reality.private
+/etc/madar-node-agent/agent.env
 ```
 
-The credential file is written with owner-only `0600` permissions. The local REALITY private key is also owner-only and remains under the node state directory. Neither secret is written to `agent.env`.
-
-`/etc/madar-node-agent/agent.env` is written with `0600` permissions and contains only the API base URL, credential-file path, pinned Xray binary/version, listener port, server name, explicit REALITY target, and public short ID. It does not contain the node credential value, REALITY private key, or REALITY public key.
-
-Failed enrollment must leave no persisted node credential and must not leave a falsely-ready running service.
+All are owner-only `0600`; the state directory is restrictive. `agent.env` contains configuration paths/public runtime values, never the raw node credential or REALITY private key. Failed enrollment must not leave a persisted credential or falsely-ready service.
 
 ## Service behavior
 
-The installed agent unit is `madar-node-agent.service` and runs:
+Node Agent:
 
 ```text
 /opt/madar-node-agent/venv/bin/python -m madar_agent.service
 ```
 
-The managed Xray unit is `madar-xray.service`. It runs the pinned binary against the locally managed configuration only when that configuration exists:
+Managed Xray:
 
 ```text
 /opt/madar-xray/26.3.27/xray run -c /etc/madar-node-agent/xray-config.json
 ```
 
-The Xray unit is staged during install but is not treated as ready merely because a unit file exists. The Node Agent applies revisioned policy through the Xray adapter, validates candidate Xray configuration before atomic promotion, and restarts the managed Xray service only after a valid configuration is promoted.
+The Node Agent validates candidate Xray config before atomic promotion and restarts Xray only after a valid config is promoted. Access logging is explicitly disabled with `log.access = "none"`; warning log level by itself is not sufficient to prevent client-identifier access logs.
 
-The Node Agent cycle performs real control-plane policy fetch/apply/ack, telemetry collection/posting, Xray health checks, authorization freshness checks, and readiness/capacity heartbeat reporting. If authorization becomes stale, environment validation fails, or managed policy is invalid, managed access fails closed rather than remaining enabled on stale state.
+The 30-second control-plane cycle performs policy fetch/apply/ack, usage collection/posting, Xray health, authorization freshness, and heartbeat/readiness. Managed access fails closed when authorization is absent/stale, environment validation fails, or managed policy is invalid. Expiry is enforced before a policy request and rechecked when an in-flight request returns or raises, so retry exhaustion cannot preserve stale access. This is cycle/request-bound enforcement, not an exact deadline timer.
 
-Managed Xray configuration also enables `StatsService` with `statsUserOnline` for Phase 7 field observation. The API is bound only to `127.0.0.1:10085`; it is not a public management endpoint. Access logging is explicitly disabled (`access: "none"`): setting only `loglevel: "warning"` does not suppress Xray's client-identifying access log. This observation surface is deliberately separate from billing telemetry. The real-VPS test established that an idle open connection still counts online; the installed Node Agent does not translate this count into billable active-traffic seconds.
+### Server-observed traffic activity sampler
 
-The agent closes managed access before a policy request when it has no fresh in-memory authorization, including after restart. It rechecks expiry when the request finishes or raises, so exhausted network retries cannot skip expiry enforcement. Enforcement happens on the service cycle and at the end of an in-flight request; this is not an exact wall-clock shutdown timer. Test both expiry with a reachable control plane and expiry during a real control-plane outage.
+Managed Xray config exposes `StatsService` only on loopback `127.0.0.1:10085` and enables:
 
-Choose and test the REALITY target with the pinned runtime, rather than relying on ordinary TLS success alone. During the 2026-10-10 field test, `www.microsoft.com:443` passed direct TLS 1.3 validation but REALITY failed with EOF on the pinned `26.3.27` runtime. The unchanged keys/client worked after switching the test target and matching SNI to `www.cloudflare.com`. This is consistent with [upstream issue 6356](https://github.com/XTLS/Xray-core/issues/6356); another target must be verified in its actual deployment environment.
+- `statsUserOnline` for aggregate operator diagnosis;
+- `statsUserUplink` and `statsUserDownlink` for per-managed-client cumulative byte observation.
 
-Systemd hardening includes restrictive umask/home/system protection. Xray configuration and REALITY private-key state are owner-only.
+The billing sampler is **not** based on `onlineUsers`. The real field test proved an idle open connection can remain online for more than a minute with no response payload.
+
+The Node Agent samples cumulative per-user uplink/downlink counters on a dedicated approximately one-second background worker. The algorithm is deliberately conservative:
+
+- first sample establishes a baseline and charges zero;
+- between adjacent valid samples, any positive uplink or downlink byte delta creates exactly **one observed activity second** for that client;
+- unchanged counters are idle and create zero activity;
+- a new/missing client, decreasing counter (Xray restart/reset), non-monotonic time, observation failure, or sampling gap greater than `2.5s` breaks continuity/rebaselines and creates zero inferred seconds across the ambiguous interval;
+- observed activity is grouped by client and UTC-minute window IDs such as `xray-traffic:2026-10-10T07:00Z`;
+- no `sessionId` is fabricated from aggregate per-user counters.
+
+The sampler never intentionally emits raw StatsService output. Query failures/malformed output are reduced to generic errors. Raw per-client Xray stats can contain client UUID-derived identifiers and must not be copied to chat, tickets, screenshots, CI, or reports.
+
+The existing `ObservedActivity -> UsageReport -> POST /api/node/telemetry` path is used. A telemetry batch is retained **in memory** until the POST succeeds; if a transient/ambiguous POST fails, the same reports and sequences are retried before newly drained usage is sent, allowing server-side idempotency to prevent double debit.
+
+Important current limits:
+
+1. Pending sampler/batch state is not yet a durable on-disk outbox. A Node Agent process/VPS restart can discard not-yet-posted in-memory activity; do not claim crash-durable accounting yet.
+2. Xray's counters are aggregate per VLESS client UUID. Two simultaneous sessions using the same UUID cannot currently be distinguished by this sampler, so the product requirement that concurrent sessions debit their combined actual usage is **not yet proven/solved** by this mechanism.
+3. Automated tests prove algorithmic behavior only. Real transfer -> telemetry -> PostgreSQL settlement -> free-credit debit, and idle -> no debit, must be demonstrated on the VPS before Phase 7 PASS.
 
 ## Status and non-secret diagnosis
 
 ```bash
 sudo ./install.sh status
-```
-
-For the Phase 7 VPS field test, inspect both services without printing secret file contents:
-
-```bash
 sudo systemctl status madar-node-agent.service --no-pager
 sudo systemctl status madar-xray.service --no-pager
 sudo systemctl is-active madar-node-agent.service
@@ -104,9 +113,9 @@ sudo journalctl -u madar-node-agent.service --since '15 minutes ago' --no-pager
 sudo journalctl -u madar-xray.service --since '15 minutes ago' --no-pager
 ```
 
-Before sharing logs, review and redact any bearer values. Never run `cat` on `node.credential` or `reality.private` for evidence collection.
+Before sharing logs, inspect/redact bearer values. Never `cat` `node.credential` or `reality.private` as evidence.
 
-Useful permission checks that do not reveal contents:
+Permission checks without revealing contents:
 
 ```bash
 sudo stat -c '%a %U:%G %n' /etc/madar-node-agent/node.credential
@@ -114,29 +123,27 @@ sudo stat -c '%a %U:%G %n' /etc/madar-node-agent/reality.private
 sudo stat -c '%a %U:%G %n' /etc/madar-node-agent/agent.env
 ```
 
-Expected secret-file mode is `600`; the node state directory remains restrictive.
+Expected mode is `600`.
 
-## Local-only Xray activity observation
+## Aggregate online-state diagnosis
 
-After a valid managed policy has been applied and Xray is running, use the installer wrapper for Phase 7 observation:
+For controlled diagnosis only:
 
 ```bash
 sudo ./install.sh observe
 ```
 
-The command invokes the pinned local Xray CLI against `127.0.0.1:10085`, filters observations to Madar-managed online-user entries, and emits only an aggregate JSON count such as:
+Example output:
 
 ```json
 {"onlineUsers":1}
 ```
 
-The wrapper intentionally does not print Xray's raw `statsgetallonlineusers` response because that response can contain client identifiers derived from VLESS UUIDs. On command failure or malformed Xray output, it returns only the generic error `local Xray observation unavailable`; captured Xray stdout/stderr is not echoed.
+This wrapper calls loopback Xray StatsService and emits only the aggregate Madar online count. It intentionally does not print raw `statsgetallonlineusers` output. On failure it emits only `local Xray observation unavailable`.
 
-For the real-VPS field test, take aggregate observations before connection, while exactly one disposable test client is known to be connected, after disconnect, and after revoke/policy propagation. Record only the aggregate count and expected state transition. Do not run or preserve the raw Xray StatsService command as test evidence, and do not copy per-client identifiers into screenshots, chat, tickets, logs, or reports.
+`observe` is **not** the billing source. It is useful for connect/disconnect/revoke correlation only. Do not infer active seconds from it.
 
-The aggregate observation command proves only that Xray exposes a server-observed online-state primitive. It does **not** prove a connection-duration model, session boundaries, billable seconds, or usage-debit correctness. The real-VPS test must establish the actual transition semantics before any runtime adapter is permitted to translate observations into `ObservedActivity` seconds.
-
-Do not expose port `10085` through the VPS firewall or a public bind. The managed configuration is expected to keep it on loopback only.
+Never expose port `10085` publicly.
 
 ## Update
 
@@ -144,7 +151,7 @@ Do not expose port `10085` through the VPS firewall or a public bind. The manage
 sudo ./install.sh update
 ```
 
-The lifecycle command refreshes the checked-out agent/service assets and restarts `madar-node-agent.service`. It is not a general remote release channel. Any real-VPS update result must be recorded separately in the production-readiness lifecycle acceptance.
+The lifecycle command refreshes checked-out agent/service assets and restarts `madar-node-agent.service`. Treat a real-VPS update result as separate field evidence.
 
 ## Remove
 
@@ -152,38 +159,44 @@ The lifecycle command refreshes the checked-out agent/service assets and restart
 sudo ./install.sh remove
 ```
 
-Removal stops/disables both `madar-node-agent.service` and `madar-xray.service`, then removes the node credential, agent files, Xray runtime files, staged units, and node state path according to the lifecycle implementation. It does not alter SSH or firewall configuration.
+Removal stops/disables both Madar services and removes Madar-managed credentials, agent/runtime files, units, and state. It does not change SSH/firewall configuration.
 
-After removal, verify that Madar-managed paths are gone without copying any deleted secret elsewhere.
+## Phase 7 field acceptance
 
-## Phase 7 real-VPS acceptance checklist
+Already field-verified on 2026-10-10:
 
-The automated suite is not a substitute for this field test. On a disposable supported Ubuntu VPS, Task 27 remains incomplete until all of the following are observed against real processes and real traffic:
+- real installer + one-time enrollment;
+- secret file permissions;
+- real systemd/Xray health and two reboot scenarios;
+- direct external VLESS+REALITY traffic with VPS egress;
+- live credential revoke/replacement;
+- stale-policy/control-plane-outage fail-closed after the field fix;
+- bounded post-fix log privacy check.
 
-- install with the real installer;
-- successful one-time node enrollment;
-- healthy Node Agent and Xray systemd services after a valid managed policy is applied;
-- Xray accepts an authorized VLESS client credential;
-- revoked credential stops working after policy propagation;
-- real traffic/activity produces documented server-observed telemetry semantics;
-- repeated `sudo ./install.sh observe` aggregate observations are correlated with known connect/disconnect/revoke events without retaining raw client identifiers;
-- stale policy expires into fail-closed access;
-- no node credential or REALITY private key appears in control-plane data, logs, screenshots, or evidence.
+Still required for the new activity sampler before Phase 7 PASS:
 
-Record the actual field result only in `docs/test-reports/phase-7-vps.md` after the real test is run. A template or automated test result alone is not a PASS.
+- deploy the current branch to the existing disposable VPS and verify `statsUserUplink/downlink` are available from the real pinned Xray process;
+- perform a controlled sustained transfer and prove real `ObservedActivity` becomes telemetry reports in PostgreSQL and causes the expected free-credit debit exactly once;
+- keep a controlled connection idle and prove no additional activity/credit debit occurs while byte counters remain unchanged;
+- verify sampler failure/Xray reset or restart does not invent seconds across the gap;
+- verify transient telemetry-post failure retries the same batch/sequence without a second debit;
+- decide/implement the remaining same-credential concurrent-session accounting mechanism required for combined simultaneous usage;
+- decide whether crash/reboot-durable telemetry outbox is required for the production acceptance gate and implement/test it if required.
 
-## Enrollment and recovery safety rules
+Do not mark Phase 7 PASS from CI alone. Do not start/claim Phase 8 complete until Phase 7's remaining usage-accounting gate is resolved.
 
-- Enrollment tokens are one-time and short-lived; issue a new token instead of replaying an old one.
-- Node credentials are stored hash-only by the control plane and plaintext only on the node with restrictive permissions.
-- REALITY private keys are generated and retained locally on the VPS only.
-- Never expose the node credential, enrollment token, REALITY private key, session secrets, subscription tokens, provider secrets, or raw per-client StatsService output in commands shared outside the VPS, screenshots, CI logs, or documentation.
-- Do not weaken credential/key permissions to bypass environment validation.
-- Do not mark a node ready merely because systemd is active; readiness requires fresh authorization, valid policy, real Xray health, and control-plane acknowledgement state.
-- A stale authorization is a fail-closed condition, not a reason to keep managed access enabled.
+## Safety rules
+
+- Enrollment tokens are one-time and short-lived.
+- Node credentials are hash-only in the control plane and plaintext only on the node with restrictive permissions.
+- REALITY private keys remain VPS-only.
+- Never expose raw node credentials, enrollment tokens, REALITY private keys, session/subscription/provider secrets, or raw per-client StatsService output in shared commands/logs/screenshots/reports.
+- Do not weaken key/credential permissions to bypass validation.
+- A systemd-active node is not necessarily ready; readiness requires fresh authorization, valid policy, real Xray health, and acknowledged control-plane state.
+- Stale authorization is always fail-closed.
 
 ## Verification scope
 
-Automated tests currently cover installer safety, lifecycle commands, credential permissions, explicit runtime configuration, pinned Xray release/checksum handling, local REALITY key generation/redaction, Xray configuration validation/promotion, client application/revocation boundaries, policy freshness/fail-closed behavior, telemetry sequencing, node enrollment/authentication, policy acknowledgements, readiness/capacity reporting, systemd staging, loopback-only Xray StatsService configuration, the aggregate-only observation wrapper, and secret/redaction behavior.
+Automated coverage now includes installer/lifecycle safety, credential permissions, pinned Xray/checksums, REALITY local-key handling, Xray validation/promotion, apply/revoke/fail-closed, policy freshness, telemetry sequencing, enrollment/auth, policy acknowledgements, readiness/capacity, systemd staging, loopback-only StatsService, redacted aggregate observation, per-user uplink/downlink counter parsing, conservative one-second traffic-delta activity semantics, sampler lifecycle/failure invalidation, and in-memory same-batch telemetry retry.
 
-Still **unverified in the real integration gate**: disposable VPS install/update/remove behavior, live Xray/VLESS/REALITY traffic, live credential revocation, exact real activity/usage observation semantics, translation of verified observations into billable `ObservedActivity` seconds, stale-policy shutdown against a real Xray process, and real v2rayNG compatibility. Do not describe any of those as operational until their respective Phase 7/8 acceptance evidence exists.
+Still not established by automation alone: live traffic-derived telemetry/debit correctness, idle no-debit on the deployed sampler, crash-durable unsent telemetry, same-UUID concurrent-session multiplicity, real v2rayNG, actual Cloudflare/Hyperdrive production deployment, and Production Ready status.
