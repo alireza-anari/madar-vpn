@@ -167,6 +167,13 @@ def test_main_starts_and_stops_activity_sampling_around_control_plane_loop(monke
         def wait(self, seconds: float) -> None:
             calls.append(("wait", seconds))
 
+    class FakeLifecycle:
+        def ensure_inactive(self) -> None:
+            return None
+
+        def disable(self) -> None:
+            return None
+
     class FakeService:
         def start_activity_sampling(self) -> None:
             calls.append("start-sampling")
@@ -177,10 +184,15 @@ def test_main_starts_and_stops_activity_sampling_around_control_plane_loop(monke
         def run_cycle(self) -> None:
             calls.append("cycle")
 
+    lifecycle = FakeLifecycle()
     monkeypatch.setattr(service_module, "STOP", FakeStop())
     monkeypatch.setattr(service_module.signal, "signal", lambda *_args: None)
-    monkeypatch.setattr(service_module, "_stop_xray", lambda: None)
-    monkeypatch.setattr(service_module, "build_agent_service", lambda: FakeService())
+    monkeypatch.setattr(service_module, "build_xray_lifecycle", lambda: lifecycle)
+    monkeypatch.setattr(
+        service_module,
+        "build_agent_service",
+        lambda *, lifecycle: FakeService(),
+    )
 
     assert service_module.main() == 0
     assert calls == [
