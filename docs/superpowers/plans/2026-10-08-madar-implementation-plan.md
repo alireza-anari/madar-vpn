@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-08-madar-clean-start-design.md`
 
+**Approved accounting amendment:** `docs/superpowers/specs/2026-10-10-usage-and-premium-single-session-design.md` supersedes this older plan wherever it previously required distinct simultaneous VPN sessions to multiply Free-credit usage. The implementation plan for that amendment is `docs/superpowers/plans/2026-10-10-active-second-free-accounting.md`.
+
 ## Global Constraints
 
 - Clean start only: no code, database, repository history, credentials, secrets, installer assets, or architecture from Velo/WireGuard may be reused.
@@ -18,7 +20,8 @@
 - First verified email grants exactly 1,800 free seconds once.
 - Each valid server-verified rewarded-ad event grants exactly 900 free seconds once per provider event identity.
 - Free credit expires at 00:00 Asia/Tehran; Premium does not reset and lasts through purchased expiration.
-- Distinct simultaneous VPN sessions consume their actual combined observed usage; duplicate/replayed telemetry evidence never causes a second debit.
+- Free usage is charged at most once per account per trusted server-observed UTC second bucket. Overlapping connections, devices, credentials, or nodes in the same bucket do not multiply Free debit; duplicate/replayed telemetry evidence never causes a second debit.
+- Premium separately requires at most one active client instance per copied configuration, but IP address and raw Xray connection count are not approved device identity; this remains a separate unresolved design/release gate until implemented and real-client verified.
 - Free speed cap is admin-configurable and initially 5 Mbps; Premium has no Madar-imposed application speed cap.
 - Entitlement expiry, suspension, revocation, and credential rotation must be enforced on nodes, not only hidden in UI.
 - REALITY private key and raw node credential remain only on the VPS.
@@ -33,11 +36,11 @@
 
 ## Review Focus
 
-1. **Replay/concurrency accounting:** retries, duplicate provider callbacks, duplicate telemetry, concurrent transactions, and multiple active sessions must settle exactly according to source identity and actual observed usage.
-2. **Tehran date boundary:** delayed reports from the previous Tehran day must never consume the new day's free balance; Premium must remain unchanged through midnight.
+1. **Replay/concurrency accounting:** retries, duplicate provider callbacks, duplicate/contradictory telemetry, concurrent transactions, and overlapping node/credential evidence must settle exactly once per account/UTC active-second bucket while preserving distinct non-overlapping active seconds.
+2. **Tehran date boundary:** delayed reports from the previous Tehran day must never consume the new day's free balance; Premium must remain unchanged through midnight and observed-time Premium must not debit Free later.
 3. **Credential/node race conditions:** rotation must not publish a node before it has acknowledged the required credential policy; stale nodes must fail closed.
 4. **Authorization/secrets:** anonymous users, ordinary users, forged CSRF/origin requests, and log/error paths must never expose or perform admin/subscription/node-secret operations.
-5. **Honest readiness:** absent provider credentials, denied notification permission, unsupported install state, unhealthy nodes, and unavailable VPS integration must render as unavailable rather than success.
+5. **Honest readiness:** absent provider credentials, denied notification permission, unsupported install state, unhealthy nodes, unavailable VPS integration, and unresolved Premium client-instance enforcement must render as unavailable rather than success.
 
 ---
 
@@ -112,7 +115,7 @@
 - [ ] **Step 4: Add CI**
   - CI runs install with frozen lockfile, TS tests, typecheck, production build, Python tests when node-agent exists.
 - [ ] **Step 5: Verify**
-  - Run: `pnpm test && pnpm typecheck && pnpm build`
+  - `pnpm test && pnpm typecheck && pnpm build`
   - Expected: PASS.
 - [ ] **Step 6: Commit**
   - `git commit -m "chore: bootstrap Madar workspace"`
@@ -270,15 +273,21 @@
 
 ## Task 10: Implement telemetry settlement model
 
-**Files:** `0003_usage.sql`, `packages/domain/src/account/usage.ts`, `tests/integration/usage-settlement.test.ts`.
+**Supersession:** the original session-multiplying design for this task is replaced by the approved 2026-10-10 active-second plan. The canonical current implementation is described in `docs/superpowers/plans/2026-10-10-active-second-free-accounting.md`.
 
-**Interfaces:**
-- `recordUsage(report:{nodeId,clientId,windowId,sequence,seconds,timestamp,observedFrom?,observedTo?}): Promise<'accepted'|'duplicate'|'stale-day'>`
+**Current interfaces/semantics:**
+- canonical masked telemetry carries `(nodeId, clientId, windowId, sequence, seconds, timestamp, activeSecondsHex)` plus optional diagnostic observation bounds;
+- exact delivery retry is idempotent; contradictory reuse of the same delivery identity is a conflict;
+- Free debit uniqueness is account-level UTC second identity, including overlap across connections, nodes, and credential rotations;
+- delayed buckets use their observed Tehran day and observed-time Premium state;
+- old aggregate telemetry is retained only as legacy evidence and never converted into guessed active-second positions.
 
-- [ ] Tests: duplicate `(node,window,sequence)` no second debit; out-of-order sequence accepted once; negative/invalid seconds rejected; prior Tehran-day report cannot debit new-day credit; two distinct 60-second simultaneous sessions may debit 120 seconds; replay of either session adds zero.
-- [ ] Implement raw telemetry idempotency plus session-scoped settlement.
-- [ ] Verify under concurrent transactions.
-- [ ] Commit `feat: add idempotent real-usage settlement`.
+- [x] Active-second PostgreSQL schema/migration and entitlement-history state implemented under the 2026-10-10 plan.
+- [x] Canonical 60-bit bitmap contract and contradiction detection implemented/tested.
+- [x] Atomic PostgreSQL raw telemetry + de-duplication + debit settlement implemented/tested.
+- [x] UTC-aligned Xray sampler and durable local bitmap outbox implemented/tested.
+- [x] Mixed-version capability negotiation implemented/tested.
+- [ ] Real-VPS field acceptance for the current exact head remains required before Phase 7 PASS.
 
 ## Task 11: Expose authoritative account API and TimeRing states
 
@@ -466,12 +475,20 @@
 - [ ] Enroll node through one-time token.
 - [ ] Add user policy and verify Xray accepts credential.
 - [ ] Revoke credential and verify access removal.
-- [ ] Observe real traffic/activity source and document exact semantics; if exact connection duration is unavailable, document the server-observed activity algorithm rather than inventing connection state.
+- [ ] Verify pinned Xray cumulative user counters and the current UTC-aligned active-second sampler against direct real traffic.
+- [ ] Prove sustained traffic produces the expected durable `activeSecondsHex` evidence and exactly-once PostgreSQL Free debit.
+- [ ] Prove an idle open connection produces no new active bits/debit.
+- [ ] Prove overlapping connections in the same UTC seconds do not multiply Free debit.
+- [ ] Prove reset/restart/gap/missed-boundary ambiguity creates no inferred seconds.
+- [ ] Restart Agent before local acknowledgement and prove exact pending `(windowId, sequence, seconds, activeSecondsHex)` survives/retries once.
+- [ ] Prove malformed/incomplete acceptance keeps the local report pending.
+- [ ] Verify current boot ordering is fail-closed before fresh policy and verify outbox/log privacy/permissions.
+- [ ] Ensure no masked field report remains unexplained `unmapped`.
 - [ ] Verify stale-policy fail-closed behavior.
 - [ ] Record commands/results without secrets.
 - [ ] Commit evidence/config changes only after real test passes.
 
-**Phase 7 Gate:** real VPS integration and revoke/fail-closed behavior verified. If VPS access is unavailable, phase remains incomplete.
+**Phase 7 Gate:** the current exact head must pass the real VPS active-second/debit/retry/idle/fail-closed checklist. Green CI alone is insufficient. Premium single-active-client enforcement remains a separate unresolved release gate and does not become PASS from this Free-account field test.
 
 ---
 
@@ -486,14 +503,14 @@
 - [ ] Fetch real subscription URL.
 - [ ] Import subscription in current real v2rayNG.
 - [ ] Connect to real VPS and prove public traffic traverses VPS.
-- [ ] Confirm usage telemetry appears and free balance decreases only during observed active usage.
-- [ ] Disconnect and prove debit stops under documented observation window semantics.
+- [ ] Confirm usage telemetry appears and Free balance decreases only for trusted server-observed active UTC buckets.
+- [ ] Keep the imported connection idle and prove no additional active bits/debit appear.
 - [ ] Rotate Client ID: old config fails after revocation, Refresh obtains working new config.
 - [ ] Rotate Subscription URL: old URL fails immediately; new URL refresh works.
 - [ ] Freeze renderer/parser fixtures only after this test.
 - [ ] Commit evidence and compatibility fixtures.
 
-**Phase 8 Gate:** real v2rayNG/VPS connection and lifecycle tests pass. Otherwise subscription remains integration-unverified.
+**Phase 8 Gate:** real v2rayNG/VPS connection and lifecycle tests pass. Otherwise subscription remains integration-unverified. Premium single-active-client enforcement still requires its separately approved mechanism and real-client concurrency test.
 
 ---
 
@@ -505,6 +522,7 @@
 - [ ] Tests: two healthy ACKed nodes appear; stale/unhealthy node disappears; capacity-excluded node disappears; rotations propagate before advertisement.
 - [ ] Verify real subscription refresh displays both nodes in v2rayNG.
 - [ ] Verify traffic can pass through each node.
+- [ ] Verify overlapping active-second evidence from both nodes is de-duplicated globally at account level.
 - [ ] Record `phase-9-multinode.md`; commit.
 
 ## Task 30: Implement and prove per-free-user SpeedEnforcer
@@ -520,7 +538,7 @@
 - [ ] If no reliable mechanism is proven, mark Phase 9 failed/incomplete and do not fake readiness.
 - [ ] Commit only verified mechanism/evidence.
 
-**Phase 9 Gate:** real two-node subscription + unhealthy filtering + per-user Free speed cap + uncapped Premium behavior verified.
+**Phase 9 Gate:** real two-node subscription + unhealthy filtering + account-level cross-node usage de-duplication + per-user Free speed cap + uncapped Premium behavior verified.
 
 ---
 
@@ -558,12 +576,13 @@
 - [ ] Run all TS/Python automated suites, typecheck and production build.
 - [ ] Re-run account creation/one-time 30m grant.
 - [ ] Re-run v2rayNG import, real connection and VPS traffic.
-- [ ] Re-run debit-start/debit-stop behavior.
+- [ ] Re-run active-bucket debit and idle/no-debit behavior, including duplicate/replay protection.
+- [ ] Verify Premium single-active-client behavior only after the separately approved client-instance mechanism exists: first device works, second distinct device is denied, same device's normal multiple transport connections do not self-block, and same-NAT devices are distinguished.
 - [ ] Verify valid rewarded ad +15m only when a real configured provider callback exists; otherwise Production Ready remains blocked on that acceptance item.
 - [ ] Verify Tehran midnight reset and Premium survival with controlled clock/integration evidence.
 - [ ] Verify entitlement expire → real revoke; recharge → real re-enable.
 - [ ] Re-run Client ID rotation and Subscription URL rotation.
-- [ ] Re-run second node, unhealthy removal, Free speed cap and Premium no-app-cap.
+- [ ] Re-run second node, unhealthy removal, cross-node usage de-duplication, Free speed cap and Premium no-app-cap.
 - [ ] Re-run Android/iPhone PWA install and real Web Push.
 - [ ] Create `docs/test-reports/final-acceptance.md` with each item PASS/FAIL/BLOCKED and evidence reference.
 - [ ] Only when every required item is PASS may release notes use `Production Ready`.
@@ -596,7 +615,7 @@ Database integration tests run against an isolated PostgreSQL database and must 
 # Self-Review Mapping
 
 - Product/PWA/Auth: Tasks 1–6.
-- Atomic/idempotent Free/Premium accounting and Tehran reset: Tasks 7–11.
+- Atomic/idempotent Free/Premium accounting and Tehran reset: Tasks 7–11 plus the superseding 2026-10-10 active-second implementation plan.
 - Access profile, subscription, credential/token rotation: Tasks 12–15.
 - Admin/audit: Tasks 16–17.
 - Ads/payments/missions/push: Tasks 18–22.
@@ -604,6 +623,7 @@ Database integration tests run against an isolated PostgreSQL database and must 
 - Xray/VLESS/REALITY and real VPS validation: Tasks 26–27.
 - Real v2rayNG E2E: Task 28.
 - Multi-node and speed enforcement: Tasks 29–30.
+- Premium single-active-client identity/enforcement: separate approved design/implementation gate before final Production Ready acceptance.
 - Production security, recovery, real-device push/install, full acceptance: Tasks 31–34.
 
-All mandatory requirements from the approved design are assigned to at least one task. The five Review Focus risks are exercised by explicit tests in Tasks 3–5, 7–10, 12–14, 18–25, and 31–34. No external provider or VPN behavior is treated as operational before its real integration gate passes.
+All mandatory requirements from the approved baseline plus the approved 2026-10-10 accounting amendment are assigned to at least one task. No external provider, VPN path, active-second field path, or Premium device-locking behavior is treated as operational before its real integration gate passes.
