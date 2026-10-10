@@ -1,6 +1,6 @@
 # Madar node installation and lifecycle
 
-This runbook documents the Madar Node Agent installer, Xray/VLESS/REALITY runtime, and the current Phase 7 server-observed traffic sampler. Real installation, enrollment, reboot, direct VLESS+REALITY traffic, revoke, and stale-policy fail-closed behavior were exercised on a disposable Ubuntu VPS on 2026-10-10. The newer traffic-to-telemetry sampler is automated/CI verified but still requires a second real-VPS field pass before Phase 7 can be marked complete. Real v2rayNG compatibility is a separate Phase 8 gate.
+This runbook documents the Madar Node Agent installer, Xray/VLESS/REALITY runtime, the Phase 7 server-observed traffic sampler, and the durable local telemetry outbox. Real installation, enrollment, reboot, direct VLESS+REALITY traffic, revoke, and stale-policy fail-closed behavior were exercised on a disposable Ubuntu VPS on 2026-10-10. The newer traffic-to-telemetry sampler, durable outbox, and boot-level stale-Xray protections are automated/CI verified but still require a second real-VPS field pass before Phase 7 can be marked complete. Real v2rayNG compatibility is a separate Phase 8 gate.
 
 ## Supported environment
 
@@ -45,15 +45,16 @@ Installation:
 6. stages Node Agent and Xray systemd units;
 7. starts the Node Agent only after successful enrollment.
 
-Sensitive state:
+Sensitive/local state:
 
 ```text
 /etc/madar-node-agent/node.credential
 /etc/madar-node-agent/reality.private
 /etc/madar-node-agent/agent.env
+/etc/madar-node-agent/telemetry-outbox.sqlite3   # created by the Agent runtime
 ```
 
-All are owner-only `0600`; the state directory is restrictive. `agent.env` contains configuration paths/public runtime values, never the raw node credential or REALITY private key. Failed enrollment must not leave a persisted credential or falsely-ready service.
+The credential, REALITY private key, environment file, and telemetry outbox are owner-only `0600`; the state directory is restrictive (`0700`). `agent.env` contains configuration paths/public runtime values, never the raw node credential or REALITY private key. Failed enrollment must not leave a persisted credential or falsely-ready service. The outbox rejects a pre-existing symlink or non-regular DB path rather than following it.
 
 ## Service behavior
 
@@ -70,6 +71,8 @@ Managed Xray:
 ```
 
 The Node Agent validates candidate Xray config before atomic promotion and restarts Xray only after a valid config is promoted. Access logging is explicitly disabled with `log.access = "none"`; warning log level by itself is not sufficient to prevent client-identifier access logs.
+
+A persisted `xray-config.json` is **not** authorization for a fresh Agent process. The Agent systemd unit depends only on `network-online.target`; it does not `Wants`/`After` the Xray service. At every Agent process start, the Agent first stops managed Xray **before** runtime/outbox construction. If Xray cannot be stopped, runtime construction is refused. If runtime/outbox construction then fails, Xray remains stopped and only a generic startup error is logged. The first control-plane cycle re-establishes fail-closed managed state and only then can a freshly validated policy promote/restart Xray. This boot ordering is repository/CI verified and still needs a real reboot rerun on the disposable VPS.
 
 The 30-second control-plane cycle performs policy fetch/apply/ack, usage collection/posting, Xray health, authorization freshness, and heartbeat/readiness. Managed access fails closed when authorization is absent/stale, environment validation fails, or managed policy is invalid. Expiry is enforced before a policy request and rechecked when an in-flight request returns or raises, so retry exhaustion cannot preserve stale access. This is cycle/request-bound enforcement, not an exact deadline timer.
 
@@ -93,13 +96,35 @@ The Node Agent samples cumulative per-user uplink/downlink counters on a dedicat
 
 The sampler never intentionally emits raw StatsService output. Query failures/malformed output are reduced to generic errors. Raw per-client Xray stats can contain client UUID-derived identifiers and must not be copied to chat, tickets, screenshots, CI, or reports.
 
-The existing `ObservedActivity -> UsageReport -> POST /api/node/telemetry` path is used. A telemetry batch is retained **in memory** until the POST succeeds; if a transient/ambiguous POST fails, the same reports and sequences are retried before newly drained usage is sent, allowing server-side idempotency to prevent double debit.
+### Durable telemetry outbox
+
+Observed activity no longer depends on RAM-only batching. In the production runtime, every active one-second tick is written immediately to:
+
+```text
+/etc/madar-node-agent/telemetry-outbox.sqlite3
+```
+
+The SQLite outbox:
+
+- durably aggregates unprepared activity by client/window;
+- transactionally allocates monotonic per-window `sequence` values;
+- converts accumulated activity into immutable pending `UsageReport` rows;
+- returns the exact same pending report identity/payload after Agent process or VPS restart until it is acknowledged;
+- deletes pending reports only after the control-plane telemetry response accounts for **every** submitted report;
+- accepts a report as accounted for when the server classifies it as newly `accepted` or an idempotent `duplicate`;
+- requires `accepted` and `duplicates` to be non-negative JSON integers and requires `accepted + duplicates == submitted batch size`;
+- treats malformed, partial, contradictory, boolean/string count, or otherwise ambiguous 2xx responses as invalid and leaves the outbox pending;
+- keeps the DB `0600` and its parent state directory `0700` and rejects symlink/non-regular DB paths.
+
+Sampling baseline is intentionally **not** persisted. After an Agent restart, the first Xray counter sample is baseline-only and the restart gap is charged as zero rather than inventing usage. Already persisted activity and pending reports do survive the restart.
+
+If the durable activity write itself fails, sampling continuity is invalidated and the error is propagated to the sampler worker; the next successful observation is baseline-only. This avoids pretending an unpersisted interval was safely recorded.
 
 Important current limits:
 
-1. Pending sampler/batch state is not yet a durable on-disk outbox. A Node Agent process/VPS restart can discard not-yet-posted in-memory activity; do not claim crash-durable accounting yet.
-2. Xray's counters are aggregate per VLESS client UUID. Two simultaneous sessions using the same UUID cannot currently be distinguished by this sampler, so the product requirement that concurrent sessions debit their combined actual usage is **not yet proven/solved** by this mechanism.
-3. Automated tests prove algorithmic behavior only. Real transfer -> telemetry -> PostgreSQL settlement -> free-credit debit, and idle -> no debit, must be demonstrated on the VPS before Phase 7 PASS.
+1. The durable outbox/restart/ACK behavior is automated/CI verified but has **not yet been rerun on the real disposable VPS**. Do not claim live crash/reboot-durable accounting until the field procedure below passes.
+2. Xray's counters are aggregate per VLESS client UUID. Two simultaneous sessions using the same UUID cannot currently be distinguished by this sampler, so the product requirement that distinct simultaneous VPN sessions debit their combined actual usage is **not yet proven/solved** by this mechanism.
+3. Real transfer -> durable outbox -> telemetry -> PostgreSQL settlement -> free-credit debit, and idle -> no debit, must be demonstrated on the VPS before Phase 7 PASS.
 
 ## Status and non-secret diagnosis
 
@@ -113,7 +138,7 @@ sudo journalctl -u madar-node-agent.service --since '15 minutes ago' --no-pager
 sudo journalctl -u madar-xray.service --since '15 minutes ago' --no-pager
 ```
 
-Before sharing logs, inspect/redact bearer values. Never `cat` `node.credential` or `reality.private` as evidence.
+Before sharing logs, inspect/redact bearer values. Never `cat` `node.credential`, `reality.private`, or the SQLite outbox as evidence.
 
 Permission checks without revealing contents:
 
@@ -121,9 +146,11 @@ Permission checks without revealing contents:
 sudo stat -c '%a %U:%G %n' /etc/madar-node-agent/node.credential
 sudo stat -c '%a %U:%G %n' /etc/madar-node-agent/reality.private
 sudo stat -c '%a %U:%G %n' /etc/madar-node-agent/agent.env
+sudo stat -c '%a %U:%G %n' /etc/madar-node-agent/telemetry-outbox.sqlite3
+sudo stat -c '%a %U:%G %n' /etc/madar-node-agent
 ```
 
-Expected mode is `600`.
+Expected file mode is `600`; expected state-directory mode is `700`. The outbox exists only after the current Agent runtime has initialized it.
 
 ## Aggregate online-state diagnosis
 
@@ -151,7 +178,7 @@ Never expose port `10085` publicly.
 sudo ./install.sh update
 ```
 
-The lifecycle command refreshes checked-out agent/service assets and restarts `madar-node-agent.service`. Treat a real-VPS update result as separate field evidence.
+The lifecycle command refreshes checked-out agent/service assets and restarts `madar-node-agent.service`. The restarted Agent first stops Xray and re-establishes authorized managed state; treat this updated behavior as automated-only until a real-VPS update/restart result is recorded.
 
 ## Remove
 
@@ -166,22 +193,24 @@ Removal stops/disables both Madar services and removes Madar-managed credentials
 Already field-verified on 2026-10-10:
 
 - real installer + one-time enrollment;
-- secret file permissions;
-- real systemd/Xray health and two reboot scenarios;
+- secret file permissions for the original sensitive state;
+- real systemd/Xray health and two reboot scenarios under the then-current unit ordering;
 - direct external VLESS+REALITY traffic with VPS egress;
 - live credential revoke/replacement;
 - stale-policy/control-plane-outage fail-closed after the field fix;
 - bounded post-fix log privacy check.
 
-Still required for the new activity sampler before Phase 7 PASS:
+Still required for the current sampler/outbox/startup code before Phase 7 PASS:
 
 - deploy the current branch to the existing disposable VPS and verify `statsUserUplink/downlink` are available from the real pinned Xray process;
-- perform a controlled sustained transfer and prove real `ObservedActivity` becomes telemetry reports in PostgreSQL and causes the expected free-credit debit exactly once;
-- keep a controlled connection idle and prove no additional activity/credit debit occurs while byte counters remain unchanged;
+- perform a controlled sustained transfer and prove real activity ticks are durably persisted, become telemetry reports in PostgreSQL, and cause the expected free-credit debit exactly once;
+- keep a controlled connection idle and prove no additional durable activity/credit debit occurs while byte counters remain unchanged;
 - verify sampler failure/Xray reset or restart does not invent seconds across the gap;
-- verify transient telemetry-post failure retries the same batch/sequence without a second debit;
-- decide/implement the remaining same-credential concurrent-session accounting mechanism required for combined simultaneous usage;
-- decide whether crash/reboot-durable telemetry outbox is required for the production acceptance gate and implement/test it if required.
+- force an ambiguous telemetry-delivery scenario, restart the Agent **before outbox acknowledgement**, and prove the same `(windowId, sequence, seconds)` returns after restart and settles/debits only once; a retry classified by the server as duplicate must safely clear the same pending report;
+- verify a malformed/partial 2xx telemetry response leaves the pending outbox report intact;
+- verify outbox/state permissions remain `0600`/`0700` and no client identifiers/outbox contents leak to logs;
+- reboot/restart the current units and prove persisted stale Xray client access is unavailable before fresh authorization/policy is established;
+- resolve/implement the remaining same-credential concurrent-session accounting mechanism required for combined simultaneous usage.
 
 Do not mark Phase 7 PASS from CI alone. Do not start/claim Phase 8 complete until Phase 7's remaining usage-accounting gate is resolved.
 
@@ -190,13 +219,13 @@ Do not mark Phase 7 PASS from CI alone. Do not start/claim Phase 8 complete unti
 - Enrollment tokens are one-time and short-lived.
 - Node credentials are hash-only in the control plane and plaintext only on the node with restrictive permissions.
 - REALITY private keys remain VPS-only.
-- Never expose raw node credentials, enrollment tokens, REALITY private keys, session/subscription/provider secrets, or raw per-client StatsService output in shared commands/logs/screenshots/reports.
-- Do not weaken key/credential permissions to bypass validation.
+- Never expose raw node credentials, enrollment tokens, REALITY private keys, session/subscription/provider secrets, raw per-client StatsService output, or SQLite outbox contents in shared commands/logs/screenshots/reports.
+- Do not weaken key/credential/outbox permissions to bypass validation.
 - A systemd-active node is not necessarily ready; readiness requires fresh authorization, valid policy, real Xray health, and acknowledged control-plane state.
 - Stale authorization is always fail-closed.
 
 ## Verification scope
 
-Automated coverage now includes installer/lifecycle safety, credential permissions, pinned Xray/checksums, REALITY local-key handling, Xray validation/promotion, apply/revoke/fail-closed, policy freshness, telemetry sequencing, enrollment/auth, policy acknowledgements, readiness/capacity, systemd staging, loopback-only StatsService, redacted aggregate observation, per-user uplink/downlink counter parsing, conservative one-second traffic-delta activity semantics, sampler lifecycle/failure invalidation, and in-memory same-batch telemetry retry.
+Automated coverage now includes installer/lifecycle safety, credential permissions, pinned Xray/checksums, REALITY local-key handling, Xray validation/promotion, apply/revoke/fail-closed, policy freshness, telemetry sequencing, enrollment/auth, policy acknowledgements, readiness/capacity, systemd staging, loopback-only StatsService, redacted aggregate observation, per-user uplink/downlink counter parsing, conservative one-second traffic-delta activity semantics, sampler lifecycle/failure invalidation, durable SQLite tick/report persistence, immutable retry identity across reopen/restart, monotonic sequence allocation, exact outbox acknowledgement, complete `accepted + duplicates` telemetry-response validation, startup fail-closed behavior, and systemd ordering that prevents the Agent from auto-starting persisted Xray state before authorization.
 
-Still not established by automation alone: live traffic-derived telemetry/debit correctness, idle no-debit on the deployed sampler, crash-durable unsent telemetry, same-UUID concurrent-session multiplicity, real v2rayNG, actual Cloudflare/Hyperdrive production deployment, and Production Ready status.
+Still not established by automation alone: live traffic-derived telemetry/debit correctness on the updated VPS code, live idle no-debit on the deployed sampler, real restart/outage durability of the local outbox and new boot ordering, same-UUID concurrent-session multiplicity, real v2rayNG, actual Cloudflare/Hyperdrive production deployment, and Production Ready status.
