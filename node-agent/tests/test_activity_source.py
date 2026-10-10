@@ -242,3 +242,124 @@ def test_drain_is_destructive_and_later_activity_in_same_window_is_incremental()
     assert len(second) == 1
     assert second[0].window_id == first[0].window_id == WINDOW
     assert second[0].seconds == 1
+
+
+def test_durable_sink_receives_active_tick_immediately_without_ram_pending() -> None:
+    recorded: list[dict[str, object]] = []
+
+    def record_activity(**payload: object) -> None:
+        recorded.append(payload)
+
+    source = source_class()(
+        read_counters=SequenceReader(
+            [
+                {CLIENT_A: counters(10, 20)},
+                {CLIENT_A: counters(11, 20)},
+            ]
+        ),
+        now=SequenceClock([START, START + timedelta(seconds=1)]),
+        record_activity=record_activity,
+    )
+
+    source.sample()
+    source.sample()
+
+    assert recorded == [
+        {
+            "client_id": CLIENT_A,
+            "window_id": WINDOW,
+            "seconds": 1,
+            "timestamp": START + timedelta(seconds=1),
+            "observed_from": START,
+            "observed_to": START + timedelta(seconds=1),
+            "session_id": None,
+        }
+    ]
+    assert source.drain() == []
+
+
+def test_durable_sink_is_not_called_for_idle_reset_or_ambiguous_gap() -> None:
+    recorded: list[dict[str, object]] = []
+
+    source = source_class()(
+        read_counters=SequenceReader(
+            [
+                {CLIENT_A: counters(100, 100)},
+                {CLIENT_A: counters(100, 100)},
+                {CLIENT_A: counters(10, 10)},
+                {CLIENT_A: counters(20, 10)},
+            ]
+        ),
+        now=SequenceClock(
+            [
+                START,
+                START + timedelta(seconds=1),
+                START + timedelta(seconds=2),
+                START + timedelta(seconds=6),
+            ]
+        ),
+        record_activity=lambda **payload: recorded.append(payload),
+        max_gap_seconds=2.5,
+    )
+
+    source.sample()
+    source.sample()
+    source.sample()
+    source.sample()
+
+    assert recorded == []
+    assert source.drain() == []
+
+
+def test_durable_sink_failure_invalidates_continuity_and_propagates() -> None:
+    calls = 0
+    recorded: list[dict[str, object]] = []
+
+    def record_activity(**payload: object) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("disk unavailable")
+        recorded.append(payload)
+
+    source = source_class()(
+        read_counters=SequenceReader(
+            [
+                {CLIENT_A: counters(0, 0)},
+                {CLIENT_A: counters(1, 0)},
+                {CLIENT_A: counters(2, 0)},
+                {CLIENT_A: counters(3, 0)},
+            ]
+        ),
+        now=SequenceClock(
+            [
+                START,
+                START + timedelta(seconds=1),
+                START + timedelta(seconds=2),
+                START + timedelta(seconds=3),
+            ]
+        ),
+        record_activity=record_activity,
+    )
+
+    source.sample()
+    with pytest.raises(OSError, match="disk unavailable"):
+        source.sample()
+
+    # The failed durable write breaks continuity. The next sample is baseline-only.
+    source.sample()
+    source.sample()
+
+    assert calls == 2
+    assert recorded == [
+        {
+            "client_id": CLIENT_A,
+            "window_id": WINDOW,
+            "seconds": 1,
+            "timestamp": START + timedelta(seconds=3),
+            "observed_from": START + timedelta(seconds=2),
+            "observed_to": START + timedelta(seconds=3),
+            "session_id": None,
+        }
+    ]
+    assert source.drain() == []
