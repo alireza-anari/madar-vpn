@@ -6,6 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import madar_agent.service as service_module
+from madar_agent.api import PermanentApiError
 from madar_agent.config import XrayRuntimeSettings
 from madar_agent.models import AgentConfig
 from madar_agent.service import AgentService
@@ -70,8 +71,11 @@ def test_build_agent_service_wires_control_plane_node_agent_and_pinned_xray(monk
     assert xray_kwargs["state_root"] == credential_path.parent
     assert xray_kwargs["install_root"] == binary.parents[1]
     assert callable(xray_kwargs["run"])
+    assert callable(xray_kwargs["authorize_runtime"])
+    assert callable(xray_kwargs["revoke_runtime_authorization"])
     assert callable(xray_kwargs["reload"])
     assert callable(xray_kwargs["is_active"])
+    assert callable(xray_kwargs["disable_runtime"])
     assert xray_kwargs["server"] == RealityServerConfig(
         port=443,
         target="origin.example.test:443",
@@ -87,79 +91,189 @@ def test_build_agent_service_wires_control_plane_node_agent_and_pinned_xray(monk
     assert built._max_clients == 128
 
 
-def test_main_stops_managed_xray_before_building_runtime_and_running_cycle(monkeypatch) -> None:
+class FakeStop:
+    def __init__(self, calls: list[object], *, loops: int = 1) -> None:
+        self._calls = calls
+        self._loops = loops
+        self._checks = 0
+
+    def is_set(self) -> bool:
+        self._checks += 1
+        return self._checks > self._loops
+
+    def wait(self, seconds: float) -> None:
+        self._calls.append(("wait", seconds))
+
+
+class FakeLifecycle:
+    def __init__(self, calls: list[object], *, ensure_error: Exception | None = None, disable_error: Exception | None = None) -> None:
+        self.calls = calls
+        self.ensure_error = ensure_error
+        self.disable_error = disable_error
+
+    def ensure_inactive(self) -> None:
+        self.calls.append("ensure-inactive")
+        if self.ensure_error is not None:
+            raise self.ensure_error
+
+    def disable(self) -> None:
+        self.calls.append("disable")
+        if self.disable_error is not None:
+            raise self.disable_error
+
+
+def test_main_verifies_xray_inactive_before_build_and_uses_same_lifecycle_for_shutdown(monkeypatch) -> None:
     calls: list[object] = []
-
-    class FakeStop:
-        def __init__(self) -> None:
-            self.checks = 0
-
-        def is_set(self) -> bool:
-            self.checks += 1
-            return self.checks > 1
-
-        def wait(self, seconds: float) -> None:
-            calls.append(("wait", seconds))
+    lifecycle = FakeLifecycle(calls)
 
     class FakeService:
+        def start_activity_sampling(self) -> None:
+            calls.append("start-sampler")
+
+        def stop_activity_sampling(self) -> None:
+            calls.append("stop-sampler")
+
         def run_cycle(self) -> None:
             calls.append("cycle")
 
-    def build() -> FakeService:
+    def build(*, lifecycle):
+        assert lifecycle is lifecycle_instance
         calls.append("build")
         return FakeService()
 
-    monkeypatch.setattr(service_module, "STOP", FakeStop())
+    lifecycle_instance = lifecycle
+    monkeypatch.setattr(service_module, "STOP", FakeStop(calls))
     monkeypatch.setattr(service_module.signal, "signal", lambda *_args: None)
-    monkeypatch.setattr(service_module, "_stop_xray", lambda: calls.append("stop-xray"))
+    monkeypatch.setattr(service_module, "build_xray_lifecycle", lambda: lifecycle)
     monkeypatch.setattr(service_module, "build_agent_service", build)
-    monkeypatch.setattr(
-        service_module,
-        "load_config",
-        lambda: (_ for _ in ()).throw(AssertionError("placeholder path must not be used")),
-    )
 
     assert service_module.main() == 0
-    assert calls == ["stop-xray", "build", "cycle", ("wait", 30.0)]
+    assert calls == [
+        "ensure-inactive",
+        "build",
+        "start-sampler",
+        "cycle",
+        ("wait", 30.0),
+        "stop-sampler",
+        "disable",
+    ]
 
 
-def test_main_keeps_xray_stopped_when_runtime_build_fails_without_leaking_error(monkeypatch, capsys) -> None:
+def test_main_refuses_runtime_build_when_xray_inactivity_cannot_be_proven(monkeypatch, capsys) -> None:
+    calls: list[object] = []
+    sensitive_detail = "fixture-systemctl-secret-should-not-leak"
+    lifecycle = FakeLifecycle(calls, ensure_error=RuntimeError(sensitive_detail))
+
+    def build(*, lifecycle):
+        calls.append("build")
+        raise AssertionError("runtime must not build while Xray shutdown is unverified")
+
+    monkeypatch.setattr(service_module.signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(service_module, "build_xray_lifecycle", lambda: lifecycle)
+    monkeypatch.setattr(service_module, "build_agent_service", build)
+
+    assert service_module.main() == 4
+    assert calls == ["ensure-inactive"]
+    captured = capsys.readouterr()
+    assert sensitive_detail not in captured.err
+    assert captured.err.strip() == "node-agent startup unavailable; managed Xray shutdown unverified"
+
+
+def test_main_build_failure_best_effort_disables_xray_without_leaking_error(monkeypatch, capsys) -> None:
     calls: list[object] = []
     sensitive_detail = "fixture-client-id-should-not-be-logged"
+    lifecycle = FakeLifecycle(calls)
 
-    def build():
+    def build(*, lifecycle):
         calls.append("build")
         raise RuntimeError(sensitive_detail)
 
     monkeypatch.setattr(service_module.signal, "signal", lambda *_args: None)
-    monkeypatch.setattr(service_module, "_stop_xray", lambda: calls.append("stop-xray"))
+    monkeypatch.setattr(service_module, "build_xray_lifecycle", lambda: lifecycle)
     monkeypatch.setattr(service_module, "build_agent_service", build)
 
     assert service_module.main() == 3
-    assert calls == ["stop-xray", "build"]
+    assert calls == ["ensure-inactive", "build", "disable"]
     captured = capsys.readouterr()
     assert sensitive_detail not in captured.err
     assert captured.err.strip() == "node-agent startup unavailable; managed Xray disabled"
 
 
-def test_main_refuses_to_build_runtime_when_prestart_xray_stop_fails(monkeypatch, capsys) -> None:
+def test_main_build_failure_still_returns_generic_error_when_cleanup_disable_also_fails(monkeypatch, capsys) -> None:
     calls: list[object] = []
-    sensitive_detail = "fixture-systemctl-detail-should-not-be-logged"
+    lifecycle = FakeLifecycle(
+        calls,
+        disable_error=RuntimeError("cleanup-secret-should-not-leak"),
+    )
 
-    def stop_xray() -> None:
-        calls.append("stop-xray")
-        raise RuntimeError(sensitive_detail)
-
-    def build():
+    def build(*, lifecycle):
         calls.append("build")
-        raise AssertionError("runtime must not build if Xray could not be stopped")
+        raise RuntimeError("build-secret-should-not-leak")
 
     monkeypatch.setattr(service_module.signal, "signal", lambda *_args: None)
-    monkeypatch.setattr(service_module, "_stop_xray", stop_xray)
+    monkeypatch.setattr(service_module, "build_xray_lifecycle", lambda: lifecycle)
     monkeypatch.setattr(service_module, "build_agent_service", build)
 
-    assert service_module.main() == 4
-    assert calls == ["stop-xray"]
+    assert service_module.main() == 3
+    assert calls == ["ensure-inactive", "build", "disable"]
     captured = capsys.readouterr()
-    assert sensitive_detail not in captured.err
-    assert captured.err.strip() == "node-agent startup unavailable; managed Xray stop failed"
+    assert "secret-should-not-leak" not in captured.err
+    assert captured.err.strip() == "node-agent startup unavailable; managed Xray disabled"
+
+
+def test_main_shutdown_disables_xray_even_when_sampler_cleanup_fails(monkeypatch, capsys) -> None:
+    calls: list[object] = []
+    lifecycle = FakeLifecycle(calls)
+
+    class FakeService:
+        def start_activity_sampling(self) -> None:
+            calls.append("start-sampler")
+
+        def stop_activity_sampling(self) -> None:
+            calls.append("stop-sampler")
+            raise RuntimeError("sampler-cleanup-secret")
+
+        def run_cycle(self) -> None:
+            calls.append("cycle")
+
+    monkeypatch.setattr(service_module, "STOP", FakeStop(calls))
+    monkeypatch.setattr(service_module.signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(service_module, "build_xray_lifecycle", lambda: lifecycle)
+    monkeypatch.setattr(service_module, "build_agent_service", lambda *, lifecycle: FakeService())
+
+    assert service_module.main() == 0
+    assert calls[-2:] == ["stop-sampler", "disable"]
+    assert "sampler-cleanup-secret" not in capsys.readouterr().err
+
+
+def test_main_fatal_cycle_exit_still_disables_runtime(monkeypatch, capsys) -> None:
+    calls: list[object] = []
+    lifecycle = FakeLifecycle(calls)
+
+    class FakeService:
+        def start_activity_sampling(self) -> None:
+            calls.append("start-sampler")
+
+        def stop_activity_sampling(self) -> None:
+            calls.append("stop-sampler")
+
+        def run_cycle(self) -> None:
+            calls.append("cycle")
+            raise PermanentApiError(401, "FIXTURE_SECRET_CODE")
+
+    monkeypatch.setattr(service_module, "STOP", FakeStop(calls, loops=10))
+    monkeypatch.setattr(service_module.signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(service_module, "build_xray_lifecycle", lambda: lifecycle)
+    monkeypatch.setattr(service_module, "build_agent_service", lambda *, lifecycle: FakeService())
+
+    assert service_module.main() == 2
+    assert calls == [
+        "ensure-inactive",
+        "start-sampler",
+        "cycle",
+        "stop-sampler",
+        "disable",
+    ]
+    captured = capsys.readouterr()
+    assert "FIXTURE_SECRET_CODE" not in captured.err
+    assert captured.err.strip() == "node-agent cycle rejected: HTTP 401"
