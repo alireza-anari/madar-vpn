@@ -94,7 +94,7 @@ Evidence:
 
 ## Task 4 — updater regression, review, docs and repository acceptance
 
-Status: **repository code portion complete; documentation reconciliation is this commit**.
+Status: **complete at repository/CI level**.
 
 - [x] Updater regression proves both unit files are staged before `daemon_reload`, then only Agent is restarted; Xray is never independently enabled/started/restarted.
 - [x] No production installer change was necessary because existing ordering already satisfied the approved design.
@@ -102,6 +102,7 @@ Status: **repository code portion complete; documentation reconciliation is this
 - [x] Implementation diff reviewed against base `dd453018ac9202225b634edb57fb985aaeb38f2d`: lifecycle/runtime/systemd/tests only; no Free accounting, API, Premium, or unrelated refactor changes.
 - [x] Secret scan and dependency audits passed in the exact-head CI.
 - [x] Spec/runbook/status evidence reconciled without marking field acceptance PASS.
+- [x] Documentation reconciliation head also passed the complete CI.
 
 Repository code head before docs:
 
@@ -121,7 +122,19 @@ Updater regression commit:
 1b7dee80fd068b76beaaf1ac27d9dbd0cd531c94
 ```
 
-The final documentation head must also pass the complete CI before this plan is considered repository-complete.
+Documentation reconciliation head:
+
+```text
+02f6eb3469dda21d688f2c16109271a9a8d06da6
+```
+
+Documentation reconciliation CI:
+
+```text
+38070647195 — SUCCESS
+```
+
+The current status-only commit changes no runtime or test behavior; it only records the already-successful documentation CI witness above. A fresh CI for this status-only head is still required before reporting Tasks 1-4 as finalized in this execution session.
 
 ## Task 5 — real-VPS Gate J rerun
 
@@ -155,8 +168,9 @@ Repository/CI acceptance does **not** close Gate J. Only Task 5 can establish re
 Current release status:
 
 - lifecycle code: implemented;
-- repository tests/CI: passed on code head;
-- documentation CI: pending this documentation commit;
+- Tasks 1-4 repository evidence: complete;
+- code-head CI: SUCCESS;
+- documentation reconciliation CI: SUCCESS;
 - Gate J: open;
 - Phase 7: **INCOMPLETE**;
 - Phase 8: unstarted;
