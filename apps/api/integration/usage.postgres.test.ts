@@ -213,6 +213,11 @@ describe('Postgres active-second telemetry settlement', () => {
   });
 
   it('assigns delayed debit to the observed Tehran day rather than arrival day', async () => {
+    await client.query(
+      `UPDATE usage_accounting_config
+       SET active_second_epoch = '2026-10-09T00:00:00.000Z'
+       WHERE id = 1`,
+    );
     const report = masked({
       windowId: 'xray-traffic:2026-10-09T20:29Z',
       seconds: 1,
