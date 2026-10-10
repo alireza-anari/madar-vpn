@@ -11,6 +11,7 @@ from .activity import XrayTrafficActivitySource, next_utc_second_boundary
 from .agent import NodeAgent
 from .api import ControlPlaneClient, PermanentApiError
 from .config import load_config, load_runtime_config
+from .lifecycle import SystemdXrayLifecycle
 from .outbox import TelemetryOutbox
 from .retry import RetryExhausted
 from .xray import PinnedXrayAdapter, RealityServerConfig
@@ -193,11 +194,15 @@ def _xray_is_active() -> bool:
     return _run_process(["systemctl", "is-active", "--quiet", XRAY_SERVICE_NAME]).returncode == 0
 
 
+def build_xray_lifecycle() -> SystemdXrayLifecycle:
+    return SystemdXrayLifecycle(run=_run_process)
+
+
 def _runtime_download_forbidden(_url: str) -> bytes:
     raise RuntimeError("Xray runtime download is installer-only")
 
 
-def build_agent_service() -> AgentService:
+def build_agent_service(*, lifecycle=None) -> AgentService:
     config = load_config()
     runtime = load_runtime_config()
     client = ControlPlaneClient(config)
@@ -210,6 +215,7 @@ def build_agent_service() -> AgentService:
     now = lambda: datetime.now(UTC)
     outbox = TelemetryOutbox(config.credential_path.parent / "telemetry-outbox.sqlite3")
     xray_holder: dict[str, PinnedXrayAdapter] = {}
+    xray_lifecycle = lifecycle if lifecycle is not None else build_xray_lifecycle()
 
     def read_counters():
         return xray_holder["adapter"].read_user_traffic_counters()
@@ -226,8 +232,11 @@ def build_agent_service() -> AgentService:
         run=_run_process,
         binary=runtime.binary,
         server=server,
-        reload=_restart_xray,
-        is_active=_xray_is_active,
+        authorize_runtime=xray_lifecycle.grant_authorization,
+        revoke_runtime_authorization=xray_lifecycle.revoke_authorization,
+        reload=xray_lifecycle.restart_authorized,
+        is_active=xray_lifecycle.is_active,
+        disable_runtime=xray_lifecycle.disable,
         activity_source=activity_source.drain,
     )
     xray_holder["adapter"] = xray
