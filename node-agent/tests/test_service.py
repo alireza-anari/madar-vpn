@@ -4,6 +4,8 @@ import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from madar_agent.models import ApplyResult, EnvironmentReport, Policy, PolicyClient, UsageReport
@@ -45,6 +47,7 @@ class FakeAgent:
         self.apply_result = apply_result
         self.applied: list[Policy] = []
         self.fetches = 0
+        self.collects = 0
         self.usage = [
             UsageReport(
                 client_id=CLIENT_ID,
@@ -72,6 +75,7 @@ class FakeAgent:
         return ApplyResult(applied=True, disabled=False, reason="applied", revision=value.revision)
 
     def collect_usage(self) -> list[UsageReport]:
+        self.collects += 1
         return list(self.usage)
 
     def is_authorization_fresh(self, now: datetime) -> bool:
@@ -96,6 +100,18 @@ class FakeControlPlane:
     def heartbeat(self, *, health, versions, capacity) -> dict[str, object]:
         self.heartbeats.append({"health": health, "versions": versions, "capacity": capacity})
         return {"ok": True}
+
+
+def build_service(agent, control) -> AgentService:
+    return AgentService(
+        agent=agent,
+        control_plane=control,
+        runtime_health=lambda: True,
+        disable_access=lambda: None,
+        now=lambda: NOW,
+        versions={"agent": "0.1.0", "xray": "26.3.27"},
+        max_clients=128,
+    )
 
 
 def test_cycle_applies_policy_acks_posts_telemetry_and_reports_real_readiness() -> None:
@@ -125,6 +141,43 @@ def test_cycle_applies_policy_acks_posts_telemetry_and_reports_real_readiness() 
             "capacity": {"accepting": True, "activeClients": 1, "maxClients": 128},
         }
     ]
+
+
+def test_failed_telemetry_post_retries_the_same_batch_before_draining_new_usage() -> None:
+    agent = FakeAgent(next_policy=None)
+    original = list(agent.usage)
+    attempts: list[list[UsageReport]] = []
+
+    class FlakyControlPlane(FakeControlPlane):
+        def post_telemetry(self, reports: list[UsageReport]) -> dict[str, object]:
+            attempts.append(list(reports))
+            if len(attempts) == 1:
+                raise RuntimeError("fixture telemetry outage")
+            return {"accepted": len(reports)}
+
+    control = FlakyControlPlane()
+    service = build_service(agent, control)
+
+    with pytest.raises(RuntimeError, match="fixture telemetry outage"):
+        service.run_cycle()
+
+    agent.usage = [
+        UsageReport(
+            client_id=CLIENT_ID,
+            window_id="window-1",
+            sequence=2,
+            seconds=15,
+            timestamp=NOW + timedelta(seconds=30),
+        )
+    ]
+    service.run_cycle()
+
+    assert attempts == [original, original]
+    assert agent.collects == 1
+
+    service.run_cycle()
+    assert attempts[-1] == agent.usage
+    assert agent.collects == 2
 
 
 def test_invalid_environment_fails_closed_without_fetching_or_acking_policy() -> None:
