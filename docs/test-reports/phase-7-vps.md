@@ -5,7 +5,7 @@ Branch: `impl/phase-1`
 
 ## Status
 
-**Phase 7: INCOMPLETE. Gate J subsequently passed its real-VPS lifecycle rerun on `d4fe18b91a2da26488faedd96b4182190de31861`; the earlier failure is preserved below. This Task-5-only rerun does not close the remaining broader Phase 7 acceptance.**
+**Phase 7: PASS. Gate J: PASS.** The subsequent compact accounting closure on unchanged runtime `d4fe18b91a2da26488faedd96b4182190de31861` completed all seven reconciled current-head checks. Earlier failures and incomplete checkpoints remain preserved below. Phase 8 remains unstarted; Production Ready is not claimed.
 
 The new field section at the end of this report supersedes the earlier current-head readiness snapshot below. Earlier field observations and repository-only evidence remain preserved as history.
 
@@ -367,3 +367,29 @@ The boot observer proves the measured interval starting at uptime 6.877s; it is 
 The actual current-boot Xray journal also had zero successful start events before fresh recovery and two successful start events afterward (authorized revision 13 recovery and revision 14 empty-policy cleanup). The event counter was checked against those positive starts, not inferred solely from missing text.
 
 **No new Gate J blocker remains.** The prior lifecycle blocker is closed by real evidence. The limited rerun did not execute or promote remaining non-J Phase 7 scenarios; Phase 7 therefore remains INCOMPLETE. Phase 8 remains unstarted; Premium single-active-client/device remains separate; Production Ready is not claimed. The same VPS is retained for inspection.
+
+## Compact current-head accounting closure — 2026-10-11 (Asia/Tehran)
+
+**Phase 7: PASS. Gate J remains PASS.** All seven reconciled checks completed on the same existing VPS with unchanged deployed runtime/checkout `d4fe18b91a2da26488faedd96b4182190de31861`, branch `impl/phase-1-native-lifecycle`. Exact runtime CI [38073194023](https://github.com/alireza-anari/madar-vpn/actions/runs/38073194023) was rechecked completed/SUCCESS. Reference reconciliation: `0f8cd0a8ba33e97073183218e46ab9f05598094a`, CI [38083723606](https://github.com/alireza-anari/madar-vpn/actions/runs/38083723606), SUCCESS.
+
+Events were recorded in UTC on 2026-10-10; the session occurred after midnight on 2026-10-11 in Tehran. No new VPS, migration, architecture or production runtime code change occurred. All deployed Agent files and both systemd base units byte-matched before/after. The full Gate J A-L matrix was not repeated.
+
+A fresh credential was issued through the real AccessService and fresh policy revision 15 ACKed. Direct external Windows Xray VLESS+REALITY succeeded. A loopback HTTP origin supplied paced real payload, then held the **same** connection idle and sent a final byte before closing. Two other simultaneous transfers used that same credential/account. Temporary wrappers delegated production counter, durable bucket and normal HTTP operations; evidence contained aggregate counters, UTC times, counts and canonical fingerprints, without client identities, raw StatsService output or outbox rows.
+
+| Current-head check | Actual evidence | Result |
+| --- | --- | --- |
+| 1 — sustained / settlement | Counters increased. Independent reconstruction from adjacent continuous nondecreasing positive counter deltas, durable callbacks and PG telemetry all agreed on 69 UTC active bits across eight minute windows. Every report's seconds=popcount; settlement observed masks matched hex; only new billable bits debited. Free usage-ledger debit=69 seconds | PASS |
+| 2 — same-connection idle | Twenty one-second interior samples had fixed counters, zero new bits and zero debit for those UTC buckets. Aggregate online presence was 1. Same connection survived until the final byte and normal curl completion | PASS |
+| 3 — overlap | Two real direct connections ran together; 18 interior overlapping seconds produced 18 billable seconds. Repeated billing of the same UTC bit across all events was zero | PASS |
+| 4 — gap/reset | Seven-second Xray stop/restart under current valid authorization; two counter queries failed. Ambiguous interval had zero buckets/debit; first recovered observation baseline only | PASS |
+| 5 — restart before ACK | Two real masked reports/nine seconds settled server-side. Hook stopped the temporary API to hold fresh authorization off, then exited Agent with status 77 before local ACK. Reopened full-payload fingerprint matched window/sequence/seconds/hex exactly. Replacement activation had no marker, Xray inactive/PID 0, direct sanity probe denied. Actual retry classified identical batch as duplicate; genuine complete acceptance ACKed it; no additional ledger debit; pending 0 | PASS |
+| 6 — malformed acceptance | Real masked pending report received controlled HTTP 200 missing `duplicates`. Exact batch/payload fingerprint remained unchanged through failure/restart. Fault removal allowed genuine complete acceptance and ACK to pending 0 | PASS |
+| 7 — final hygiene | All ten session masked reports settled; unmapped/pending/activity 0. Schema2 SQLite `0600`, state `0700`. Bounded scan after final probe found no known current/old client, credential/private key/session/CSRF value, bearer/PEM pattern, raw per-client StatsService or telemetry/outbox payload pattern. Historical journals preserved | PASS |
+
+The 69 seconds include successful probe activity; they are observed/billable UTC bits, not connection duration. Idle debit was checked by **observed bucket time**, not POST arrival time: settlement may legitimately deliver earlier active seconds during idle. Bitmap validation independently reconstructed expected bits from successful adjacent counter reads and compared the exact result to durable/PG evidence.
+
+Delivery and malformed-response faults were disclosed hooks, not natural outages. One positive recovery probe was launched before its asynchronous recovery runner was confirmed complete and timed out; it was not counted as a verified recovery result. After runner completion and fault removal, genuine recovery succeeded. The deliberately closed-state sanity probe denied traffic. No production fix was needed.
+
+Cleanup removed the fault and Python-path drop-in, stopped the temporary origin, restored API, published/ACKed fresh empty revision 16, and left Agent healthy/ready with managed clients 0. Pending/activity were 0 and the session credential's direct probe denied. Exported client config was removed on the operator path and local computer. Fresh empty-policy Xray may remain active with zero clients. VPS and historical journals remain retained.
+
+The previous exact-head Gate J result and reconciliation-approved source-identical historical setup/revoke/capability/Premium/day evidence carry forward. With all seven checks above, **Phase 7 is PASS, with no remaining Phase 7 blocker**. Cross-node/speed-cap work, Premium device locking, real v2rayNG, providers/PWA/push and Phase 8 were not executed or promoted. **Phase 8 remains unstarted; Production Ready is not claimed.**

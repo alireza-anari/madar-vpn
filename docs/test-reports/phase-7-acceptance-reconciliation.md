@@ -4,7 +4,7 @@ Date: 2026-10-10
 Repository branch: `impl/phase-1-native-lifecycle`  
 Documentation head before this reconciliation: `660cc63c16537fac625b44d5bd7bd825d5bebc52`  
 Current deployed runtime head: `d4fe18b91a2da26488faedd96b4182190de31861`  
-Current status: **Gate J PASS; Phase 7 INCOMPLETE**
+Current status: **Gate J PASS; Phase 7 PASS after the unchanged-runtime compact closure on 2026-10-11 (Asia/Tehran)**
 
 ## Purpose
 
@@ -87,7 +87,7 @@ Therefore old field evidence may be carried forward only where the exercised pro
 | Premium single-active-client/device enforcement | **Separate unresolved release gate** | Explicitly outside Free accounting Phase 7. |
 | Real v2rayNG end-to-end | **Phase 8** | Must not be pulled into Phase 7. |
 
-## Exact current-head checks still required
+## Exact current-head checklist — completed by the compact closure below
 
 The strict exact-head requirement means the accounting evidence from `7848a28...` cannot by itself close Phase 7 after lifecycle code changed. However a full re-run of all historical setup is unnecessary.
 
@@ -127,6 +127,24 @@ If the compact session changes production runtime code, the affected checks must
 
 If all seven pass without runtime code change, the canonical `docs/test-reports/phase-7-vps.md`, the active-second implementation plan Task 8 Step 4, and the Phase 7 status in the main implementation plan should be reconciled to PASS. Phase 8 must still wait for explicit user instruction.
 
-Until then:
+Historical pre-closure checkpoint:
 
 **Gate J: PASS. Phase 7: INCOMPLETE. Phase 8: unstarted. Production Ready: not claimed.**
+
+## Compact closure result — 2026-10-11 (Asia/Tehran)
+
+The same existing VPS completed all seven checks on unchanged exact runtime `d4fe18b91a2da26488faedd96b4182190de31861`, full CI `38073194023` SUCCESS, reverified. Reference reconciliation commit `0f8cd0a8ba33e97073183218e46ab9f05598094a` passed CI `38083723606`. No migration or production runtime code changed; Agent files and both units byte-matched before/after. The canonical report's compact closure contains actual method, limits and cleanup.
+
+| Current-head check | Result | Evidence |
+| --- | --- | --- |
+| Sustained / settlement | **PASS** | Independent counter-derived bits, durable buckets and PG masks agreed on 69 seconds; ten reports settled; seconds=popcount and Free debit=69 new billable bits |
+| Idle | **PASS** | Same connection, 20 fixed-counter samples, zero new bits/debit, online presence 1 |
+| Overlap | **PASS** | Two actual connections; 18 interior shared seconds debited 18 times total; no duplicate billed bit |
+| Gap/reset | **PASS** | Seven-second stop/restart, two query failures, zero ambiguous buckets/debit, first recovery baseline only |
+| Restart before ACK | **PASS** | Two-report/nine-second settled batch survived exit 77 identically; restart closed-state probe denied; duplicate retry/complete ACK, no repeated debit, pending 0 |
+| Malformed acceptance | **PASS** | Exact pending retained after controlled missing-duplicates 2xx; genuine complete response ACKed it |
+| Final hygiene | **PASS** | All ten reports settled, unmapped/pending/activity 0, schema2 `0600`/state `0700`, bounded privacy scan clean after final probe |
+
+Fault/drop-in removed, temporary origin stopped, fresh empty revision 16 ACKed, managed clients 0, session credential denied, client export removed; VPS/history retained. One positive probe timeout before recovery-runner completion was retained, not counted as verified recovery; subsequent confirmed genuine recovery succeeded. No new Phase 7 blocker remains.
+
+**Current decision: Phase 7 PASS; Gate J PASS; Phase 8 unstarted; Production Ready not claimed.** Deferred/non-blocking boundaries above remain unchanged, including Premium device locking, v2rayNG and multi-node work.

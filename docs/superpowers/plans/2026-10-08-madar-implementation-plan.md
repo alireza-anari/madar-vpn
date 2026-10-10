@@ -287,7 +287,7 @@
 - [x] Atomic PostgreSQL raw telemetry + de-duplication + debit settlement implemented/tested.
 - [x] UTC-aligned Xray sampler and durable local bitmap outbox implemented/tested.
 - [x] Mixed-version capability negotiation implemented/tested.
-- [ ] Real-VPS field acceptance for the current exact head remains required before Phase 7 PASS.
+- [x] Real-VPS field acceptance on unchanged `d4fe18b91a2da26488faedd96b4182190de31861` completed through the Gate J rerun and seven-check compact closure; see the canonical report and acceptance reconciliation.
 
 ## Task 11: Expose authoritative account API and TimeRing states
 
@@ -470,25 +470,25 @@
 
 **Evidence file:** `docs/test-reports/phase-7-vps.md`.
 
-- [ ] Install on supported Ubuntu LTS using real installer.
-- [ ] Verify Xray/Agent systemd health.
-- [ ] Enroll node through one-time token.
-- [ ] Add user policy and verify Xray accepts credential.
-- [ ] Revoke credential and verify access removal.
-- [ ] Verify pinned Xray cumulative user counters and the current UTC-aligned active-second sampler against direct real traffic.
-- [ ] Prove sustained traffic produces the expected durable `activeSecondsHex` evidence and exactly-once PostgreSQL Free debit.
-- [ ] Prove an idle open connection produces no new active bits/debit.
-- [ ] Prove overlapping connections in the same UTC seconds do not multiply Free debit.
-- [ ] Prove reset/restart/gap/missed-boundary ambiguity creates no inferred seconds.
-- [ ] Restart Agent before local acknowledgement and prove exact pending `(windowId, sequence, seconds, activeSecondsHex)` survives/retries once.
-- [ ] Prove malformed/incomplete acceptance keeps the local report pending.
-- [ ] Verify current boot ordering is fail-closed before fresh policy and verify outbox/log privacy/permissions.
-- [ ] Ensure no masked field report remains unexplained `unmapped`.
-- [ ] Verify stale-policy fail-closed behavior.
-- [ ] Record commands/results without secrets.
-- [ ] Commit evidence/config changes only after real test passes.
+- [x] Install on supported Ubuntu LTS using real installer (retained historical field evidence).
+- [x] Verify Xray/Agent systemd health.
+- [x] Enroll node through one-time token (retained historical field evidence).
+- [x] Add user policy and verify Xray accepts credential.
+- [x] Revoke credential and verify access removal (retained historical/current evidence).
+- [x] Verify pinned Xray cumulative user counters and the current UTC-aligned active-second sampler against direct real traffic.
+- [x] Prove sustained traffic produces the expected durable `activeSecondsHex` evidence and exactly-once PostgreSQL Free debit.
+- [x] Prove an idle open connection produces no new active bits/debit.
+- [x] Prove overlapping connections in the same UTC seconds do not multiply Free debit.
+- [x] Prove reset/restart/gap/missed-boundary ambiguity creates no inferred seconds.
+- [x] Restart Agent before local acknowledgement and prove exact pending `(windowId, sequence, seconds, activeSecondsHex)` survives/retries once.
+- [x] Prove malformed/incomplete acceptance keeps the local report pending.
+- [x] Verify current boot ordering is fail-closed before fresh policy and verify outbox/log privacy/permissions.
+- [x] Ensure no masked field report remains unexplained `unmapped`.
+- [x] Verify stale-policy fail-closed behavior.
+- [x] Record commands/results without secrets.
+- [x] Commit evidence/config changes only after real test passes.
 
-**Phase 7 Gate:** the current exact head must pass the real VPS active-second/debit/retry/idle/fail-closed checklist. Green CI alone is insufficient. Premium single-active-client enforcement remains a separate unresolved release gate and does not become PASS from this Free-account field test.
+**Phase 7 Gate: PASS.** Exact unchanged runtime `d4fe18b91a2da26488faedd96b4182190de31861`, full CI `38073194023` SUCCESS, completed the actual Gate J lifecycle matrix and all seven compact current-head accounting checks. Closure on 2026-10-11 (Asia/Tehran) combines approved historical/source-identical evidence with new exact-head evidence, documented in `phase-7-vps.md` and `phase-7-acceptance-reconciliation.md`. Green CI alone was insufficient. No runtime code/migration changed; cleanup empty policy 16 ACKed, zero clients/pending/activity, test credential denied, VPS/history retained. Premium single-active-client enforcement remains a separate unresolved release gate; Production Ready is not claimed. Phase 8 remains unstarted and its section below is unchanged.
 
 ---
 
