@@ -8,6 +8,7 @@ type InsertedKeyRow = Record<string, unknown> & { unique_key: string };
 type TotalRow = Record<string, unknown> & { total: number | string | bigint | null };
 type UsageSessionRow = Record<string, unknown> & { user_id: string };
 type MembershipRow = Record<string, unknown> & { premium_until: Date | string | null };
+type IdRow = Record<string, unknown> & { id: string };
 
 function toIso(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
@@ -98,6 +99,12 @@ export class PostgresCreditStore implements CreditStore {
     occurredAt: string,
   ) {
     return this.db.transaction(async (transaction) => {
+      const userLock = await transaction.query<IdRow>(
+        'SELECT id FROM users WHERE id = $1 FOR UPDATE',
+        [userId],
+      );
+      if (!userLock.rows[0]) return false;
+
       const inserted = await transaction.query<InsertedKeyRow>(
         `INSERT INTO premium_adjustments (unique_key, user_id, premium_until, occurred_at)
          VALUES ($1, $2, $3::timestamptz, $4::timestamptz)
@@ -113,6 +120,13 @@ export class PostgresCreditStore implements CreditStore {
          ON CONFLICT (user_id) DO UPDATE SET
            premium_until = EXCLUDED.premium_until`,
         [userId, premiumUntil],
+      );
+
+      await transaction.query(
+        `INSERT INTO premium_entitlement_events (
+           user_id, source_key, effective_at, premium_until
+         ) VALUES ($1, $2, $3::timestamptz, $4::timestamptz)`,
+        [userId, `adjustment:${uniqueKey}`, occurredAt, premiumUntil],
       );
       return true;
     });
