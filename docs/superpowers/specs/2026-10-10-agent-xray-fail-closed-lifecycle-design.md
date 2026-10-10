@@ -81,7 +81,9 @@ The selected design uses three independent layers.
 `madar-xray.service` becomes lifecycle-bound to `madar-node-agent.service` using systemd dependency semantics equivalent to:
 
 - `BindsTo=madar-node-agent.service`;
-- ordering after the Agent unit where needed for runtime authorization availability.
+- `After=madar-node-agent.service` for ordering around the Agent-owned runtime authorization.
+
+The Agent unit must not `Wants=`/`Requires=` Xray as a startup dependency. Agent startup therefore cannot automatically start persisted Xray state.
 
 Required behavior:
 
@@ -99,6 +101,8 @@ The Agent systemd unit owns a private runtime directory under `/run`, for exampl
 
 using systemd `RuntimeDirectory` with restrictive permissions.
 
+The runtime directory must not be preserved across Agent service activations (`RuntimeDirectoryPreserve=no`, or the equivalent non-preserving default). A stop/failure/restart must therefore destroy the previous activation's authorization state before a replacement Agent process can authorize Xray again.
+
 The Agent creates a runtime authorization marker, for example:
 
 `/run/madar-node-agent/xray-authorized`
@@ -114,7 +118,7 @@ The Xray unit adds a start condition requiring that runtime marker in addition t
 Properties:
 
 - `/run` state is ephemeral across reboot;
-- `RuntimeDirectory` is associated with the Agent service lifecycle;
+- `RuntimeDirectory` is associated with one Agent service activation;
 - a new Agent process starts without authorization inherited from the previous process;
 - a stale on-disk `xray-config.json` cannot by itself authorize Xray start;
 - when Agent stops/fails, the runtime directory/marker is removed as part of service lifecycle cleanup.
@@ -137,7 +141,9 @@ Startup behavior:
 
 A nonzero ordinary stop command is not by itself fatal if independent state verification proves Xray is already inactive. Conversely, a zero stop exit code is not considered sufficient if Xray is still active.
 
-Systemd lifecycle binding is the authoritative second safety layer: if Agent exits or fails, Xray must be stopped by the unit relationship even when the Agent's own command path failed.
+The force-stop path is defense in depth, not the sole lifecycle guarantee. It must be bounded and followed by state verification; implementation details must account for Xray's restart policy rather than assuming a process signal alone proves the unit is safely inactive.
+
+Systemd lifecycle binding is the independent safety layer: if Agent exits or fails, Xray must be stopped by the unit relationship even when the Agent's own command path failed.
 
 ## 6. Xray authorization/start sequence
 
@@ -195,7 +201,7 @@ If Agent exits unexpectedly, is killed, or enters failed state:
 
 Restart must behave as stop + fresh start, not as continuation of the previous authorization.
 
-There must be no automatic Xray restart caused merely by the Agent service restarting.
+The previous runtime directory/marker must be removed between service activations. Xray must transition down with the old Agent before the replacement Agent can create a new marker. There must be no automatic Xray restart caused merely by the Agent service restarting.
 
 ### Reboot
 
@@ -256,6 +262,7 @@ The implementation must preserve the following intent:
 
 - remains the lifecycle authority;
 - owns `/run/madar-node-agent` through `RuntimeDirectory`;
+- uses non-preserving runtime-directory semantics across activations;
 - does not require/start Xray as a startup dependency;
 - keeps its existing restrictive service sandbox unless a narrowly necessary change is reviewed.
 
@@ -287,9 +294,9 @@ The implementation should avoid unrelated refactoring.
 
 Repository tests must cover at least:
 
-1. Agent unit owns restrictive `RuntimeDirectory`.
+1. Agent unit owns restrictive, non-preserved `RuntimeDirectory`.
 2. Xray unit has lifecycle binding to Agent and requires the runtime authorization marker.
-3. Xray is not an independent boot-enabled managed service.
+3. Agent unit does not auto-start Xray; Xray is not an independent boot-enabled managed service.
 4. startup stop returns failure + Xray already inactive -> safe startup may continue;
 5. startup stop returns success + Xray still active -> do not trust exit code; force-stop path runs;
 6. ordinary stop failure + Xray active + successful force-stop -> startup may continue only after verified inactive;
@@ -299,7 +306,8 @@ Repository tests must cover at least:
 10. candidate validation failure -> no marker;
 11. Xray start/restart failure -> marker removed and access forced down;
 12. graceful Agent shutdown revokes authorization;
-13. tests assert error paths do not print credentials, UUIDs, REALITY private key, raw config secrets, or bearer material.
+13. Agent service restart removes the old marker, pulls Xray down, and does not start Xray again before fresh authorization;
+14. tests assert error paths do not print credentials, UUIDs, REALITY private key, raw config secrets, or bearer material.
 
 ## 14. Real VPS acceptance
 
@@ -313,11 +321,11 @@ Mandatory real checks:
 4. Repeated direct external VLESS+REALITY probes must fail while Agent is failed/not freshly authorized.
 5. Start Xray manually while Agent is inactive/no marker: it must not become a serving runtime.
 6. Kill/crash Agent while Xray is serving: Xray must be stopped by lifecycle binding and external traffic must fail.
-7. Restart Agent with control plane unavailable: Xray must remain down.
+7. Restart Agent with control plane unavailable: the previous marker must be gone and Xray must remain down.
 8. Restore control plane/fresh valid policy: Agent may authorize/start Xray and external traffic must succeed again.
 9. Force runtime/outbox initialization failure: Xray must remain down.
 10. Reboot with current units: no stale managed access before fresh authorization.
-11. Confirm the runtime marker is ephemeral and not present after Agent stop/reboot.
+11. Confirm the runtime marker is ephemeral and not present after Agent stop/restart/reboot.
 12. Confirm secret/log privacy and existing state-file permissions remain intact.
 
 Phase 7 may only move past Gate J after these real checks pass on one exact code head with full CI success.
