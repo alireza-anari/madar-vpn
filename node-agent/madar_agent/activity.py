@@ -38,6 +38,7 @@ class XrayTrafficActivitySource:
         max_gap_seconds: float = 2.5,
         max_post_boundary_skew_seconds: float = 0.75,
         record_activity: Callable[..., None] | None = None,
+        record_active_bucket: Callable[..., None] | None = None,
     ) -> None:
         if max_gap_seconds <= 0:
             raise ValueError("max_gap_seconds must be positive")
@@ -48,6 +49,7 @@ class XrayTrafficActivitySource:
         self._max_gap_seconds = max_gap_seconds
         self._max_post_boundary_skew_seconds = max_post_boundary_skew_seconds
         self._record_activity = record_activity
+        self._record_active_bucket = record_active_bucket
         self._lock = Lock()
         self._previous_counters: dict[str, UserTrafficCounters] | None = None
         self._previous_at: datetime | None = None
@@ -170,6 +172,17 @@ class XrayTrafficActivitySource:
         bucket_start = bucket_end - timedelta(seconds=1) if scheduled else observed_to
         window_id = self._window_id(bucket_start)
         timestamp = bucket_end if scheduled else observed_to
+
+        if scheduled and self._record_active_bucket is not None:
+            self._record_active_bucket(
+                client_id=client_id,
+                bucket_start=bucket_start,
+                timestamp=timestamp,
+                observed_from=observed_from,
+                observed_to=observed_to,
+            )
+            return
+
         if self._record_activity is not None:
             self._record_activity(
                 client_id=client_id,
