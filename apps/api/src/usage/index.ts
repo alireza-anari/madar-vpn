@@ -107,7 +107,7 @@ function premiumOverlapsSecond(
     if (event.effectiveAtMs > secondStartMs) break;
     state = event;
   }
-  if (state?.premiumUntilMs !== null && state.premiumUntilMs > secondStartMs) return true;
+  if (state !== null && state.premiumUntilMs !== null && state.premiumUntilMs > secondStartMs) return true;
 
   for (const event of events) {
     if (event.effectiveAtMs <= secondStartMs) continue;
