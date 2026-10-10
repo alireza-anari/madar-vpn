@@ -2,7 +2,7 @@
 
 This runbook documents the Madar Node Agent installer, pinned Xray/VLESS/REALITY runtime, UTC-aligned server-observed activity sampling, durable bitmap telemetry outbox, and the Phase 7 field gate.
 
-A disposable Ubuntu VPS was exercised on 2026-10-10 for installation/enrollment, systemd health, reboot behavior under the then-current units, direct VLESS+REALITY traffic, credential revoke/replacement, stale-policy fail-closed behavior, and bounded post-fix log privacy. The newer UTC-bucket accounting path, bitmap outbox v2, capability negotiation, atomic PostgreSQL settlement, and current boot ordering are repository/CI verified but **have not yet been rerun end-to-end on the VPS**. Phase 7 therefore remains incomplete.
+A disposable Ubuntu VPS was exercised on 2026-10-10 for installation/enrollment, systemd health, earlier reboot behavior, direct VLESS+REALITY traffic, credential revoke/replacement, stale-policy behavior, and bounded log privacy. A later exact-head field pass also exercised UTC bitmap accounting, outbox persistence, capability negotiation, and PostgreSQL settlement. It reproduced a startup stop-failure blocker: Agent exit does not stop the independent already-running Xray process. Phase 7 remains incomplete; see the new field section in `../test-reports/phase-7-vps.md`.
 
 Real v2rayNG acceptance is a separate later gate. Premium single-active-client enforcement is also a separate unresolved release gate and must not be inferred from the Free accounting implementation.
 
@@ -71,6 +71,8 @@ The Agent validates candidate Xray config before atomic promotion and restarts X
 A persisted `xray-config.json` is **not** authorization for a fresh Agent process. The Agent unit depends only on `network-online.target`; it does not `Wants`/`After` the Xray service. Every fresh Agent process first stops managed Xray before runtime/outbox construction. If that stop fails, startup is refused. If later runtime/outbox construction fails, Xray remains stopped and only a generic error is logged. A fresh control-plane policy cycle must re-establish authorized managed state before Xray can be promoted/restarted.
 
 This current boot ordering is repository/CI verified and still requires a real reboot rerun.
+
+The current-head field test additionally proved that a failed startup stop command leaves the prior Xray process and real client access alive while the Agent exits with status 4. Do not treat that exit status as proof of closed access. The field run explicitly stopped both services and applied an empty policy when collecting the test; lifecycle remediation and the complete current-head reboot/failure matrix remain open.
 
 The 30-second control-plane cycle performs policy fetch/apply/ack, pending usage delivery, Xray health, authorization freshness, and heartbeat/readiness. Managed access fails closed when authorization is absent/stale, environment validation fails, or policy is invalid. Expiry enforcement is cycle/request-bound, not an exact wall-clock timer.
 
@@ -179,7 +181,7 @@ For an existing database that already has migration `0001_core.sql`, **do not re
 Supported rollout order:
 
 1. take and verify a PostgreSQL backup/preflight;
-2. apply **only** `0002_active_second_accounting.sql` to the existing database;
+2. apply **only** `0002_active_second_accounting.sql` to the existing database, using the intended schema-owner role; verify that the API role can access the new accounting tables and identity sequence before upgrading Agents. A privileged migration session can otherwise leave new tables owned by a different role and cause telemetry HTTP `500` / PostgreSQL `42501`;
 3. deploy the new control plane;
 4. authenticate as a node and verify the telemetry-capabilities endpoint reports active-second support;
 5. only then upgrade/restart Node Agents;

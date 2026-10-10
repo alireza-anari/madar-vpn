@@ -5,7 +5,9 @@ Branch: `impl/phase-1`
 
 ## Status
 
-**Phase 7: INCOMPLETE after real-VPS execution plus later repository/CI active-second implementation. Do not mark PASS.**
+**Phase 7: INCOMPLETE. The 2026-10-10 current-head field pass reproduced a startup stop-failure access blocker (gate J). Do not mark PASS.**
+
+The new field section at the end of this report supersedes the earlier current-head readiness snapshot below. Earlier field observations and repository-only evidence remain preserved as history.
 
 A real disposable AWS EC2 Ubuntu VPS already verified installation/enrollment, systemd health, two reboot scenarios under the then-current runtime/unit behavior, direct external VLESS+REALITY traffic, aggregate online observation, live credential revocation/replacement, and control-plane-outage expiry after a fail-closed fix. The field run also exposed and fixed client-UUID access-log leakage.
 
@@ -258,3 +260,69 @@ This gate is **not solved by the Free active-second implementation**. It require
 Direct VLESS+REALITY transport, revoke/replacement, earlier reboot observations, and corrected stale-policy behavior have genuine historical field evidence. The current UTC active-second bitmap accounting path, outbox v2, capability negotiation, atomic settlement, and stronger boot behavior have strong repository/CI evidence but still require the real-VPS checklist above.
 
 Do not start/claim Phase 8 complete, do not claim live current-head Free debit correctness or live crash-durable bitmap accounting, do not claim Premium single-client enforcement, and do not use `Production Ready` from this state.
+
+## Current-head real field pass — 2026-10-10
+
+### Exact deployed code and rollout
+
+- Same existing disposable EC2 VPS; no additional server was provisioned.
+- Field checkout/deployed Agent code: `7848a28ac87ad24ac0cf6c2cbefb6c3e9af49f75`, branch `impl/phase-1`.
+- Full CI for that code: [38060721337](https://github.com/alireza-anari/madar-vpn/actions/runs/38060721337), SUCCESS.
+- Existing PostgreSQL backup was produced before migration, mode `0600`; `pg_restore --list` verified the archive. SHA-256: `83dcc458495eeb021fc9b2c0614bb11b08d52dca6e5e6891f0c0f53ca7900eda`.
+- Existing database contained zero telemetry reports before rollout. Only migration `0002_active_second_accounting.sql` was applied to that database; `0001` was not rerun.
+- Server-first order was observed: migration, rebuilt production API assembly, authenticated capability `activeSecondsV1=true`, unauthenticated request HTTP `401`, then installer `update`.
+- Deployed Agent source files and base systemd units matched the exact checkout. All 111 Python tests passed on this Ubuntu VPS.
+- A rollout permission failure was reproduced: pending telemetry received HTTP `500`; direct production settlement exposed PostgreSQL SQLSTATE `42501`. The migration had been executed by the database superuser, making the four new tables owned by that role. Their ownership was aligned with the existing `telemetry_reports` owner. The same pending batch then received HTTP `200`, `accepted=2`, `duplicates=0`, and both reports settled. No application code changed.
+
+The API remained the approved temporary HTTPS/real-PostgreSQL deployment, not an actual Cloudflare Worker/Hyperdrive deployment.
+
+### Safe measured results
+
+Direct tests used the existing external Windows Xray client, official version `26.3.27`, and VLESS+REALITY over TCP 443. Successful probes matched this VPS's public egress. The Linux runtime independently reported `26.3.27`, `linux/amd64`.
+
+Temporary field instrumentation delegated the unchanged production counter, outbox, and HTTP methods. It recorded only UTC bucket times, aggregate counters, counts, response acceptance counts, and SHA-256 batch fingerprints. It did not record client identifiers, raw StatsService output, report payloads, or SQLite contents. HTTP faults and exit-before-ACK were explicitly controlled injections rather than naturally occurring network failures.
+
+| Gate | Actual current-head evidence | Result / remaining scope |
+| --- | --- | --- |
+| A — runtime/counters | Pinned Linux runtime; uplink/downlink stats enabled; API listen `127.0.0.1:10085`; aggregate counters increased under real traffic | Observed assertions pass |
+| B — bitmap/settlement | 67 instrumented active UTC buckets across six minute windows; OR of persisted telemetry masks exactly matched recorded durable buckets; every report's seconds equalled bitmap popcount | Real single-node path demonstrated; totals include only observed counter activity, not elapsed connection duration |
+| C — idle | Valid connection remained open for 30 seconds. After handshake, 24 consecutive one-second samples had identical byte counters and zero new buckets; matched database masks had no added idle bits | Measured idle interval passes; handshake activity excluded |
+| D — overlap | Two connections with the same credential both remained running through the full 30-second transfer. Reposting observed bits under a new sequence received HTTP `200`, accepted one report, and added no debit | Actual simultaneous connections plus PostgreSQL OR/de-dup demonstrated |
+| E — reset/gap | Xray was stopped for eight seconds and restarted; two counter queries failed. No buckets appeared across the ambiguous interval; first successful recovered sample was baseline only | This actual reset/query-gap scenario passes; broader skew scenarios were not completed before gate J blocked continuation |
+| F — ambiguous delivery | Agent exited deliberately after successful server settlement and before returning to local ACK. After systemd restart, the batch fingerprint was identical and server acceptance classified the retry as duplicate | Actual persisted retry demonstrated; complete-acceptance ACK subsequently cleared pending reports |
+| G — malformed 2xx | Controlled bool, string, missing, and mismatched acceptance responses each reached the real Agent. The same two-report pending batch remained unchanged | All four tested malformed responses preserved pending state; later genuine complete acceptance cleared it |
+| H — capability | Authenticated true and unauthenticated `401`; controlled authenticated `404` left the same bitmap batch intact, with no masked POST | These cases pass; other capability-unavailability cases remain unexecuted |
+| I — outbox/privacy | Actual schema 2, SQLite mode `0600`, state-directory mode `0700`; 111 Python tests passed on the VPS. No existing real v1 outbox was migrated in this pass | Actual permissions/schema pass; no claim of real populated-v1 migration |
+| J — startup fail-closed | Controlled startup stop failure caused Agent exit status 4; existing Xray process stayed active; two direct external traffic probes still succeeded before fresh authorization | **FAIL — blocking**, details below; current-head reboot/initialization-failure matrix not completed |
+| K — Premium/day | Production settlement integration suite ran against an isolated real PostgreSQL database on this same VPS. Delayed Premium and previous Tehran-day cases passed | Clock-controlled field integration, not real wall-clock VPN boundary proof. Only the fresh isolated fixture database received `0001`; the existing field database was untouched |
+| L — mapping/conflict | All 15 final masked reports were settled, zero unmapped. Exact duplicate returned HTTP `200`/duplicate; contradictory timestamp replay returned HTTP `409`; neither replay nor overlapping bits changed debit | Actual API/PG assertions pass; separate pending-outbox conflict injection was not completed |
+
+Final accounting aggregates were 15 masked/settled telemetry reports, 15 immutable debit events, 113 newly billable seconds across the whole current-head run, zero unmapped, zero pending, and zero accumulated activity. The 67 instrumented buckets are a subset of that whole-run total; earlier direct probes and the initial sustained transfer preceded instrumentation. They are not interchangeable totals.
+
+The intentionally repeated malformed-response exits briefly exhausted systemd restart handling. The failure state was reset after removing the injected response faults, and real complete acceptance was verified before proceeding. This is harness recovery, not a production fix.
+
+### Blocking reproduction: startup stop failure leaves prior Xray access alive
+
+The controlled fault returned a nonzero result for the startup command `systemctl stop madar-xray.service`. Every other production operation and the actual systemd units remained in use. At startup the production Agent returned exit status `4` before building its runtime/outbox or fetching fresh authorization.
+
+Observed simultaneously:
+
+- Agent: `ExecMainStatus=4`, repeatedly attempting restart.
+- Xray: `ActiveState=active`, unchanged `MainPID=72829`.
+- Direct external VLESS+REALITY probe at `15:25:05Z`: successful, VPS egress matched.
+- Independent repeat at `15:26:18Z`: successful, VPS egress matched.
+
+Root cause: `service.main()` catches startup stop failure and exits, but the Xray unit has an independent lifecycle. Neither unit currently couples Xray shutdown to Agent termination/failure. Returning status 4 does not revoke the already running Xray process. The source does attempt stop before initialization; that ordering alone does not guarantee the required fail-closed outcome when stop fails.
+
+This is a controlled stop-command failure with real surviving Xray and real external traffic, not evidence that an uninjected systemctl stop naturally failed. Nevertheless it directly falsifies the required stop-failure acceptance condition. Per the field instructions, testing stopped before changing the security/lifecycle design. No workaround or architectural code change was made, and no remaining unexecuted gate is marked PASS.
+
+### Cleanup and release decision
+
+- Removed the active fault and temporary instrumentation systemd drop-in.
+- Explicitly stopped Agent and Xray, published empty policy revision 8, and restarted the unchanged Agent. Revision 8 was ACKed; managed clients `0`; heartbeat healthy/ready with active client count `0`.
+- An external probe using the former field credential was denied after cleanup.
+- Removed exported client configuration from the VPS operator path and the local test computer.
+- Bounded new runtime journal scan from `14:55:00Z` found no known node credential, REALITY private key, current/revoked client UUID, admin session, CSRF token, bearer pattern, or PEM private key. Historical journals were preserved exactly as requested.
+- Same VPS remains allocated for inspection; no server destruction or extra provisioning occurred.
+
+**Phase 7 remains INCOMPLETE because gate J failed. Phase 8 was not started. Production Ready is not claimed.** Cross-node overlap remains a later multi-node field gate. Premium single-active-client/device locking is separate and was not implemented or used to block this Free-accounting pass.
