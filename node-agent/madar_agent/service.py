@@ -19,7 +19,6 @@ from .xray import PinnedXrayAdapter, RealityServerConfig
 
 STOP = Event()
 AGENT_VERSION = "0.1.0"
-XRAY_SERVICE_NAME = "madar-xray.service"
 
 
 class ActivitySamplerWorker:
@@ -178,22 +177,6 @@ def _run_process(arguments: list[str]) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _restart_xray() -> None:
-    result = _run_process(["systemctl", "restart", XRAY_SERVICE_NAME])
-    if result.returncode != 0:
-        raise RuntimeError("managed Xray restart failed")
-
-
-def _stop_xray() -> None:
-    result = _run_process(["systemctl", "stop", XRAY_SERVICE_NAME])
-    if result.returncode != 0:
-        raise RuntimeError("managed Xray stop failed")
-
-
-def _xray_is_active() -> bool:
-    return _run_process(["systemctl", "is-active", "--quiet", XRAY_SERVICE_NAME]).returncode == 0
-
-
 def build_xray_lifecycle() -> SystemdXrayLifecycle:
     return SystemdXrayLifecycle(run=_run_process)
 
@@ -267,31 +250,38 @@ def _stop(_signum, _frame) -> None:
     STOP.set()
 
 
+def _best_effort_disable(lifecycle) -> None:
+    try:
+        lifecycle.disable()
+    except Exception:
+        pass
+
+
 def main() -> int:
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
 
-    # Persisted Xray config is never authorization for a fresh Agent process.
-    # Stop the runtime before reading local state or contacting the control plane;
-    # the first cycle will promote/restart only a freshly validated managed config.
     try:
-        _stop_xray()
+        lifecycle = build_xray_lifecycle()
+        lifecycle.ensure_inactive()
     except Exception:
-        print("node-agent startup unavailable; managed Xray stop failed", file=sys.stderr)
+        print("node-agent startup unavailable; managed Xray shutdown unverified", file=sys.stderr)
         return 4
 
     try:
-        service = build_agent_service()
+        service = build_agent_service(lifecycle=lifecycle)
     except Exception:
+        _best_effort_disable(lifecycle)
         print("node-agent startup unavailable; managed Xray disabled", file=sys.stderr)
         return 3
 
     start_activity_sampling = getattr(service, "start_activity_sampling", None)
     stop_activity_sampling = getattr(service, "stop_activity_sampling", None)
-    if callable(start_activity_sampling):
-        start_activity_sampling()
 
     try:
+        if callable(start_activity_sampling):
+            start_activity_sampling()
+
         while not STOP.is_set():
             try:
                 service.run_cycle()
@@ -304,7 +294,11 @@ def main() -> int:
             STOP.wait(30.0)
     finally:
         if callable(stop_activity_sampling):
-            stop_activity_sampling()
+            try:
+                stop_activity_sampling()
+            except Exception:
+                pass
+        _best_effort_disable(lifecycle)
 
     return 0
 
