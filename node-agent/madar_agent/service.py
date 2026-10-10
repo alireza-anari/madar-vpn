@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from threading import Event, Thread
 from typing import Callable
 
-from .activity import XrayTrafficActivitySource
+from .activity import XrayTrafficActivitySource, next_utc_second_boundary
 from .agent import NodeAgent
 from .api import ControlPlaneClient, PermanentApiError
 from .config import load_config, load_runtime_config
@@ -27,11 +27,15 @@ class ActivitySamplerWorker:
         *,
         source,
         interval_seconds: float = 1.0,
+        now: Callable[[], datetime] | None = None,
     ) -> None:
         if interval_seconds <= 0:
             raise ValueError("interval_seconds must be positive")
         self._source = source
+        # Kept as a lifecycle timeout/compatibility bound. Sampling cadence is
+        # determined from UTC wall-clock boundaries, not repeated relative waits.
         self._interval_seconds = interval_seconds
+        self._now = now or (lambda: datetime.now(UTC))
         self._stop = Event()
         self._thread: Thread | None = None
 
@@ -64,11 +68,15 @@ class ActivitySamplerWorker:
 
     def _run(self) -> None:
         while not self._stop.is_set():
+            current = self._now()
+            boundary = next_utc_second_boundary(current)
+            delay = max(0.0, (boundary - current).total_seconds())
+            if self._stop.wait(delay):
+                return
             try:
-                self._source.sample()
+                self._source.sample(bucket_end=boundary)
             except Exception:
                 self._source.invalidate()
-            self._stop.wait(self._interval_seconds)
 
 
 class AgentService:
