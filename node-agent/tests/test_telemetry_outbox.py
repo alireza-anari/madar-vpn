@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import importlib
 import os
+import sqlite3
 import stat
 import sys
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -38,6 +40,93 @@ def record_tick(outbox, *, client_id: str = CLIENT_A, offset: int = 1) -> None:
         observed_to=START + timedelta(seconds=offset),
         session_id=None,
     )
+
+
+def record_bucket(outbox, *, client_id: str = CLIENT_A, second: int) -> None:
+    bucket_start = START + timedelta(seconds=second)
+    outbox.record_active_bucket(
+        client_id=client_id,
+        bucket_start=bucket_start,
+        timestamp=bucket_start + timedelta(seconds=1),
+        observed_from=bucket_start,
+        observed_to=bucket_start + timedelta(seconds=1),
+    )
+
+
+def _create_v1_database(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(path)
+    try:
+        connection.executescript(
+            """
+            CREATE TABLE activity_windows (
+                client_id TEXT NOT NULL,
+                window_id TEXT NOT NULL,
+                session_id TEXT NOT NULL DEFAULT '',
+                seconds INTEGER NOT NULL CHECK (seconds > 0),
+                timestamp TEXT NOT NULL,
+                observed_from TEXT,
+                observed_to TEXT,
+                PRIMARY KEY (client_id, window_id, session_id)
+            );
+            CREATE TABLE window_sequences (
+                window_id TEXT PRIMARY KEY,
+                last_sequence INTEGER NOT NULL CHECK (last_sequence >= 0)
+            );
+            CREATE TABLE pending_reports (
+                client_id TEXT NOT NULL,
+                window_id TEXT NOT NULL,
+                sequence INTEGER NOT NULL CHECK (sequence > 0),
+                seconds INTEGER NOT NULL CHECK (seconds > 0),
+                timestamp TEXT NOT NULL,
+                observed_from TEXT,
+                observed_to TEXT,
+                session_id TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY (window_id, sequence)
+            );
+            """
+        )
+        # Deployed v1 never set PRAGMA user_version, so an actual v1 database is 0.
+        connection.execute(
+            """
+            INSERT INTO pending_reports (
+                client_id, window_id, sequence, seconds, timestamp,
+                observed_from, observed_to, session_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, '')
+            """,
+            (
+                CLIENT_A,
+                WINDOW,
+                4,
+                3,
+                (START + timedelta(seconds=3)).isoformat(),
+                START.isoformat(),
+                (START + timedelta(seconds=3)).isoformat(),
+            ),
+        )
+        connection.execute(
+            "INSERT INTO window_sequences (window_id, last_sequence) VALUES (?, ?)",
+            (WINDOW, 4),
+        )
+        connection.execute(
+            """
+            INSERT INTO activity_windows (
+                client_id, window_id, session_id, seconds, timestamp,
+                observed_from, observed_to
+            ) VALUES (?, ?, '', ?, ?, ?, ?)
+            """,
+            (
+                CLIENT_B,
+                WINDOW,
+                2,
+                (START + timedelta(seconds=5)).isoformat(),
+                (START + timedelta(seconds=3)).isoformat(),
+                (START + timedelta(seconds=5)).isoformat(),
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
 
 
 def test_outbox_creates_owner_only_sqlite_state_and_aggregates_activity(tmp_path: Path) -> None:
@@ -183,3 +272,84 @@ def test_invalid_activity_is_rejected_without_creating_report(tmp_path: Path) ->
         )
 
     assert outbox.prepare_reports() == []
+
+
+def test_v2_active_buckets_use_exact_low_60_bit_bitmap_and_are_idempotent(tmp_path: Path) -> None:
+    path = tmp_path / "state" / "telemetry-outbox.sqlite3"
+    outbox = outbox_class()(path)
+
+    record_bucket(outbox, second=0)
+    record_bucket(outbox, second=0)
+    record_bucket(outbox, second=59)
+
+    reports = outbox.prepare_reports()
+    assert len(reports) == 1
+    assert reports[0].seconds == 2
+    assert reports[0].active_seconds_hex == "0800000000000001"
+
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+
+
+def test_v2_multiple_buckets_freeze_mask_and_retry_identically_after_reopen(tmp_path: Path) -> None:
+    path = tmp_path / "state" / "telemetry-outbox.sqlite3"
+    outbox = outbox_class()(path)
+    for second in (1, 2, 17):
+        record_bucket(outbox, second=second)
+
+    expected = outbox.prepare_reports()
+    assert expected[0].seconds == 3
+    assert expected[0].active_seconds_hex == "0000000000020006"
+
+    reopened = outbox_class()(path)
+    assert reopened.prepare_reports() == expected
+
+    forged = replace(expected[0], active_seconds_hex="0000000000020002")
+    with pytest.raises(ValueError, match="pending telemetry report mismatch"):
+        reopened.acknowledge([forged])
+    assert reopened.prepare_reports() == expected
+
+
+def test_v1_pending_and_aggregate_activity_migrate_without_inventing_bitmap_seconds(tmp_path: Path) -> None:
+    path = tmp_path / "state" / "telemetry-outbox.sqlite3"
+    _create_v1_database(path)
+
+    outbox = outbox_class()(path)
+    pending = outbox.prepare_reports()
+
+    assert len(pending) == 1
+    assert pending[0].client_id == CLIENT_A
+    assert pending[0].sequence == 4
+    assert pending[0].seconds == 3
+    assert pending[0].active_seconds_hex is None
+
+    outbox.acknowledge(pending)
+    legacy_activity = outbox.prepare_reports()
+    assert len(legacy_activity) == 1
+    assert legacy_activity[0].client_id == CLIENT_B
+    assert legacy_activity[0].sequence == 5
+    assert legacy_activity[0].seconds == 2
+    assert legacy_activity[0].active_seconds_hex is None
+
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert connection.execute(
+            "SELECT last_sequence FROM window_sequences WHERE window_id = ?", (WINDOW,)
+        ).fetchone()[0] == 5
+
+
+def test_future_outbox_schema_version_fails_closed_without_mutating_database(tmp_path: Path) -> None:
+    path = tmp_path / "state" / "telemetry-outbox.sqlite3"
+    path.parent.mkdir(parents=True)
+    with sqlite3.connect(path) as connection:
+        connection.execute("PRAGMA user_version = 99")
+        connection.execute("CREATE TABLE future_witness(value TEXT NOT NULL)")
+        connection.execute("INSERT INTO future_witness(value) VALUES ('keep-me')")
+        connection.commit()
+
+    with pytest.raises(ValueError, match="unsupported telemetry outbox schema version"):
+        outbox_class()(path)
+
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 99
+        assert connection.execute("SELECT value FROM future_witness").fetchone()[0] == "keep-me"
