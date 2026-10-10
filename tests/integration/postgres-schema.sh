@@ -79,7 +79,9 @@ BEGIN
 END $$;
 
 INSERT INTO users (id, email, role, verified_at)
-VALUES ('schema-user-1', 'User@Example.COM', 'user', '2026-10-08T12:00:00.000Z');
+VALUES
+  ('schema-user-1', 'User@Example.COM', 'user', '2026-10-08T12:00:00.000Z'),
+  ('schema-usage-user-1', 'usage-witness@example.com', 'user', '2026-10-08T12:00:00.000Z');
 
 DO $$
 BEGIN
@@ -172,13 +174,13 @@ INSERT INTO telemetry_reports (
 );
 
 INSERT INTO usage_active_minutes (user_id, minute_start, settled_mask, updated_at)
-VALUES ('schema-user-1', '2026-10-08T12:02:00.000Z', 3, '2026-10-08T12:02:02.000Z');
+VALUES ('schema-usage-user-1', '2026-10-08T12:02:00.000Z', 3, '2026-10-08T12:02:02.000Z');
 
 INSERT INTO usage_debit_events (
   node_id, window_id, sequence, user_id, minute_start,
   observed_mask, new_mask, debited_mask, debit_seconds, created_at
 ) VALUES (
-  'schema-node-1', 'xray-traffic:2026-10-08T12:02Z', 10, 'schema-user-1', '2026-10-08T12:02:00.000Z',
+  'schema-node-1', 'xray-traffic:2026-10-08T12:02Z', 10, 'schema-usage-user-1', '2026-10-08T12:02:00.000Z',
   3, 3, 3, 2, '2026-10-08T12:02:02.000Z'
 );
 
@@ -186,7 +188,7 @@ INSERT INTO credit_ledger (
   unique_key, user_id, kind, free_day, delta_seconds, occurred_at, node_id, sequence
 ) VALUES (
   'usage:schema-node-1:xray-traffic:2026-10-08T12:02Z:10:2026-10-08',
-  'schema-user-1', 'usage', '2026-10-08', -2, '2026-10-08T12:02:00.000Z', 'schema-node-1', 10
+  'schema-usage-user-1', 'usage', '2026-10-08', -2, '2026-10-08T12:02:00.000Z', 'schema-node-1', 10
 );
 SQL
 
