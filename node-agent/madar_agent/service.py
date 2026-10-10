@@ -11,6 +11,7 @@ from .activity import XrayTrafficActivitySource
 from .agent import NodeAgent
 from .api import ControlPlaneClient, PermanentApiError
 from .config import load_config, load_runtime_config
+from .models import UsageReport
 from .retry import RetryExhausted
 from .xray import PinnedXrayAdapter, RealityServerConfig
 
@@ -94,6 +95,7 @@ class AgentService:
         self._max_clients = max_clients
         self._active_clients = 0
         self._activity_worker = activity_worker
+        self._pending_reports: list[UsageReport] = []
 
     def start_activity_sampling(self) -> None:
         if self._activity_worker is not None:
@@ -130,9 +132,11 @@ class AgentService:
             elif result.disabled:
                 self._active_clients = 0
 
-        reports = self._agent.collect_usage()
-        if reports:
-            self._control_plane.post_telemetry(reports)
+        if not self._pending_reports:
+            self._pending_reports = list(self._agent.collect_usage())
+        if self._pending_reports:
+            self._control_plane.post_telemetry(self._pending_reports)
+            self._pending_reports = []
 
         runtime_healthy = bool(self._runtime_health())
         ready = (
