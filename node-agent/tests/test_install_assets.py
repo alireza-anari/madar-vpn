@@ -24,7 +24,7 @@ def test_shell_entrypoint_supports_lifecycle_and_reads_token_without_echo() -> N
         assert forbidden not in lowered
 
 
-def test_systemd_unit_uses_restrictive_umask_and_never_contains_enrollment_secret() -> None:
+def test_systemd_unit_uses_restrictive_umask_and_does_not_autostart_stale_xray() -> None:
     unit = (ROOT / "systemd" / "madar-node-agent.service").read_text(encoding="utf-8")
 
     assert "UMask=0077" in unit
@@ -33,6 +33,9 @@ def test_systemd_unit_uses_restrictive_umask_and_never_contains_enrollment_secre
     assert "Restart=on-failure" in unit
     assert "ENROLLMENT_TOKEN" not in unit
     assert "--token" not in unit
+    assert "Wants=madar-xray.service" not in unit
+    assert "After=madar-xray.service" not in unit
+    assert "After=network-online.target madar-xray.service" not in unit
 
 
 def test_xray_systemd_unit_uses_pinned_binary_and_requires_managed_config_before_start() -> None:
