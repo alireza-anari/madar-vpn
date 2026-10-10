@@ -19,6 +19,7 @@ import { PostgresPushStore } from '../push/postgres';
 import { createVapidSender } from '../push/vapid';
 import { createSurfaceService } from '../surfaces';
 import { PostgresSurfaceStore } from '../surfaces/postgres';
+import { PostgresUsageSettlementStore } from '../usage/postgres';
 
 export type HyperdriveBinding = {
   connectionString: string;
@@ -104,7 +105,10 @@ export async function createPostgresRequestRuntime(
       publicKey: vapid?.publicKey,
       sender: vapid ? createVapidSender(vapid) : undefined,
     }),
-    nodes: createNodeControlService({ store: new PostgresNodeControlStore(database) }),
+    nodes: createNodeControlService({
+      store: new PostgresNodeControlStore(database),
+      telemetrySettlement: new PostgresUsageSettlementStore(database),
+    }),
     adminAudit: createAdminAuditService({ store: surfaceStore }),
   };
 }
