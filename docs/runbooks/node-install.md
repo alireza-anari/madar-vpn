@@ -2,7 +2,7 @@
 
 This runbook documents the current repository behavior for the Madar Node Agent, pinned Xray/VLESS/REALITY runtime, UTC active-second Free accounting, durable telemetry, PostgreSQL settlement, and the Phase 7 field gate.
 
-Repository lifecycle remediation is implemented and CI-verified, but the new lifecycle has **not yet been rerun on the real VPS**. The historical Gate J failure remains valid field evidence. Phase 7 is still INCOMPLETE.
+Repository lifecycle remediation is implemented, CI-verified, and its real-VPS Gate J rerun passed on `d4fe18b91a2da26488faedd96b4182190de31861`. The historical failure remains preserved in the report. This limited lifecycle rerun does not close broader Phase 7 acceptance; Phase 7 remains INCOMPLETE.
 
 Premium single-active-client/device enforcement is a separate unresolved release gate and must not be inferred from Free accounting or this lifecycle work.
 
@@ -402,7 +402,7 @@ docs/test-reports/phase-7-vps.md
 
 ## Real Phase 7 / Gate J rerun
 
-The next lifecycle field pass must deploy one exact final head and prove:
+A lifecycle field pass must deploy one exact final head and prove:
 
 1. original controlled startup stop-command failure no longer leaves serving Xray;
 2. repeated direct external VLESS+REALITY probes fail while Agent is failed/unfresh;
@@ -415,7 +415,7 @@ The next lifecycle field pass must deploy one exact final head and prove:
 9. marker is ephemeral across stop/restart/reboot and restrictive while present;
 10. bounded logs/privacy and existing state-file permissions remain intact.
 
-Only that real pass can close Gate J.
+That real pass subsequently completed; see the A-L field matrix in `docs/test-reports/phase-7-vps.md`. During manual-start testing, `systemctl start madar-xray.service` returned success for a skipped activation while its marker condition was false. Its dependency may activate Agent, but without fresh authorization Xray stayed inactive/PID 0. Check explicit state and marker, not command exit code alone. Fault/crash/reboot denial observations held API unavailable to prevent authorized recovery during the observation window.
 
 ## Historical evidence boundary
 
@@ -437,7 +437,7 @@ Do not advertise Premium single-device enforcement until a separate design plus 
 - stale authorization is fail-closed;
 - systemd-active does not automatically mean ready;
 - repository lifecycle remediation is implemented/CI-verified;
-- real Gate J rerun is still required;
+- real Gate J rerun passed; broader Phase 7 acceptance remains open;
 - Phase 7 is **INCOMPLETE**;
 - Phase 8 is unstarted;
 - Production Ready is not claimed.

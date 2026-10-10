@@ -5,7 +5,7 @@ Branch: `impl/phase-1`
 
 ## Status
 
-**Phase 7: INCOMPLETE. The 2026-10-10 current-head field pass reproduced a startup stop-failure access blocker (gate J). Do not mark PASS.**
+**Phase 7: INCOMPLETE. Gate J subsequently passed its real-VPS lifecycle rerun on `d4fe18b91a2da26488faedd96b4182190de31861`; the earlier failure is preserved below. This Task-5-only rerun does not close the remaining broader Phase 7 acceptance.**
 
 The new field section at the end of this report supersedes the earlier current-head readiness snapshot below. Earlier field observations and repository-only evidence remain preserved as history.
 
@@ -326,3 +326,44 @@ This is a controlled stop-command failure with real surviving Xray and real exte
 - Same VPS remains allocated for inspection; no server destruction or extra provisioning occurred.
 
 **Phase 7 remains INCOMPLETE because gate J failed. Phase 8 was not started. Production Ready is not claimed.** Cross-node overlap remains a later multi-node field gate. Premium single-active-client/device locking is separate and was not implemented or used to block this Free-accounting pass.
+
+## Gate J native-lifecycle rerun — 2026-10-10
+
+**Gate J: PASS. Phase 7: INCOMPLETE.** This section records subsequent remediation evidence; it does not rewrite the earlier real failure.
+
+- Same existing disposable EC2 Ubuntu VPS. No new server, database migration, accounting change, Premium locking, or Phase 8 work.
+- Exact deployed source/checkout: `d4fe18b91a2da26488faedd96b4182190de31861`, branch `impl/phase-1-native-lifecycle`.
+- Exact deployed-head full CI: [38073194023](https://github.com/alireza-anari/madar-vpn/actions/runs/38073194023), verified completed/SUCCESS with that SHA.
+- All deployed Agent Python files and both base systemd units matched this checkout before and after the field pass. Both units were staged together, followed by daemon-reload, explicit stop of both services, and start of Agent only.
+- All 142 Python tests passed on the actual Ubuntu VPS after cleanup. No repository runtime code was changed during this rerun.
+
+### Method and evidence boundary
+
+The original stop-command fault was repeated through a temporary Python startup hook: only the production subprocess call `systemctl stop madar-xray.service` returned a controlled nonzero result instead of executing that command. Actual systemd units, state queries, lifecycle verification, marker operations, and direct external VLESS+REALITY remained real. A separate hook raised a generic error at the real outbox constructor to test initialization failure. Neither hook logged command output, client/config data, or secret material.
+
+For stop-failure, manual-start, crash, outage-restart, and reboot closed-state observations, the temporary control plane was unavailable. This deliberately prevents automatic *fresh* authorization from making a legitimate recovery during the denial probes. The existing Xray was actually serving before the stop-failure/crash/reboot transitions. Control-plane availability alone did not remove its already valid policy. Every recovery restored the real API and published a fresh revision, then checked current-activation marker and direct traffic. The tested guarantee is absence of stale access before fresh authorization, not permanent denial after fresh authorization succeeds.
+
+All probes used independent local Windows Xray client processes and direct external TCP 443 VLESS+REALITY; there was no SSH traffic tunnel. Only success/failure, curl exit code, UTC timestamps, systemd state/PID, permissions, and nonsecret activation/marker/boot fingerprints were recorded.
+
+| Sub-gate | Actual evidence | Result |
+| --- | --- | --- |
+| A — baseline | Fresh revision 9 ACKed; Agent active, heartbeat healthy/ready, one managed client; Xray active; marker regular/root-owned `0600`, runtime directory `0700`; direct probe succeeded | PASS |
+| B — original stop fault | Hook trace confirms controlled stop failures. Old activation lost authorization; Agent was active but unfresh with API unavailable. Xray `inactive/dead`, `MainPID=0`, marker absent, persisted config retained. Two independent probes at `19:59:40Z` and `19:59:49Z` both failed | PASS |
+| C — manual start | Agent explicitly stopped and marker absence asserted before manual start; persisted config was retained. Manual command returned 0 but Xray condition result was no, PID 0, runtime inactive, probe failed. Its dependency activated an unfresh Agent, which still had no authorization | PASS |
+| D — crash | Revision 10 had fresh marker, ready health and a successful direct probe. Actual Agent main process received SIGKILL, so application cleanup could not execute. Agent status showed signal 9/auto-restart; Xray became inactive with PID 0; runtime marker/directory disappeared; direct probe failed | PASS |
+| E — unavailable API restart | Restarted Agent with real control plane stopped; persisted config remained, marker absent, Xray inactive/PID 0; direct probe failed | PASS |
+| F — fresh recovery | Restored API, published/ACKed revision 11, restarted Agent. New activation and marker fingerprints differed from previous serving activation; marker `0600`; Xray active; healthy/ready and direct success returned | PASS |
+| G — initialization failure | Actual outbox constructor fault observed repeatedly; Agent exited status 3 and auto-restarted. Marker absent, Xray inactive/PID 0; direct probe failed. Fault removed and revision 12 restored fresh serving state | PASS |
+| H — reboot | Rebooted from authorized serving state with API disabled/stopped. Boot fingerprint changed; persisted config remained; old marker absent; Xray inactive/PID 0; direct probe failed. Temporary boot observer, ordered before Agent, started at uptime 6.877s and recorded 1,029 samples over 51.888s with no marker and no reachable loopback 443. After observer stopped, revision 13 created a new activation marker, ready health returned, and direct probe succeeded | PASS |
+| I — marker lifecycle | `/run/madar-node-agent/xray-authorized` existed only in authorized activations, was regular/root-owned `0600`, and had fixed nonsecret content. Stop, restart without fresh policy, SIGKILL, initialization failure and reboot observations had no marker. Serving recovery fingerprints differed | PASS |
+| J — actual units | Safe systemctl properties showed Agent RuntimeDirectory `madar-node-agent`, mode `0700`, Preserve `no`; Xray BindsTo and After Agent; static/no independent install target. Byte-matched deployed unit has both config/marker conditions and pre-start checks; manual condition failure and actual SIGKILL binding verified behavior | PASS |
+| K — privacy/permissions | Bounded journal scan from `19:50:00Z`: no known node credential, REALITY private key, current/revoked client UUID, session/CSRF, bearer/PEM patterns or raw per-client StatsService pattern. State/outbox/secrets remained `0700`/`0600`; historical journals preserved | PASS |
+| L — cleanup | Removed fault file and Python-path drop-in; disabled/removed temporary boot observer; restored API enablement; fresh empty revision 14 ACKed; Agent active/healthy/ready, managed clients 0, pending/activity 0. Authorized zero-client Xray active; old field credential's direct probe denied. Exported client config removed from VPS operator path and local computer | PASS |
+
+Eight closed-state external probes all failed. Five allowed-state probes succeeded. One additional allowed-state probe before reboot timed out with curl 28; an unchanged-state repeat succeeded with the same Agent/Xray PIDs and marker, before reboot proceeded. The timeout is retained as an observation, not classified as a lifecycle failure or silently discarded.
+
+The boot observer proves the measured interval starting at uptime 6.877s; it is not a claim of continuous packet capture from power-on. The real no-marker start conditions, no independent Xray installation target, unchanged persisted config, absent post-boot marker, actual inactive PID 0, and external denial provide the complementary lifecycle evidence.
+
+The actual current-boot Xray journal also had zero successful start events before fresh recovery and two successful start events afterward (authorized revision 13 recovery and revision 14 empty-policy cleanup). The event counter was checked against those positive starts, not inferred solely from missing text.
+
+**No new Gate J blocker remains.** The prior lifecycle blocker is closed by real evidence. The limited rerun did not execute or promote remaining non-J Phase 7 scenarios; Phase 7 therefore remains INCOMPLETE. Phase 8 remains unstarted; Premium single-active-client/device remains separate; Production Ready is not claimed. The same VPS is retained for inspection.

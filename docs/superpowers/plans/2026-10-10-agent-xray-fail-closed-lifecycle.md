@@ -1,7 +1,7 @@
 # Agent/Xray Fail-Closed Lifecycle Implementation Plan
 
 Date: 2026-10-10  
-Status: **Tasks 1-4 repository implementation complete; Task 5 real-VPS Gate J pending**  
+Status: **Tasks 1-4 repository implementation complete; Task 5 real-VPS Gate J PASS; broader Phase 7 INCOMPLETE**
 Implementation branch: `impl/phase-1-native-lifecycle`
 
 **Goal:** close the real Phase 7 Gate J blocker so managed Xray cannot remain serving when the Node Agent is failed, stopped, restarting, or unable to prove control of the current runtime.
@@ -134,11 +134,11 @@ Documentation reconciliation CI:
 38070647195 — SUCCESS
 ```
 
-The current status-only commit changes no runtime or test behavior; it only records the already-successful documentation CI witness above. A fresh CI for this status-only head is still required before reporting Tasks 1-4 as finalized in this execution session.
+At that historical status-only checkpoint, fresh CI was still required before finalizing Tasks 1-4. The subsequent accepted head `d4fe18b91a2da26488faedd96b4182190de31861` passed full CI `38073194023`, verified again before Task 5 deployment, satisfying that requirement.
 
 ## Task 5 — real-VPS Gate J rerun
 
-Status: **open**.
+Status: **complete — actual same-VPS A-L rerun PASS**.
 
 Prerequisites:
 
@@ -150,16 +150,18 @@ Prerequisites:
 
 Mandatory real checks:
 
-- [ ] Reproduce the original controlled startup stop-command fault while Xray initially serves the disposable credential. Xray must become inactive and repeated direct VLESS+REALITY probes must fail.
-- [ ] Manual Xray start with Agent inactive/no marker must not serve.
-- [ ] Kill/crash Agent while authorized Xray is serving; `BindsTo` must pull Xray down and traffic must fail.
-- [ ] Restart Agent with control plane unavailable; old marker must be gone and Xray must remain down.
-- [ ] Restore fresh valid policy; Agent may create a new marker, start Xray, become healthy/ready, and traffic may succeed again.
-- [ ] Force runtime/outbox initialization failure; marker absent and Xray down.
-- [ ] Reboot current units; persisted config alone must not expose stale access before fresh authorization.
-- [ ] Marker disappears across stop/restart/reboot and remains owner-only while present.
-- [ ] Recheck bounded logs/privacy and existing secret/outbox permissions; preserve historical journals.
-- [ ] Update the canonical Phase 7 field report with exact deployed head, CI, fault-injection evidence and cleanup state.
+- [x] Reproduce the original controlled startup stop-command fault while Xray initially serves the disposable credential. Xray became inactive/PID 0, marker absent, and two independent direct probes failed.
+- [x] Manual Xray start with Agent inactive/no marker did not serve; persisted config retained; condition false and probe denied.
+- [x] Actual SIGKILL of serving Agent pulled Xray down through `BindsTo`; no application cleanup; marker absent and probe denied.
+- [x] Restart with real API unavailable left marker absent, persisted config intact, Xray down and probe denied.
+- [x] Fresh policy restored a new activation marker, active Xray, ready health and successful direct traffic.
+- [x] Real outbox-constructor fault produced exit 3, absent marker, inactive Xray and denied traffic.
+- [x] Actual reboot with API disabled preserved no authorization; boot observer and direct probe verified closure before fresh recovery.
+- [x] Marker absent across stop/restart/crash/reboot; regular/root-owned `0600` in fresh activations; runtime directory `0700`.
+- [x] Bounded logs/privacy and existing `0600` secrets/outbox, `0700` state; historical journals preserved.
+- [x] Canonical report and remediation appendix include A-L results, method, exact SHA/CI, observation limits and safe cleanup.
+
+Field evidence: exact deployed `d4fe18b91a2da26488faedd96b4182190de31861`, full CI `38073194023` SUCCESS; all Agent files and both units byte-matched; 142 Python tests passed on the VPS. All eight closed-state direct probes failed. API was deliberately held unavailable in denial windows to prevent legitimate automatic fresh recovery; that isolation and the measured boot interval are disclosed in the report. No source fix/architecture change was made. Cleanup: fault/drop-in and boot observer removed, API enablement restored, fresh empty revision 14 ACKed, zero managed clients/pending/activity, former credential denied. No new Gate J blocker remains. Non-J Phase 7 acceptance was outside this Task-5-only rerun.
 
 ## Acceptance boundary
 
@@ -171,7 +173,7 @@ Current release status:
 - Tasks 1-4 repository evidence: complete;
 - code-head CI: SUCCESS;
 - documentation reconciliation CI: SUCCESS;
-- Gate J: open;
+- Gate J: **PASS — real same-VPS Task 5 evidence recorded**;
 - Phase 7: **INCOMPLETE**;
 - Phase 8: unstarted;
 - Premium single-active-client/device enforcement: separate unresolved release gate;

@@ -1,7 +1,7 @@
 # Phase 7 Gate J lifecycle remediation — repository appendix
 
 Date: 2026-10-10  
-Status: **repository remediation implemented and CI-verified; real-VPS Gate J rerun pending**  
+Status: **repository remediation CI-verified; real-VPS Gate J PASS on `d4fe18b91a2da26488faedd96b4182190de31861`; Phase 7 INCOMPLETE**
 Canonical historical field report: `docs/test-reports/phase-7-vps.md`
 
 ## Why this appendix exists
@@ -11,6 +11,8 @@ The canonical Phase 7 report preserves the actual current-head field failure in 
 That failure is historical field evidence and must not be rewritten as a PASS by repository automation.
 
 This appendix records the subsequent approved lifecycle remediation and repository/CI evidence. It does **not** replace the historical report and does not close Gate J.
+
+The repository-only sections through the historical release decision below preserve the pre-rerun checkpoint. The subsequent real-VPS Task 5 section records the current field result.
 
 ## Approved remediation
 
@@ -167,8 +169,20 @@ Before Gate J can become PASS, deploy one exact final documentation/code head wi
 
 The canonical `phase-7-vps.md` should receive the actual field result after this rerun.
 
-## Release decision
+## Historical repository-only release decision
 
 **Gate J remains OPEN. Phase 7 remains INCOMPLETE. Phase 8 remains unstarted. Production Ready is not claimed.**
 
 Premium single-active-client/device enforcement remains a separate unresolved release gate and is not addressed by this lifecycle remediation.
+
+## Subsequent real-VPS Task 5 result
+
+**Gate J: PASS**, based on the same existing VPS running exact `d4fe18b91a2da26488faedd96b4182190de31861`, branch `impl/phase-1-native-lifecycle`, with completed SUCCESS CI [38073194023](https://github.com/alireza-anari/madar-vpn/actions/runs/38073194023). The earlier repository-only sections above remain historical evidence; the full A-L field matrix is appended to the canonical `phase-7-vps.md`.
+
+Actual checks completed: healthy fresh-policy baseline; original subprocess stop failure with two denied direct external probes; no-marker manual start; SIGKILL with actual BindsTo shutdown; API-unavailable restart; new-marker fresh recovery; real outbox-constructor failure/exit 3; actual reboot with API disabled; ephemeral marker and unit properties; bounded privacy/permissions; safe empty-policy cleanup. All eight closed-state external probes failed, and positive probes confirmed direct serving before transitions and after fresh recovery. The unchanged-source VPS Python suite passed 142 tests.
+
+Stop/crash/manual/reboot denial windows deliberately held the real API unavailable to prevent fresh-authorized automatic recovery during observation. This is disclosed test isolation, not a claimed stop-command-only permanent refusal to serve. Hooks intercepted only the ordinary stop subprocess or outbox constructor; actual systemd/PID/marker checks and VPN traffic were real. A pre-Agent ordered boot observer measured 1,029 samples over 51.888 seconds from uptime 6.877 seconds with no marker/listener; earlier power-on time is not claimed as observed. One allowed-state timeout was retained and an unchanged-state repeat succeeded.
+
+Cleanup removed active hooks/drop-in and boot-observer unit, restored API enablement, ACKed fresh empty revision 14, left managed clients and pending/activity counts at 0, and confirmed the old credential denied. The fresh empty-policy zero-client runtime is intentionally authorized. Source and both deployed base units still matched the accepted SHA. Historical journals were not deleted. No runtime code or architecture change was needed in this field rerun; no new Gate J blocker remains.
+
+**Phase 7 remains INCOMPLETE** because this task was limited to Gate J and did not close broader remaining acceptance. Phase 8 remains unstarted; Production Ready and Premium device enforcement are not claimed.
