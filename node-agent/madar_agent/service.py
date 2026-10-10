@@ -170,6 +170,12 @@ def _restart_xray() -> None:
         raise RuntimeError("managed Xray restart failed")
 
 
+def _stop_xray() -> None:
+    result = _run_process(["systemctl", "stop", XRAY_SERVICE_NAME])
+    if result.returncode != 0:
+        raise RuntimeError("managed Xray stop failed")
+
+
 def _xray_is_active() -> bool:
     return _run_process(["systemctl", "is-active", "--quiet", XRAY_SERVICE_NAME]).returncode == 0
 
@@ -243,7 +249,17 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
 
-    service = build_agent_service()
+    try:
+        service = build_agent_service()
+    except Exception:
+        try:
+            _stop_xray()
+        except Exception:
+            print("node-agent startup unavailable; managed Xray stop failed", file=sys.stderr)
+            return 4
+        print("node-agent startup unavailable; managed Xray disabled", file=sys.stderr)
+        return 3
+
     start_activity_sampling = getattr(service, "start_activity_sampling", None)
     stop_activity_sampling = getattr(service, "stop_activity_sampling", None)
     if callable(start_activity_sampling):
