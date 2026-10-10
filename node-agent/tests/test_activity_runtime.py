@@ -68,10 +68,11 @@ def test_build_agent_service_wires_xray_counter_source_drain_and_one_second_work
             created["client_config"] = config
 
     class FakeSource:
-        def __init__(self, *, read_counters, now, max_gap_seconds=2.5) -> None:
+        def __init__(self, *, read_counters, now, max_gap_seconds=2.5, record_activity=None) -> None:
             self.read_counters = read_counters
             self.now = now
             self.max_gap_seconds = max_gap_seconds
+            self.record_activity = record_activity
             created["source"] = self
 
         def sample(self) -> None:
@@ -111,7 +112,8 @@ def test_build_agent_service_wires_xray_counter_source_drain_and_one_second_work
             return None
 
     class FakeNodeAgent:
-        def __init__(self, config, *, api, xray, environment=None, now) -> None:
+        def __init__(self, config, *, api, xray, environment=None, now, outbox=None) -> None:
+            self.outbox = outbox
             created["agent"] = self
 
     monkeypatch.setattr(service_module, "load_config", lambda: agent_config)
@@ -127,13 +129,16 @@ def test_build_agent_service_wires_xray_counter_source_drain_and_one_second_work
     source = created["source"]
     xray = created["xray"]
     worker = created["worker"]
+    agent = created["agent"]
     assert source.read_counters() == {
         "fixture-client": UserTrafficCounters(uplink_bytes=1, downlink_bytes=2)
     }
+    assert callable(source.record_activity)
     assert xray.kwargs["activity_source"]() == []
     assert getattr(xray.kwargs["activity_source"], "__self__", None) is source
     assert worker.source is source
     assert worker.interval_seconds == 1.0
+    assert agent.outbox is getattr(source.record_activity, "__self__", None)
     assert built._activity_worker is worker
 
 
