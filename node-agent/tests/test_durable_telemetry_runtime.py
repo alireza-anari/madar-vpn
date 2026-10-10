@@ -196,6 +196,9 @@ def test_build_agent_service_wires_single_outbox_to_sampler_and_agent(monkeypatc
         def record_activity(self, **payload) -> None:
             return None
 
+        def record_active_bucket(self, **payload) -> None:
+            return None
+
         def prepare_reports(self):
             return []
 
@@ -207,13 +210,22 @@ def test_build_agent_service_wires_single_outbox_to_sampler_and_agent(monkeypatc
             created["client"] = self
 
     class FakeSource:
-        def __init__(self, *, read_counters, now, max_gap_seconds=2.5, record_activity=None) -> None:
+        def __init__(
+            self,
+            *,
+            read_counters,
+            now,
+            max_gap_seconds=2.5,
+            record_activity=None,
+            record_active_bucket=None,
+        ) -> None:
             self.read_counters = read_counters
             self.now = now
             self.record_activity = record_activity
+            self.record_active_bucket = record_active_bucket
             created["source"] = self
 
-        def sample(self) -> None:
+        def sample(self, *, bucket_end=None) -> None:
             return None
 
         def invalidate(self) -> None:
@@ -268,5 +280,6 @@ def test_build_agent_service_wires_single_outbox_to_sampler_and_agent(monkeypatc
     source = created["source"]
     agent = created["agent"]
     assert outbox.path == credential_path.parent / "telemetry-outbox.sqlite3"
-    assert getattr(source.record_activity, "__self__", None) is outbox
+    assert source.record_activity is None
+    assert getattr(source.record_active_bucket, "__self__", None) is outbox
     assert agent.outbox is outbox
