@@ -165,6 +165,8 @@ def _serialize_usage(report: UsageReport) -> dict[str, object]:
         payload["observedTo"] = _serialize_timestamp(report.observed_to)
     if report.session_id is not None:
         payload["sessionId"] = report.session_id
+    if report.active_seconds_hex is not None:
+        payload["activeSecondsHex"] = report.active_seconds_hex
     return payload
 
 
@@ -262,6 +264,19 @@ class ControlPlaneClient:
         if not isinstance(decoded, dict):
             raise PermanentApiError(response.status, "RESPONSE_INVALID")
         return decoded
+
+    def supports_active_second_telemetry(self) -> bool:
+        response = self._request(
+            "GET",
+            "/api/node/telemetry/capabilities",
+            accepted_statuses=frozenset({200, 404}),
+        )
+        if response.status == 404:
+            return False
+        decoded = _decode_json(response)
+        if not isinstance(decoded, dict) or decoded.get("activeSecondsV1") is not True:
+            raise PermanentApiError(response.status, "RESPONSE_INVALID")
+        return True
 
     def post_telemetry(self, reports: list[UsageReport]) -> dict[str, object]:
         response = self._request(
