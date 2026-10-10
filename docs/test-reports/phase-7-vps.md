@@ -50,7 +50,17 @@ Ordinary TLS success did not establish REALITY suitability: `www.microsoft.com:4
 - Xray managed configurations explicitly set `log.access` to `none`. The new assertion failed against the baseline (`None` rather than `none`), then passed after the minimal configuration change. Real post-fix logs were separately scanned; old logs were not erased or described as clean.
 - `NodeAgent.fetch_policy` closes absent/expired authorization before starting the network request and rechecks expiry in `finally`, including when HTTP/retry raises. New tests failed for expiry before retry, expiry during retry, and startup with unavailable control plane. The full Python suite subsequently passed: **58 tests** on the real Ubuntu host. The actual outage was independently rerun, with access closing and fresh traffic denied.
 - A separate static review of the narrow source changes reported no critical/important findings; that review did not independently execute the field tests.
-- Full GitHub CI result for the final changes is recorded below only after the actual run completes.
+- Deployed `agent.py` and `xray.py` were refreshed from the published checkout and their SHA-256 values matched the checkout files exactly; the full Ubuntu Python suite again passed **58 tests**.
+
+## Full CI evidence
+
+Implementation/evidence commit `7806a1a63f624d593a1c9b25232b72d802aa2435` passed the complete GitHub Actions workflow: [run 38030266011](https://github.com/alireza-anari/madar-vpn/actions/runs/38030266011), **SUCCESS**.
+
+All required gates completed successfully: repository secret scan; PostgreSQL schema and destructive backup/restore; restored-Worker HTTP smoke; PostgreSQL driver/rollback smoke and integration suite; JavaScript and Python dependency audits; full JavaScript/TypeScript tests; typecheck; production build; and the full Python suite. This is CI evidence for the actual source fixes; it does not turn the remaining live activity/telemetry/privacy limitations into PASS.
+
+## Safe end-of-test state
+
+Revision 6 with an empty client list was published and ACKed through the real node API. Managed client count and aggregate online count were both `0`; Node Agent, Xray and the loopback-only control plane remained active. The second reboot with the control plane disabled separately demonstrated startup access denial; re-enabling the control plane restored fresh-policy connectivity before the empty cleanup policy was published. The disposable EC2 instance remains allocated for inspection; it was not terminated and historical journals were not erased.
 
 ## Verified observation semantics and remaining gate
 
