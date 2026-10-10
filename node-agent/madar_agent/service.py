@@ -11,7 +11,7 @@ from .activity import XrayTrafficActivitySource
 from .agent import NodeAgent
 from .api import ControlPlaneClient, PermanentApiError
 from .config import load_config, load_runtime_config
-from .models import UsageReport
+from .outbox import TelemetryOutbox
 from .retry import RetryExhausted
 from .xray import PinnedXrayAdapter, RealityServerConfig
 
@@ -95,7 +95,6 @@ class AgentService:
         self._max_clients = max_clients
         self._active_clients = 0
         self._activity_worker = activity_worker
-        self._pending_reports: list[UsageReport] = []
 
     def start_activity_sampling(self) -> None:
         if self._activity_worker is not None:
@@ -132,11 +131,10 @@ class AgentService:
             elif result.disabled:
                 self._active_clients = 0
 
-        if not self._pending_reports:
-            self._pending_reports = list(self._agent.collect_usage())
-        if self._pending_reports:
-            self._control_plane.post_telemetry(self._pending_reports)
-            self._pending_reports = []
+        reports = list(self._agent.collect_usage())
+        if reports:
+            self._control_plane.post_telemetry(reports)
+            self._agent.acknowledge_usage(reports)
 
         runtime_healthy = bool(self._runtime_health())
         ready = (
@@ -191,6 +189,7 @@ def build_agent_service() -> AgentService:
         short_ids=(runtime.reality_short_id,),
     )
     now = lambda: datetime.now(UTC)
+    outbox = TelemetryOutbox(config.credential_path.parent / "telemetry-outbox.sqlite3")
     xray_holder: dict[str, PinnedXrayAdapter] = {}
 
     def read_counters():
@@ -199,6 +198,7 @@ def build_agent_service() -> AgentService:
     activity_source = XrayTrafficActivitySource(
         read_counters=read_counters,
         now=now,
+        record_activity=outbox.record_activity,
     )
     xray = PinnedXrayAdapter(
         install_root=runtime.binary.parents[1],
@@ -221,6 +221,7 @@ def build_agent_service() -> AgentService:
         api=client,
         xray=xray,
         now=now,
+        outbox=outbox,
     )
     return AgentService(
         agent=agent,
