@@ -47,6 +47,17 @@ def config(tmp_path: Path, credential: str = "node-super-secret") -> AgentConfig
     return AgentConfig(api_base_url="https://control.example.test", credential_path=path)
 
 
+def usage_report(*, sequence: int = 3) -> UsageReport:
+    return UsageReport(
+        client_id="client-free",
+        window_id="window-1",
+        sequence=sequence,
+        seconds=12,
+        timestamp=datetime(2026, 10, 8, 13, 0, 12, tzinfo=UTC),
+        session_id="session-1",
+    )
+
+
 def test_fetch_policy_uses_bearer_auth_and_parses_control_plane_shape(tmp_path: Path) -> None:
     transport = FakeTransport(HttpResponse(
         status=200,
@@ -132,16 +143,7 @@ def test_ack_heartbeat_and_telemetry_use_expected_server_contract_without_extra_
         capacity={"accepting": True, "activeClients": 2, "maxClients": 100},
     )
     assert heartbeat["status"] == "ready"
-    result = client.post_telemetry([
-        UsageReport(
-            client_id="client-free",
-            window_id="window-1",
-            sequence=3,
-            seconds=12,
-            timestamp=datetime(2026, 10, 8, 13, 0, 12, tzinfo=UTC),
-            session_id="session-1",
-        )
-    ])
+    result = client.post_telemetry([usage_report()])
     assert result == {"accepted": 1, "duplicates": 0}
 
     ack_body = json.loads(transport.requests[0].body or b"{}")
@@ -163,3 +165,35 @@ def test_ack_heartbeat_and_telemetry_use_expected_server_contract_without_extra_
             "sessionId": "session-1",
         }]
     }
+
+
+def test_telemetry_duplicate_response_counts_as_complete_acceptance(tmp_path: Path) -> None:
+    transport = FakeTransport(HttpResponse(status=200, body=b'{"accepted":0,"duplicates":1}'))
+    client = ControlPlaneClient(config(tmp_path), transport=transport)
+
+    assert client.post_telemetry([usage_report()]) == {"accepted": 0, "duplicates": 1}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'{"accepted":1}',
+        b'{"accepted":0,"duplicates":0}',
+        b'{"accepted":2,"duplicates":0}',
+        b'{"accepted":-1,"duplicates":2}',
+        b'{"accepted":true,"duplicates":0}',
+        b'{"accepted":1,"duplicates":"0"}',
+    ],
+)
+def test_telemetry_response_must_account_for_every_report_before_outbox_can_ack(
+    tmp_path: Path,
+    body: bytes,
+) -> None:
+    transport = FakeTransport(HttpResponse(status=200, body=body))
+    client = ControlPlaneClient(config(tmp_path), transport=transport)
+
+    with pytest.raises(PermanentApiError) as raised:
+        client.post_telemetry([usage_report()])
+
+    assert raised.value.status == 200
+    assert "RESPONSE_INVALID" in str(raised.value)
