@@ -141,8 +141,13 @@ class AgentService:
 
         reports = list(self._agent.collect_usage())
         if reports:
-            self._control_plane.post_telemetry(reports)
-            self._agent.acknowledge_usage(reports)
+            has_active_second_report = any(report.active_seconds_hex is not None for report in reports)
+            can_post = True
+            if has_active_second_report:
+                can_post = bool(self._control_plane.supports_active_second_telemetry())
+            if can_post:
+                self._control_plane.post_telemetry(reports)
+                self._agent.acknowledge_usage(reports)
 
         runtime_healthy = bool(self._runtime_health())
         ready = (
@@ -212,7 +217,7 @@ def build_agent_service() -> AgentService:
     activity_source = XrayTrafficActivitySource(
         read_counters=read_counters,
         now=now,
-        record_activity=outbox.record_activity,
+        record_active_bucket=outbox.record_active_bucket,
     )
     xray = PinnedXrayAdapter(
         install_root=runtime.binary.parents[1],
