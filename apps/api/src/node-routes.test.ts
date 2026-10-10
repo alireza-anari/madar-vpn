@@ -65,7 +65,7 @@ describe('node control HTTP boundary', () => {
       body: JSON.stringify({
         health: { healthy: true, ready: true },
         versions: { agent: '1.0.0', xray: '25.10.0' },
-        capacity: { accepting: true, activeClients: 0, maxClients: 100 },
+        capacity: { accepting: false, activeClients: 0, maxClients: 100 },
       }),
     });
     expect(anonymousHeartbeat.status).toBe(401);
@@ -149,6 +149,36 @@ describe('node control HTTP boundary', () => {
       body: JSON.stringify({ reports: [report] }),
     });
     await expect(replay.json()).resolves.toEqual({ accepted: 0, duplicates: 1 });
+
+    const masked = {
+      clientId: 'client-1',
+      windowId: 'xray-traffic:2026-10-08T12:31Z',
+      sequence: 2,
+      seconds: 2,
+      timestamp: '2026-10-08T12:31:02.000Z',
+      activeSecondsHex: '0000000000000003',
+    };
+    const maskedResponse = await app.request('/api/node/telemetry', {
+      method: 'POST',
+      headers: bearer(enrolled.rawCredential),
+      body: JSON.stringify({ reports: [masked] }),
+    });
+    expect(maskedResponse.status).toBe(200);
+    await expect(maskedResponse.json()).resolves.toEqual({ accepted: 1, duplicates: 0 });
+    expect(store.telemetryReports.at(-1)).toMatchObject({
+      windowId: masked.windowId,
+      seconds: 2,
+      activeSecondsHex: '0000000000000003',
+    });
+
+    const mismatched = await app.request('/api/node/telemetry', {
+      method: 'POST',
+      headers: bearer(enrolled.rawCredential),
+      body: JSON.stringify({ reports: [{ ...masked, sequence: 3, seconds: 1 }] }),
+    });
+    expect(mismatched.status).toBe(400);
+    await expect(mismatched.json()).resolves.toEqual({ error: 'TELEMETRY_INVALID' });
+
     expect(JSON.stringify(store.telemetryReports)).not.toContain('never-store-this');
   });
 });
