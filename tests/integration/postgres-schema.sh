@@ -161,6 +161,33 @@ BEGIN
     WHEN check_violation THEN NULL;
   END;
 END $$;
+
+INSERT INTO telemetry_reports (
+  node_id, client_id, window_id, sequence, seconds, timestamp,
+  observed_from, observed_to, session_id, active_seconds_hex, settlement_status
+) VALUES (
+  'schema-node-1', 'schema-client-1', 'xray-traffic:2026-10-08T12:02Z', 10, 2,
+  '2026-10-08T12:02:02.000Z', '2026-10-08T12:02:00.000Z', '2026-10-08T12:02:02.000Z', NULL,
+  '0000000000000003', 'settled'
+);
+
+INSERT INTO usage_active_minutes (user_id, minute_start, settled_mask, updated_at)
+VALUES ('schema-user-1', '2026-10-08T12:02:00.000Z', 3, '2026-10-08T12:02:02.000Z');
+
+INSERT INTO usage_debit_events (
+  node_id, window_id, sequence, user_id, minute_start,
+  observed_mask, new_mask, debited_mask, debit_seconds, created_at
+) VALUES (
+  'schema-node-1', 'xray-traffic:2026-10-08T12:02Z', 10, 'schema-user-1', '2026-10-08T12:02:00.000Z',
+  3, 3, 3, 2, '2026-10-08T12:02:02.000Z'
+);
+
+INSERT INTO credit_ledger (
+  unique_key, user_id, kind, free_day, delta_seconds, occurred_at, node_id, sequence
+) VALUES (
+  'usage:schema-node-1:xray-traffic:2026-10-08T12:02Z:10:2026-10-08',
+  'schema-user-1', 'usage', '2026-10-08', -2, '2026-10-08T12:02:00.000Z', 'schema-node-1', 10
+);
 SQL
 
 # Verify an existing 0001 database upgrades without replaying 0001 and receives
