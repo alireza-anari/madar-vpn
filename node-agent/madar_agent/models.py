@@ -86,3 +86,4 @@ class UsageReport:
     observed_from: datetime | None = None
     observed_to: datetime | None = None
     session_id: str | None = None
+    active_seconds_hex: str | None = None
