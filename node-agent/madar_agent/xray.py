@@ -10,7 +10,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from .models import ManagedClient, ObservedActivity
+from .models import ManagedClient, ObservedActivity, UserTrafficCounters
+
+
+XRAY_STATS_SERVER = "127.0.0.1:10085"
+XRAY_MADAR_USER_PATTERN = "user>>>madar:"
 
 
 class XrayAdapter(Protocol):
@@ -21,6 +25,8 @@ class XrayAdapter(Protocol):
     def revoke_client(self, uuid: str) -> None: ...
 
     def disable_managed_access(self) -> None: ...
+
+    def read_user_traffic_counters(self) -> dict[str, UserTrafficCounters]: ...
 
     def collect_observed_activity(self) -> list[ObservedActivity]: ...
 
@@ -214,6 +220,80 @@ class PinnedXrayAdapter:
     def disable_managed_access(self) -> None:
         self.apply_clients([])
 
+    def read_user_traffic_counters(self) -> dict[str, UserTrafficCounters]:
+        if self._run is None or self._binary is None:
+            raise XrayRuntimeError("Xray traffic observation unavailable")
+
+        result = self._run(
+            [
+                str(self._binary),
+                "api",
+                "statsquery",
+                f"--server={XRAY_STATS_SERVER}",
+                "-pattern",
+                XRAY_MADAR_USER_PATTERN,
+            ]
+        )
+        if result.returncode != 0:
+            raise XrayRuntimeError("Xray traffic observation unavailable")
+
+        managed_ids = {client.client_id for client in self._managed_clients}
+        counters = {
+            client_id: {"uplink": 0, "downlink": 0}
+            for client_id in managed_ids
+        }
+        expected_names = {
+            f"user>>>madar:{client_id}>>>traffic>>>{direction}": (client_id, direction)
+            for client_id in managed_ids
+            for direction in ("uplink", "downlink")
+        }
+
+        try:
+            payload = json.loads(result.stdout)
+            if not isinstance(payload, dict):
+                raise ValueError
+            stats = payload.get("stat", [])
+            if stats is None:
+                stats = []
+            if not isinstance(stats, list):
+                raise ValueError
+            seen: set[str] = set()
+            for stat_entry in stats:
+                if not isinstance(stat_entry, dict):
+                    raise ValueError
+                name = stat_entry.get("name")
+                if not isinstance(name, str):
+                    raise ValueError
+                target = expected_names.get(name)
+                if target is None:
+                    continue
+                if name in seen:
+                    raise ValueError
+                seen.add(name)
+                value = stat_entry.get("value", 0)
+                if isinstance(value, str):
+                    if not value.isdecimal():
+                        raise ValueError
+                    numeric_value = int(value)
+                elif isinstance(value, int) and not isinstance(value, bool):
+                    numeric_value = value
+                else:
+                    raise ValueError
+                if numeric_value < 0:
+                    raise ValueError
+                client_id, direction = target
+                counters[client_id][direction] = numeric_value
+        except (json.JSONDecodeError, TypeError, ValueError):
+            raise XrayRuntimeError("Xray traffic observation unavailable") from None
+
+        return {
+            client_id: UserTrafficCounters(
+                uplink_bytes=values["uplink"],
+                downlink_bytes=values["downlink"],
+            )
+            for client_id, values in counters.items()
+        }
+
     def collect_observed_activity(self) -> list[ObservedActivity]:
         if self._activity_source is None:
             return []
@@ -247,13 +327,17 @@ class PinnedXrayAdapter:
             "log": {"loglevel": "warning", "access": "none"},
             "api": {
                 "tag": "madar-local-api",
-                "listen": "127.0.0.1:10085",
+                "listen": XRAY_STATS_SERVER,
                 "services": ["StatsService"],
             },
             "stats": {},
             "policy": {
                 "levels": {
-                    "0": {"statsUserOnline": True},
+                    "0": {
+                        "statsUserOnline": True,
+                        "statsUserUplink": True,
+                        "statsUserDownlink": True,
+                    },
                 },
             },
             "inbounds": [
