@@ -36,33 +36,6 @@ function toNullableIso(value: Date | string | null): string | null {
   return value === null ? null : toIso(value);
 }
 
-function mapPlan(row: PlanRow | undefined): PaymentPlan | null {
-  if (!row) return null;
-  return {
-    id: row.id,
-    title: row.title,
-    durationDays: row.duration_days,
-    priceMinor: Number(row.price_minor),
-    currency: row.currency,
-    enabled: row.enabled,
-  };
-}
-
-function mapOrder(row: OrderRow | undefined): PaymentOrder | null {
-  if (!row) return null;
-  return {
-    id: row.id,
-    userId: row.user_id,
-    planId: row.plan_id,
-    durationDays: row.duration_days,
-    amountMinor: Number(row.amount_minor),
-    currency: row.currency,
-    status: row.status,
-    createdAt: toIso(row.created_at),
-    settledAt: toNullableIso(row.settled_at),
-  };
-}
-
 export class PostgresPaymentStore implements PaymentStore {
   constructor(private readonly db: QueryDatabase) {}
 
@@ -109,7 +82,12 @@ export class PostgresPaymentStore implements PaymentStore {
     return mapOrder(result.rows[0]);
   }
 
-  async settlePendingOrder(orderId: string, sourceKey: string, settledAt: string): Promise<PaymentSettlement | null> {
+  async settlePendingOrder(
+    orderId: string,
+    sourceKey: string,
+    sourceOccurredAt: string,
+    settledAt: string = sourceOccurredAt,
+  ): Promise<PaymentSettlement | null> {
     return this.db.transaction(async (transaction) => {
       const orderResult = await transaction.query<OrderRow>(
         `SELECT id, user_id, plan_id, duration_days, amount_minor, currency,
@@ -138,7 +116,7 @@ export class PostgresPaymentStore implements PaymentStore {
          VALUES ($1, $2, $3::timestamptz)
          ON CONFLICT (source_key) DO NOTHING
          RETURNING source_key`,
-        [sourceKey, orderId, settledAt],
+        [sourceKey, orderId, sourceOccurredAt],
       );
       if (!insertedEvent.rows[0]) {
         return { applied: false, premiumUntil: currentPremiumUntil };
@@ -168,8 +146,16 @@ export class PostgresPaymentStore implements PaymentStore {
       );
       const premiumUntil = membership.rows[0]?.premium_until;
       if (!premiumUntil) throw new Error('Premium membership could not be extended.');
+      const premiumUntilIso = toIso(premiumUntil);
 
-      return { applied: true, premiumUntil: toIso(premiumUntil) };
+      await transaction.query(
+        `INSERT INTO premium_entitlement_events (
+           user_id, source_key, effective_at, premium_until
+         ) VALUES ($1, $2, $3::timestamptz, $4::timestamptz)`,
+        [order.userId, `payment:${sourceKey}`, settledAt, premiumUntilIso],
+      );
+
+      return { applied: true, premiumUntil: premiumUntilIso };
     });
   }
 
@@ -187,4 +173,31 @@ export class PostgresPaymentStore implements PaymentStore {
     );
     return result.rows[0] ? toNullableIso(result.rows[0].premium_until) : null;
   }
+}
+
+function mapPlan(row: PlanRow | undefined): PaymentPlan | null {
+  if (!row) return null;
+  return {
+    id: row.id,
+    title: row.title,
+    durationDays: row.duration_days,
+    priceMinor: Number(row.price_minor),
+    currency: row.currency,
+    enabled: row.enabled,
+  };
+}
+
+function mapOrder(row: OrderRow | undefined): PaymentOrder | null {
+  if (!row) return null;
+  return {
+    id: row.id,
+    userId: row.user_id,
+    planId: row.plan_id,
+    durationDays: row.duration_days,
+    amountMinor: Number(row.amount_minor),
+    currency: row.currency,
+    status: row.status,
+    createdAt: toIso(row.created_at),
+    settledAt: toNullableIso(row.settled_at),
+  };
 }
