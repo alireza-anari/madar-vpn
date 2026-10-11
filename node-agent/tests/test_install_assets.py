@@ -71,5 +71,7 @@ def test_speed_enforcer_unit_requires_live_config_ephemeral_authorization_and_ag
     assert "UMask=0077" in unit
     assert "NoNewPrivileges=true" in unit
     assert "PrivateTmp=true" in unit
+    assert "ProtectSystem=strict" in unit
+    assert "ReadWritePaths=/run/madar-node-agent" in unit
     assert "EnvironmentFile=" not in unit
     assert "[Install]" not in unit
