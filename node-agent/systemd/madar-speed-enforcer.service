@@ -9,6 +9,7 @@ ConditionPathExists=/run/madar-node-agent/speed-enforcer-authorized
 
 [Service]
 Type=simple
+ReadWritePaths=/run/madar-node-agent
 ExecStartPre=/usr/bin/test -f /etc/madar-node-agent/speed-enforcer.json
 ExecStartPre=/usr/bin/test -f /run/madar-node-agent/speed-enforcer-authorized
 ExecStart=/opt/madar-speed-enforcer/madar-speed-enforcer --config /etc/madar-node-agent/speed-enforcer.json
