@@ -88,6 +88,54 @@ def test_worker_production_entrypoint_uses_hyperdrive_runtime() -> None:
     assert config.get("main") == "src/worker.ts", "production Worker must use the Hyperdrive/PostgreSQL runtime entrypoint"
 
 
+def test_worker_static_assets_and_node_compat_are_deployable() -> None:
+    config = json.loads((ROOT / "apps" / "api" / "wrangler.jsonc").read_text(encoding="utf-8"))
+
+    assert "nodejs_compat" in config.get("compatibility_flags", []), "pg runtime requires nodejs_compat"
+    assert config.get("assets") == {
+        "directory": "../web/dist",
+        "not_found_handling": "single-page-application",
+        "run_worker_first": ["/api/*"],
+    }, "Worker must serve the web SPA while routing /api/* through the API first"
+
+
+def test_worker_staging_environment_isolated_from_production() -> None:
+    config = json.loads((ROOT / "apps" / "api" / "wrangler.jsonc").read_text(encoding="utf-8"))
+
+    assert config.get("name") == "madar-api", "production Worker name must remain unchanged"
+    assert "hyperdrive" not in config, "staging Hyperdrive must not leak into top-level production config"
+    staging = config.get("env", {}).get("staging")
+    assert isinstance(staging, dict), "staging Worker environment is required"
+    assert staging.get("name") == "madar-staging"
+    assert staging.get("workers_dev") is True
+    assert staging.get("hyperdrive") == [
+        {
+            "binding": "HYPERDRIVE",
+            "id": "09d3d308e97e47eeb22d3b091431cefa",
+        }
+    ]
+
+
+def test_worker_staging_declares_isolated_rate_limit_bindings() -> None:
+    config = json.loads((ROOT / "apps" / "api" / "wrangler.jsonc").read_text(encoding="utf-8"))
+    staging = config.get("env", {}).get("staging")
+    assert isinstance(staging, dict), "staging Worker environment is required"
+
+    expected = {
+        "LOGIN_RATE_LIMITER": ("920001", 5),
+        "SUBSCRIPTION_RATE_LIMITER": ("920002", 60),
+        "NODE_ENROLLMENT_RATE_LIMITER": ("920003", 10),
+        "PROVIDER_CALLBACK_RATE_LIMITER": ("920004", 300),
+        "ADMIN_RATE_LIMITER": ("920005", 120),
+    }
+    actual = {
+        item["name"]: (item["namespace_id"], item["simple"]["limit"])
+        for item in staging.get("ratelimits", [])
+    }
+    assert actual == expected, "staging rate-limit namespaces must be isolated from production counters"
+    assert all(item["simple"]["period"] == 60 for item in staging["ratelimits"])
+
+
 def test_api_runtime_contains_no_legacy_d1_persistence_artifacts() -> None:
     api_root = ROOT / "apps" / "api"
     source_root = api_root / "src"
