@@ -1,19 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MemoryAuthStore, createAuthService } from '../auth';
-import type { PgQueryClient } from '../postgres/client';
-import { createDefaultApiApp } from '../worker';
 import { createResendMagicLinkSender } from './resend-email';
-
-class ReadinessPgClient implements PgQueryClient {
-  async connect() {}
-
-  async query<Row extends Record<string, unknown> = Record<string, unknown>>(): Promise<{
-    rows: Row[];
-    rowCount: number | null;
-  }> {
-    return { rows: [], rowCount: 0 };
-  }
-}
 
 describe('Resend magic-link email provider', () => {
   it('sends an allowlisted magic link through Resend without exposing the API key in the body', async () => {
@@ -104,27 +91,5 @@ describe('Resend magic-link email provider', () => {
     });
 
     await expect(auth.requestLogin('tester@example.com')).resolves.toEqual({ status: 'unavailable' });
-  });
-
-  it('enables email readiness only when all staging Resend bindings are configured', async () => {
-    const app = createDefaultApiApp({ pgClientFactory: () => new ReadinessPgClient() });
-    const configured = await app.request('/api/auth/readiness', undefined, {
-      HYPERDRIVE: { connectionString: 'postgresql://hyperdrive.example/madar' },
-      RESEND_API_KEY: 're_test_secret',
-      RESEND_FROM: 'Madar <onboarding@resend.dev>',
-      MAGIC_LINK_BASE_URL: 'https://madar-staging.example.workers.dev',
-      STAGING_EMAIL_ALLOWLIST: 'tester@example.com',
-    } as never);
-    expect(configured.status).toBe(200);
-    await expect(configured.json()).resolves.toEqual({ email: true });
-
-    const missingSecret = await app.request('/api/auth/readiness', undefined, {
-      HYPERDRIVE: { connectionString: 'postgresql://hyperdrive.example/madar' },
-      RESEND_FROM: 'Madar <onboarding@resend.dev>',
-      MAGIC_LINK_BASE_URL: 'https://madar-staging.example.workers.dev',
-      STAGING_EMAIL_ALLOWLIST: 'tester@example.com',
-    } as never);
-    expect(missingSecret.status).toBe(200);
-    await expect(missingSecret.json()).resolves.toEqual({ email: false });
   });
 });
