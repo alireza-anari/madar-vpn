@@ -116,10 +116,11 @@ export class MemoryAuthStore implements AuthStore {
 }
 
 type LoginMessage = { email: string; token: string; expiresAt: string };
+type LoginDeliveryStatus = 'sent' | 'unavailable';
 
 type AuthOptions = {
   store: AuthStore;
-  sender?: ((message: LoginMessage) => Promise<void>) | undefined;
+  sender?: ((message: LoginMessage) => Promise<LoginDeliveryStatus | void>) | undefined;
   adminEmails?: string[] | undefined;
   now?: (() => Date) | undefined;
   randomToken?: (() => string) | undefined;
@@ -208,13 +209,13 @@ export function createAuthService(options: AuthOptions) {
       return { email: Boolean(options.sender) };
     },
 
-    async requestLogin(emailInput: string): Promise<{ status: 'sent' | 'unavailable' }> {
+    async requestLogin(emailInput: string): Promise<{ status: LoginDeliveryStatus }> {
       if (!options.sender) return { status: 'unavailable' };
       const email = normalizeEmail(emailInput); validateEmail(email);
       const token = randomToken(); const issuedAt = now(); const expiresAt = new Date(issuedAt.getTime() + loginTokenTtlMs);
       await options.store.saveLoginToken({ tokenHash: await hashSecret(token), email, expiresAt: expiresAt.toISOString(), usedAt: null });
-      await options.sender({ email, token, expiresAt: expiresAt.toISOString() });
-      return { status: 'sent' };
+      const delivery = await options.sender({ email, token, expiresAt: expiresAt.toISOString() });
+      return { status: delivery === 'unavailable' ? 'unavailable' : 'sent' };
     },
 
     async consumeLoginToken(token: string): Promise<Session> {
