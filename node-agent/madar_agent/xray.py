@@ -10,17 +10,23 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from .models import ManagedClient, ObservedActivity, UserTrafficCounters
+from .models import ManagedClient, ObservedActivity, SpeedRouteCredential, UserTrafficCounters
 
 
 XRAY_STATS_SERVER = "127.0.0.1:10085"
 XRAY_MADAR_USER_PATTERN = "user>>>madar:"
+SPEED_ENFORCER_HOST = "127.0.0.1"
+SPEED_ENFORCER_PORT = 10808
 
 
 class XrayAdapter(Protocol):
     def ensure_runtime(self, config: XrayRuntimeConfig) -> Path: ...
 
-    def apply_clients(self, clients: list[ManagedClient]) -> None: ...
+    def apply_clients(
+        self,
+        clients: list[ManagedClient],
+        speed_routes: dict[str, SpeedRouteCredential] | None = None,
+    ) -> None: ...
 
     def revoke_client(self, uuid: str) -> None: ...
 
@@ -127,6 +133,7 @@ class PinnedXrayAdapter:
         self._disable_runtime = disable_runtime
         self._activity_source = activity_source
         self._managed_clients: list[ManagedClient] = []
+        self._speed_routes: dict[str, SpeedRouteCredential] = {}
 
     def ensure_runtime(self, config: XrayRuntimeConfig) -> Path:
         payload = self._download(config.download_url)
@@ -184,7 +191,11 @@ class PinnedXrayAdapter:
 
         return RealityPublicParameters(public_key=public_key)
 
-    def apply_clients(self, clients: list[ManagedClient]) -> None:
+    def apply_clients(
+        self,
+        clients: list[ManagedClient],
+        speed_routes: dict[str, SpeedRouteCredential] | None = None,
+    ) -> None:
         if (
             self._run is None
             or self._binary is None
@@ -197,6 +208,7 @@ class PinnedXrayAdapter:
         ):
             raise XrayRuntimeError("Xray managed configuration is not fully configured")
 
+        validated_routes = self._validate_speed_routes(clients, speed_routes)
         private_path = self.state_root / "reality.private"
         try:
             private_key = private_path.read_text(encoding="utf-8").strip()
@@ -205,7 +217,7 @@ class PinnedXrayAdapter:
         if not private_key:
             raise XrayRuntimeError("Xray REALITY private key is unavailable")
 
-        config = self._render_config(clients, private_key)
+        config = self._render_config(clients, private_key, validated_routes)
         self.state_root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.state_root.chmod(0o700)
         candidate = self.state_root / "xray-config.candidate.json"
@@ -232,6 +244,7 @@ class PinnedXrayAdapter:
             if not self.health():
                 raise XrayRuntimeError("Xray managed runtime health verification failed")
             self._managed_clients = list(clients)
+            self._speed_routes = dict(validated_routes)
         except Exception:
             if promoted:
                 self._log("Xray managed runtime activation failed")
@@ -242,10 +255,16 @@ class PinnedXrayAdapter:
         remaining = [client for client in self._managed_clients if client.client_id != uuid]
         if len(remaining) == len(self._managed_clients):
             return
-        self.apply_clients(remaining)
+        remaining_routes = {
+            client_id: credential
+            for client_id, credential in self._speed_routes.items()
+            if client_id != uuid
+        }
+        self.apply_clients(remaining, remaining_routes)
 
     def disable_managed_access(self) -> None:
         self._managed_clients = []
+        self._speed_routes = {}
         if self._revoke_runtime_authorization is None or self._disable_runtime is None:
             raise XrayRuntimeError("Xray managed lifecycle is not fully configured")
 
@@ -375,8 +394,32 @@ class PinnedXrayAdapter:
             except Exception:
                 pass
         self._managed_clients = []
+        self._speed_routes = {}
 
-    def _render_config(self, clients: list[ManagedClient], private_key: str) -> dict[str, object]:
+    @staticmethod
+    def _validate_speed_routes(
+        clients: list[ManagedClient],
+        speed_routes: dict[str, SpeedRouteCredential] | None,
+    ) -> dict[str, SpeedRouteCredential]:
+        routes = {} if speed_routes is None else dict(speed_routes)
+        free_ids = {client.client_id for client in clients if client.tier == "free"}
+        if set(routes) != free_ids:
+            raise XrayRuntimeError("Xray Free speed route credentials do not match managed Free Clients")
+        for client_id, credential in routes.items():
+            if (
+                credential.client_id != client_id
+                or not credential.alias
+                or not credential.password
+            ):
+                raise XrayRuntimeError("Xray Free speed route credential is invalid")
+        return routes
+
+    def _render_config(
+        self,
+        clients: list[ManagedClient],
+        private_key: str,
+        speed_routes: dict[str, SpeedRouteCredential],
+    ) -> dict[str, object]:
         assert self._server is not None
         client_entries = [
             {
@@ -386,7 +429,44 @@ class PinnedXrayAdapter:
             }
             for client in clients
         ]
-        return {
+        outbounds: list[dict[str, object]] = [{"protocol": "freedom", "tag": "direct"}]
+        routing_rules: list[dict[str, object]] = []
+        free_clients = sorted(
+            (client for client in clients if client.tier == "free"),
+            key=lambda client: client.client_id,
+        )
+        for ordinal, client in enumerate(free_clients, start=1):
+            credential = speed_routes[client.client_id]
+            tag = f"madar-speed-{ordinal:04d}"
+            outbounds.append(
+                {
+                    "protocol": "socks",
+                    "tag": tag,
+                    "settings": {
+                        "servers": [
+                            {
+                                "address": SPEED_ENFORCER_HOST,
+                                "port": SPEED_ENFORCER_PORT,
+                                "users": [
+                                    {
+                                        "user": credential.alias,
+                                        "pass": credential.password,
+                                    }
+                                ],
+                            }
+                        ]
+                    },
+                }
+            )
+            routing_rules.append(
+                {
+                    "type": "field",
+                    "user": [f"madar:{client.client_id}"],
+                    "outboundTag": tag,
+                }
+            )
+
+        config: dict[str, object] = {
             "log": {"loglevel": "warning", "access": "none"},
             "api": {
                 "tag": "madar-local-api",
@@ -425,8 +505,11 @@ class PinnedXrayAdapter:
                     },
                 }
             ],
-            "outbounds": [{"protocol": "freedom", "tag": "direct"}],
+            "outbounds": outbounds,
         }
+        if routing_rules:
+            config["routing"] = {"rules": routing_rules}
+        return config
 
     @staticmethod
     def _write_secret_file(path: Path, content: str) -> None:

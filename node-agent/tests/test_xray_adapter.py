@@ -15,7 +15,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from madar_agent import xray
-from madar_agent.models import ManagedClient, ObservedActivity
+from madar_agent.models import ManagedClient, ObservedActivity, SpeedRouteCredential
 
 
 VERSION = "26.3.27"
@@ -25,6 +25,15 @@ ARM64_URL = "https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-l
 ARM64_SHA256 = "4d30283ae614e3057f730f67cd088a42be6fdf91f8639d82cb69e48cde80413c"
 CLIENT_ID = "27848739-7e62-4138-9fd3-098a63964b6b"
 SECOND_CLIENT_ID = "50848739-7e62-4138-9fd3-098a63964b6b"
+
+
+def speed_route(
+    client_id: str,
+    *,
+    alias: str = "opaque-speed-alias",
+    password: str = "test-only-speed-pass",
+) -> SpeedRouteCredential:
+    return SpeedRouteCredential(client_id=client_id, alias=alias, password=password)
 
 
 def xray_archive(binary_payload: bytes) -> bytes:
@@ -255,7 +264,123 @@ def test_apply_clients_validates_candidate_before_atomic_promote_and_reload(tmp_
         "privateKey": private_key,
         "shortIds": ["0123456789abcdef"],
     }
+    assert config["outbounds"] == [{"protocol": "freedom", "tag": "direct"}]
+    assert "routing" not in config
+    assert config["api"]["services"] == ["StatsService"]
+    assert config["policy"]["levels"]["0"]["statsUserOnline"] is True
+    assert config["policy"]["levels"]["0"]["statsUserUplink"] is True
+    assert config["policy"]["levels"]["0"]["statsUserDownlink"] is True
     assert all(private_key not in line for line in logs)
+
+
+def test_free_client_gets_authenticated_socks_route_while_premium_remains_direct(tmp_path: Path) -> None:
+    write_private_key(tmp_path)
+    calls: list[list[str]] = []
+    logs: list[str] = []
+
+    def run(argv: list[str]):
+        calls.append(argv)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    adapter, _binary = configured_adapter(tmp_path, run, lambda: None, logs)
+    free = ManagedClient(client_id=CLIENT_ID, tier="free", speed_kbps=5000)
+    premium = ManagedClient(client_id=SECOND_CLIENT_ID, tier="premium", speed_kbps=None)
+    credential = speed_route(CLIENT_ID)
+    adapter.apply_clients([premium, free], {CLIENT_ID: credential})
+
+    config = json.loads((tmp_path / "state" / "xray-config.json").read_text(encoding="utf-8"))
+    assert [outbound["tag"] for outbound in config["outbounds"]] == ["direct", "madar-speed-0001"]
+    speed_outbound = config["outbounds"][1]
+    assert speed_outbound == {
+        "protocol": "socks",
+        "tag": "madar-speed-0001",
+        "settings": {
+            "servers": [
+                {
+                    "address": "127.0.0.1",
+                    "port": 10808,
+                    "users": [{"user": credential.alias, "pass": credential.password}],
+                }
+            ]
+        },
+    }
+    assert config["routing"]["rules"] == [
+        {
+            "type": "field",
+            "user": [f"madar:{CLIENT_ID}"],
+            "outboundTag": "madar-speed-0001",
+        }
+    ]
+    assert "network" not in config["routing"]["rules"][0]
+    tags = " ".join(outbound["tag"] for outbound in config["outbounds"])
+    assert CLIENT_ID not in tags
+    assert credential.alias not in tags
+    assert credential.password not in tags
+    assert config["api"]["services"] == ["StatsService"]
+    assert config["policy"]["levels"]["0"] == {
+        "statsUserOnline": True,
+        "statsUserUplink": True,
+        "statsUserDownlink": True,
+    }
+
+
+def test_free_speed_tags_are_stable_by_sorted_client_id(tmp_path: Path) -> None:
+    write_private_key(tmp_path)
+    logs: list[str] = []
+
+    def run(_argv: list[str]):
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    adapter, _binary = configured_adapter(tmp_path, run, lambda: None, logs)
+    first = ManagedClient(client_id=CLIENT_ID, tier="free", speed_kbps=5000)
+    second = ManagedClient(client_id=SECOND_CLIENT_ID, tier="free", speed_kbps=5000)
+    first_route = speed_route(CLIENT_ID, alias="opaque-one", password="test-only-one")
+    second_route = speed_route(SECOND_CLIENT_ID, alias="opaque-two", password="test-only-two")
+    adapter.apply_clients(
+        [second, first],
+        {SECOND_CLIENT_ID: second_route, CLIENT_ID: first_route},
+    )
+
+    config = json.loads((tmp_path / "state" / "xray-config.json").read_text(encoding="utf-8"))
+    speed_outbounds = config["outbounds"][1:]
+    assert [entry["tag"] for entry in speed_outbounds] == ["madar-speed-0001", "madar-speed-0002"]
+    assert speed_outbounds[0]["settings"]["servers"][0]["users"] == [
+        {"user": first_route.alias, "pass": first_route.password}
+    ]
+    assert speed_outbounds[1]["settings"]["servers"][0]["users"] == [
+        {"user": second_route.alias, "pass": second_route.password}
+    ]
+    assert [rule["user"] for rule in config["routing"]["rules"]] == [
+        [f"madar:{CLIENT_ID}"],
+        [f"madar:{SECOND_CLIENT_ID}"],
+    ]
+
+
+def test_free_speed_route_mapping_must_be_exact_and_identity_matched(tmp_path: Path) -> None:
+    write_private_key(tmp_path)
+    calls: list[list[str]] = []
+    logs: list[str] = []
+
+    def run(argv: list[str]):
+        calls.append(argv)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    adapter, _binary = configured_adapter(tmp_path, run, lambda: None, logs)
+    free = ManagedClient(client_id=CLIENT_ID, tier="free", speed_kbps=5000)
+    cases = [
+        {},
+        {
+            CLIENT_ID: speed_route(CLIENT_ID),
+            SECOND_CLIENT_ID: speed_route(SECOND_CLIENT_ID),
+        },
+        {CLIENT_ID: speed_route(SECOND_CLIENT_ID)},
+    ]
+    for routes in cases:
+        with pytest.raises(xray.XrayRuntimeError, match="speed route"):
+            adapter.apply_clients([free], routes)
+    assert calls == []
+    assert not (tmp_path / "state" / "xray-config.candidate.json").exists()
+    assert not (tmp_path / "state" / "xray-config.json").exists()
 
 
 def test_apply_clients_keeps_previous_config_when_validation_fails_and_redacts_output(tmp_path: Path) -> None:
@@ -278,7 +403,10 @@ def test_apply_clients_keeps_previous_config_when_validation_fails_and_redacts_o
     adapter, _binary = configured_adapter(tmp_path, run, lambda: reloads.append(True), logs)
 
     with pytest.raises(xray.XrayRuntimeError) as exc_info:
-        adapter.apply_clients([ManagedClient(client_id=CLIENT_ID, tier="free", speed_kbps=1024)])
+        adapter.apply_clients(
+            [ManagedClient(client_id=CLIENT_ID, tier="free", speed_kbps=1024)],
+            {CLIENT_ID: speed_route(CLIENT_ID)},
+        )
 
     assert live_path.read_text(encoding="utf-8") == '{"sentinel":"previous"}'
     assert not (state_root / "xray-config.candidate.json").exists()
@@ -306,18 +434,22 @@ def test_revoke_client_reapplies_remaining_set_and_fail_closed_disable_stops_wit
     first = ManagedClient(client_id=CLIENT_ID, tier="free", speed_kbps=1024)
     second = ManagedClient(client_id=SECOND_CLIENT_ID, tier="premium", speed_kbps=None)
 
-    adapter.apply_clients([first, second])
+    adapter.apply_clients([first, second], {CLIENT_ID: speed_route(CLIENT_ID)})
     adapter.revoke_client(CLIENT_ID)
 
     live_path = tmp_path / "state" / "xray-config.json"
     config = json.loads(live_path.read_text(encoding="utf-8"))
     assert [entry["id"] for entry in config["inbounds"][0]["settings"]["clients"]] == [SECOND_CLIENT_ID]
+    assert config["outbounds"] == [{"protocol": "freedom", "tag": "direct"}]
+    assert "routing" not in config
+    assert adapter._speed_routes == {}
     before_disable = live_path.read_text(encoding="utf-8")
 
     adapter.disable_managed_access()
 
     assert live_path.read_text(encoding="utf-8") == before_disable
     assert adapter._managed_clients == []
+    assert adapter._speed_routes == {}
     assert reloads == [True, True]
     assert lifecycle_events == ["authorize", "authorize", "revoke", "disable"]
 
