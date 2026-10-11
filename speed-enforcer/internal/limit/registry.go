@@ -50,3 +50,19 @@ func (r *Registry) WaitDownload(ctx context.Context, alias string, payloadBytes 
 	}
 	return p.download.wait(ctx, payloadBytes)
 }
+
+func (r *Registry) UploadBurst(alias string) (int64, error) {
+	p, ok := r.clients[alias]
+	if !ok {
+		return 0, ErrUnknownAlias
+	}
+	return p.upload.burst, nil
+}
+
+func (r *Registry) DownloadBurst(alias string) (int64, error) {
+	p, ok := r.clients[alias]
+	if !ok {
+		return 0, ErrUnknownAlias
+	}
+	return p.download.burst, nil
+}
