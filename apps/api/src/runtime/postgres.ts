@@ -14,6 +14,7 @@ import { PostgresNodeControlStore } from '../nodes/postgres';
 import { createPaymentService } from '../payments';
 import { PostgresPaymentStore } from '../payments/postgres';
 import { connectPostgres, type PgClientFactory } from '../postgres/client';
+import { createResendMagicLinkSender } from '../providers/resend-email';
 import { createPushService } from '../push';
 import { PostgresPushStore } from '../push/postgres';
 import { createVapidSender } from '../push/vapid';
@@ -31,6 +32,10 @@ export type PostgresRuntimeBindings = {
   VAPID_PUBLIC_KEY?: string;
   VAPID_PRIVATE_KEY?: string;
   VAPID_SUBJECT?: string;
+  RESEND_API_KEY?: string;
+  RESEND_FROM?: string;
+  MAGIC_LINK_BASE_URL?: string;
+  STAGING_EMAIL_ALLOWLIST?: string;
 };
 
 function configuredAdminEmails(value: string | undefined) {
@@ -44,6 +49,18 @@ function configuredVapid(env: PostgresRuntimeBindings | undefined) {
     privateKey: env.VAPID_PRIVATE_KEY,
     subject: env.VAPID_SUBJECT,
   };
+}
+
+function configuredEmailSender(env: PostgresRuntimeBindings | undefined) {
+  const apiKey = env?.RESEND_API_KEY?.trim();
+  const from = env?.RESEND_FROM?.trim();
+  const baseUrl = env?.MAGIC_LINK_BASE_URL?.trim();
+  const allowedEmails = (env?.STAGING_EMAIL_ALLOWLIST ?? '')
+    .split(',')
+    .map((email) => email.trim())
+    .filter(Boolean);
+  if (!apiKey || !from || !baseUrl || allowedEmails.length === 0) return null;
+  return createResendMagicLinkSender({ apiKey, from, baseUrl, allowedEmails });
 }
 
 export async function createPostgresRequestRuntime(
@@ -60,10 +77,12 @@ export async function createPostgresRequestRuntime(
   const accessStore = new PostgresAccessStore(database);
   const access = createAccessService({ store: accessStore });
   const vapid = configuredVapid(env);
+  const emailSender = configuredEmailSender(env);
 
   const auth = createAuthService({
     store: new PostgresAuthStore(database),
     adminEmails: configuredAdminEmails(env?.ADMIN_EMAILS),
+    sender: emailSender ?? undefined,
     onUserSuspension: async (event) => {
       await surfaceStore.appendAudit({
         id: crypto.randomUUID(),
@@ -86,7 +105,7 @@ export async function createPostgresRequestRuntime(
       store: surfaceStore,
       credits,
       providerAvailability: {
-        email: false,
+        email: emailSender !== null,
         ads: false,
         payments: false,
         push: vapid !== null,

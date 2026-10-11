@@ -65,6 +65,10 @@
     "staging": {
       "name": "madar-staging",
       "workers_dev": true,
+      "vars": {
+        "RESEND_FROM": "Madar <onboarding@resend.dev>",
+        "MAGIC_LINK_BASE_URL": "https://madar-staging.alirezaanari117.workers.dev"
+      },
       "hyperdrive": [
         {
           "binding": "HYPERDRIVE",
