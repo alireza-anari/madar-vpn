@@ -11,6 +11,7 @@ The product rule is:
 
 - Free: per Client, per Node, maximum **5 Mbps download** and **5 Mbps upload**, independently;
 - all concurrent connections for the same Client on the same Node share those two limits;
+- TCP and UDP traffic for that Client share the same per-direction limits;
 - the cap is not aggregated globally across Nodes;
 - Premium: no Madar-imposed application speed cap;
 - the configured Free rate remains administrator-configurable; 5 Mbps is the initial value.
@@ -24,6 +25,13 @@ The accepted runtime remains Xray `26.3.27` with VLESS+REALITY. The current mana
 Xray can route authenticated users using user/email-aware routing rules and can use authenticated SOCKS outbounds. Xray also supports static socket marks, but a static outbound mark does not provide a reliable two-direction per-user limiter by itself.
 
 The selected design therefore does **not** fork Xray and does **not** treat source IP, NAT identity, online-user counters, or socket marks as the authoritative speed identity.
+
+The existing Node policy already carries `speedKbps` per managed Client. Phase 9 does not add a second source of truth for speed. The control plane remains authoritative:
+
+- Free default: `speedKbps = 5000`;
+- Premium/no Madar cap: `speedKbps = null`.
+
+The Agent converts the integer policy rate to limiter bytes/second using decimal networking units. Invalid policy values fail closed rather than silently becoming unlimited.
 
 ## 3. Selected architecture
 
@@ -41,7 +49,7 @@ Premium:
 v2rayNG -> Xray/VLESS/REALITY -> direct outbound -> Internet
 ```
 
-The Speed Enforcer is implemented in Go. It is a small local authenticated SOCKS5 proxy with per-client bidirectional rate limiting.
+The Speed Enforcer is implemented in Go. It is a small local authenticated SOCKS5 proxy with per-client bidirectional rate limiting for both TCP `CONNECT` and UDP `ASSOCIATE` traffic.
 
 Reasons for a separate Go sidecar:
 
@@ -60,24 +68,28 @@ The policy interface remains conceptually:
 SpeedEnforcer.apply(client_id, speed_mbps: float | null) -> None
 ```
 
+The persisted/wire policy remains `speedKbps`; the conceptual `speed_mbps` interface expresses the product boundary, not a new database field.
+
 Semantics:
 
-- `speed_mbps > 0`: enforce that rate independently in each direction;
+- positive configured rate: enforce that rate independently in each direction;
 - `null`: no Madar-imposed cap; the Client must not be routed through the limiter;
-- zero, negative, NaN, infinity, or otherwise invalid rates are rejected and must not produce an active policy.
+- zero, negative, non-finite, overflowed, or otherwise invalid rates are rejected and must not produce an active policy.
 
 For the initial Free policy:
 
 ```text
-5 Mbps = 5,000,000 bits/second = 625,000 bytes/second
+5000 Kbps = 5 Mbps = 5,000,000 bits/second = 625,000 bytes/second
 ```
 
 Each Free Client on a Node owns two shared token buckets:
 
-- upload bucket: aggregate bytes flowing from Xray/client side toward the remote Internet destination;
-- download bucket: aggregate bytes flowing from the remote destination back toward Xray/client side.
+- upload bucket: aggregate payload bytes flowing from Xray/client side toward Internet destinations;
+- download bucket: aggregate payload bytes flowing from Internet destinations back toward Xray/client side.
 
-All simultaneous SOCKS connections authenticated as the same internal Client alias consume the same pair of buckets. Opening more TCP connections must not multiply the cap.
+TCP and UDP consume the same two buckets for that Client. All simultaneous TCP connections and UDP associations authenticated as the same internal Client alias share those buckets. Opening more connections, switching to QUIC/UDP, or mixing TCP and UDP must not multiply or bypass the cap.
+
+The limiter accounts bytes at the sidecar proxy boundary. Wire overhead outside that boundary is not part of the product speed number.
 
 The initial burst allowance is 0.5 seconds of configured rate per direction. At 5 Mbps this is 312,500 bytes. The implementation may use an equivalent standard token-bucket formulation, but burst must remain explicitly bounded and testable.
 
@@ -100,11 +112,12 @@ Properties:
 
 - Client-ID rotation changes both local alias and password;
 - two Nodes derive unrelated values because their Node secrets differ;
-- the sidecar config contains aliases/rates, not raw UUIDs;
+- the sidecar config contains aliases/rates and a password verifier, not raw UUIDs or recoverable plaintext SOCKS passwords;
+- the Xray live config necessarily contains the local SOCKS credential required for its outbound and therefore remains root-readable `0600`, consistent with other managed secret-bearing runtime config;
 - logs must never contain SOCKS passwords or raw UUIDs;
-- aliases are still treated as sensitive operational identifiers and should be truncated/redacted in logs.
+- aliases are still treated as sensitive operational identifiers and are represented in logs only through a bounded one-way fingerprint when absolutely necessary.
 
-The exact output encoding and minimum entropy are implementation details fixed by tests in the implementation plan; the design requires at least 128 bits of effective alias entropy and at least 192 bits of password entropy.
+The exact output encoding and verifier format are implementation details fixed by tests in the implementation plan; the design requires at least 128 bits of effective alias entropy and at least 192 bits of password entropy.
 
 ## 6. Xray rendering
 
@@ -121,6 +134,8 @@ The local listener is loopback-only. It must never bind a public interface.
 
 The initial design deliberately prefers one logical outbound per Free Client over clever shared routing metadata. It is easier to verify, preserves a direct one-to-one identity boundary, and avoids introducing an Xray patch. If future scale shows configuration size is a real bottleneck, that is a later optimization and cannot weaken the Phase 9 correctness contract.
 
+The SOCKS path must support the destination forms Xray can legitimately send for the product path: IPv4, IPv6, and domain-name destinations. UDP associations inherit the authenticated alias from their SOCKS control connection; orphan or unauthenticated UDP datagrams are dropped.
+
 ## 7. Sidecar configuration
 
 The live sidecar configuration is a root-owned `0600` file and contains only what the sidecar requires:
@@ -128,14 +143,15 @@ The live sidecar configuration is a root-owned `0600` file and contains only wha
 ```text
 listener address/port
 opaque alias
-opaque password verifier or password
+password verifier
 upload rate
 upload burst
 download rate
 download burst
+config generation
 ```
 
-No email address, account ID, Client UUID, subscription token, Node credential, REALITY private key, or database credential belongs in this file.
+No email address, account ID, Client UUID, plaintext internal SOCKS password, subscription token, Node credential, REALITY private key, or database credential belongs in this file.
 
 The state directory is `0700`.
 
@@ -154,7 +170,7 @@ The apply sequence is:
 5. run sidecar config validation;
 6. atomically promote sidecar config;
 7. authorize/start or restart the Speed Enforcer;
-8. prove local sidecar health;
+8. prove local sidecar health and loaded config generation;
 9. render Xray candidate config containing the matching Free routes/outbounds;
 10. run Xray config validation;
 11. atomically promote Xray config;
@@ -176,7 +192,7 @@ A Free policy is not promoted into Xray until the sidecar is healthy. A new Free
 
 Free Xray routes still target the loopback sidecar. If it crashes, those Free flows fail rather than falling back to the direct outbound.
 
-There is no automatic routing fallback from a Free per-user SOCKS outbound to `direct`.
+There is no automatic routing fallback from a Free per-user SOCKS outbound to `direct` for either TCP or UDP.
 
 Premium flows are not routed through the sidecar and may continue on the direct outbound while Agent remains alive.
 
@@ -185,6 +201,8 @@ Premium flows are not routed through the sidecar and may continue on the direct 
 If the sidecar is required by the current policy and is unhealthy, Agent reports the Node as not ready. The control plane therefore excludes it from new subscription output.
 
 For Phase 9, readiness remains conservatively node-wide rather than tier-aware. This may temporarily hide the Node from Premium subscription refreshes too. The simpler fail-safe behavior is preferred over a more complicated tier-specific readiness model.
+
+If a current policy contains no capped Clients, sidecar unavailability does not by itself make the Node unready; there is no Free limiter dependency to satisfy for that revision.
 
 ### Agent crash/restart/reboot
 
@@ -219,6 +237,8 @@ It follows the same fail-closed philosophy as the current Xray unit:
 
 The implementation plan will choose the exact unit relationships after testing them against the current native lifecycle. The required outcome is behavioral, not tied to a specific systemd directive: killing/stopping Agent must leave both Xray and the Speed Enforcer unable to provide stale managed access.
 
+The sidecar must use an ephemeral authorization marker owned by the Agent runtime directory or an equivalent mechanism with the same reboot/restart semantics. A persisted sidecar config is never enough to authorize startup.
+
 ## 11. Rotation and tier transitions
 
 ### Client ID rotation
@@ -248,6 +268,7 @@ Sidecar health is not merely “process exists”. A valid health check must pro
 - process is active;
 - expected loopback listener is reachable;
 - the process loaded the current promoted config generation;
+- TCP and UDP proxy capability initialized successfully when capped Clients are configured;
 - the health mechanism does not expose credentials or Client aliases publicly.
 
 Preferred implementation: a root-only Unix-domain health/control socket or an equivalent local mechanism. A public HTTP health endpoint is not allowed.
@@ -261,9 +282,9 @@ Allowed operational log fields include:
 - config generation;
 - number of configured capped Clients;
 - listener state;
-- aggregate connection counts;
+- aggregate TCP/UDP connection or association counts;
 - categorized errors;
-- truncated/non-reversible alias fingerprint when necessary for debugging.
+- bounded one-way alias fingerprint when necessary for debugging.
 
 Forbidden log fields include:
 
@@ -284,14 +305,16 @@ The sidecar must have explicit safety limits:
 - bounded SOCKS handshake size/time;
 - authenticated clients only;
 - bounded per-connection buffers;
-- connection deadlines appropriate for proxying;
+- bounded UDP association lifetime/state;
+- TCP connection deadlines appropriate for proxying;
 - no unauthenticated open proxy behavior;
 - no listening outside loopback;
 - no DNS/control endpoint exposed publicly;
 - graceful rejection of unknown aliases;
+- orphan UDP datagrams dropped;
 - limiter state removed when config no longer contains an alias.
 
-The implementation must avoid one goroutine/task per byte-chunk or other unbounded scheduling patterns. Normal Go connection-per-goroutine proxying is acceptable if connection/resource tests remain bounded.
+The implementation must avoid one goroutine/task per byte-chunk or other unbounded scheduling patterns. Normal Go connection-per-goroutine proxying plus bounded UDP association workers is acceptable if connection/resource tests remain bounded.
 
 ## 15. Automated verification
 
@@ -300,18 +323,24 @@ Implementation uses TDD.
 Required repository coverage includes at least:
 
 - independent upload/download token buckets;
+- TCP and UDP for one alias share the same directional buckets;
 - all concurrent connections for one alias share one cap;
 - two different aliases have independent caps;
 - invalid/unknown SOCKS authentication is rejected;
+- orphan/unauthenticated UDP is rejected;
+- IPv4, IPv6, and domain destination parsing;
 - Premium/null does not create a limiter entry or Free route;
+- `speedKbps` conversion uses decimal networking units and rejects invalid values;
 - deterministic alias derivation is domain-separated and never emits raw UUID;
+- sidecar stores only a password verifier, while Xray secret-bearing config remains `0600`;
 - candidate validation before live promotion;
 - config permissions and state permissions;
 - Xray renderer creates user-aware Free routes and leaves Premium direct;
-- no Free direct fallback exists;
+- no Free TCP or UDP direct fallback exists;
 - Client-ID rotation ordering;
 - Free->Premium and Premium->Free ordering;
 - sidecar failure marks Node not ready when current policy requires Free limiting;
+- a policy with zero capped Clients does not require sidecar readiness;
 - Agent startup/restart/reboot lifecycle leaves both managed processes closed before fresh authorization;
 - security scan/log tests reject secret leakage.
 
@@ -321,22 +350,26 @@ Full repository CI remains required.
 
 Repository tests cannot close Task 30.
 
-Real field acceptance must use real VLESS+REALITY traffic and a network path whose measured baseline is clearly above the configured 5 Mbps limit.
+Real field acceptance must use real VLESS+REALITY traffic and a network path whose measured uncapped baseline is clearly above the configured 5 Mbps limit.
+
+For quantitative Free checks, discard an initial warm-up of at least 5 seconds and measure a sustained interval of at least 30 seconds.
 
 Required checks:
 
-1. Free sustained download is near configured 5 Mbps.
-2. Free sustained upload is near configured 5 Mbps.
-3. Simultaneous upload + download each independently remain near 5 Mbps; they must not share one combined 5 Mbps bucket.
-4. Multiple parallel connections for one Free Client do not multiply throughput.
-5. A second Free Client on the same Node receives its own independent per-client cap.
-6. Premium on the same Node is not pinned near the Free cap and follows the available network baseline, demonstrating no Madar software cap.
-7. Sidecar stop/crash causes Free traffic to fail, not become uncapped.
-8. Sidecar unhealthy state removes Node readiness/subscription eligibility until recovery.
-9. Restart/reboot behavior preserves the existing fail-closed invariant.
-10. No forbidden secret appears in bounded journals/config evidence.
+1. Uncapped/Premium baseline is materially above the Free acceptance band in the direction being judged; target at least 8 Mbps sustained where the environment permits.
+2. Free sustained TCP download is near configured 5 Mbps.
+3. Free sustained TCP upload is near configured 5 Mbps.
+4. Simultaneous TCP upload + download each independently remain near 5 Mbps; they must not share one combined 5 Mbps bucket.
+5. Multiple parallel TCP connections for one Free Client do not multiply throughput.
+6. A second Free Client/account on the same Node receives its own independent per-client cap.
+7. Controlled Free UDP traffic is rate-limited by the same Client policy and cannot bypass the cap; sustained application goodput must not materially exceed the configured cap after burst allowance. UDP is not required to hit a lower-bound throughput target because packet loss/jitter may reduce goodput.
+8. Premium on the same Node is not pinned near the Free cap and follows the available network baseline, demonstrating no Madar software cap.
+9. Sidecar stop/crash causes Free TCP and UDP traffic to fail, not become uncapped.
+10. Sidecar unhealthy state removes Node readiness/subscription eligibility until recovery when capped Clients are present.
+11. Restart/reboot behavior preserves the existing fail-closed invariant.
+12. No forbidden secret appears in bounded journals/config evidence.
 
-For the default 5 Mbps field run, the initial sustained acceptance band is **4.5–5.5 Mbps per direction**, provided the uncapped baseline is materially above that range. Short startup bursts are evaluated separately from the sustained interval because the design intentionally permits a bounded 0.5-second burst.
+For the default 5 Mbps TCP field run, the sustained acceptance band is **4.5–5.5 Mbps per direction**, provided the uncapped baseline is materially above that range. Short startup bursts are evaluated separately because the design intentionally permits a bounded 0.5-second burst.
 
 If the VPS/network baseline is too low to distinguish a 5 Mbps limiter from ordinary network congestion, the test is inconclusive, not PASS.
 
@@ -371,6 +404,7 @@ Task 30 is PASS only when:
 - full CI is green on the exact deployed code;
 - real sustained Free throughput demonstrates the configured per-client per-node cap independently in both directions;
 - parallel connections cannot multiply the cap;
+- UDP cannot bypass the cap;
 - Premium demonstrates no Madar application cap;
 - Free fails closed if the limiter is unavailable;
 - cleanup leaves no test credentials or temporary instrumentation active.
