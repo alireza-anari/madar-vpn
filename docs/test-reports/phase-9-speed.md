@@ -1,7 +1,7 @@
 # Phase 9 — speed enforcement acceptance
 
 Date: 2026-10-11  
-Status: **PREPARED — repository implementation verification in progress; real Task 30 field execution pending.**
+Status: **PREPARED — repository implementation verified; real Task 30 field execution pending.**
 
 ## Scope
 
@@ -49,6 +49,18 @@ A failed stage or final prune closes managed access rather than leaving a Free C
 
 ## Repository evidence
 
+Task 8 implementation evidence:
+
+- repository SHA: `b10b5e36542d8a864e2c4e9de30711ddf1804e53`;
+- GitHub Actions CI run: `38128375791`;
+- result: **PASS**;
+- Go `go test -race ./...`: PASS;
+- Go `go vet ./...`: PASS;
+- static `CGO_ENABLED=0 go build -trimpath`: PASS;
+- JavaScript/TypeScript tests, typecheck and build: PASS;
+- Python Node Agent suite: PASS;
+- security scan, dependency audits and PostgreSQL integration/restore checks: PASS.
+
 Automated coverage includes:
 
 - strict sidecar configuration parsing, loopback listener validation and bounded numeric rate fields;
@@ -69,7 +81,7 @@ Automated coverage includes:
 - CI Go race tests, `go vet`, and a static `CGO_ENABLED=0` Linux build gate;
 - repository build helper `scripts/build-speed-enforcer.sh` restricted to supported Linux `amd64` / `arm64` targets.
 
-Exact CI-green Task 8 implementation SHA and workflow run are intentionally recorded only after the implementation head is green. This report will then be updated once with that evidence; the documentation-only head will receive its own final CI run.
+This documentation-only evidence update receives its own full CI run. The deployable Task 30 code remains the exact implementation SHA above unless a later code change is made, in which case field evidence must restart from the new exact CI-green SHA.
 
 ## Required real field evidence
 
