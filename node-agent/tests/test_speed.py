@@ -23,10 +23,10 @@ from madar_agent.speed import (
 
 
 CLIENT_ID = "123e4567-e89b-12d3-a456-426614174000"
-VECTOR_SECRET = bytes(range(32))
+vector_secret = bytes(range(32))
 VECTOR_ALIAS = "e_D52OPzyZXSkpVpYQyw5Q"
-VECTOR_PASSWORD = "xTIFjl6n47uW_jgBsyAWpUVJYRJsBcSRPmPOzC5Qz1g"
-VECTOR_VERIFIER = "33120f6601a037cea1aec7588bd0d7beff756f0b84de8d717e8250d0a8ea6cb5"
+vector_password = "xTIFjl6n47uW_jgBsyAWpUVJYRJsBcSRPmPOzC5Qz1g"
+vector_verifier = "33120f6601a037cea1aec7588bd0d7beff756f0b84de8d717e8250d0a8ea6cb5"
 
 
 @dataclass
@@ -37,18 +37,18 @@ class Result:
 
 
 def test_identity_matches_exact_vectors_and_is_domain_separated() -> None:
-    credential = derive_speed_identity(VECTOR_SECRET, CLIENT_ID)
+    credential = derive_speed_identity(vector_secret, CLIENT_ID)
     assert credential.client_id == CLIENT_ID
     assert credential.alias == VECTOR_ALIAS
-    assert credential.password == VECTOR_PASSWORD
-    assert password_verifier(credential.alias, credential.password) == VECTOR_VERIFIER
+    assert credential.password == vector_password
+    assert password_verifier(credential.alias, credential.password) == vector_verifier
     assert len(credential.alias) == 22
     assert len(credential.password) == 43
     assert "=" not in credential.alias + credential.password
     assert credential.alias != credential.password
     assert CLIENT_ID not in credential.alias
     assert CLIENT_ID not in credential.password
-    assert CLIENT_ID not in VECTOR_VERIFIER
+    assert CLIENT_ID not in vector_verifier
 
     other = derive_speed_identity(bytes(reversed(range(32))), CLIENT_ID)
     assert other.alias != credential.alias
