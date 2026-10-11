@@ -42,6 +42,8 @@ type Server struct {
 	handshakeTimeout time.Duration
 	udpIdleTimeout   time.Duration
 	clients          map[string]string
+	connMu           sync.Mutex
+	conns            map[net.Conn]struct{}
 }
 
 func NewServer(cfg config.Config, registry *limit.Registry, dial DialFunc, logger Logger) *Server {
@@ -56,7 +58,7 @@ func NewServer(cfg config.Config, registry *limit.Registry, dial DialFunc, logge
 	for _, client := range cfg.Clients {
 		clients[client.Alias] = client.PasswordVerifier
 	}
-	return &Server{cfg: cfg, registry: registry, dial: dial, log: logger, handshakeTimeout: 5 * time.Second, udpIdleTimeout: 120 * time.Second, clients: clients}
+	return &Server{cfg: cfg, registry: registry, dial: dial, log: logger, handshakeTimeout: 5 * time.Second, udpIdleTimeout: 120 * time.Second, clients: clients, conns: make(map[net.Conn]struct{})}
 }
 
 func (s *Server) Serve(listener net.Listener) error {
@@ -72,12 +74,23 @@ func (s *Server) Serve(listener net.Listener) error {
 			}
 			return err
 		}
+		s.connMu.Lock()
+		s.conns[conn] = struct{}{}
+		s.connMu.Unlock()
 		go s.handle(conn)
 	}
 }
 
+func (s *Server) Close() {
+	s.connMu.Lock()
+	defer s.connMu.Unlock()
+	for conn := range s.conns {
+		_ = conn.Close()
+	}
+}
+
 func (s *Server) handle(conn net.Conn) {
-	defer conn.Close()
+	defer func() { _ = conn.Close(); s.connMu.Lock(); delete(s.conns, conn); s.connMu.Unlock() }()
 	_ = conn.SetDeadline(time.Now().Add(s.handshakeTimeout))
 	alias, err := s.negotiate(conn)
 	if err != nil {
