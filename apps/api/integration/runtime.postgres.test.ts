@@ -139,4 +139,28 @@ describe('default PostgreSQL Worker runtime', () => {
       'postgresql://hyperdrive.example/madar',
     ]);
   });
+
+  it('enables email readiness only when all staging Resend bindings are configured', async () => {
+    const app = createDefaultApiApp({ pgClientFactory: () => new FakePgClient() });
+    const configured = await app.request('/api/auth/readiness', undefined, {
+      HYPERDRIVE: { connectionString: 'postgresql://hyperdrive.example/madar' },
+      RESEND_API_KEY: 're_test_secret',
+      RESEND_FROM: 'Madar <onboarding@resend.dev>',
+      MAGIC_LINK_BASE_URL: 'https://madar-staging.example.workers.dev',
+      STAGING_EMAIL_ALLOWLIST: 'tester@example.com',
+    } as never);
+
+    expect(configured.status).toBe(200);
+    await expect(configured.json()).resolves.toEqual({ email: true });
+
+    const missingSecret = await app.request('/api/auth/readiness', undefined, {
+      HYPERDRIVE: { connectionString: 'postgresql://hyperdrive.example/madar' },
+      RESEND_FROM: 'Madar <onboarding@resend.dev>',
+      MAGIC_LINK_BASE_URL: 'https://madar-staging.example.workers.dev',
+      STAGING_EMAIL_ALLOWLIST: 'tester@example.com',
+    } as never);
+
+    expect(missingSecret.status).toBe(200);
+    await expect(missingSecret.json()).resolves.toEqual({ email: false });
+  });
 });
