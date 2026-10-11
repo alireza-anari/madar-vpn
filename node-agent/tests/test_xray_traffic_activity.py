@@ -10,7 +10,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from madar_agent import xray
-from madar_agent.models import ManagedClient
+from madar_agent.models import ManagedClient, SpeedRouteCredential
 
 
 VERSION = "26.3.27"
@@ -98,7 +98,14 @@ def test_read_user_traffic_counters_returns_managed_cumulative_bytes_and_zero_fo
         [
             ManagedClient(client_id=CLIENT_ID, tier="free", speed_kbps=5000),
             ManagedClient(client_id=SECOND_CLIENT_ID, tier="premium", speed_kbps=None),
-        ]
+        ],
+        {
+            CLIENT_ID: SpeedRouteCredential(
+                client_id=CLIENT_ID,
+                alias="opaque-traffic-alias",
+                password="test-only-traffic-password",
+            )
+        },
     )
 
     read_counters = getattr(adapter, "read_user_traffic_counters", None)
