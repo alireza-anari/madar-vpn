@@ -155,19 +155,26 @@ def test_policy_apply_is_sidecar_xray_prune_and_commits_revision_only_after_all_
     assert agent.api.known == [7]
 
 
-def test_invalid_policy_is_rejected_before_either_runtime_promotion(tmp_path: Path) -> None:
+def test_invalid_policy_is_rejected_before_any_runtime_side_effect_and_preserves_current_revision(tmp_path: Path) -> None:
     events: list[str] = []
     speed = FakeSpeed(events)
     xray = FakeXray(events)
     agent = make_agent(tmp_path, speed, xray)
+    assert agent.apply_policy(make_policy(revision=7)).applied is True
+    events.clear()
+    speed.snapshots.clear()
+    xray.applied.clear()
 
-    result = agent.apply_policy(make_policy(free_speed=0))
+    result = agent.apply_policy(make_policy(revision=8, free_speed=0))
 
     assert result.applied is False
     assert result.reason == "invalid_policy"
-    assert events == ["xray:disable", "speed:disable"]
+    assert events == []
     assert xray.applied == []
     assert speed.snapshots == []
+    assert agent.runtime_health() is True
+    agent.fetch_policy()
+    assert agent.api.known[-1] == 7
 
 
 def test_client_id_rotation_keeps_old_alias_through_xray_switch_then_prunes_before_revision_commit(tmp_path: Path) -> None:

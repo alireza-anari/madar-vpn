@@ -34,7 +34,7 @@ class FakeApi:
 
 
 class FakeXray:
-    def apply_clients(self, clients) -> None:
+    def apply_clients(self, clients, speed_routes=None) -> None:
         return None
 
     def disable_managed_access(self) -> None:
@@ -42,6 +42,22 @@ class FakeXray:
 
     def collect_observed_activity(self):
         return []
+
+    def health(self) -> bool:
+        return True
+
+
+class FakeSpeed:
+    required = False
+
+    def apply_clients(self, clients, generation: int):
+        return {}
+
+    def disable_managed_access(self) -> None:
+        return None
+
+    def health(self, expected_generation: int) -> bool:
+        return True
 
 
 def build_node_agent(tmp_path: Path, outbox: TelemetryOutbox) -> NodeAgent:
@@ -55,6 +71,7 @@ def build_node_agent(tmp_path: Path, outbox: TelemetryOutbox) -> NodeAgent:
         ),
         api=FakeApi(),
         xray=FakeXray(),
+        speed_enforcer=FakeSpeed(),
         environment=FakeEnvironment(),
         now=lambda: NOW,
         outbox=outbox,
@@ -261,9 +278,16 @@ def test_build_agent_service_wires_single_outbox_to_sampler_and_agent(monkeypatc
             return None
 
     class FakeNodeAgent:
-        def __init__(self, config, *, api, xray, environment=None, now, outbox=None) -> None:
+        def __init__(self, config, *, api, xray, speed_enforcer, environment=None, now, outbox=None) -> None:
             self.outbox = outbox
+            self.speed_enforcer = speed_enforcer
             created["agent"] = self
+
+        def runtime_health(self) -> bool:
+            return True
+
+        def disable_managed_access(self) -> None:
+            return None
 
     monkeypatch.setattr(service_module, "load_config", lambda: agent_config)
     monkeypatch.setattr(service_module, "load_runtime_config", lambda: runtime)
@@ -283,3 +307,4 @@ def test_build_agent_service_wires_single_outbox_to_sampler_and_agent(monkeypatc
     assert source.record_activity is None
     assert getattr(source.record_active_bucket, "__self__", None) is outbox
     assert agent.outbox is outbox
+    assert agent.speed_enforcer is not None

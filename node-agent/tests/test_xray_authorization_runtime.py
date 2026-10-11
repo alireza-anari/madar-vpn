@@ -249,7 +249,7 @@ def test_fresh_explicit_empty_policy_is_a_normal_authorized_apply_not_fail_close
             self.applied: list[list[ManagedClient]] = []
             self.disable_calls = 0
 
-        def apply_clients(self, clients: list[ManagedClient]) -> None:
+        def apply_clients(self, clients: list[ManagedClient], speed_routes=None) -> None:
             self.applied.append(list(clients))
 
         def disable_managed_access(self) -> None:
@@ -258,11 +258,27 @@ def test_fresh_explicit_empty_policy_is_a_normal_authorized_apply_not_fail_close
         def collect_observed_activity(self):
             return []
 
+        def health(self) -> bool:
+            return True
+
+    class FakeSpeed:
+        required = False
+
+        def apply_clients(self, clients, generation: int):
+            return {}
+
+        def disable_managed_access(self) -> None:
+            return None
+
+        def health(self, expected_generation: int) -> bool:
+            return True
+
     runtime = FakeXray()
     agent = NodeAgent(
         AgentConfig(api_base_url="https://control.example.test", credential_path=credential),
         api=FakeApi(),
         xray=runtime,
+        speed_enforcer=FakeSpeed(),
         now=lambda: NOW,
     )
     empty = Policy(revision=9, valid_until=NOW + timedelta(minutes=5), clients=())
@@ -333,12 +349,19 @@ def test_build_agent_service_wires_one_supplied_lifecycle_into_all_xray_runtime_
             return {}
 
     class FakeNodeAgent:
-        def __init__(self, config, *, api, xray, environment=None, now, outbox=None) -> None:
+        def __init__(self, config, *, api, xray, speed_enforcer, environment=None, now, outbox=None) -> None:
             created["agent"] = self
             self.config = config
             self.api = api
             self.xray = xray
+            self.speed_enforcer = speed_enforcer
             self.outbox = outbox
+
+        def runtime_health(self) -> bool:
+            return True
+
+        def disable_managed_access(self) -> None:
+            return None
 
     monkeypatch.setattr(service_module, "load_config", lambda: agent_config)
     monkeypatch.setattr(service_module, "load_runtime_config", lambda: runtime_config)

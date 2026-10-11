@@ -122,9 +122,16 @@ def test_build_agent_service_wires_xray_counter_source_drain_and_one_second_work
             return None
 
     class FakeNodeAgent:
-        def __init__(self, config, *, api, xray, environment=None, now, outbox=None) -> None:
+        def __init__(self, config, *, api, xray, speed_enforcer, environment=None, now, outbox=None) -> None:
             self.outbox = outbox
+            self.speed_enforcer = speed_enforcer
             created["agent"] = self
+
+        def runtime_health(self) -> bool:
+            return True
+
+        def disable_managed_access(self) -> None:
+            return None
 
     monkeypatch.setattr(service_module, "load_config", lambda: agent_config)
     monkeypatch.setattr(service_module, "load_runtime_config", lambda: runtime)
@@ -150,6 +157,7 @@ def test_build_agent_service_wires_xray_counter_source_drain_and_one_second_work
     assert worker.source is source
     assert worker.interval_seconds == 1.0
     assert agent.outbox is getattr(source.record_active_bucket, "__self__", None)
+    assert agent.speed_enforcer is not None
     assert built._activity_worker is worker
 
 
@@ -184,14 +192,16 @@ def test_main_starts_and_stops_activity_sampling_around_control_plane_loop(monke
         def run_cycle(self) -> None:
             calls.append("cycle")
 
-    lifecycle = FakeLifecycle()
+    xray_lifecycle = FakeLifecycle()
+    speed_lifecycle = FakeLifecycle()
     monkeypatch.setattr(service_module, "STOP", FakeStop())
     monkeypatch.setattr(service_module.signal, "signal", lambda *_args: None)
-    monkeypatch.setattr(service_module, "build_xray_lifecycle", lambda: lifecycle)
+    monkeypatch.setattr(service_module, "build_xray_lifecycle", lambda: xray_lifecycle)
+    monkeypatch.setattr(service_module, "build_speed_lifecycle", lambda: speed_lifecycle)
     monkeypatch.setattr(
         service_module,
         "build_agent_service",
-        lambda *, lifecycle: FakeService(),
+        lambda *, lifecycle, speed_lifecycle: FakeService(),
     )
 
     assert service_module.main() == 0
