@@ -1,0 +1,43 @@
+{
+  "testedClient": {
+    "name": "v2rayNG",
+    "version": "2.2.6"
+  },
+  "profile": {
+    "userId": "fixture-user",
+    "policyRevision": 7,
+    "clientUuid": "11111111-2222-4333-8444-555555555555"
+  },
+  "node": {
+    "id": "fixture-node",
+    "name": "Madar Fixture",
+    "address": "vpn.example.test",
+    "port": 443,
+    "serverName": "cdn.example.test",
+    "realityPublicKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "realityShortId": "0123456789abcdef"
+  },
+  "expectedShareLink": "vless://11111111-2222-4333-8444-555555555555@vpn.example.test:443?encryption=none&security=reality&sni=cdn.example.test&fp=chrome&pbk=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&sid=0123456789abcdef&type=tcp&flow=xtls-rprx-vision#Madar%20Fixture",
+  "expected": {
+    "queryParameterNames": [
+      "encryption",
+      "security",
+      "sni",
+      "fp",
+      "pbk",
+      "sid",
+      "type",
+      "flow"
+    ],
+    "query": {
+      "encryption": "none",
+      "security": "reality",
+      "sni": "cdn.example.test",
+      "fp": "chrome",
+      "pbk": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "sid": "0123456789abcdef",
+      "type": "tcp",
+      "flow": "xtls-rprx-vision"
+    }
+  }
+}
