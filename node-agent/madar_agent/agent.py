@@ -130,10 +130,11 @@ class NodeAgent:
         try:
             candidate = self._managed_clients(policy)
         except ValueError:
-            self.disable_managed_access()
+            # Invalid candidate data must not disturb an already-authorized
+            # current policy. Validation therefore has zero runtime side effects.
             return ApplyResult(
                 applied=False,
-                disabled=True,
+                disabled=False,
                 reason="invalid_policy",
                 revision=policy.revision,
             )
