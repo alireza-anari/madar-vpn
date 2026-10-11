@@ -21,11 +21,14 @@ const (
 	userPassMethod     = 0x02
 	noAcceptableMethod = 0xff
 	cmdConnect         = 0x01
+	cmdUDPAssociate    = 0x03
 )
 
 type DialFunc func(ctx context.Context, network, address string) (net.Conn, error)
 
-type Logger interface{ Printf(format string, args ...any) }
+type Logger interface {
+	Printf(format string, args ...any)
+}
 
 type discardLogger struct{}
 
@@ -37,6 +40,7 @@ type Server struct {
 	dial             DialFunc
 	log              Logger
 	handshakeTimeout time.Duration
+	udpIdleTimeout   time.Duration
 	clients          map[string]string
 }
 
@@ -52,7 +56,7 @@ func NewServer(cfg config.Config, registry *limit.Registry, dial DialFunc, logge
 	for _, client := range cfg.Clients {
 		clients[client.Alias] = client.PasswordVerifier
 	}
-	return &Server{cfg: cfg, registry: registry, dial: dial, log: logger, handshakeTimeout: 5 * time.Second, clients: clients}
+	return &Server{cfg: cfg, registry: registry, dial: dial, log: logger, handshakeTimeout: 5 * time.Second, udpIdleTimeout: 120 * time.Second, clients: clients}
 }
 
 func (s *Server) Serve(listener net.Listener) error {
@@ -163,6 +167,13 @@ func (s *Server) handleRequest(client net.Conn, alias string) error {
 	}
 	if head[0] != socksVersion || head[2] != 0 {
 		return errors.New("invalid request")
+	}
+	if head[1] == cmdUDPAssociate {
+		if _, err := readAddressWithZeroPort(client, true); err != nil {
+			_ = writeReply(client, 0x08, Address{ATYP: atypIPv4, Host: "127.0.0.1", Port: 1})
+			return err
+		}
+		return s.handleUDPAssociation(client, alias)
 	}
 	if head[1] != cmdConnect {
 		_ = writeReply(client, 0x07, Address{ATYP: atypIPv4, Host: "127.0.0.1", Port: 1})

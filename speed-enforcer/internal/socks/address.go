@@ -21,6 +21,10 @@ type Address struct {
 }
 
 func readAddress(r io.Reader) (Address, error) {
+	return readAddressWithZeroPort(r, false)
+}
+
+func readAddressWithZeroPort(r io.Reader, allowZeroPort bool) (Address, error) {
 	var atyp [1]byte
 	if _, err := io.ReadFull(r, atyp[:]); err != nil {
 		return Address{}, err
@@ -60,7 +64,7 @@ func readAddress(r io.Reader) (Address, error) {
 		return Address{}, err
 	}
 	port := binary.BigEndian.Uint16(portBytes[:])
-	if port == 0 {
+	if port == 0 && !allowZeroPort {
 		return Address{}, errors.New("invalid zero port")
 	}
 	return Address{ATYP: atyp[0], Host: host, Port: port}, nil
