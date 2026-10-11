@@ -24,7 +24,7 @@ def test_shell_entrypoint_supports_lifecycle_and_reads_token_without_echo() -> N
         assert forbidden not in lowered
 
 
-def test_systemd_unit_uses_restrictive_umask_and_does_not_autostart_stale_xray() -> None:
+def test_agent_systemd_unit_does_not_boot_start_managed_children() -> None:
     unit = (ROOT / "systemd" / "madar-node-agent.service").read_text(encoding="utf-8")
 
     assert "UMask=0077" in unit
@@ -33,15 +33,19 @@ def test_systemd_unit_uses_restrictive_umask_and_does_not_autostart_stale_xray()
     assert "Restart=on-failure" in unit
     assert "ENROLLMENT_TOKEN" not in unit
     assert "--token" not in unit
-    assert "Wants=madar-xray.service" not in unit
-    assert "After=madar-xray.service" not in unit
-    assert "After=network-online.target madar-xray.service" not in unit
+    for child in ("madar-xray.service", "madar-speed-enforcer.service"):
+        assert f"Wants={child}" not in unit
+        assert f"After={child}" not in unit
 
 
-def test_xray_systemd_unit_uses_pinned_binary_and_requires_managed_config_before_start() -> None:
+def test_xray_systemd_unit_uses_pinned_binary_ephemeral_authorization_and_agent_binding() -> None:
     unit = (ROOT / "systemd" / "madar-xray.service").read_text(encoding="utf-8")
 
+    assert "BindsTo=madar-node-agent.service" in unit
+    assert "ConditionPathExists=/etc/madar-node-agent/xray-config.json" in unit
+    assert "ConditionPathExists=/run/madar-node-agent/xray-authorized" in unit
     assert "ExecStartPre=/usr/bin/test -f /etc/madar-node-agent/xray-config.json" in unit
+    assert "ExecStartPre=/usr/bin/test -f /run/madar-node-agent/xray-authorized" in unit
     assert "ExecStart=/opt/madar-xray/26.3.27/xray run -c /etc/madar-node-agent/xray-config.json" in unit
     assert "Restart=on-failure" in unit
     assert "UMask=0077" in unit
@@ -51,3 +55,21 @@ def test_xray_systemd_unit_uses_pinned_binary_and_requires_managed_config_before
     assert "PRIVATE" not in unit
     assert "CREDENTIAL" not in unit
     assert "EnvironmentFile=" not in unit
+    assert "[Install]" not in unit
+
+
+def test_speed_enforcer_unit_requires_live_config_ephemeral_authorization_and_agent_binding() -> None:
+    unit = (ROOT / "systemd" / "madar-speed-enforcer.service").read_text(encoding="utf-8")
+
+    assert "BindsTo=madar-node-agent.service" in unit
+    assert "ConditionPathExists=/etc/madar-node-agent/speed-enforcer.json" in unit
+    assert "ConditionPathExists=/run/madar-node-agent/speed-enforcer-authorized" in unit
+    assert "ExecStartPre=/usr/bin/test -f /etc/madar-node-agent/speed-enforcer.json" in unit
+    assert "ExecStartPre=/usr/bin/test -f /run/madar-node-agent/speed-enforcer-authorized" in unit
+    assert "ExecStart=/opt/madar-speed-enforcer/madar-speed-enforcer --config /etc/madar-node-agent/speed-enforcer.json" in unit
+    assert "Restart=on-failure" in unit
+    assert "UMask=0077" in unit
+    assert "NoNewPrivileges=true" in unit
+    assert "PrivateTmp=true" in unit
+    assert "EnvironmentFile=" not in unit
+    assert "[Install]" not in unit

@@ -11,9 +11,10 @@ from .activity import XrayTrafficActivitySource, next_utc_second_boundary
 from .agent import NodeAgent
 from .api import ControlPlaneClient, PermanentApiError
 from .config import load_config, load_runtime_config
-from .lifecycle import SystemdXrayLifecycle
+from .lifecycle import SystemdSpeedEnforcerLifecycle, SystemdXrayLifecycle
 from .outbox import TelemetryOutbox
 from .retry import RetryExhausted
+from .speed import SpeedEnforcerAdapter
 from .xray import PinnedXrayAdapter, RealityServerConfig
 
 
@@ -181,11 +182,15 @@ def build_xray_lifecycle() -> SystemdXrayLifecycle:
     return SystemdXrayLifecycle(run=_run_process)
 
 
+def build_speed_lifecycle() -> SystemdSpeedEnforcerLifecycle:
+    return SystemdSpeedEnforcerLifecycle(run=_run_process)
+
+
 def _runtime_download_forbidden(_url: str) -> bytes:
     raise RuntimeError("Xray runtime download is installer-only")
 
 
-def build_agent_service(*, lifecycle=None) -> AgentService:
+def build_agent_service(*, lifecycle=None, speed_lifecycle=None) -> AgentService:
     config = load_config()
     runtime = load_runtime_config()
     client = ControlPlaneClient(config)
@@ -199,6 +204,9 @@ def build_agent_service(*, lifecycle=None) -> AgentService:
     outbox = TelemetryOutbox(config.credential_path.parent / "telemetry-outbox.sqlite3")
     xray_holder: dict[str, PinnedXrayAdapter] = {}
     xray_lifecycle = lifecycle if lifecycle is not None else build_xray_lifecycle()
+    speed_runtime_lifecycle = (
+        speed_lifecycle if speed_lifecycle is not None else build_speed_lifecycle()
+    )
 
     def read_counters():
         return xray_holder["adapter"].read_user_traffic_counters()
@@ -207,6 +215,15 @@ def build_agent_service(*, lifecycle=None) -> AgentService:
         read_counters=read_counters,
         now=now,
         record_active_bucket=outbox.record_active_bucket,
+    )
+    speed_enforcer = SpeedEnforcerAdapter(
+        state_root=config.credential_path.parent,
+        run=_run_process,
+        authorize_runtime=speed_runtime_lifecycle.grant_authorization,
+        revoke_runtime_authorization=speed_runtime_lifecycle.revoke_authorization,
+        reload=speed_runtime_lifecycle.restart_authorized,
+        is_active=speed_runtime_lifecycle.is_active,
+        disable_runtime=speed_runtime_lifecycle.disable,
     )
     xray = PinnedXrayAdapter(
         install_root=runtime.binary.parents[1],
@@ -231,14 +248,15 @@ def build_agent_service(*, lifecycle=None) -> AgentService:
         config,
         api=client,
         xray=xray,
+        speed_enforcer=speed_enforcer,
         now=now,
         outbox=outbox,
     )
     return AgentService(
         agent=agent,
         control_plane=client,
-        runtime_health=xray.health,
-        disable_access=xray.disable_managed_access,
+        runtime_health=agent.runtime_health,
+        disable_access=agent.disable_managed_access,
         now=now,
         versions={"agent": AGENT_VERSION, "xray": runtime.version},
         max_clients=runtime.max_clients,
@@ -257,22 +275,47 @@ def _best_effort_disable(lifecycle) -> None:
         pass
 
 
+def _close_lifecycles(xray_lifecycle, speed_lifecycle) -> None:
+    # Same fail-closed order as NodeAgent: close Xray before the limiter.
+    _best_effort_disable(xray_lifecycle)
+    _best_effort_disable(speed_lifecycle)
+
+
+def _prove_startup_inactive(xray_lifecycle, speed_lifecycle) -> None:
+    failed = False
+    for lifecycle in (xray_lifecycle, speed_lifecycle):
+        try:
+            lifecycle.ensure_inactive()
+        except Exception:
+            failed = True
+    if failed:
+        _close_lifecycles(xray_lifecycle, speed_lifecycle)
+        raise RuntimeError("managed runtime shutdown unverified")
+
+
 def main() -> int:
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
 
+    xray_lifecycle = build_xray_lifecycle()
+    speed_lifecycle = build_speed_lifecycle()
     try:
-        lifecycle = build_xray_lifecycle()
-        lifecycle.ensure_inactive()
+        _prove_startup_inactive(xray_lifecycle, speed_lifecycle)
     except Exception:
-        print("node-agent startup unavailable; managed Xray shutdown unverified", file=sys.stderr)
+        print(
+            "node-agent startup unavailable; managed runtimes shutdown unverified",
+            file=sys.stderr,
+        )
         return 4
 
     try:
-        service = build_agent_service(lifecycle=lifecycle)
+        service = build_agent_service(
+            lifecycle=xray_lifecycle,
+            speed_lifecycle=speed_lifecycle,
+        )
     except Exception:
-        _best_effort_disable(lifecycle)
-        print("node-agent startup unavailable; managed Xray disabled", file=sys.stderr)
+        _close_lifecycles(xray_lifecycle, speed_lifecycle)
+        print("node-agent startup unavailable; managed runtimes disabled", file=sys.stderr)
         return 3
 
     start_activity_sampling = getattr(service, "start_activity_sampling", None)
@@ -298,7 +341,7 @@ def main() -> int:
                 stop_activity_sampling()
             except Exception:
                 pass
-        _best_effort_disable(lifecycle)
+        _close_lifecycles(xray_lifecycle, speed_lifecycle)
 
     return 0
 

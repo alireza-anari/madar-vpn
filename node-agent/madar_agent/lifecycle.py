@@ -5,10 +5,11 @@ import stat
 import tempfile
 from pathlib import Path
 from time import sleep as default_sleep
-from typing import Callable, Protocol
+from typing import Callable, Protocol, TypeVar
 
 
 XRAY_SERVICE_NAME = "madar-xray.service"
+SPEED_ENFORCER_SERVICE_NAME = "madar-speed-enforcer.service"
 _AUTHORIZATION_CONTENT = "authorized\n"
 
 
@@ -22,12 +23,22 @@ class XrayLifecycleError(RuntimeError):
     pass
 
 
-class SystemdXrayLifecycle:
+class SpeedEnforcerLifecycleError(RuntimeError):
+    pass
+
+
+LifecycleError = TypeVar("LifecycleError", bound=RuntimeError)
+
+
+class _SystemdManagedLifecycle:
     def __init__(
         self,
         *,
         run: Callable[[list[str]], ProcessResult],
-        marker_path: Path = Path("/run/madar-node-agent/xray-authorized"),
+        service_name: str,
+        marker_path: Path,
+        runtime_label: str,
+        error_type: type[RuntimeError],
         sleep: Callable[[float], None] = default_sleep,
         poll_attempts: int = 3,
         poll_interval_seconds: float = 0.1,
@@ -37,30 +48,44 @@ class SystemdXrayLifecycle:
         if poll_interval_seconds < 0:
             raise ValueError("poll_interval_seconds must be non-negative")
         self._run = run
+        self._service_name = service_name
         self._marker_path = Path(marker_path)
+        self._runtime_label = runtime_label
+        self._error_type = error_type
         self._sleep = sleep
         self._poll_attempts = poll_attempts
         self._poll_interval_seconds = poll_interval_seconds
+
+    def _error(self, message: str) -> RuntimeError:
+        return self._error_type(message)
 
     def grant_authorization(self) -> None:
         parent = self._marker_path.parent
         try:
             parent_metadata = parent.lstat()
         except OSError as exc:
-            raise XrayLifecycleError("Xray runtime authorization directory unavailable") from exc
+            raise self._error(
+                f"{self._runtime_label} runtime authorization directory unavailable"
+            ) from exc
         if not stat.S_ISDIR(parent_metadata.st_mode) or parent.is_symlink():
-            raise XrayLifecycleError("Xray runtime authorization directory unavailable")
+            raise self._error(
+                f"{self._runtime_label} runtime authorization directory unavailable"
+            )
 
         try:
             existing = self._marker_path.lstat()
         except FileNotFoundError:
             existing = None
         except OSError as exc:
-            raise XrayLifecycleError("Xray runtime authorization marker unavailable") from exc
+            raise self._error(
+                f"{self._runtime_label} runtime authorization marker unavailable"
+            ) from exc
         if existing is not None and (
             stat.S_ISLNK(existing.st_mode) or not stat.S_ISREG(existing.st_mode)
         ):
-            raise XrayLifecycleError("Xray runtime authorization marker unavailable")
+            raise self._error(
+                f"{self._runtime_label} runtime authorization marker unavailable"
+            )
 
         fd = -1
         temporary: Path | None = None
@@ -79,7 +104,9 @@ class SystemdXrayLifecycle:
             temporary.replace(self._marker_path)
             self._marker_path.chmod(0o600)
         except OSError as exc:
-            raise XrayLifecycleError("Xray runtime authorization marker unavailable") from exc
+            raise self._error(
+                f"{self._runtime_label} runtime authorization marker unavailable"
+            ) from exc
         finally:
             if fd >= 0:
                 os.close(fd)
@@ -92,16 +119,22 @@ class SystemdXrayLifecycle:
         except FileNotFoundError:
             return
         except OSError as exc:
-            raise XrayLifecycleError("Xray runtime authorization marker unavailable") from exc
+            raise self._error(
+                f"{self._runtime_label} runtime authorization marker unavailable"
+            ) from exc
 
         if stat.S_ISDIR(metadata.st_mode):
-            raise XrayLifecycleError("Xray runtime authorization marker unavailable")
+            raise self._error(
+                f"{self._runtime_label} runtime authorization marker unavailable"
+            )
         try:
             self._marker_path.unlink()
         except FileNotFoundError:
             return
         except OSError as exc:
-            raise XrayLifecycleError("Xray runtime authorization marker unavailable") from exc
+            raise self._error(
+                f"{self._runtime_label} runtime authorization marker unavailable"
+            ) from exc
 
     def authorization_granted(self) -> bool:
         try:
@@ -120,7 +153,7 @@ class SystemdXrayLifecycle:
                 [
                     "systemctl",
                     "show",
-                    XRAY_SERVICE_NAME,
+                    self._service_name,
                     "--property=ActiveState",
                     "--property=SubState",
                     "--property=MainPID",
@@ -128,51 +161,55 @@ class SystemdXrayLifecycle:
                 ]
             )
         except Exception:
-            raise XrayLifecycleError("managed Xray state unavailable") from None
+            raise self._error(
+                f"managed {self._runtime_label} state unavailable"
+            ) from None
 
         if result.returncode != 0:
-            raise XrayLifecycleError("managed Xray state unavailable")
+            raise self._error(f"managed {self._runtime_label} state unavailable")
 
         values: dict[str, str] = {}
         for line in result.stdout.splitlines():
             if "=" not in line:
-                raise XrayLifecycleError("managed Xray state unavailable")
+                raise self._error(f"managed {self._runtime_label} state unavailable")
             key, value = line.split("=", 1)
             if key in values:
-                raise XrayLifecycleError("managed Xray state unavailable")
+                raise self._error(f"managed {self._runtime_label} state unavailable")
             values[key] = value
 
         if set(values) != {"ActiveState", "SubState", "MainPID"}:
-            raise XrayLifecycleError("managed Xray state unavailable")
+            raise self._error(f"managed {self._runtime_label} state unavailable")
         try:
             main_pid = int(values["MainPID"], 10)
         except ValueError:
-            raise XrayLifecycleError("managed Xray state unavailable") from None
+            raise self._error(f"managed {self._runtime_label} state unavailable") from None
         if main_pid < 0:
-            raise XrayLifecycleError("managed Xray state unavailable")
+            raise self._error(f"managed {self._runtime_label} state unavailable")
 
         active_state = values["ActiveState"]
         if active_state in {"inactive", "failed"} and main_pid == 0:
             return False
         if active_state == "active" and main_pid > 0:
             return True
-        raise XrayLifecycleError("managed Xray state unavailable")
+        raise self._error(f"managed {self._runtime_label} state unavailable")
 
     def ensure_inactive(self) -> None:
-        revoke_error: XrayLifecycleError | None = None
+        revoke_error: RuntimeError | None = None
         try:
             self.revoke_authorization()
-        except XrayLifecycleError as exc:
+        except RuntimeError as exc:
             revoke_error = exc
 
         try:
-            self._run(["systemctl", "stop", XRAY_SERVICE_NAME])
+            self._run(["systemctl", "stop", self._service_name])
         except Exception:
             pass
 
         if self._verified_inactive():
             if revoke_error is not None:
-                raise XrayLifecycleError("managed Xray authorization could not be revoked")
+                raise self._error(
+                    f"managed {self._runtime_label} authorization could not be revoked"
+                )
             return
 
         try:
@@ -182,7 +219,7 @@ class SystemdXrayLifecycle:
                     "kill",
                     "--kill-who=all",
                     "--signal=SIGKILL",
-                    XRAY_SERVICE_NAME,
+                    self._service_name,
                 ]
             )
         except Exception:
@@ -191,20 +228,26 @@ class SystemdXrayLifecycle:
         for attempt in range(self._poll_attempts):
             if self._verified_inactive():
                 if revoke_error is not None:
-                    raise XrayLifecycleError("managed Xray authorization could not be revoked")
+                    raise self._error(
+                        f"managed {self._runtime_label} authorization could not be revoked"
+                    )
                 return
             if attempt + 1 < self._poll_attempts:
                 self._sleep(self._poll_interval_seconds)
 
-        raise XrayLifecycleError("managed Xray shutdown could not be verified")
+        raise self._error(
+            f"managed {self._runtime_label} shutdown could not be verified"
+        )
 
     def restart_authorized(self) -> None:
         if not self.authorization_granted():
-            raise XrayLifecycleError("managed Xray runtime is not authorized")
+            raise self._error(
+                f"managed {self._runtime_label} runtime is not authorized"
+            )
 
         restart_succeeded = False
         try:
-            result = self._run(["systemctl", "restart", XRAY_SERVICE_NAME])
+            result = self._run(["systemctl", "restart", self._service_name])
             restart_succeeded = result.returncode == 0
         except Exception:
             restart_succeeded = False
@@ -213,18 +256,20 @@ class SystemdXrayLifecycle:
             try:
                 if self.is_active():
                     return
-            except XrayLifecycleError:
+            except RuntimeError:
                 pass
 
         try:
             self.revoke_authorization()
-        except XrayLifecycleError:
+        except RuntimeError:
             pass
         try:
             self.ensure_inactive()
-        except XrayLifecycleError:
+        except RuntimeError:
             pass
-        raise XrayLifecycleError("managed Xray authorized restart failed")
+        raise self._error(
+            f"managed {self._runtime_label} authorized restart failed"
+        )
 
     def disable(self) -> None:
         self.ensure_inactive()
@@ -232,5 +277,49 @@ class SystemdXrayLifecycle:
     def _verified_inactive(self) -> bool:
         try:
             return not self.is_active()
-        except XrayLifecycleError:
+        except RuntimeError:
             return False
+
+
+class SystemdXrayLifecycle(_SystemdManagedLifecycle):
+    def __init__(
+        self,
+        *,
+        run: Callable[[list[str]], ProcessResult],
+        marker_path: Path = Path("/run/madar-node-agent/xray-authorized"),
+        sleep: Callable[[float], None] = default_sleep,
+        poll_attempts: int = 3,
+        poll_interval_seconds: float = 0.1,
+    ) -> None:
+        super().__init__(
+            run=run,
+            service_name=XRAY_SERVICE_NAME,
+            marker_path=marker_path,
+            runtime_label="Xray",
+            error_type=XrayLifecycleError,
+            sleep=sleep,
+            poll_attempts=poll_attempts,
+            poll_interval_seconds=poll_interval_seconds,
+        )
+
+
+class SystemdSpeedEnforcerLifecycle(_SystemdManagedLifecycle):
+    def __init__(
+        self,
+        *,
+        run: Callable[[list[str]], ProcessResult],
+        marker_path: Path = Path("/run/madar-node-agent/speed-enforcer-authorized"),
+        sleep: Callable[[float], None] = default_sleep,
+        poll_attempts: int = 3,
+        poll_interval_seconds: float = 0.1,
+    ) -> None:
+        super().__init__(
+            run=run,
+            service_name=SPEED_ENFORCER_SERVICE_NAME,
+            marker_path=marker_path,
+            runtime_label="Speed Enforcer",
+            error_type=SpeedEnforcerLifecycleError,
+            sleep=sleep,
+            poll_attempts=poll_attempts,
+            poll_interval_seconds=poll_interval_seconds,
+        )
