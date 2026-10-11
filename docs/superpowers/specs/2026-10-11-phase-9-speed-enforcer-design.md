@@ -1,7 +1,7 @@
 # Phase 9 — Per-Client Free Speed Enforcer Design
 
 Date: 2026-10-11  
-Status: **DESIGN — awaiting user review**
+Status: **APPROVED**
 
 ## 1. Purpose
 
