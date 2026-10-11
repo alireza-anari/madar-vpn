@@ -52,6 +52,13 @@ class ManagedClient:
 
 
 @dataclass(frozen=True, slots=True)
+class SpeedRouteCredential:
+    client_id: str
+    alias: str
+    password: str
+
+
+@dataclass(frozen=True, slots=True)
 class UserTrafficCounters:
     uplink_bytes: int
     downlink_bytes: int
