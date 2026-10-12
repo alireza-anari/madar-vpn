@@ -154,6 +154,312 @@
   color: #9bd5b3;
 }
 
+.auth-screen {
+  position: relative;
+  display: grid;
+  width: min(100%, 36rem);
+  margin-inline: auto;
+  justify-items: center;
+  gap: clamp(1.35rem, 5vw, 2rem);
+  padding: clamp(0.3rem, 2vw, 1rem) 0 var(--space-5);
+  overflow: hidden;
+}
+
+.auth-brand {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  justify-items: center;
+  gap: 0.65rem;
+  text-align: center;
+}
+
+.auth-brand .madar-logo__ring {
+  width: clamp(3.5rem, 15vw, 4.8rem);
+}
+
+.auth-brand .madar-logo__wordmark {
+  font-size: clamp(2rem, 9vw, 3.15rem);
+}
+
+.auth-brand__tagline {
+  margin: 0;
+  color: #c0cae2;
+  font-size: clamp(0.9rem, 4vw, 1.06rem);
+}
+
+.auth-orbit {
+  position: relative;
+  width: min(68vw, 20rem);
+  aspect-ratio: 1;
+  margin-block: -0.2rem -0.65rem;
+  border-radius: 50%;
+  filter: drop-shadow(0 0 42px rgba(85, 65, 255, 0.28));
+}
+
+.auth-orbit__planet {
+  position: absolute;
+  inset: 13%;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 38% 28%, rgba(103, 119, 255, 0.78), transparent 28%),
+    radial-gradient(circle at 72% 68%, rgba(130, 42, 255, 0.45), transparent 42%),
+    linear-gradient(145deg, #2633ff 0%, #723cff 48%, #061330 82%);
+  box-shadow:
+    inset 18px -18px 48px rgba(4, 9, 31, 0.72),
+    inset -10px 10px 28px rgba(94, 184, 255, 0.22),
+    0 0 54px rgba(91, 51, 255, 0.36);
+}
+
+.auth-orbit__line {
+  position: absolute;
+  inset: 22% 3%;
+  border: 1px solid rgba(123, 79, 255, 0.58);
+  border-radius: 50%;
+  transform: rotate(-18deg);
+}
+
+.auth-orbit__line--two {
+  inset: 31% 0;
+  border-color: rgba(40, 132, 255, 0.32);
+  transform: rotate(17deg);
+}
+
+.auth-orbit__spark {
+  position: absolute;
+  width: 0.25rem;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: #8e61ff;
+  box-shadow: 0 0 10px #8259ff;
+}
+
+.auth-orbit__spark--one {
+  top: 18%;
+  left: 8%;
+}
+
+.auth-orbit__spark--two {
+  right: 12%;
+  bottom: 22%;
+}
+
+.auth-panel,
+.auth-result {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  padding: clamp(1.05rem, 4vw, 1.35rem);
+  border: 1px solid rgba(91, 131, 255, 0.24);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(155deg, rgba(12, 27, 54, 0.86), rgba(5, 14, 31, 0.92));
+  box-shadow: var(--shadow-card), inset 0 1px rgba(255, 255, 255, 0.035);
+  backdrop-filter: blur(18px);
+}
+
+.auth-copy {
+  display: grid;
+  justify-items: center;
+  gap: 0.55rem;
+  text-align: center;
+}
+
+.auth-copy__eyebrow {
+  margin: 0;
+  color: #8ca9e8;
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.auth-copy__title,
+.auth-result__title {
+  margin: 0;
+  color: var(--color-text);
+  font-size: clamp(1.6rem, 7vw, 2.2rem);
+  line-height: 1.35;
+  letter-spacing: -0.045em;
+}
+
+.auth-copy__title span {
+  background: linear-gradient(120deg, #26a7ff, #704cff);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.auth-copy__description,
+.auth-result__description {
+  max-width: 28rem;
+  margin: 0;
+  color: #aebbd4;
+  font-size: 0.9rem;
+  line-height: 1.95;
+}
+
+.auth-form {
+  display: grid;
+  gap: 0.9rem;
+  margin-top: 1.35rem;
+}
+
+.auth-field {
+  position: relative;
+  display: grid;
+  grid-template-columns: 2.2rem minmax(0, 1fr);
+  grid-template-areas:
+    'icon label'
+    'icon input';
+  align-items: center;
+  min-height: 4.55rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid rgba(95, 137, 255, 0.48);
+  border-radius: 1.15rem;
+  background: rgba(13, 29, 57, 0.64);
+  box-shadow: inset 0 0 24px rgba(34, 78, 164, 0.08);
+}
+
+.auth-field:focus-within {
+  border-color: #6d78ff;
+  box-shadow: 0 0 0 3px rgba(77, 96, 255, 0.12), 0 0 24px rgba(73, 82, 255, 0.12);
+}
+
+.auth-field__label {
+  grid-area: label;
+  color: #9dadc8;
+  font-size: 0.72rem;
+  text-align: end;
+}
+
+.auth-field__icon {
+  grid-area: icon;
+  color: #dce5fa;
+  font-size: 1.45rem;
+  text-align: center;
+}
+
+.auth-email-input {
+  grid-area: input;
+  width: 100%;
+  min-width: 0;
+  padding: 0.1rem 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 1rem;
+  text-align: left;
+}
+
+.auth-email-input::placeholder {
+  color: #667797;
+}
+
+.auth-form .button--primary {
+  min-height: 3.65rem;
+  border-radius: 1rem;
+  background: var(--gradient-neon);
+  box-shadow: 0 16px 40px rgba(89, 58, 255, 0.3), inset 0 1px rgba(255, 255, 255, 0.18);
+  font-size: 1rem;
+}
+
+.auth-notice {
+  margin-top: 0.9rem;
+  text-align: center;
+}
+
+.auth-notice--success {
+  border-color: rgba(40, 220, 148, 0.22);
+  background: rgba(40, 220, 148, 0.06);
+  color: #96efc8;
+}
+
+.auth-security-note {
+  display: grid;
+  grid-template-columns: 2.5rem minmax(0, 1fr);
+  gap: 0.8rem;
+  align-items: center;
+  margin-top: 1.1rem;
+  padding: 0.9rem;
+  border: 1px solid rgba(114, 66, 255, 0.5);
+  border-radius: 1rem;
+  background: linear-gradient(135deg, rgba(78, 37, 160, 0.16), rgba(22, 59, 128, 0.12));
+}
+
+.auth-security-note__icon {
+  display: grid;
+  width: 2.5rem;
+  aspect-ratio: 1;
+  place-items: center;
+  border-radius: 0.8rem;
+  background: rgba(88, 57, 225, 0.18);
+  color: #b687ff;
+  font-size: 1.3rem;
+}
+
+.auth-security-note strong {
+  color: #e9edfa;
+  font-size: 0.82rem;
+}
+
+.auth-security-note p {
+  margin: 0.2rem 0 0;
+  color: #9eacc6;
+  font-size: 0.76rem;
+  line-height: 1.8;
+}
+
+.auth-screen--compact .auth-orbit {
+  width: min(48vw, 12rem);
+  margin-block: -0.55rem -0.35rem;
+}
+
+.auth-result {
+  display: grid;
+  justify-items: center;
+  gap: 0.65rem;
+  text-align: center;
+}
+
+.auth-result__mark {
+  display: grid;
+  width: 3.3rem;
+  aspect-ratio: 1;
+  place-items: center;
+  margin-bottom: 0.2rem;
+  border: 1px solid rgba(104, 120, 255, 0.34);
+  border-radius: 50%;
+  background: rgba(70, 75, 200, 0.12);
+  color: #9bb4ff;
+  box-shadow: var(--glow-soft);
+  font-size: 1.35rem;
+}
+
+.auth-result--success .auth-result__mark {
+  border-color: rgba(40, 220, 148, 0.3);
+  background: rgba(40, 220, 148, 0.09);
+  color: var(--color-positive);
+}
+
+.auth-result--danger .auth-result__mark {
+  border-color: rgba(255, 92, 108, 0.28);
+  background: rgba(255, 92, 108, 0.08);
+  color: #ff8c99;
+}
+
+.auth-result__link {
+  display: inline-flex;
+  min-height: 2.9rem;
+  align-items: center;
+  justify-content: center;
+  margin-top: 0.35rem;
+  padding-inline: 1.2rem;
+  border: 1px solid rgba(100, 117, 255, 0.35);
+  border-radius: 0.9rem;
+  background: rgba(75, 81, 203, 0.12);
+  color: #cbd7ff;
+  font-weight: 800;
+}
+
 @media (min-width: 44rem) {
   .surface-grid--two,
   .instruction-grid {
@@ -163,10 +469,21 @@
   .metric-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
+
+  .auth-panel,
+  .auth-result {
+    padding: 1.5rem;
+  }
 }
 
 @media (min-width: 68rem) {
   .surface-grid--three {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-orbit {
+    filter: none;
   }
 }

@@ -437,13 +437,20 @@ function AccountRoute({ mode }: { mode: 'dashboard' | 'premium' | 'missions' | '
   );
 
   if (account.status === 'loading') return <LoadingPanel />;
-  if (mode === 'settings') {
-    const pushAvailable = account.status === 'ready' && account.data.providers.push;
-    if (!pushAvailable) return <PwaSettingsPage pushAvailable={false} />;
-    return <PwaSettingsPage pushAvailable subscribe={() => subscribeBrowserPush()} />;
-  }
   if (account.status === 'error') return <ErrorPanel />;
   if (account.status !== 'ready') return <UnavailablePanel />;
+
+  if (mode === 'settings') {
+    const pushAvailable = account.data.providers.push;
+    return (
+      <PwaSettingsPage
+        account={account.data}
+        pushAvailable={pushAvailable}
+        subscribe={pushAvailable ? () => subscribeBrowserPush() : undefined}
+      />
+    );
+  }
+
   if (mode === 'dashboard') return <DashboardPage account={account.data} />;
 
   if (catalog.status === 'loading') return <LoadingPanel />;

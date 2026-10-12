@@ -29,10 +29,11 @@ describe('approved account surfaces', () => {
     render(<DashboardPage account={account} />);
 
     expect(screen.getByText('۳۰ دقیقه')).toBeInTheDocument();
-    expect(screen.getByText('قطع')).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: /وضعیت دسترسی: آماده نیست/ })).toBeInTheDocument();
+    expect(screen.getByText(/اتصال گزارش‌شده: قطع/)).toBeInTheDocument();
     expect(screen.getByText(/پیکربندی VPN هنوز آماده نیست/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /کپی پیکربندی/ })).toBeDisabled();
-    expect(screen.getByRole('button', { name: /نمایش QR/ })).toBeDisabled();
+    expect(screen.getByRole('link', { name: /دریافت کانفیگ/ })).toHaveAttribute('href', '/access');
+    expect(screen.queryByRole('button', { name: /کپی پیکربندی|نمایش QR/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /اتصال|وصل شو|connect/i })).not.toBeInTheDocument();
   });
 

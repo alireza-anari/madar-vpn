@@ -1,27 +1,26 @@
 import type { ReactNode } from 'react';
+import { BottomNav } from './BottomNav';
+import { MadarLogo } from './MadarLogo';
 import { StatusBadge } from './StatusBadge';
 
 type AppShellProps = {
   children: ReactNode;
+  currentPath?: string;
   serviceStatus?: 'ready' | 'checking' | 'unavailable';
 };
 
-const navigationItems = [
-  ['/', 'خانه'],
-  ['/missions', 'ماموریت‌ها'],
-  ['/premium', 'اشتراک'],
-  ['/settings', 'تنظیمات'],
-] as const;
-
-export function AppShell({ children, serviceStatus = 'checking' }: AppShellProps) {
+export function AppShell({
+  children,
+  currentPath = typeof window === 'undefined' ? '' : window.location.pathname,
+  serviceStatus = 'checking',
+}: AppShellProps) {
   const statusLabel = serviceStatus === 'ready' ? 'آنلاین' : serviceStatus === 'checking' ? 'در حال بررسی' : 'آفلاین';
 
   return (
-    <div className="app-shell" dir="rtl" lang="fa">
-      <header className="app-shell__topbar">
-        <a className="brand" href="/" aria-label="مدار، صفحه اصلی">
-          <span aria-hidden="true" className="brand__mark">م</span>
-          <h1 className="brand__name">مدار</h1>
+    <div className="app-shell app-shell--neon" dir="rtl" lang="fa">
+      <header className="app-shell__topbar app-shell__topbar--neon">
+        <a className="brand brand--neon" href="/" aria-label="مدار، صفحه اصلی">
+          <MadarLogo compact />
         </a>
         <StatusBadge tone={serviceStatus}>{statusLabel}</StatusBadge>
       </header>
@@ -34,13 +33,7 @@ export function AppShell({ children, serviceStatus = 'checking' }: AppShellProps
 
       <main className="app-shell__content">{children}</main>
 
-      <nav aria-label="ناوبری اصلی" className="app-shell__nav">
-        {navigationItems.map(([href, label]) => (
-          <a href={href} key={href} className="app-shell__nav-link">
-            {label}
-          </a>
-        ))}
-      </nav>
+      <BottomNav currentPath={currentPath} />
     </div>
   );
 }
