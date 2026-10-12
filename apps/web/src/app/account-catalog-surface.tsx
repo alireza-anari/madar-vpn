@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
 import { PageHeader } from '../components/PageHeader';
+import './missions.css';
 
 export type AccountCatalogView = {
   plans: Array<{
@@ -183,35 +184,57 @@ export function MissionsCatalogPage({
   submitEvidence: (missionId: string, evidence: string) => Promise<MissionSubmissionResult>;
 }) {
   return (
-    <div className="surface-stack">
-      <Card>
-        <PageHeader
-          eyebrow="ماموریت‌ها"
-          title="اعتبار قابل دریافت"
-          description="پاداش تنها پس از مدرک یا callback معتبر سمت سرور ثبت می‌شود."
-        />
-        {!adsAvailable ? <p className="inline-notice">تبلیغات هنوز متصل نشده؛ پاداش تبلیغاتی غیرفعال است.</p> : null}
-      </Card>
+    <div className="surface-stack missions-catalog">
+      <section className="missions-hero">
+        <div className="missions-hero__copy">
+          <p className="missions-hero__eyebrow">اعتبار رایگان</p>
+          <h1>ماموریت‌ها</h1>
+          <h2 className="missions-hero__subtitle">اعتبار قابل دریافت</h2>
+          <p className="missions-hero__description">
+            اعتبار فقط پس از تأیید سمت سرور به حساب اضافه می‌شود؛ مدرک یا رابطه ارجاع در مرورگر به‌تنهایی پاداش ایجاد نمی‌کند.
+          </p>
+        </div>
+        <span className="missions-hero__orbit" aria-hidden="true" />
+        {!adsAvailable ? (
+          <p className="inline-notice missions-provider-notice">تبلیغات هنوز متصل نشده؛ پاداش تبلیغاتی غیرفعال است.</p>
+        ) : null}
+      </section>
 
       {missions.length === 0 ? (
-        <Card><p className="empty-state">ماموریت فعال واقعی وجود ندارد.</p></Card>
-      ) : missions.map((mission) => {
-        const status = latestMissionStatus(statuses, mission.id);
-        return (
-          <Card key={mission.id}>
-            <h2 className="section-title">{mission.title}</h2>
-            <p className="muted-copy">{mission.description}</p>
-            <p className="muted-copy">پاداش: {faNumber.format(Math.floor(mission.rewardSeconds / 60))} دقیقه</p>
-            <MissionStatus status={status} />
-            <Button disabled>شروع ماموریت</Button>
-            {mission.verificationKind === 'evidence' ? (
-              <EvidenceMissionForm mission={mission} submitEvidence={submitEvidence} />
-            ) : (
-              <p className="muted-copy">ماموریت ارجاع فقط پس از تأیید رابطه واقعی توسط سرور قابل پاداش است.</p>
-            )}
-          </Card>
-        );
-      })}
+        <Card className="missions-empty"><p className="empty-state">ماموریت فعال واقعی وجود ندارد.</p></Card>
+      ) : (
+        <div className="missions-list">
+          {missions.map((mission) => {
+            const status = latestMissionStatus(statuses, mission.id);
+            const rewardMinutes = Math.floor(mission.rewardSeconds / 60);
+            return (
+              <article className="mission-card" key={mission.id}>
+                <header className="mission-card__header">
+                  <span className="mission-card__icon" aria-hidden="true">
+                    {mission.verificationKind === 'evidence' ? '◇' : '◎'}
+                  </span>
+                  <div>
+                    <p className="mission-card__kind">
+                      {mission.verificationKind === 'evidence' ? 'بررسی مدرک' : 'تأیید ارجاع'}
+                    </p>
+                    <h2 className="mission-card__title">{mission.title}</h2>
+                  </div>
+                </header>
+                <span className="mission-card__reward">+ {faNumber.format(rewardMinutes)} دقیقه</span>
+                <p className="mission-card__description">{mission.description}</p>
+                <p className="mission-card__legacy-reward">پاداش: {faNumber.format(rewardMinutes)} دقیقه</p>
+                <MissionStatus status={status} />
+                <Button disabled>شروع ماموریت</Button>
+                {mission.verificationKind === 'evidence' ? (
+                  <EvidenceMissionForm mission={mission} submitEvidence={submitEvidence} />
+                ) : (
+                  <p className="muted-copy">ماموریت ارجاع فقط پس از تأیید رابطه واقعی توسط سرور قابل پاداش است.</p>
+                )}
+              </article>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
