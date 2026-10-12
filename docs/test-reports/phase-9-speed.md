@@ -1,13 +1,13 @@
 # Phase 9 — speed enforcement acceptance
 
-Date: 2026-10-11  
-Status: **PREPARED — repository implementation verified; real Task 30 field execution pending.**
+Date: 2026-10-12  
+Status: **FIELD PASS — Task 30 real acceptance complete on the exact deployed CI-green runtime; final documentation CI for this evidence commit is pending.**
 
 ## Scope
 
 Task 30 proves that Madar enforces the configured Free speed policy on real VLESS+REALITY traffic without weakening the existing fail-closed Node lifecycle.
 
-The product contract is:
+The accepted product contract is:
 
 - Free speed is enforced **per Client per Node**;
 - the initial policy value is `speedKbps = 5000`, equal to exactly `625000` payload bytes/second independently for upload and download;
@@ -17,121 +17,147 @@ The product contract is:
 - Xray remains pinned to `26.3.27` and is not forked or patched;
 - Free has no TCP or UDP fallback to Xray `direct` if the limiter is unavailable.
 
-Task 30 cannot PASS from repository tests alone. Real sustained VPS throughput evidence is mandatory.
+## Exact field build
 
-## Architecture under test
+The real field session was frozen on the exact CI-green runtime below even though the working branch later advanced with unrelated staging/email/security-test changes:
 
-The Free traffic path is:
+- deployed repository SHA: `07179e48f0447782745673bb17e1f1fb4867aa13`;
+- GitHub Actions CI run: `38166200895` — success;
+- Xray: `26.3.27`;
+- deployed static Speed Enforcer SHA-256 on both Nodes: `a976df89c4fc99fb8d2f1e03498b906b8734ba0c9e20d8fc50d7c6902ba2f116`;
+- Speed Enforcer systemd unit source blob used in the field: `7a540c2e0b4855f37cb38e1d4d028f44f9e9d0df`.
+
+Both VPS installations were checked against the exact field source/unit artifacts before acceptance work continued. The sidecar service includes strict filesystem hardening plus the required writable `/run/madar-node-agent` path for its private health socket.
+
+## Architecture exercised
+
+Free traffic used the real path:
 
 ```text
-v2rayNG -> Xray/VLESS/REALITY -> authenticated loopback SOCKS5 -> madar-speed-enforcer -> Internet
+VLESS+REALITY -> Xray authenticated user route -> authenticated loopback SOCKS5 -> madar-speed-enforcer -> origin
 ```
 
-Premium remains:
+Premium used the default Xray `direct` outbound and did not require the speed sidecar.
+
+Policy apply exercised the implemented two-phase fail-closed ordering: stage sidecar membership, prove sidecar health, switch Xray, prune the sidecar, prove final runtime health, and only then ACK the revision.
+
+## Real quantitative evidence
+
+All judged Free TCP measurements discarded at least 5 seconds of warm-up and measured at least 30 seconds sustained.
+
+| Scenario | Result |
+| --- | --- |
+| Premium/uncapped download baseline | `20.002 Mbps` |
+| Premium/uncapped upload baseline | `19.993 Mbps` |
+| Premium duplex | `20.002 / 20.002 Mbps` |
+| Free download | `5.000 Mbps` |
+| Free upload | `5.007 Mbps` |
+| Free duplex | `5.000 / 4.999 Mbps` |
+| Three parallel TCP connections, same Free Client | `4.993 Mbps` aggregate |
+| Two distinct Free Clients simultaneously | `5.000 Mbps` each |
+| Authenticated Free UDP, controlled 20 Mbps source | `5.000 Mbps`, 15,625 measured packets |
+
+The controlled Premium baseline was therefore materially above the Free acceptance band and distinguished the software cap from ordinary network congestion.
+
+### Premium bypass proof
+
+A dedicated final Premium-only rerun closed the explicit sidecar-counter requirement:
+
+- the Premium policy revision was ACKed with exactly one Premium Client;
+- `madar-speed-enforcer.service` remained inactive because there were zero capped Clients;
+- the production Xray render contained `0` SOCKS speed outbounds for the Premium-only policy;
+- real VLESS+REALITY Premium traffic exceeded `8 Mbps`;
+- the maximum established connection count observed on the Speed Enforcer listener during that Premium transfer was `0`;
+- the resulting safe assertion was `PREMIUM_BYPASS_COUNTER_PASS=True`.
+
+The first disposable self-connect attempt used the Node's public endpoint and timed out. Diagnostics proved public self-connect TCP/443 was unavailable from that EC2 instance while its private interface TCP/443 was reachable. Only the **disposable client test config** was retargeted to the private address; production configuration was not changed. The rerun then passed.
+
+## Failure and recovery evidence
+
+### Sidecar stop while Free TCP active
+
+During an active capped Free TCP flow, the sidecar was stopped deliberately. The existing flow closed in about 7 seconds. Xray and the Agent remained running, but Node readiness/eligibility failed closed; the affected Node disappeared from the real subscription while the healthy second Node remained. After sidecar recovery and a fresh healthy policy cycle, the Node returned and real traffic worked again.
+
+### Sidecar crash / restart
+
+The sidecar process was sent `SIGKILL` while Free traffic was active. The flow closed in about 7 seconds. systemd restarted the sidecar under its `Restart=on-failure` policy and a new process became healthy. No uncapped Free fallback was observed.
+
+### UDP fail-closed
+
+Authenticated UDP was active before the fault. Safe packet evidence around a deliberate sidecar stop was:
 
 ```text
-v2rayNG -> Xray/VLESS/REALITY -> direct -> Internet
+UDP_PRE_FAULT_PACKETS=776
+UDP_FAULT_GRACE_PACKETS=70
+UDP_POST_GRACE_PACKETS=0
+UDP_POST_GRACE_NONZERO_BUCKETS=0
+UDP_FAIL_CLOSED=True
 ```
 
-The sidecar listens only on loopback, authenticates with Node-local opaque per-Client aliases/passwords, stores only password verifiers in its own config, and uses one shared upload bucket plus one shared download bucket per alias across TCP and UDP.
+Thus traffic present before the fault ceased after the bounded grace period rather than bypassing the limiter.
 
-The Node Agent applies transitions fail-closed using two-phase sidecar membership:
+### Agent stop / crash / reboot
 
-1. validate the complete candidate policy before runtime side effects;
-2. apply `current_free ∪ candidate_free` to the sidecar;
-3. prove the staged sidecar generation healthy;
-4. switch Xray to the candidate policy using only candidate Free route credentials;
-5. prune sidecar membership to `candidate_free` only;
-6. prove final Xray + sidecar health;
-7. only then commit the candidate revision / become ACK-eligible.
+- stopping the Agent made Agent, Xray and Speed Enforcer inactive and removed runtime authorization markers;
+- normal Agent start restored authorized children;
+- `SIGKILL` of the Agent immediately left Xray/Speed unauthorized/inactive and a later Agent restart restored them only after authorization;
+- a real Node reboot preserved the same invariant.
 
-A failed stage or final prune closes managed access rather than leaving a Free Client uncapped. An invalid candidate does not disturb a currently valid authorized runtime.
+On the first post-reboot apply attempt, the journal recorded Speed Enforcer readiness before Xray, followed by a sidecar health-verification failure. The runtime failed closed, stopped managed children, restarted the Agent, and the second apply cycle recovered. This is retained as an explicit acceptance caveat: reboot recovery was not a single clean first attempt, but the failure path remained fail-closed and automatic retry recovered without exposing uncapped Free traffic.
 
-## Repository evidence
+## Privacy evidence
 
-Task 8 implementation evidence:
+The field session retained only secret-safe evidence.
 
-- repository SHA: `b10b5e36542d8a864e2c4e9de30711ddf1804e53`;
-- GitHub Actions CI run: `38128375791`;
-- result: **PASS**;
-- Go `go test -race ./...`: PASS;
-- Go `go vet ./...`: PASS;
-- static `CGO_ENABLED=0 go build -trimpath`: PASS;
-- JavaScript/TypeScript tests, typecheck and build: PASS;
-- Python Node Agent suite: PASS;
-- security scan, dependency audits and PostgreSQL integration/restore checks: PASS.
+Control-plane audit found no stored Node credential or REALITY private-key leak. A full-session bounded journal scan on Node1 checked 14 known secret/Client values and found `0` matches. Node2 checked its locally available secret values and found `0` exact matches, `0` raw UUID-shaped journal matches, and `0` secret-field/value matches. No raw Client UUID, full opaque alias, plaintext SOCKS password, subscription bearer, Node credential, REALITY private key, or traffic payload was intentionally recorded in this report.
 
-Automated coverage includes:
+Safe evidence files retained on the field host include:
 
-- strict sidecar configuration parsing, loopback listener validation and bounded numeric rate fields;
-- independent upload/download token buckets with shared per-alias state and race-detector coverage;
-- authenticated SOCKS5 TCP `CONNECT` for IPv4, IPv6 and domain destinations;
-- authenticated UDP `ASSOCIATE`, malformed/fragment/orphan rejection, bounded association target state and idle expiry;
-- shared TCP/UDP limiter budgets so protocol mixing cannot multiply the configured cap;
-- private Unix-socket health response containing only generation/readiness;
-- deterministic Node-local opaque identity derivation and password verifiers without raw Client UUIDs/plaintext sidecar passwords;
-- sidecar candidate validation/promotion and private `0600` files;
-- per-Free-client Xray SOCKS routes while Premium remains direct;
-- no Free direct fallback routing rule;
-- two-phase Client-ID rotation and Free/Premium transition ordering;
-- sidecar/Xray rollback, final-prune failure behavior and revision retry semantics;
-- independent systemd authorization markers and fail-closed startup/shutdown for both managed child runtimes;
-- combined Node readiness when capped Clients require the sidecar;
-- security/log assertions and existing Phase 7 accounting/lifecycle regressions;
-- CI Go race tests, `go vet`, and a static `CGO_ENABLED=0` Linux build gate;
-- repository build helper `scripts/build-speed-enforcer.sh` restricted to supported Linux `amd64` / `arm64` targets.
+- `phase9-throughput-safe.jsonl`;
+- `phase9-udp-safe.jsonl`;
+- `phase9-subscription-safe.jsonl`.
 
-This documentation-only evidence update receives its own full CI run. The deployable Task 30 code remains the exact implementation SHA above unless a later code change is made, in which case field evidence must restart from the new exact CI-green SHA.
+## Cleanup and terminal field state
 
-## Required real field evidence
+Cleanup completed without deleting either retained VPS:
 
-Task 30 remains **INCOMPLETE** until one documented field session proves all items below on exact CI-green deployed code:
+- all three Phase 9 field Client credentials were revoked;
+- all three Phase 9 field subscription tokens were revoked;
+- the unrelated pre-existing active credential was preserved;
+- temporary throughput, overlap, UDP and Premium harness files/listeners were removed;
+- no test listener remained on the temporary ports used during acceptance;
+- Node1 final empty policy revision `31` was ACKed with `clients=0`;
+- Node2 final empty policy revision `5` was ACKed with `clients=0`;
+- both Agents and Xray services remained active and both Nodes were `ready` with fresh heartbeats;
+- Speed Enforcer was inactive on both Nodes, which is expected with zero capped Clients;
+- Node1 and Node2 telemetry outbox pending counts were `0`;
+- unexplained `unmapped` telemetry was `0` reports / `0` seconds;
+- historical journals and sanitized evidence were retained;
+- both VPSs were retained as requested.
 
-- [ ] Build the static Linux sidecar from the exact approved repository SHA and record its SHA-256.
-- [ ] Copy the binary root-owned to `/opt/madar-speed-enforcer/madar-speed-enforcer` on each disposable test Node and verify the deployed checksum exactly matches.
-- [ ] Establish a controlled uncapped/Premium baseline materially above the Free acceptance band; target at least 8 Mbps sustained in each quantitatively judged direction where the network permits.
-- [ ] For quantitative Free TCP measurements, discard at least 5 seconds of warm-up and measure at least 30 seconds sustained.
-- [ ] Prove Free TCP download is 4.5–5.5 Mbps.
-- [ ] Prove Free TCP upload is 4.5–5.5 Mbps.
-- [ ] Prove simultaneous upload and download each independently remain 4.5–5.5 Mbps rather than sharing one combined 5 Mbps budget.
-- [ ] Prove multiple parallel TCP connections for one Free Client do not multiply throughput.
-- [ ] Prove a second distinct Free Client/account on the same Node receives its own independent approximately-5-Mbps cap rather than sharing a node-wide bucket.
-- [ ] Prove controlled authenticated UDP traffic cannot materially exceed the configured cap after burst allowance; no lower-bound UDP target is required because loss/jitter may reduce goodput.
-- [ ] Prove Premium on the same Node bypasses the sidecar and tracks the available baseline rather than clustering near 5 Mbps.
-- [ ] Stop/crash the sidecar while Free traffic is active and prove Free TCP and UDP fail instead of becoming uncapped; Premium direct traffic may remain.
-- [ ] Prove sidecar failure while capped Clients exist makes Node readiness/accepting false and removes subscription eligibility until healthy recovery.
-- [ ] Prove Agent stop/SIGKILL and reboot preserve the fail-closed invariant for both Xray and the sidecar.
-- [ ] Prove bounded journals/config evidence contains no raw Client UUID, full opaque alias, plaintext SOCKS password, subscription bearer, Node credential, REALITY private key or traffic payload.
+## Task 30 acceptance checklist
 
-If the available network baseline cannot distinguish a 5 Mbps software limit from ordinary network congestion, the quantitative result is **INCONCLUSIVE**, not PASS.
+- [x] Static Linux sidecar built from the exact approved SHA and checksum recorded.
+- [x] Exact sidecar binary deployed and checksum verified on both VPSs.
+- [x] Controlled Premium/uncapped baseline materially above the Free band.
+- [x] Quantitative Free TCP used >=5 s warm-up and >=30 s measurement.
+- [x] Free TCP download within 4.5–5.5 Mbps.
+- [x] Free TCP upload within 4.5–5.5 Mbps.
+- [x] Duplex upload/download independently stayed within the acceptance band.
+- [x] Parallel TCP connections for one Free Client did not multiply throughput.
+- [x] Two distinct Free Clients received independent per-Client caps.
+- [x] Authenticated UDP could not materially exceed the configured cap.
+- [x] Premium tracked the uncapped baseline and explicit sidecar connection counter stayed zero.
+- [x] Sidecar stop/crash caused Free TCP/UDP failure instead of uncapped fallback.
+- [x] Sidecar failure removed Node readiness/subscription eligibility while capped Clients existed.
+- [x] Agent stop/SIGKILL/reboot preserved fail-closed managed-runtime authorization.
+- [x] Bounded journal/config privacy scans found no prohibited secret evidence.
+- [x] Test credentials/policies/harnesses cleaned up; outboxes and unmapped telemetry ended at zero.
 
-## Task 29 interaction
+## Gate state
 
-Task 29 multi-node acceptance remains a separate real-field gate documented in `docs/test-reports/phase-9-multinode.md`. The two field gates may share one session, but neither substitutes for the other.
-
-Speed limiting is intentionally per Client per Node. Account-global active-second accounting remains a separate cross-node de-duplication mechanism.
-
-## Evidence privacy rules
-
-Do not record enrollment tokens, Node credentials, raw Client UUIDs, subscription bearer URLs/tokens, REALITY private keys, session/CSRF values, plaintext local SOCKS passwords, full opaque aliases or raw traffic payloads.
-
-Safe evidence may contain versions, aggregate counts, timestamps, throughput values, process states, non-secret node labels and one-way fingerprints when comparison is necessary.
-
-## Cleanup requirements
-
-The field session must end with:
-
-- test policies/credentials revoked or returned to the intended retained state;
-- temporary throughput tooling/harnesses removed;
-- pending telemetry outbox count `0`;
-- unexplained `unmapped` activity `0`;
-- no temporary authorization/debug instrumentation left active;
-- historical journals retained for later diagnosis;
-- disposable VPSs retained unless explicitly requested otherwise.
-
-## Current gate state
-
-- Task 29: **INCOMPLETE — real two-node field acceptance pending**.
-- Task 30: **INCOMPLETE — real speed-enforcement field acceptance pending**.
-- Phase 9: **INCOMPLETE**.
-- Production Ready: **not claimed**.
+- Task 30 field acceptance: **PASS**.
+- Task 29 field acceptance: see `phase-9-multinode.md` — **PASS**.
+- Phase 9 field requirements: **PASS**.
+- Final Phase 9 repository completion claim: **pending the full CI run triggered by the documentation evidence commit containing this report**.
+- Production Ready: **not claimed**; Phase 10 remains a separate gate.
