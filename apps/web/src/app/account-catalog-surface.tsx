@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
 import { PageHeader } from '../components/PageHeader';
+import '../styles/premium.css';
 import './missions.css';
 
 export type AccountCatalogView = {
