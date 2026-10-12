@@ -1,0 +1,186 @@
+.settings-profile {
+  display: grid;
+  gap: 1rem;
+}
+
+.profile-card {
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  gap: 1rem;
+  padding: 1.25rem;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 32%, var(--color-border));
+  border-radius: 1.5rem;
+  background:
+    radial-gradient(circle at 15% 5%, color-mix(in srgb, var(--color-accent) 18%, transparent), transparent 46%),
+    linear-gradient(145deg, color-mix(in srgb, var(--color-panel-strong) 92%, transparent), var(--color-panel));
+  box-shadow: var(--shadow-panel), var(--glow-soft);
+}
+
+.profile-card__top {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+}
+
+.profile-card__avatar {
+  display: grid;
+  width: 3.25rem;
+  height: 3.25rem;
+  flex: 0 0 3.25rem;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 55%, transparent);
+  border-radius: 1.1rem;
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  color: var(--color-accent);
+  font-size: 1.35rem;
+  box-shadow: inset 0 0 1.6rem color-mix(in srgb, var(--color-accent) 9%, transparent);
+}
+
+.profile-card__identity {
+  min-width: 0;
+}
+
+.profile-card__eyebrow {
+  margin: 0 0 0.2rem;
+  color: var(--color-muted);
+  font-size: 0.78rem;
+}
+
+.profile-card__title {
+  margin: 0;
+  color: var(--color-ink);
+  font-size: clamp(1.35rem, 5vw, 1.8rem);
+}
+
+.profile-card__email {
+  display: block;
+  max-width: 100%;
+  margin-top: 0.35rem;
+  overflow: hidden;
+  color: var(--color-muted);
+  direction: ltr;
+  text-align: left;
+  text-overflow: ellipsis;
+  unicode-bidi: isolate;
+  white-space: nowrap;
+}
+
+.profile-entitlement {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: 1rem;
+  background: color-mix(in srgb, var(--color-panel-strong) 76%, transparent);
+}
+
+.profile-entitlement__badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2rem;
+  padding-inline: 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 44%, var(--color-border));
+  border-radius: 999px;
+  color: var(--color-ink);
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  font-weight: 700;
+}
+
+.profile-entitlement__detail {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 0.9rem;
+}
+
+.settings-group {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.settings-group__title {
+  margin: 0.35rem 0 0;
+  color: var(--color-muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.settings-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.85rem;
+  align-items: start;
+  padding: 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: 1.2rem;
+  background: color-mix(in srgb, var(--color-panel-strong) 78%, transparent);
+  box-shadow: var(--shadow-panel);
+}
+
+.settings-row__icon {
+  display: grid;
+  width: 2.5rem;
+  height: 2.5rem;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 36%, transparent);
+  border-radius: 0.9rem;
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 9%, transparent);
+  font-size: 1.05rem;
+}
+
+.settings-row__body {
+  min-width: 0;
+}
+
+.settings-row__title {
+  margin: 0;
+  color: var(--color-ink);
+  font-size: 1rem;
+}
+
+.settings-row__description,
+.settings-row__content {
+  margin-top: 0.35rem;
+  color: var(--color-muted);
+  font-size: 0.9rem;
+  line-height: 1.8;
+}
+
+.settings-row__content .instruction-grid {
+  margin-top: 0.65rem;
+}
+
+.settings-row__action {
+  grid-column: 1 / -1;
+}
+
+.settings-row__action .button {
+  width: 100%;
+}
+
+.settings-row .inline-notice {
+  margin: 0.65rem 0 0;
+}
+
+@media (min-width: 44rem) {
+  .profile-card {
+    padding: 1.5rem;
+  }
+
+  .settings-row {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .settings-row__action {
+    grid-column: auto;
+  }
+
+  .settings-row__action .button {
+    width: auto;
+  }
+}
