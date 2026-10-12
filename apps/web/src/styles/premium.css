@@ -1,0 +1,243 @@
+.premium-catalog {
+  width: min(100%, var(--content-mobile));
+  margin-inline: auto;
+}
+
+.premium-hero {
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  gap: 1rem;
+  padding: clamp(1.25rem, 5vw, 2rem);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 36%, var(--color-border));
+  border-radius: 1.6rem;
+  background:
+    radial-gradient(circle at 15% 15%, color-mix(in srgb, var(--color-accent) 22%, transparent), transparent 38%),
+    radial-gradient(circle at 88% 12%, color-mix(in srgb, #7c5cff 18%, transparent), transparent 34%),
+    linear-gradient(145deg, color-mix(in srgb, var(--color-panel-strong) 94%, transparent), var(--color-panel));
+  box-shadow: var(--shadow-panel), var(--glow-soft);
+}
+
+.premium-hero__copy {
+  position: relative;
+  z-index: 2;
+  min-width: 0;
+  max-width: 38rem;
+}
+
+.premium-hero__eyebrow {
+  margin: 0 0 0.45rem;
+  color: var(--color-accent);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.premium-hero h1 {
+  margin: 0;
+  color: var(--color-ink);
+  font-size: clamp(2rem, 9vw, 3.4rem);
+  line-height: 1.05;
+}
+
+.premium-hero__copy > p:last-child {
+  max-width: 34rem;
+  margin: 0.7rem 0 0;
+  color: var(--color-muted);
+  line-height: 1.9;
+}
+
+.premium-hero__orbit {
+  position: absolute;
+  inset-inline-end: -2.4rem;
+  top: 1.2rem;
+  width: min(44vw, 11rem);
+  aspect-ratio: 1;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 28%, transparent);
+  border-radius: 50%;
+  opacity: 0.75;
+  transform: rotate(-18deg);
+  pointer-events: none;
+}
+
+.premium-hero__planet {
+  position: absolute;
+  inset: 30%;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #c9d8ff, #6b62ff 42%, #151a47 78%);
+  box-shadow: 0 0 2.2rem color-mix(in srgb, var(--color-accent) 46%, transparent);
+}
+
+.premium-hero__ring {
+  position: absolute;
+  inset: 15%;
+  border: 1px solid color-mix(in srgb, #8c7cff 42%, transparent);
+  border-radius: 50%;
+}
+
+.premium-hero__ring--one {
+  transform: rotate(35deg) scaleY(0.42);
+}
+
+.premium-hero__ring--two {
+  inset: 7%;
+  transform: rotate(-28deg) scaleY(0.3);
+  opacity: 0.7;
+}
+
+.premium-benefits {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.premium-benefits > span {
+  min-width: 0;
+  padding: 0.8rem;
+  border: 1px solid var(--color-border);
+  border-radius: 1rem;
+  background: color-mix(in srgb, var(--color-panel-strong) 76%, transparent);
+}
+
+.premium-benefits strong,
+.premium-benefits small {
+  display: block;
+}
+
+.premium-benefits strong {
+  color: var(--color-ink);
+  font-size: 0.88rem;
+}
+
+.premium-benefits small {
+  margin-top: 0.3rem;
+  color: var(--color-muted);
+  font-size: 0.7rem;
+  line-height: 1.65;
+}
+
+.premium-hero__plans-title {
+  position: relative;
+  z-index: 2;
+  margin: 0.35rem 0 0;
+  color: var(--color-ink);
+  font-size: 1rem;
+}
+
+.premium-provider-notice {
+  position: relative;
+  z-index: 2;
+  margin: 0;
+}
+
+.premium-plan-list {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.premium-plan-card {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.85rem;
+  align-items: center;
+  padding: 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: 1.3rem;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--color-panel-strong) 88%, transparent), color-mix(in srgb, var(--color-panel) 95%, transparent));
+  box-shadow: var(--shadow-panel);
+}
+
+.premium-plan-card__icon {
+  display: grid;
+  width: 2.8rem;
+  aspect-ratio: 1;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 42%, transparent);
+  border-radius: 0.95rem;
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 9%, transparent);
+  font-size: 1.2rem;
+}
+
+.premium-plan-card__main {
+  min-width: 0;
+}
+
+.premium-plan-card__main h2 {
+  margin: 0;
+  color: var(--color-ink);
+  font-size: 1.02rem;
+  overflow-wrap: anywhere;
+}
+
+.premium-plan-card__main p {
+  margin: 0.3rem 0 0;
+  color: var(--color-ink);
+  font-size: 0.84rem;
+}
+
+.premium-plan-card__main small {
+  display: block;
+  margin-top: 0.35rem;
+  color: var(--color-muted);
+  font-size: 0.7rem;
+  line-height: 1.65;
+}
+
+.premium-plan-card__purchase {
+  min-width: 0;
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.premium-plan-card__purchase strong {
+  min-width: 0;
+  max-width: 100%;
+  color: var(--color-ink);
+  direction: ltr;
+  font-size: 0.92rem;
+  overflow-wrap: anywhere;
+  text-align: start;
+  unicode-bidi: isolate;
+}
+
+.premium-plan-card__purchase .button {
+  flex: 0 0 auto;
+}
+
+@media (min-width: 44rem) {
+  .premium-catalog {
+    width: min(100%, 48rem);
+  }
+
+  .premium-plan-card {
+    grid-template-columns: auto minmax(0, 1fr) minmax(10rem, auto);
+    padding: 1.15rem;
+  }
+
+  .premium-plan-card__purchase {
+    grid-column: auto;
+    display: grid;
+    justify-items: end;
+    padding-top: 0;
+    padding-inline-start: 1rem;
+    border-top: 0;
+    border-inline-start: 1px solid var(--color-border);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .premium-hero__orbit,
+  .premium-hero__ring {
+    transform: none;
+  }
+}
