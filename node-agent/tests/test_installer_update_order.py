@@ -8,9 +8,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from madar_agent.installer import InstallPaths, NodeInstaller
 
 
+SPEED_BINARY = b"verified-speed-enforcer-test-binary"
+
+
 class FakeEnrollment:
     def enroll(self, _token: str) -> str:
-        return "unused-node-credential"
+        return "unused-test-credential"
 
 
 class FakeSystem:
@@ -22,6 +25,9 @@ class FakeSystem:
 
     def install_service(self, source: Path, destination: Path) -> None:
         self.actions.append(("install_service", (str(source), str(destination))))
+
+    def install_executable(self, payload: bytes, destination: Path) -> None:
+        self.actions.append(("install_executable", (str(destination), str(len(payload)))))
 
     def daemon_reload(self) -> None:
         self.actions.append(("daemon_reload", ()))
@@ -54,7 +60,7 @@ def paths(tmp_path: Path) -> InstallPaths:
     )
 
 
-def test_update_stages_both_units_before_reload_then_restarts_agent_only(tmp_path: Path) -> None:
+def test_update_installs_speed_binary_and_three_units_before_reload_then_restarts_agent_only(tmp_path: Path) -> None:
     system = FakeSystem()
     install_paths = paths(tmp_path)
     installer = NodeInstaller(
@@ -62,34 +68,54 @@ def test_update_stages_both_units_before_reload_then_restarts_agent_only(tmp_pat
         enrollment=FakeEnrollment(),
         system=system,
         output=lambda _message: None,
+        speed_enforcer_binary=SPEED_BINARY,
     )
 
     installer.update()
 
+    install_files = (
+        "install_files",
+        (str(install_paths.source_root), str(install_paths.install_root)),
+    )
+    speed_binary_path = install_paths.install_root.parent / "madar-speed-enforcer" / "madar-speed-enforcer"
+    speed_install = (
+        "install_executable",
+        (str(speed_binary_path), str(len(SPEED_BINARY))),
+    )
     agent_unit_source = install_paths.service_source
     agent_unit_path = install_paths.service_path
     xray_unit_source = install_paths.service_source.parent / "madar-xray.service"
     xray_unit_path = install_paths.service_path.parent / "madar-xray.service"
+    speed_unit_source = install_paths.service_source.parent / "madar-speed-enforcer.service"
+    speed_unit_path = install_paths.service_path.parent / "madar-speed-enforcer.service"
 
-    agent_stage = (
-        "install_service",
-        (str(agent_unit_source), str(agent_unit_path)),
-    )
-    xray_stage = (
-        "install_service",
-        (str(xray_unit_source), str(xray_unit_path)),
-    )
+    agent_stage = ("install_service", (str(agent_unit_source), str(agent_unit_path)))
+    xray_stage = ("install_service", (str(xray_unit_source), str(xray_unit_path)))
+    speed_stage = ("install_service", (str(speed_unit_source), str(speed_unit_path)))
     reload_action = ("daemon_reload", ())
     agent_restart = ("restart", ("madar-node-agent.service",))
 
-    assert agent_stage in system.actions
-    assert xray_stage in system.actions
-    assert reload_action in system.actions
-    assert agent_restart in system.actions
+    for action in (
+        install_files,
+        speed_install,
+        agent_stage,
+        xray_stage,
+        speed_stage,
+        reload_action,
+        agent_restart,
+    ):
+        assert action in system.actions
 
+    assert system.actions.index(install_files) < system.actions.index(speed_install)
+    assert system.actions.index(speed_install) < system.actions.index(agent_stage)
+    assert system.actions.index(speed_install) < system.actions.index(xray_stage)
+    assert system.actions.index(speed_install) < system.actions.index(speed_stage)
     assert system.actions.index(agent_stage) < system.actions.index(reload_action)
     assert system.actions.index(xray_stage) < system.actions.index(reload_action)
+    assert system.actions.index(speed_stage) < system.actions.index(reload_action)
     assert system.actions.index(reload_action) < system.actions.index(agent_restart)
 
     assert ("restart", ("madar-xray.service",)) not in system.actions
+    assert ("restart", ("madar-speed-enforcer.service",)) not in system.actions
     assert ("enable_and_start", ("madar-xray.service",)) not in system.actions
+    assert ("enable_and_start", ("madar-speed-enforcer.service",)) not in system.actions
