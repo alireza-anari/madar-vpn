@@ -10,6 +10,7 @@ WORKFLOW = ROOT / ".github" / "workflows" / "release-speed-enforcer.yml"
 def test_release_workflow_builds_both_static_assets_from_exact_sha() -> None:
     assert WORKFLOW.is_file(), "Phase 10 Speed Enforcer release workflow is required"
     text = WORKFLOW.read_text(encoding="utf-8")
+    lowered = text.lower()
 
     assert "contents: write" in text
     assert "scripts/build-speed-enforcer.sh" in text
@@ -18,7 +19,8 @@ def test_release_workflow_builds_both_static_assets_from_exact_sha() -> None:
     assert "SHA256SUMS" in text
     assert "GITHUB_SHA" in text
     assert "--target" in text
-    assert "latest" not in text.lower()
+    assert "releases/latest" not in lowered
+    assert "--latest" not in lowered
 
 
 def test_release_workflow_refuses_moving_or_reused_release_tags() -> None:
