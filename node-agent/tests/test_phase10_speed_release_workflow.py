@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 
@@ -26,7 +25,7 @@ def test_release_workflow_refuses_moving_or_reused_release_tags() -> None:
     assert WORKFLOW.is_file(), "Phase 10 Speed Enforcer release workflow is required"
     text = WORKFLOW.read_text(encoding="utf-8")
 
-    assert re.search(r"speed-enforcer-v.*\\d.*\\d.*\\d", text)
+    assert "^speed-enforcer-v[0-9]+\\.[0-9]+\\.[0-9]+$" in text
     assert "gh release view" in text or "git rev-parse" in text
     assert "gh release create" in text
     assert "workflow_dispatch" in text
