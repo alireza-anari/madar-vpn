@@ -11,6 +11,10 @@ if [ "$#" -lt 1 ] || [ "$#" -gt 3 ]; then
 fi
 
 output=$1
+case "$output" in
+  /*) ;;
+  *) output="$(pwd)/$output" ;;
+esac
 goos=${2:-linux}
 
 if [ "$goos" != "linux" ]; then
