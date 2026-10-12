@@ -2,13 +2,37 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { PwaSettingsPage } from './PwaSettingsPage';
 
+const account = {
+  identity: { id: 'user-1', email: 'profile@example.com', role: 'user' as const },
+  entitlement: { freeSeconds: 1800, premiumUntil: null, tier: 'free' as const },
+  node: { ready: false, connectionStatus: 'disconnected' as const, configAvailable: false },
+  providers: { email: true, ads: false, payments: false, push: false },
+};
+
 describe('PWA settings UX', () => {
+  it('renders only real account identity and entitlement data in the profile surface', () => {
+    render(
+      <PwaSettingsPage
+        account={account}
+        pushAvailable={false}
+        notificationSupported={false}
+      />,
+    );
+
+    const email = screen.getByText('profile@example.com');
+    expect(email).toHaveAttribute('dir', 'ltr');
+    expect(screen.getByText(/حساب رایگان/)).toBeInTheDocument();
+    expect(screen.getByText(/۳۰ دقیقه اعتبار رایگان/)).toBeInTheDocument();
+    expect(screen.queryByText(/تاریخ عضویت|آپلود آواتار|فهرست دستگاه|انتخاب زبان|پشتیبانی آنلاین/)).not.toBeInTheDocument();
+  });
+
   it('requests notification permission only after an explicit user click', async () => {
     const requestPermission = vi.fn(async () => 'granted' as NotificationPermission);
     const subscribe = vi.fn(async () => true);
 
     render(
       <PwaSettingsPage
+        account={account}
         pushAvailable
         notificationSupported
         requestPermission={requestPermission}
@@ -32,6 +56,7 @@ describe('PWA settings UX', () => {
 
     const { rerender } = render(
       <PwaSettingsPage
+        account={account}
         pushAvailable
         notificationSupported
         requestPermission={requestPermission}
@@ -50,6 +75,7 @@ describe('PWA settings UX', () => {
 
     rerender(
       <PwaSettingsPage
+        account={account}
         pushAvailable
         notificationSupported={false}
         requestPermission={requestPermission}
@@ -65,6 +91,7 @@ describe('PWA settings UX', () => {
 
     render(
       <PwaSettingsPage
+        account={account}
         pushAvailable
         notificationSupported
         requestPermission={requestPermission}
@@ -84,7 +111,13 @@ describe('PWA settings UX', () => {
       userChoice: Promise.resolve({ outcome: 'accepted', platform: 'web' }),
     });
 
-    render(<PwaSettingsPage pushAvailable={false} notificationSupported={false} />);
+    render(
+      <PwaSettingsPage
+        account={account}
+        pushAvailable={false}
+        notificationSupported={false}
+      />,
+    );
     window.dispatchEvent(installEvent);
 
     const button = await screen.findByRole('button', { name: /نصب برنامه/ });
