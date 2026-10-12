@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Protocol
@@ -37,6 +38,8 @@ class InstallerSystem(Protocol):
     def install_files(self, source: Path, destination: Path) -> None: ...
 
     def install_service(self, source: Path, destination: Path) -> None: ...
+
+    def install_executable(self, payload: bytes, destination: Path) -> None: ...
 
     def daemon_reload(self) -> None: ...
 
@@ -159,6 +162,46 @@ class LocalSystem:
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, destination)
         destination.chmod(0o644)
+
+    def install_executable(self, payload: bytes, destination: Path) -> None:
+        destination.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
+        descriptor, temp_name = tempfile.mkstemp(
+            dir=destination.parent,
+            prefix=f".{destination.name}.",
+        )
+        temp_path = Path(temp_name)
+        descriptor_open = True
+        try:
+            with os.fdopen(descriptor, "wb") as handle:
+                descriptor_open = False
+                handle.write(payload)
+                handle.flush()
+                os.fchmod(handle.fileno(), 0o755)
+                os.fsync(handle.fileno())
+            os.replace(temp_path, destination)
+
+            flags = os.O_RDONLY
+            if hasattr(os, "O_DIRECTORY"):
+                flags |= os.O_DIRECTORY
+            try:
+                parent_descriptor = os.open(destination.parent, flags)
+            except OSError:
+                parent_descriptor = None
+            if parent_descriptor is not None:
+                try:
+                    try:
+                        os.fsync(parent_descriptor)
+                    except OSError:
+                        pass
+                finally:
+                    os.close(parent_descriptor)
+        finally:
+            if descriptor_open:
+                os.close(descriptor)
+            try:
+                temp_path.unlink()
+            except FileNotFoundError:
+                pass
 
     def daemon_reload(self) -> None:
         self._run("systemctl", "daemon-reload")
