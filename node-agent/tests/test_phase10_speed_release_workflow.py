@@ -32,3 +32,17 @@ def test_release_workflow_refuses_moving_or_reused_release_tags() -> None:
     assert "gh release create" in text
     assert "workflow_dispatch" in text
     assert "release/speed-enforcer-v" in text
+
+
+def test_release_workflow_restores_executable_mode_after_artifact_download() -> None:
+    assert WORKFLOW.is_file(), "Phase 10 Speed Enforcer release workflow is required"
+    text = WORKFLOW.read_text(encoding="utf-8")
+
+    download = text.index("actions/download-artifact@v4")
+    chmod_amd64 = text.index("chmod +x dist/madar-speed-enforcer-linux-amd64")
+    chmod_arm64 = text.index("chmod +x dist/madar-speed-enforcer-linux-arm64")
+    verify_amd64 = text.index("test -x dist/madar-speed-enforcer-linux-amd64")
+    verify_arm64 = text.index("test -x dist/madar-speed-enforcer-linux-arm64")
+
+    assert download < chmod_amd64 < verify_amd64
+    assert download < chmod_arm64 < verify_arm64
