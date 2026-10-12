@@ -152,7 +152,7 @@ export function PwaSettingsPage({
         <SettingsRow
           icon="◉"
           title="اعلان‌ها"
-          description="مرورگر فقط پس از فشردن دکمه، مجوز اعلان را درخواست می‌کند."
+          description="مرورگر فقط پس از فشردن دکمه زیر مجوز اعلان را درخواست می‌کند."
           action={(
             <Button
               type="button"
