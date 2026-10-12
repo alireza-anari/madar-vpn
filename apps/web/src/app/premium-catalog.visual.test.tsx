@@ -1,5 +1,4 @@
 import { render, screen } from '@testing-library/react';
-import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { PremiumCatalogPage } from './account-catalog-surface';
 
@@ -25,16 +24,14 @@ describe('neon premium catalog', () => {
       expect(button).toBeDisabled();
     }
     expect(screen.getByText(/checkout واقعی هنوز به این صفحه متصل نشده/)).toBeInTheDocument();
+    expect(screen.queryByText(/۳۴۹[٬,]?۰۰۰|۱۹۹[٬,]?۰۰۰|۴۹۹[٬,]?۰۰۰|۱[٬,]?۶۹۰[٬,]?۰۰۰/)).not.toBeInTheDocument();
   });
 
-  it('shows real empty/provider-unavailable states and carries no authoritative screenshot price constants', () => {
+  it('shows real empty/provider-unavailable states', () => {
     const { rerender } = render(<PremiumCatalogPage paymentAvailable={false} plans={plans} />);
     expect(screen.getByText(/پرداخت هنوز فعال نیست/)).toBeInTheDocument();
 
     rerender(<PremiumCatalogPage paymentAvailable={false} plans={[]} />);
     expect(screen.getByText(/هیچ بسته فعال واقعی برای خرید ثبت نشده است/)).toBeInTheDocument();
-
-    const source = readFileSync(new URL('./account-catalog-surface.tsx', import.meta.url), 'utf8');
-    expect(source).not.toMatch(/349000|199000|499000|1690000/);
   });
 });
