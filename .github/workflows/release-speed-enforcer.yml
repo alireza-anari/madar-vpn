@@ -1,0 +1,121 @@
+name: Release Speed Enforcer
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Immutable release tag (speed-enforcer-vMAJOR.MINOR.PATCH)
+        required: true
+        type: string
+  push:
+    branches:
+      - 'release/speed-enforcer-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+          cache: false
+      - name: Build static Speed Enforcer asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          scripts/build-speed-enforcer.sh \
+            "dist/madar-speed-enforcer-linux-${{ matrix.arch }}" \
+            linux \
+            "${{ matrix.arch }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: speed-enforcer-${{ matrix.arch }}-${{ github.sha }}
+          path: dist/madar-speed-enforcer-linux-${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: speed-enforcer-*-${{ github.sha }}
+          path: dist
+          merge-multiple: true
+      - name: Validate immutable release tag
+        id: tag
+        shell: bash
+        env:
+          DISPATCH_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            tag="${DISPATCH_TAG}"
+          else
+            case "${GITHUB_REF_NAME}" in
+              release/speed-enforcer-v*) tag="${GITHUB_REF_NAME#release/}" ;;
+              *) echo "release branch name rejected" >&2; exit 2 ;;
+            esac
+          fi
+
+          if ! [[ "$tag" =~ ^speed-enforcer-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "release tag format rejected" >&2
+            exit 2
+          fi
+
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "release tag already exists" >&2
+            exit 2
+          fi
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "git tag already exists" >&2
+            exit 2
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Verify asset set and create checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -x dist/madar-speed-enforcer-linux-amd64
+          test -x dist/madar-speed-enforcer-linux-arm64
+          (
+            cd dist
+            sha256sum \
+              madar-speed-enforcer-linux-amd64 \
+              madar-speed-enforcer-linux-arm64 \
+              > SHA256SUMS
+          )
+      - name: Publish immutable release
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "${{ steps.tag.outputs.tag }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "${{ steps.tag.outputs.tag }}" \
+            --notes "Static Madar Speed Enforcer binaries built from commit $GITHUB_SHA." \
+            dist/madar-speed-enforcer-linux-amd64 \
+            dist/madar-speed-enforcer-linux-arm64 \
+            dist/SHA256SUMS
