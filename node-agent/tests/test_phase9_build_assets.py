@@ -64,6 +64,27 @@ def test_speed_enforcer_build_helper_is_executable_static_and_rejects_unsupporte
     assert not (tmp_path / "bad-arch").exists()
 
 
+def test_speed_enforcer_build_helper_keeps_relative_output_in_callers_working_directory(tmp_path: Path) -> None:
+    script = ROOT / "scripts" / "build-speed-enforcer.sh"
+    caller = tmp_path / "caller"
+    caller.mkdir()
+    relative_output = Path("dist") / "madar-speed-enforcer-linux-amd64"
+
+    result = subprocess.run(
+        ["bash", str(script), str(relative_output), "linux", "amd64"],
+        cwd=caller,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    expected = caller / relative_output
+    assert result.returncode == 0, result.stderr
+    assert expected.is_file(), "relative OUTPUT must stay relative to the caller working directory"
+    assert stat.S_IMODE(expected.stat().st_mode) & 0o111
+
+
 def test_speed_sidecar_assets_do_not_expose_public_listener_or_secret_cli_fields() -> None:
     unit = (ROOT / "node-agent" / "systemd" / "madar-speed-enforcer.service").read_text(encoding="utf-8")
     speed = (ROOT / "node-agent" / "madar_agent" / "speed.py").read_text(encoding="utf-8")
