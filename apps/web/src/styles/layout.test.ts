@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 describe('mobile shell layout guard', () => {
@@ -41,11 +41,8 @@ describe('mobile shell layout guard', () => {
   });
 
   it('requires responsive premium cards instead of leaving the reference hierarchy unstyled', () => {
-    const premiumCssUrl = new URL('./premium.css', import.meta.url);
-    expect(existsSync(premiumCssUrl)).toBe(true);
-    if (!existsSync(premiumCssUrl)) return;
+    const premiumCss = readFileSync(new URL('./premium.css', import.meta.url), 'utf8');
 
-    const premiumCss = readFileSync(premiumCssUrl, 'utf8');
     expect(premiumCss).toMatch(/\.premium-catalog\s*{[\s\S]*?width:\s*min\(100%,\s*var\(--content-mobile\)\)/);
     expect(premiumCss).toMatch(/\.premium-plan-card\s*{[\s\S]*?min-width:\s*0/);
     expect(premiumCss).toMatch(/\.premium-plan-card__purchase\s*{[\s\S]*?min-width:\s*0/);
