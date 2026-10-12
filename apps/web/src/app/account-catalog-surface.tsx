@@ -123,31 +123,47 @@ export function PremiumCatalogPage({
   plans: AccountCatalogView['plans'];
 }) {
   return (
-    <div className="surface-stack">
-      <Card>
-        <PageHeader
-          eyebrow="اشتراک"
-          title="بسته‌های پرمیوم"
-          description="خرید فقط بعد از تأیید callback پرداخت سمت سرور اعمال می‌شود."
-        />
+    <div className="surface-stack premium-catalog">
+      <section className="premium-hero">
+        <div className="premium-hero__copy">
+          <p className="premium-hero__eyebrow">مدار پرمیوم</p>
+          <h1>خرید اشتراک</h1>
+          <p>اینترنت نامحدود با محدودیت زمانی؛ پلن و قیمت فقط از اطلاعات واقعی ثبت‌شده در سرور نمایش داده می‌شود.</p>
+        </div>
+        <div aria-hidden="true" className="premium-hero__orbit">
+          <span className="premium-hero__planet" />
+          <span className="premium-hero__ring premium-hero__ring--one" />
+          <span className="premium-hero__ring premium-hero__ring--two" />
+        </div>
+        <div className="premium-benefits" aria-label="ویژگی‌های اشتراک">
+          <span><strong>سرعت</strong><small>بدون محدودیت نرم‌افزاری مدار در Premium</small></span>
+          <span><strong>زمانی</strong><small>اعتبار بر اساس مدت پلن</small></span>
+        </div>
+        <h2 className="premium-hero__plans-title">بسته‌های پرمیوم</h2>
         {!paymentAvailable ? (
-          <p className="inline-notice">پرداخت هنوز فعال نیست؛ خرید واقعی در دسترس نیست.</p>
+          <p className="inline-notice premium-provider-notice">پرداخت هنوز فعال نیست؛ خرید واقعی در دسترس نیست.</p>
         ) : (
-          <p className="inline-notice">checkout واقعی هنوز به این صفحه متصل نشده؛ دکمه خرید تا تکمیل مسیر پرداخت غیرفعال می‌ماند.</p>
+          <p className="inline-notice premium-provider-notice">checkout واقعی هنوز به این صفحه متصل نشده؛ دکمه خرید تا تکمیل مسیر پرداخت غیرفعال می‌ماند.</p>
         )}
-      </Card>
+      </section>
 
       {plans.length === 0 ? (
         <Card><p className="empty-state">هیچ بسته فعال واقعی برای خرید ثبت نشده است.</p></Card>
       ) : (
-        <div className="surface-grid surface-grid--three">
+        <div className="premium-plan-list">
           {plans.map((plan) => (
-            <Card key={plan.id}>
-              <h2 className="section-title">{plan.title}</h2>
-              <p className="metric-value">{formatPrice(plan.priceMinor, plan.currency)}</p>
-              <p className="muted-copy">{faNumber.format(plan.durationDays)} روز</p>
-              <Button disabled>خرید</Button>
-            </Card>
+            <article className="premium-plan-card" key={plan.id}>
+              <div aria-hidden="true" className="premium-plan-card__icon">◇</div>
+              <div className="premium-plan-card__main">
+                <h2>{plan.title}</h2>
+                <p>{faNumber.format(plan.durationDays)} روز</p>
+                <small>مدت و مبلغ این پلن از کاتالوگ واقعی حساب خوانده شده است.</small>
+              </div>
+              <div className="premium-plan-card__purchase">
+                <strong>{formatPrice(plan.priceMinor, plan.currency)}</strong>
+                <Button disabled>خرید</Button>
+              </div>
+            </article>
           ))}
         </div>
       )}
