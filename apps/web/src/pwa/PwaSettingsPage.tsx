@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
+import type { AccountView } from '../app/surfaces';
 import { Button } from '../components/Button';
-import { Card } from '../components/Card';
-import { PageHeader } from '../components/PageHeader';
+import { SettingsRow } from '../components/SettingsRow';
+import './settings.css';
 
 type PermissionRequester = () => Promise<NotificationPermission>;
 type SubscribeAction = () => Promise<boolean>;
@@ -12,6 +13,7 @@ type BrowserInstallPromptEvent = Event & {
 };
 
 type Props = {
+  account: Pick<AccountView, 'identity' | 'entitlement'>;
   pushAvailable: boolean;
   notificationSupported?: boolean;
   requestPermission?: PermissionRequester;
@@ -20,6 +22,8 @@ type Props = {
 };
 
 type NotificationState = 'idle' | 'enabled' | 'denied' | 'failed';
+
+const faNumber = new Intl.NumberFormat('fa-IR');
 
 function defaultNotificationSupported() {
   return typeof window !== 'undefined' && 'Notification' in window && 'serviceWorker' in navigator && 'PushManager' in window;
@@ -30,7 +34,17 @@ async function defaultRequestPermission(): Promise<NotificationPermission> {
   return Notification.requestPermission();
 }
 
+function entitlementDetail(account: Props['account']) {
+  if (account.entitlement.tier === 'premium') {
+    return account.entitlement.premiumUntil
+      ? `پرمیوم تا ${account.entitlement.premiumUntil}`
+      : 'حساب پرمیوم؛ تاریخ پایان در پاسخ حساب ثبت نشده است.';
+  }
+  return `${faNumber.format(Math.floor(account.entitlement.freeSeconds / 60))} دقیقه اعتبار رایگان`;
+}
+
 export function PwaSettingsPage({
+  account,
   pushAvailable,
   notificationSupported = defaultNotificationSupported(),
   requestPermission = defaultRequestPermission,
@@ -79,53 +93,92 @@ export function PwaSettingsPage({
     }
   }
 
+  const notificationNotice = !pushAvailable
+    ? 'ارسال Web Push هنوز پیکربندی نشده است.'
+    : !notificationSupported
+      ? 'اعلان در این مرورگر پشتیبانی نمی‌شود.'
+      : !subscriptionReady
+        ? 'فعال‌سازی این دستگاه هنوز به نشست امن متصل نشده است.'
+        : notificationState === 'denied'
+          ? 'مجوز اعلان داده نشد؛ برنامه بدون اعلان قابل استفاده است.'
+          : notificationState === 'enabled'
+            ? 'اعلان‌ها برای این دستگاه فعال شد.'
+            : notificationState === 'failed'
+              ? 'فعال‌سازی اعلان کامل نشد؛ برنامه بدون اعلان قابل استفاده است.'
+              : null;
+
   return (
-    <div className="surface-stack">
-      <Card>
-        <PageHeader
-          eyebrow="نصب"
-          title="نصب مدار روی دستگاه"
-          description="نصب برنامه مستقل از اعلان‌هاست؛ ردکردن مجوز اعلان هیچ بخشی از برنامه را قفل نمی‌کند."
-        />
-        <div className="instruction-grid">
-          <section>
-            <h2 className="section-title">نصب روی iPhone</h2>
-            <p className="muted-copy">در Safari منوی Share را باز کنید و «افزودن به صفحه اصلی» را انتخاب کنید.</p>
-          </section>
-          <section>
-            <h2 className="section-title">نصب روی Android</h2>
-            {activeInstallPrompt ? (
-              <Button type="button" onClick={() => { void activeInstallPrompt(); }}>نصب برنامه</Button>
-            ) : (
-              <p className="muted-copy">اگر گزینه نصب مرورگر نمایش داده نشد، از «افزودن به صفحه اصلی» استفاده کنید.</p>
-            )}
-          </section>
+    <div className="settings-profile">
+      <section className="profile-card" aria-labelledby="profile-settings-title">
+        <div className="profile-card__top">
+          <span className="profile-card__avatar" aria-hidden="true">◎</span>
+          <div className="profile-card__identity">
+            <p className="profile-card__eyebrow">حساب مدار</p>
+            <h1 className="profile-card__title" id="profile-settings-title">پروفایل و تنظیمات</h1>
+            <span className="profile-card__email" dir="ltr">{account.identity.email}</span>
+          </div>
         </div>
-      </Card>
+        <div className="profile-entitlement">
+          <span className="profile-entitlement__badge">
+            {account.entitlement.tier === 'premium' ? 'حساب پرمیوم' : 'حساب رایگان'}
+          </span>
+          <p className="profile-entitlement__detail">{entitlementDetail(account)}</p>
+        </div>
+      </section>
 
-      <Card>
-        <PageHeader
-          eyebrow="اعلان‌ها"
-          title="اطلاع‌رسانی"
-          description="مرورگر فقط پس از فشردن دکمه زیر مجوز اعلان را درخواست می‌کند."
-        />
-        <Button
-          type="button"
-          disabled={!pushAvailable || !notificationSupported || !subscriptionReady || busy}
-          onClick={() => { void enableNotifications(); }}
+      <div className="settings-group" aria-label="تنظیمات دستگاه">
+        <p className="settings-group__title">روی این دستگاه</p>
+        <SettingsRow
+          icon="↓"
+          title="نصب مدار"
+          description="نصب برنامه مستقل از اعلان‌هاست؛ ردکردن مجوز اعلان هیچ بخشی از برنامه را قفل نمی‌کند."
         >
-          {busy ? 'در حال فعال‌سازی…' : 'فعال‌کردن اعلان'}
-        </Button>
+          <div className="instruction-grid">
+            <section>
+              <h3 className="section-title">نصب روی iPhone</h3>
+              <p className="muted-copy">در Safari منوی Share را باز کنید و «افزودن به صفحه اصلی» را انتخاب کنید.</p>
+            </section>
+            <section>
+              <h3 className="section-title">نصب روی Android</h3>
+              {activeInstallPrompt ? (
+                <Button type="button" onClick={() => { void activeInstallPrompt(); }}>نصب برنامه</Button>
+              ) : (
+                <p className="muted-copy">اگر گزینه نصب مرورگر نمایش داده نشد، از «افزودن به صفحه اصلی» استفاده کنید.</p>
+              )}
+            </section>
+          </div>
+        </SettingsRow>
 
-        {!pushAvailable ? <p className="inline-notice">ارسال Web Push هنوز پیکربندی نشده است.</p> : null}
-        {pushAvailable && !notificationSupported ? <p className="inline-notice">اعلان در این مرورگر پشتیبانی نمی‌شود.</p> : null}
-        {pushAvailable && notificationSupported && !subscriptionReady ? (
-          <p className="inline-notice">فعال‌سازی این دستگاه هنوز به نشست امن متصل نشده است.</p>
-        ) : null}
-        {notificationState === 'denied' ? <p className="inline-notice">مجوز اعلان داده نشد؛ برنامه بدون اعلان قابل استفاده است.</p> : null}
-        {notificationState === 'enabled' ? <p className="inline-notice" role="status">اعلان‌ها برای این دستگاه فعال شد.</p> : null}
-        {notificationState === 'failed' ? <p className="inline-notice">فعال‌سازی اعلان کامل نشد؛ برنامه بدون اعلان قابل استفاده است.</p> : null}
-      </Card>
+        <SettingsRow
+          icon="◉"
+          title="اعلان‌ها"
+          description="مرورگر فقط پس از فشردن دکمه، مجوز اعلان را درخواست می‌کند."
+          action={(
+            <Button
+              type="button"
+              disabled={!pushAvailable || !notificationSupported || !subscriptionReady || busy}
+              onClick={() => { void enableNotifications(); }}
+            >
+              {busy ? 'در حال فعال‌سازی…' : 'فعال‌کردن اعلان'}
+            </Button>
+          )}
+        >
+          {notificationNotice ? (
+            <p className="inline-notice" role={notificationState === 'enabled' ? 'status' : undefined}>
+              {notificationNotice}
+            </p>
+          ) : null}
+        </SettingsRow>
+      </div>
+
+      <div className="settings-group" aria-label="امنیت و حریم خصوصی">
+        <p className="settings-group__title">امنیت</p>
+        <SettingsRow
+          icon="◇"
+          title="حریم خصوصی حساب"
+          description="اطلاعات این صفحه فقط از وضعیت حساب احراز هویت‌شده خوانده می‌شود؛ داده نمونه یا اطلاعات دستگاه ساختگی نمایش داده نمی‌شود."
+        />
+      </div>
     </div>
   );
 }
