@@ -17,7 +17,7 @@ type Props = {
   pushAvailable: boolean;
   notificationSupported?: boolean;
   requestPermission?: PermissionRequester;
-  subscribe?: SubscribeAction;
+  subscribe?: SubscribeAction | undefined;
   installPrompt?: InstallPrompt;
 };
 
