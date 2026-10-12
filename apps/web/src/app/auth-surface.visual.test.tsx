@@ -6,7 +6,7 @@ afterEach(() => cleanup());
 
 describe('neon login surface', () => {
   it('renders the approved Madar identity and secure magic-link structure without a fake guest action', () => {
-    render(<InteractiveLoginPage emailAvailable requestLogin={vi.fn(async () => 'sent')} />);
+    render(<InteractiveLoginPage emailAvailable requestLogin={vi.fn(async () => 'sent' as const)} />);
 
     expect(screen.getByText('مدار')).toBeInTheDocument();
     expect(screen.getByText('اتصال آزادتر، زندگی بزرگ‌تر')).toBeInTheDocument();
