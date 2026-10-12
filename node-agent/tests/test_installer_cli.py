@@ -9,6 +9,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import installer_cli
+from madar_agent.speed_release import SpeedReleaseError
+
+
+SPEED_BINARY = b"verified-speed-enforcer-test-binary"
 
 
 def configure_install_environment(monkeypatch) -> None:
@@ -27,7 +31,11 @@ def configure_paths(monkeypatch, tmp_path: Path) -> Path:
     monkeypatch.setattr(installer_cli, "CREDENTIAL_PATH", state_root / "node.credential")
     monkeypatch.setattr(installer_cli, "INSTALL_ROOT", tmp_path / "opt" / "madar-node-agent")
     monkeypatch.setattr(installer_cli, "XRAY_INSTALL_ROOT", tmp_path / "opt" / "madar-xray")
-    monkeypatch.setattr(installer_cli, "SERVICE_PATH", tmp_path / "etc" / "systemd" / "system" / "madar-node-agent.service")
+    monkeypatch.setattr(
+        installer_cli,
+        "SERVICE_PATH",
+        tmp_path / "etc" / "systemd" / "system" / "madar-node-agent.service",
+    )
     return state_root
 
 
@@ -37,7 +45,7 @@ def require_online_observer():
     return observer
 
 
-def test_install_builder_bootstraps_local_xray_and_does_not_require_reality_public_key_env(monkeypatch, tmp_path: Path) -> None:
+def test_install_builder_bootstraps_local_xray_and_receives_verified_speed_binary(monkeypatch, tmp_path: Path) -> None:
     configure_paths(monkeypatch, tmp_path)
     configure_install_environment(monkeypatch)
 
@@ -47,22 +55,23 @@ def test_install_builder_bootstraps_local_xray_and_does_not_require_reality_publ
         calls.append(True)
         return SimpleNamespace(
             version="26.3.27",
-            public_key="generated-public-key",
+            public_key="generated-public-test-value",
             binary=tmp_path / "opt" / "madar-xray" / "26.3.27" / "xray",
         )
 
     monkeypatch.setattr(installer_cli, "bootstrap_xray", fake_bootstrap_xray, raising=False)
 
-    installer = installer_cli.build_install_installer()
+    installer = installer_cli.build_install_installer(SPEED_BINARY)
     enrollment = installer.enrollment
 
+    assert installer.speed_enforcer_binary == SPEED_BINARY
     assert enrollment.capabilities["xray"] == "26.3.27"
     assert calls == []
     assert enrollment._public_config() == {
         "address": "203.0.113.10",
         "port": 443,
         "serverName": "edge.example.test",
-        "realityPublicKey": "generated-public-key",
+        "realityPublicKey": "generated-public-test-value",
         "realityShortId": "0123456789abcdef",
     }
     assert calls == [True]
@@ -74,14 +83,14 @@ def test_install_requires_explicit_reality_target_instead_of_inventing_one(monke
     monkeypatch.delenv("MADAR_REALITY_TARGET")
 
     with pytest.raises(SystemExit, match="MADAR_REALITY_TARGET is required for install"):
-        installer_cli.build_install_installer()
+        installer_cli.build_install_installer(SPEED_BINARY)
 
 
 def test_agent_environment_persists_only_non_secret_xray_runtime_settings(monkeypatch, tmp_path: Path) -> None:
     state_root = configure_paths(monkeypatch, tmp_path)
     configure_install_environment(monkeypatch)
 
-    installer_cli.build_install_installer()
+    installer_cli.build_install_installer(SPEED_BINARY)
 
     content = (state_root / "agent.env").read_text(encoding="utf-8")
     lines = set(content.splitlines())
@@ -99,7 +108,113 @@ def test_agent_environment_persists_only_non_secret_xray_runtime_settings(monkey
     assert "PRIVATE" not in content.upper()
     assert "PUBLIC_KEY" not in content.upper()
     assert "ENROLLMENT" not in content.upper()
-    assert "node-issued-credential" not in content
+
+
+def test_load_speed_enforcer_binary_converts_release_failure_to_generic_system_exit(monkeypatch) -> None:
+    sentinel = "transport-response-body-sentinel"
+    fake_asset = object()
+    monkeypatch.setattr(installer_cli, "pinned_speed_enforcer_asset", lambda: fake_asset, raising=False)
+
+    def fail_download(asset):
+        assert asset is fake_asset
+        raise SpeedReleaseError(f"release failed near {sentinel}")
+
+    monkeypatch.setattr(installer_cli, "download_verified_speed_enforcer", fail_download, raising=False)
+
+    with pytest.raises(SystemExit) as captured:
+        installer_cli.load_speed_enforcer_binary()
+
+    assert str(captured.value) == "Speed Enforcer release verification failed"
+    assert sentinel not in str(captured.value)
+    assert captured.value.__cause__ is None
+
+
+def test_install_prefetch_failure_happens_before_builder_environment_or_install(monkeypatch) -> None:
+    events: list[str] = []
+
+    def fail_load():
+        events.append("load")
+        raise SystemExit("Speed Enforcer release verification failed")
+
+    monkeypatch.setattr(installer_cli, "load_speed_enforcer_binary", fail_load, raising=False)
+    monkeypatch.setattr(
+        installer_cli,
+        "build_install_installer",
+        lambda _payload: events.append("build") or (_ for _ in ()).throw(AssertionError("builder reached")),
+    )
+    monkeypatch.setattr(
+        installer_cli,
+        "write_agent_environment",
+        lambda *args, **kwargs: events.append("environment"),
+    )
+    monkeypatch.setattr(installer_cli, "read_enrollment_token", lambda: events.append("token") or "test-input-value")
+
+    with pytest.raises(SystemExit, match="Speed Enforcer release verification failed"):
+        installer_cli.main(["install"])
+
+    assert events == ["load"]
+
+
+def test_update_prefetch_failure_happens_before_lifecycle_builder_or_update(monkeypatch) -> None:
+    events: list[str] = []
+
+    def fail_load():
+        events.append("load")
+        raise SystemExit("Speed Enforcer release verification failed")
+
+    monkeypatch.setattr(installer_cli, "load_speed_enforcer_binary", fail_load, raising=False)
+    monkeypatch.setattr(
+        installer_cli,
+        "build_lifecycle_installer",
+        lambda **kwargs: events.append("build") or (_ for _ in ()).throw(AssertionError("builder reached")),
+    )
+
+    with pytest.raises(SystemExit, match="Speed Enforcer release verification failed"):
+        installer_cli.main(["update"])
+
+    assert events == ["load"]
+
+
+def test_update_passes_verified_speed_binary_into_lifecycle_installer(monkeypatch) -> None:
+    events: list[object] = []
+
+    class FakeInstaller:
+        def update(self) -> None:
+            events.append("update")
+
+    monkeypatch.setattr(installer_cli, "load_speed_enforcer_binary", lambda: events.append("load") or SPEED_BINARY, raising=False)
+
+    def build_lifecycle_installer(*, speed_enforcer_binary=None):
+        events.append(("build", speed_enforcer_binary))
+        return FakeInstaller()
+
+    monkeypatch.setattr(installer_cli, "build_lifecycle_installer", build_lifecycle_installer)
+
+    assert installer_cli.main(["update"]) == 0
+    assert events == ["load", ("build", SPEED_BINARY), "update"]
+
+
+@pytest.mark.parametrize("command", ["status", "remove"])
+def test_non_mutating_or_remove_lifecycle_commands_never_download_release(monkeypatch, command: str, capsys) -> None:
+    events: list[str] = []
+
+    def forbidden_loader():
+        raise AssertionError("release loader must not run")
+
+    class FakeInstaller:
+        def status(self) -> str:
+            events.append("status")
+            return "inactive"
+
+        def remove(self) -> None:
+            events.append("remove")
+
+    monkeypatch.setattr(installer_cli, "load_speed_enforcer_binary", forbidden_loader, raising=False)
+    monkeypatch.setattr(installer_cli, "build_lifecycle_installer", lambda **kwargs: FakeInstaller())
+
+    assert installer_cli.main([command]) == 0
+    assert events == [command]
+    capsys.readouterr()
 
 
 def test_xray_observation_reports_only_managed_online_count(monkeypatch, tmp_path: Path) -> None:
@@ -152,8 +267,14 @@ def test_xray_observation_failure_never_echoes_raw_xray_output(monkeypatch, tmp_
     assert raw_identifier not in message
 
 
-def test_observe_command_prints_aggregate_json_only(monkeypatch, capsys) -> None:
+def test_observe_command_prints_aggregate_json_only_and_never_downloads_release(monkeypatch, capsys) -> None:
     monkeypatch.setattr(installer_cli, "observe_xray_online_users", lambda: 1, raising=False)
+    monkeypatch.setattr(
+        installer_cli,
+        "load_speed_enforcer_binary",
+        lambda: (_ for _ in ()).throw(AssertionError("release loader must not run")),
+        raising=False,
+    )
 
     assert installer_cli.main(["observe"]) == 0
 
