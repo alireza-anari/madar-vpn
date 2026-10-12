@@ -1,6 +1,8 @@
-import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { InteractiveLoginPage } from './auth-surface';
+
+afterEach(() => cleanup());
 
 describe('neon login surface', () => {
   it('renders the approved Madar identity and secure magic-link structure without a fake guest action', () => {
@@ -19,16 +21,20 @@ describe('neon login surface', () => {
     expect(email).toHaveAttribute('placeholder', 'name@example.com');
   });
 
-  it('preserves real submit and unavailable status semantics', async () => {
+  it('preserves the real sent status semantics after submit', async () => {
     const requestLogin = vi.fn(async () => 'sent' as const);
-    const { rerender } = render(<InteractiveLoginPage emailAvailable requestLogin={requestLogin} />);
+    render(<InteractiveLoginPage emailAvailable requestLogin={requestLogin} />);
 
     const email = screen.getByRole('textbox', { name: /ایمیل/ });
     fireEvent.change(email, { target: { value: 'user@example.com' } });
     fireEvent.click(screen.getByRole('button', { name: /ارسال لینک ورود/ }));
-    expect(await screen.findByRole('status')).toHaveTextContent('لینک ورود ارسال شد');
 
-    rerender(<InteractiveLoginPage emailAvailable={false} />);
+    expect(await screen.findByRole('status')).toHaveTextContent('لینک ورود ارسال شد');
+  });
+
+  it('preserves the real unavailable status semantics', () => {
+    render(<InteractiveLoginPage emailAvailable={false} />);
+
     expect(screen.getByRole('button', { name: /ارسال لینک ورود/ })).toBeDisabled();
     expect(screen.getByRole('status')).toHaveTextContent('سرویس ایمیل هنوز متصل نشده');
   });
