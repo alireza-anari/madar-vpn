@@ -10,6 +10,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from madar_agent.installer import HttpEnrollmentClient, InstallPaths, NodeInstaller
+from madar_agent.speed_release import (
+    SpeedReleaseError,
+    download_verified_speed_enforcer,
+    pinned_speed_enforcer_asset,
+)
 from madar_agent.xray import PinnedXrayAdapter, XRAY_STABLE_VERSION, stable_runtime_config
 
 
@@ -115,6 +120,14 @@ def _run_process(arguments: list[str]) -> subprocess.CompletedProcess[str]:
     )
 
 
+def load_speed_enforcer_binary() -> bytes:
+    try:
+        asset = pinned_speed_enforcer_asset()
+        return download_verified_speed_enforcer(asset)
+    except SpeedReleaseError:
+        raise SystemExit("Speed Enforcer release verification failed") from None
+
+
 def observe_xray_online_users() -> int:
     binary = XRAY_INSTALL_ROOT / XRAY_STABLE_VERSION / "xray"
     result = _run_process(
@@ -161,7 +174,7 @@ def bootstrap_xray() -> XrayBootstrapResult:
     )
 
 
-def build_install_installer() -> NodeInstaller:
+def build_install_installer(speed_enforcer_binary: bytes) -> NodeInstaller:
     api_base_url = required("MADAR_API_BASE_URL").rstrip("/")
     try:
         port = int(required("MADAR_NODE_PORT"))
@@ -195,11 +208,19 @@ def build_install_installer() -> NodeInstaller:
         reality_target=reality_target,
         short_id=short_id,
     )
-    return NodeInstaller(install_paths(), enrollment=enrollment)
+    return NodeInstaller(
+        install_paths(),
+        enrollment=enrollment,
+        speed_enforcer_binary=speed_enforcer_binary,
+    )
 
 
-def build_lifecycle_installer() -> NodeInstaller:
-    return NodeInstaller(install_paths(), enrollment=UnusedEnrollment())
+def build_lifecycle_installer(*, speed_enforcer_binary: bytes | None = None) -> NodeInstaller:
+    return NodeInstaller(
+        install_paths(),
+        enrollment=UnusedEnrollment(),
+        speed_enforcer_binary=speed_enforcer_binary,
+    )
 
 
 def read_enrollment_token() -> str:
@@ -217,18 +238,21 @@ def main(argv: list[str] | None = None) -> int:
     arguments = sys.argv[1:] if argv is None else argv
     command = arguments[0] if arguments else "install"
     if command == "install":
-        build_install_installer().install(read_enrollment_token())
+        speed_enforcer_binary = load_speed_enforcer_binary()
+        build_install_installer(speed_enforcer_binary).install(read_enrollment_token())
         return 0
     if command == "observe":
         print(json.dumps({"onlineUsers": observe_xray_online_users()}, separators=(",", ":")))
         return 0
 
+    if command == "update":
+        speed_enforcer_binary = load_speed_enforcer_binary()
+        build_lifecycle_installer(speed_enforcer_binary=speed_enforcer_binary).update()
+        return 0
+
     installer = build_lifecycle_installer()
     if command == "status":
         print(installer.status())
-        return 0
-    if command == "update":
-        installer.update()
         return 0
     if command == "remove":
         installer.remove()
