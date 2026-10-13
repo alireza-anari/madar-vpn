@@ -4,6 +4,7 @@ import {
   popcount60,
   type TelemetrySettlement,
 } from '../usage';
+import { parsePublicationRequest, type PolicyPublisher } from './policy';
 
 export type NodeStatus = 'enrolled' | 'ready' | 'offline' | 'error';
 
@@ -393,6 +394,7 @@ function validateTelemetry(nodeId: string, input: unknown): TelemetryReport {
 
 export function createNodeControlService(options: {
   store: NodeControlStore;
+  policyPublisher?: PolicyPublisher;
   telemetrySettlement?: TelemetrySettlement;
   now?: () => Date;
   randomId?: () => string;
@@ -407,6 +409,13 @@ export function createNodeControlService(options: {
   const staleAfterMs = options.staleAfterMs ?? 120_000;
 
   return {
+    async publishNodePolicy(actorId: string, nodeId: string, input: unknown) {
+      validateId(actorId, 'ADMIN_INVALID');
+      validateId(nodeId, 'NODE_INVALID');
+      const request = parsePublicationRequest(input);
+      if (!options.policyPublisher) throw new NodeControlError(503, 'NODE_POLICY_PUBLICATION_UNAVAILABLE', 'Policy publication is unavailable.');
+      return options.policyPublisher.publish(actorId, nodeId, request, now());
+    },
     async createEnrollmentToken(adminId: string, nodeDraft: unknown, issuedAt: Date) {
       validateId(adminId, 'ADMIN_INVALID');
       const candidate = objectInput(nodeDraft, 'NODE_INVALID');

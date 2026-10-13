@@ -229,6 +229,15 @@ export function createApiApp(
     return c.json(await auth.requireAdmin(c.req.raw));
   });
 
+  app.post('/api/admin/nodes/:id/policy', async (c) => {
+    c.header('Cache-Control', 'no-store');
+    const auth = authFactory(c.env); const nodes = nodeFactory(c.env);
+    if (!auth || !nodes) return unavailable(c, 'NODE_CONTROL_UNAVAILABLE');
+    const actor = await requireAdminMutation(auth, c.req.raw);
+    const body = await c.req.json<unknown>().catch(() => null);
+    return c.json(await nodes.publishNodePolicy(actor.id, c.req.param('id'), body), 201);
+  });
+
   app.post('/api/admin/nodes/enrollment-token', async (c) => {
     const auth = authFactory(c.env); const nodes = nodeFactory(c.env);
     if (!auth || !nodes) return unavailable(c, 'NODE_CONTROL_UNAVAILABLE');
