@@ -12,6 +12,7 @@ beforeAll(async () => { await client.connect(); });
 afterAll(async () => { await client.end(); });
 beforeEach(async () => {
   await client.query('TRUNCATE users, nodes CASCADE');
+  await client.query('UPDATE app_settings SET free_speed_kbps=5000 WHERE id=1');
   await client.query(`INSERT INTO users(id,email,role,verified_at) VALUES ('admin-pub','admin-pub@example.test','admin',$1),('free-pub','free-pub@example.test','user',$1),('premium-pub','premium-pub@example.test','user',$1)`, [now]);
   await client.query(`INSERT INTO nodes(id,name,status,created_at) VALUES ('node-pub','Publication test','enrolled',$1)`, [now]);
   await client.query(`INSERT INTO node_credentials(id,node_id,credential_hash,created_at) VALUES ('cred-pub','node-pub','test-hash-only',$1)`, [now]);
@@ -51,6 +52,16 @@ describe('real PostgreSQL policy publication', () => {
       const results=await Promise.all([new PostgresPolicyPublisher(db).publish('admin-pub','node-pub',{mode:'empty',ttlSeconds:60},now),new PostgresPolicyPublisher(new PgDatabase(other)).publish('admin-pub','node-pub',{mode:'empty',ttlSeconds:60},now)]);
       expect(results.map(r=>r.revision).sort()).toEqual([1,2]);
     } finally { await other.end(); }
+  });
+  it('withholds previous user ACKs on publication and rejects a late ACK of the superseded revision', async () => {
+    const publisher=new PostgresPolicyPublisher(db);const store=new PostgresNodeControlStore(db);
+    await publisher.publish('admin-pub','node-pub',{mode:'current',ttlSeconds:7200},now);
+    const oldPolicy=(await store.getPolicy('node-pub'))!;
+    await store.acknowledgePolicy('node-pub',1,now.toISOString(),oldPolicy.clients);
+    await publisher.publish('admin-pub','node-pub',{mode:'empty',ttlSeconds:7200},now);
+    expect((await client.query('SELECT count(*)::int AS n FROM node_policy_acks')).rows[0].n).toBe(0);
+    await expect(store.acknowledgePolicy('node-pub',1,now.toISOString(),oldPolicy.clients)).rejects.toThrow();
+    expect((await client.query('SELECT count(*)::int AS n FROM node_policy_acks')).rows[0].n).toBe(0);
   });
   it('rejects retired nodes and rolls back publication when audit storage fails', async () => {
     await client.query(`UPDATE node_credentials SET revoked_at=$1`,[now]);

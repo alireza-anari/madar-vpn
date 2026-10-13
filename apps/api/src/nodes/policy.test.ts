@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compilePolicyClients, parsePublicationRequest } from './policy';
+import { compilePolicyClients, parsePublicationRequest, policyValidUntil } from './policy';
 
 const now = new Date('2026-10-13T18:00:00Z');
 const candidate = { userId: 'user-a', clientId: 'test-client-a', policyRevision: 3, suspended: false, revoked: false, verified: true, freeSeconds: 100, premiumUntil: null as string | null };
@@ -25,5 +25,10 @@ describe('authoritative node policy compilation', () => {
     expect(() => parsePublicationRequest({ mode: 'arbitrary', ttlSeconds: 60 })).toThrow();
     expect(() => compilePolicyClients([candidate], 0, now)).toThrow();
     expect(parsePublicationRequest({ mode: 'empty', ttlSeconds: 7200 })).toEqual({ mode: 'empty', ttlSeconds: 7200 });
+  });
+  it('does not authorize beyond Premium expiry or the Free accounting-day boundary', () => {
+    expect(policyValidUntil([candidate], 7200, new Date('2026-10-13T20:00:00Z'))).toBe('2026-10-13T20:30:00.000Z');
+    expect(policyValidUntil([{ ...candidate, premiumUntil: '2026-10-13T18:10:00Z' }], 7200, now)).toBe('2026-10-13T18:10:00.000Z');
+    expect(policyValidUntil([], 7200, now)).toBe('2026-10-13T20:00:00.000Z');
   });
 });

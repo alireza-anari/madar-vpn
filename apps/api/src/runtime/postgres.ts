@@ -11,6 +11,7 @@ import { createMissionService } from '../missions';
 import { PostgresMissionStore } from '../missions/postgres';
 import { createNodeControlService } from '../nodes';
 import { PostgresNodeControlStore } from '../nodes/postgres';
+import { PostgresPolicyPublisher } from '../nodes/policy-postgres';
 import { createPaymentService } from '../payments';
 import { PostgresPaymentStore } from '../payments/postgres';
 import { connectPostgres, type PgClientFactory } from '../postgres/client';
@@ -126,6 +127,7 @@ export async function createPostgresRequestRuntime(
     }),
     nodes: createNodeControlService({
       store: new PostgresNodeControlStore(database),
+      policyPublisher: new PostgresPolicyPublisher(database),
       telemetrySettlement: new PostgresUsageSettlementStore(database),
     }),
     adminAudit: createAdminAuditService({ store: surfaceStore }),

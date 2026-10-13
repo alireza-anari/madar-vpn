@@ -1,4 +1,5 @@
 import { NodeControlError, type NodePolicyClient } from './index';
+import { tehranDateKey } from '../credits';
 
 export type PolicyCandidate = {
   userId: string; clientId: string; policyRevision: number;
@@ -31,4 +32,18 @@ export function compilePolicyClients(candidates: PolicyCandidate[], freeSpeedKbp
     return [{ userId: candidate.userId, clientId: candidate.clientId, policyRevision: candidate.policyRevision,
       tier: premium ? 'premium' as const : 'free' as const, speedKbps: premium ? null : freeSpeedKbps }];
   });
+}
+
+export function policyValidUntil(candidates: PolicyCandidate[], ttlSeconds: number, now: Date): string {
+  let deadline = now.getTime() + ttlSeconds * 1000;
+  for (const candidate of candidates) {
+    if (candidate.suspended || candidate.revoked || !candidate.verified) continue;
+    const premiumExpiry = candidate.premiumUntil === null ? NaN : new Date(candidate.premiumUntil).getTime();
+    if (premiumExpiry > now.getTime()) deadline = Math.min(deadline, premiumExpiry);
+    else if (candidate.freeSeconds > 0) {
+      // Tehran accounting days in this contract use UTC+03:30.
+      deadline = Math.min(deadline, new Date(`${tehranDateKey(now)}T20:30:00.000Z`).getTime());
+    }
+  }
+  return new Date(deadline).toISOString();
 }
