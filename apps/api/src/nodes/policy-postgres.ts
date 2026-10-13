@@ -48,6 +48,7 @@ export class PostgresPolicyPublisher implements PolicyPublisher {
       const revision = latest.rows[0]!.revision + 1;
       await transaction.query(`INSERT INTO node_policy_revisions(node_id,revision,valid_until,policy_json,created_at)
         VALUES($1,$2,$3::timestamptz,$4::jsonb,$5::timestamptz)`, [nodeId, revision, validUntil, JSON.stringify({ clients }), now.toISOString()]);
+      await transaction.query('DELETE FROM node_policy_acks WHERE node_id=$1', [nodeId]);
       const metadata = { nodeId, revision, mode: request.mode, clientCount: clients.length, validUntil };
       // Audit and policy commit together; audit failure rolls back the policy.
       await transaction.query(`INSERT INTO audit_log(id,actor_user_id,action,details_json,created_at)

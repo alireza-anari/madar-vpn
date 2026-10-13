@@ -1,4 +1,5 @@
 import type { PgDatabase } from '../postgres/client';
+import { NodeControlError } from './index';
 import type {
   NodeCapacity,
   NodeControlStore,
@@ -285,6 +286,16 @@ export class PostgresNodeControlStore implements NodeControlStore {
 
   async acknowledgePolicy(nodeId: string, revision: number, ackedAt: string, clients: NodePolicyClient[]) {
     await this.db.transaction(async (transaction) => {
+      // Publication takes this same lock. Recheck after locking so a late ACK
+      // cannot repopulate eligibility for a superseded or expired policy.
+      await transaction.query('SELECT id FROM nodes WHERE id=$1 FOR UPDATE', [nodeId]);
+      const current = await transaction.query<{ revision: number }>(
+        `SELECT revision FROM node_policy_revisions WHERE node_id=$1
+         AND revision=(SELECT MAX(revision) FROM node_policy_revisions WHERE node_id=$1)
+         AND revision=$2 AND valid_until>$3::timestamptz`,
+        [nodeId, revision, ackedAt],
+      );
+      if (!current.rows.length) throw new NodeControlError(409, 'NODE_POLICY_STALE', 'Policy revision is no longer current.');
       await transaction.query(
         `UPDATE node_policy_revisions
          SET acked_at = $3::timestamptz
