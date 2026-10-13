@@ -25,6 +25,11 @@ export class PostgresPolicyPublisher implements PolicyPublisher {
       if (!settings.rows.length) throw new NodeControlError(503, 'NODE_POLICY_SETTINGS_UNAVAILABLE', 'Policy settings are unavailable.');
       let candidates: PolicyCandidate[] = [];
       if (request.mode === 'current') {
+        // Settlement locks users before debiting credit. Acquire those locks
+        // first, then use a new READ COMMITTED statement snapshot for balances.
+        await transaction.query(`SELECT u.id FROM users u
+          WHERE EXISTS(SELECT 1 FROM client_credentials c WHERE c.user_id=u.id AND c.revoked_at IS NULL)
+          ORDER BY u.id FOR SHARE OF u`);
         const rows = await transaction.query<CandidateRow>(`
           SELECT u.id AS user_id, c.uuid, p.policy_revision, u.suspended_at, u.verified_at,
             m.premium_until,

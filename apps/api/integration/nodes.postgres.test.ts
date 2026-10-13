@@ -197,6 +197,7 @@ describe('PostgresNodeControlStore integration', () => {
 
   it('loads revisioned policy and persists node plus per-user acknowledgements', async () => {
     await store.saveNode(node);
+    const validUntil = new Date(Date.now()+3600000).toISOString();
     const clients: NodePolicyClient[] = [
       { userId: 'user-1', policyRevision: 7, clientId: 'client-1', tier: 'free', speedKbps: 5000 },
       { userId: 'user-2', policyRevision: 2, clientId: 'client-2', tier: 'premium', speedKbps: null },
@@ -207,7 +208,7 @@ describe('PostgresNodeControlStore integration', () => {
        ) VALUES ($1, 3, $2::timestamptz, $3::jsonb, $4::timestamptz, NULL)`,
       [
         'node-1',
-        '2026-10-09T06:15:00.000Z',
+        validUntil,
         JSON.stringify({ clients }),
         '2026-10-09T06:00:00.000Z',
       ],
@@ -216,7 +217,7 @@ describe('PostgresNodeControlStore integration', () => {
     await expect(store.getPolicy('node-1')).resolves.toEqual({
       nodeId: 'node-1',
       revision: 3,
-      validUntil: '2026-10-09T06:15:00.000Z',
+      validUntil: validUntil,
       clients,
     });
 

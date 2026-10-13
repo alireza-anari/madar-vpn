@@ -144,6 +144,7 @@ describe('PostgresAccessStore integration', () => {
          'node-ready', 'vpn.example.com', 443, 'cdn.example.com', 'public-key', 'a1b2c3d4', '2026-10-09T00:05:00.000Z'
        )`,
     );
+    await client.query(`INSERT INTO node_policy_revisions(node_id,revision,valid_until,policy_json,created_at,acked_at) SELECT id,1,clock_timestamp()+interval '1 hour','{"clients":[]}'::jsonb,clock_timestamp(),clock_timestamp() FROM nodes`);
     await client.query(
       `INSERT INTO node_policy_acks (node_id, user_id, revision, acked_at)
        VALUES ('node-ready', 'user-1', 1, '2026-10-09T00:05:00.000Z')`,
@@ -201,6 +202,7 @@ describe('PostgresSubscriptionNodeStore integration', () => {
          'node-ready', 'vpn.example.com', 443, 'cdn.example.com', 'public-key', 'a1b2c3d4', '2026-10-09T00:05:00.000Z'
        )`,
     );
+    await client.query(`INSERT INTO node_policy_revisions(node_id,revision,valid_until,policy_json,created_at,acked_at) SELECT id,1,clock_timestamp()+interval '1 hour','{"clients":[]}'::jsonb,clock_timestamp(),clock_timestamp() FROM nodes`);
     await client.query(
       `INSERT INTO node_policy_acks (node_id, user_id, revision, acked_at)
        VALUES ('node-ready', 'user-1', 7, '2026-10-09T00:05:00.000Z')`,

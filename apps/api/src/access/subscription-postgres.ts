@@ -31,7 +31,8 @@ export class PostgresSubscriptionNodeStore implements SubscriptionNodeStore {
          n.name,
          n.status,
          n.last_seen_at,
-         a.revision AS acked_revision,
+         CASE WHEN latest.valid_until>clock_timestamp() AND latest.acked_at IS NOT NULL
+           THEN a.revision ELSE NULL END AS acked_revision,
          p.address,
          p.port,
          p.server_name,
@@ -40,6 +41,10 @@ export class PostgresSubscriptionNodeStore implements SubscriptionNodeStore {
        FROM nodes n
        LEFT JOIN node_public_configs p ON p.node_id = n.id
        LEFT JOIN node_policy_acks a ON a.node_id = n.id AND a.user_id = $1
+       LEFT JOIN LATERAL (
+         SELECT valid_until, acked_at FROM node_policy_revisions
+         WHERE node_id=n.id ORDER BY revision DESC LIMIT 1
+       ) latest ON true
        ORDER BY n.created_at ASC, n.id ASC`,
       [userId],
     );

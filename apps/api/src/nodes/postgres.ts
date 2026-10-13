@@ -292,7 +292,7 @@ export class PostgresNodeControlStore implements NodeControlStore {
       const current = await transaction.query<{ revision: number }>(
         `SELECT revision FROM node_policy_revisions WHERE node_id=$1
          AND revision=(SELECT MAX(revision) FROM node_policy_revisions WHERE node_id=$1)
-         AND revision=$2 AND valid_until>$3::timestamptz`,
+         AND revision=$2 AND valid_until>$3::timestamptz AND valid_until>clock_timestamp()`,
         [nodeId, revision, ackedAt],
       );
       if (!current.rows.length) throw new NodeControlError(409, 'NODE_POLICY_STALE', 'Policy revision is no longer current.');

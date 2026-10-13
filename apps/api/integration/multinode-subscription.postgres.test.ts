@@ -114,6 +114,7 @@ beforeEach(async () => {
     { accepting: true, activeClients: 0, maxClients: 10 },
   );
 
+  await client.query(`INSERT INTO node_policy_revisions(node_id,revision,valid_until,policy_json,created_at,acked_at) SELECT id,1,clock_timestamp()+interval '1 hour','{"clients":[]}'::jsonb,clock_timestamp(),clock_timestamp() FROM nodes`);
   await client.query(
     `INSERT INTO node_policy_acks (node_id, user_id, revision, acked_at)
      VALUES

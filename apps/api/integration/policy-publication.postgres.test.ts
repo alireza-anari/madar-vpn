@@ -3,15 +3,17 @@ import { Client } from 'pg';
 import { PgDatabase } from '../src/postgres/client';
 import { PostgresPolicyPublisher } from '../src/nodes/policy-postgres';
 import { PostgresNodeControlStore } from '../src/nodes/postgres';
+import { tehranDateKey } from '../src/credits';
 import { PostgresSubscriptionNodeStore } from '../src/access/subscription-postgres';
 const connectionString = process.env.TEST_DATABASE_URL;
 if (!connectionString) throw new Error('TEST_DATABASE_URL is required.');
 const client = new Client({ connectionString });
 const db = new PgDatabase(client);
-const now = new Date('2026-10-13T18:00:00Z');
+let now = new Date();
 beforeAll(async () => { await client.connect(); });
 afterAll(async () => { await client.end(); });
 beforeEach(async () => {
+  now=new Date();
   await client.query('TRUNCATE users, nodes CASCADE');
   await client.query('UPDATE app_settings SET free_speed_kbps=5000 WHERE id=1');
   await client.query(`INSERT INTO users(id,email,role,verified_at) VALUES ('admin-pub','admin-pub@example.test','admin',$1),('free-pub','free-pub@example.test','user',$1),('premium-pub','premium-pub@example.test','user',$1)`, [now]);
@@ -21,14 +23,16 @@ beforeEach(async () => {
     await client.query(`INSERT INTO access_profiles(id,user_id,policy_revision,created_at) VALUES ($1,$1,4,$2)`, [label, now]);
     await client.query(`INSERT INTO client_credentials(id,user_id,uuid,version,created_at) VALUES ($1,$1,$2,1,$3)`, [label, `fixture-${label}`, now]);
   }
-  await client.query(`INSERT INTO credit_ledger(unique_key,user_id,kind,free_day,delta_seconds,occurred_at) VALUES ('grant-pub','free-pub','initial','2026-10-13',1800,$1)`, [now]);
-  await client.query(`INSERT INTO memberships(user_id,premium_until) VALUES ('premium-pub','2026-10-13T19:00:00Z')`);
+  await client.query(`INSERT INTO credit_ledger(unique_key,user_id,kind,free_day,delta_seconds,occurred_at) VALUES ('grant-pub','free-pub','initial',$2::date,1800,$1)`, [now,tehranDateKey(now)]);
+  await client.query(`INSERT INTO memberships(user_id,premium_until) VALUES ('premium-pub',$1)`,[new Date(now.getTime()+3600000)]);
 });
 describe('real PostgreSQL policy publication', () => {
   it('atomically compiles authoritative clients, audits safely, and remains unacknowledged until real ACK', async () => {
     const publisher = new PostgresPolicyPublisher(db);
     const result = await publisher.publish('admin-pub','node-pub',{ mode:'current',ttlSeconds:7200 },now);
-    expect(result).toMatchObject({ revision:1,clientCount:2,validUntil:'2026-10-13T19:00:00.000Z' });
+    expect(result).toMatchObject({ revision:1,clientCount:2 });
+    expect(new Date(result.validUntil).getTime()).toBeGreaterThan(now.getTime());
+    expect(new Date(result.validUntil).getTime()).toBeLessThanOrEqual(now.getTime()+3600000);
     const store = new PostgresNodeControlStore(db);
     const policy = await store.getPolicy('node-pub');
     expect(policy!.clients).toEqual(expect.arrayContaining([expect.objectContaining({userId:'free-pub',tier:'free',speedKbps:5000}),expect.objectContaining({userId:'premium-pub',tier:'premium',speedKbps:null})]));
@@ -113,7 +117,7 @@ describe('real PostgreSQL policy publication', () => {
         if(waiting)break;await new Promise(resolve=>setTimeout(resolve,20));
       }
       expect(waiting).toBe(true);
-      await blocker.query(`INSERT INTO credit_ledger(unique_key,user_id,kind,free_day,delta_seconds,occurred_at) VALUES ('debit-race','free-pub','usage','2026-10-13',-1800,$1)`,[now]);
+      await blocker.query(`INSERT INTO credit_ledger(unique_key,user_id,kind,free_day,delta_seconds,occurred_at) VALUES ('debit-race','free-pub','usage',$2::date,-1800,$1)`,[now,tehranDateKey(now)]);
       await blocker.query('COMMIT');await publication;
       const policy=(await new PostgresNodeControlStore(db).getPolicy('node-pub'))!;
       expect(policy.clients.some(candidate=>candidate.userId==='free-pub')).toBe(false);
