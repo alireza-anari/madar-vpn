@@ -3,6 +3,7 @@ import { Client } from 'pg';
 import { PgDatabase } from '../src/postgres/client';
 import { PostgresPolicyPublisher } from '../src/nodes/policy-postgres';
 import { PostgresNodeControlStore } from '../src/nodes/postgres';
+import { PostgresSubscriptionNodeStore } from '../src/access/subscription-postgres';
 const connectionString = process.env.TEST_DATABASE_URL;
 if (!connectionString) throw new Error('TEST_DATABASE_URL is required.');
 const client = new Client({ connectionString });
@@ -77,5 +78,45 @@ describe('real PostgreSQL policy publication', () => {
     } });
     await expect(new PostgresPolicyPublisher(failingAuditDatabase).publish('admin-pub','node-pub',{mode:'empty',ttlSeconds:60},now)).rejects.toThrow('injected audit storage failure');
     expect((await client.query('SELECT count(*)::int AS n FROM node_policy_revisions')).rows[0].n).toBe(0);
+  });
+  it('excludes an expired ACKed publication even while node heartbeat remains fresh', async () => {
+    const publisher=new PostgresPolicyPublisher(db);const store=new PostgresNodeControlStore(db);
+    await publisher.publish('admin-pub','node-pub',{mode:'current',ttlSeconds:7200},now);
+    const policy=(await store.getPolicy('node-pub'))!;
+    await store.acknowledgePolicy('node-pub',1,now.toISOString(),policy.clients);
+    await client.query(`UPDATE node_policy_revisions SET valid_until=clock_timestamp()+interval '1 hour'`);
+    const subscriptions=new PostgresSubscriptionNodeStore(db);
+    expect((await subscriptions.listCandidates('free-pub'))[0]!.ackedRevision).toBe(4);
+    await client.query(`UPDATE node_policy_revisions SET valid_until=clock_timestamp()-interval '1 second'`);
+    expect((await subscriptions.listCandidates('free-pub'))[0]!.ackedRevision).toBeNull();
+  });
+  it('rejects an ACK that waits behind the node lock until after expiry', async () => {
+    await new PostgresPolicyPublisher(db).publish('admin-pub','node-pub',{mode:'empty',ttlSeconds:60},now);
+    const blocker=new Client({connectionString});await blocker.connect();
+    try {
+      await blocker.query('BEGIN');await blocker.query(`SELECT id FROM nodes WHERE id='node-pub' FOR UPDATE`);
+      await blocker.query(`UPDATE node_policy_revisions SET valid_until=clock_timestamp()+interval '500 milliseconds'`);
+      const result=new PostgresNodeControlStore(db).acknowledgePolicy('node-pub',1,new Date().toISOString(),[]).then(()=>false,()=>true);
+      await blocker.query('SELECT pg_sleep(0.8)');await blocker.query('COMMIT');
+      expect(await result).toBe(true);
+    } finally {await blocker.query('ROLLBACK');await blocker.end();}
+  });
+  it('reads the committed ledger balance after waiting for settlement user locks', async () => {
+    const pid=(await client.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+    const blocker=new Client({connectionString});await blocker.connect();
+    try {
+      await blocker.query('BEGIN');await blocker.query(`SELECT id FROM users WHERE id='free-pub' FOR UPDATE`);
+      const publication=new PostgresPolicyPublisher(db).publish('admin-pub','node-pub',{mode:'current',ttlSeconds:60},now);
+      let waiting=false;
+      for(let attempt=0;attempt<100;attempt++) {
+        waiting=(await blocker.query(`SELECT wait_event_type='Lock' AS waiting FROM pg_stat_activity WHERE pid=$1`,[pid])).rows[0]?.waiting===true;
+        if(waiting)break;await new Promise(resolve=>setTimeout(resolve,20));
+      }
+      expect(waiting).toBe(true);
+      await blocker.query(`INSERT INTO credit_ledger(unique_key,user_id,kind,free_day,delta_seconds,occurred_at) VALUES ('debit-race','free-pub','usage','2026-10-13',-1800,$1)`,[now]);
+      await blocker.query('COMMIT');await publication;
+      const policy=(await new PostgresNodeControlStore(db).getPolicy('node-pub'))!;
+      expect(policy.clients.some(candidate=>candidate.userId==='free-pub')).toBe(false);
+    } finally {await blocker.query('ROLLBACK');await blocker.end();}
   });
 });
