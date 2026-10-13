@@ -22,7 +22,7 @@ Automated tests currently verify:
 - `status`, `observe`, and `remove` never require a release download;
 - PostgreSQL backup/restore and restore-smoke behavior in CI.
 
-The real Node2 recovery sequence defined by Phase 10 Task 32 has **not yet been executed against this exact installer build**. Therefore the real VPS `update -> retire -> credential rejection -> remove -> fresh re-enroll -> policy/traffic` acceptance remains **NOT RUN** until the field procedure below is completed. Do not turn automated coverage into a field PASS.
+The operator's Task 32 field handoff records real Node2 update, retirement, old-credential rejection, remove and fresh re-enrollment against installer source `7834fe6c000411e61d22208df4d50f1184a80a2e`. Complete recovery acceptance remains **BLOCKED**: policy/ACK diagnostics used direct SQL, and that source lacks an operational application policy-publication path. Real replacement traffic and final safe recovery/cleanup remain unproved. See `docs/test-reports/phase-10-recovery.md` for historical versus freshly verified evidence. Do not use direct SQL policy seeding or automated coverage to claim field PASS.
 
 ## Pinned Speed Enforcer release
 
