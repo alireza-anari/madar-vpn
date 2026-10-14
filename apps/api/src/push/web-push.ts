@@ -3,25 +3,25 @@ import type { VapidConfig, VapidTransport } from './vapid';
 const encoder = new TextEncoder();
 const PUSH_HOSTS = ['fcm.googleapis.com', 'updates.push.services.mozilla.com', 'push.services.mozilla.com', 'web.push.apple.com'];
 
-export function decodeBase64Url(value: string, length: number): Uint8Array {
+export function decodeBase64Url(value: string, length: number): Uint8Array<ArrayBuffer> {
   if (!/^[A-Za-z0-9_-]+$/.test(value)) throw new Error('Invalid push key material.');
   const bytes = Uint8Array.from(atob(value.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
   if (bytes.length !== length || encodeBase64Url(bytes) !== value) throw new Error('Invalid push key material.');
   return bytes;
 }
 
-function encodeBase64Url(bytes: Uint8Array): string {
+function encodeBase64Url(bytes: Uint8Array<ArrayBuffer>): string {
   return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-function concat(...parts: Uint8Array[]): Uint8Array {
+function concat(...parts: Uint8Array<ArrayBuffer>[]): Uint8Array<ArrayBuffer> {
   const result = new Uint8Array(parts.reduce((total, part) => total + part.length, 0));
   let offset = 0;
   for (const part of parts) { result.set(part, offset); offset += part.length; }
   return result;
 }
 
-async function hmac(key: Uint8Array, input: Uint8Array): Promise<Uint8Array> {
+async function hmac(key: Uint8Array<ArrayBuffer>, input: Uint8Array<ArrayBuffer>): Promise<Uint8Array<ArrayBuffer>> {
   const imported = await crypto.subtle.importKey('raw', key, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
   return new Uint8Array(await crypto.subtle.sign('HMAC', imported, input));
 }

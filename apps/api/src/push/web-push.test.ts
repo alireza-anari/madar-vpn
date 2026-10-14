@@ -3,7 +3,7 @@ import { MemoryPushStore, createPushService, type PushSubscriptionRecord } from 
 import { createWebPushTransport } from './web-push';
 import { createVapidSender, type VapidConfig } from './vapid';
 
-const encode = (bytes: ArrayBuffer | Uint8Array) => btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const encode = (bytes: ArrayBuffer | Uint8Array<ArrayBuffer>) => btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const decode = (value: string) => Uint8Array.from(atob(value.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
 const text = new TextEncoder();
 
@@ -21,11 +21,11 @@ async function fixture() {
 }
 
 // Receiver uses Web Crypto HKDF, independently of the sender's derivation implementation.
-async function derive(ikm: ArrayBuffer | Uint8Array, salt: Uint8Array, info: Uint8Array, bits: number) {
+async function derive(ikm: ArrayBuffer | Uint8Array<ArrayBuffer>, salt: Uint8Array<ArrayBuffer>, info: Uint8Array<ArrayBuffer>, bits: number) {
   const key = await crypto.subtle.importKey('raw', ikm, 'HKDF', false, ['deriveBits']);
   return crypto.subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt, info }, key, bits);
 }
-async function decrypt(body: Uint8Array, receiver: CryptoKeyPair, subscription: PushSubscriptionRecord) {
+async function decrypt(body: Uint8Array<ArrayBuffer>, receiver: CryptoKeyPair, subscription: PushSubscriptionRecord) {
   expect(body[20]).toBe(65);
   const senderPublic = body.slice(21, 86);
   const peer = await crypto.subtle.importKey('raw', senderPublic, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
