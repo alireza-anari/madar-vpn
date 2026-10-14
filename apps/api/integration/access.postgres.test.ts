@@ -35,6 +35,27 @@ afterAll(async () => {
 });
 
 describe('PostgresAccessStore integration', () => {
+  it('bootstraps a credential before readiness and keeps repeated preparations idempotent', async () => {
+    const access = createAccessService({ store: accessStore });
+    const subscriptions = createSubscriptionService({ accessStore, access, nodes: nodeStore });
+    await expect(subscriptions.listEligibleNodes('user-1', new Date())).resolves.toEqual([]);
+    await expect(subscriptions.listEligibleNodes('user-1', new Date())).resolves.toEqual([]);
+    const rows = await client.query(`SELECT
+      (SELECT count(*)::int FROM client_credentials WHERE user_id='user-1' AND revoked_at IS NULL) AS active_count,
+      (SELECT policy_revision FROM access_profiles WHERE user_id='user-1') AS revision`);
+    expect(rows.rows[0]).toEqual({ active_count: 1, revision: 1 });
+  });
+
+  it('permits a first-access rotation and still stores only one active credential', async () => {
+    const access = createAccessService({ store: accessStore });
+    const rotated = await access.rotateClientCredential('user-1');
+    expect(rotated.credential.version).toBe(2);
+    expect(rotated.policyRevision).toBe(2);
+    const rows = await client.query(`SELECT count(*) FILTER (WHERE revoked_at IS NULL)::int AS active_count,
+      count(*) FILTER (WHERE revoked_at IS NOT NULL)::int AS revoked_count FROM client_credentials WHERE user_id='user-1'`);
+    expect(rows.rows[0]).toEqual({ active_count: 1, revoked_count: 1 });
+  });
+
   it('keeps one stable access profile and one active client credential per user', async () => {
     const firstProfile = await accessStore.ensureProfile({
       id: 'profile-1',
