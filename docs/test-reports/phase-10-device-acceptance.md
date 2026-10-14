@@ -1,7 +1,7 @@
 # Phase 10 — Task 33 device acceptance
 
 Date: 2026-10-14. Branch: `impl/phase-10-task33-pwa-push`.
-Task 33: **BLOCKED**. Phase 10 incomplete.
+Task 33: **BLOCKED** (exact iOS version / final-candidate changed-frontend evidence outstanding). Phase 10 incomplete.
 
 Baseline verified locally and through GitHub: `ea0fa64308e9d17703973281c933c0a324ef811d`; full CI `38515671586`, completed/success. Task 32 was not repeated. Its accepted amd64 field scope, both retained VPSs, historical journals and existing SSH bridge were not modified.
 
@@ -49,9 +49,9 @@ No test key is a production credential; generated key material existed only in t
 | Android real notification received/displayed | PASS | Physical-phone operator opened the authenticated own-account test page, invoked the explicit backend-send button and confirmed notification displayed on 2026-10-14 at 09:23Z. Runtime source `9a1ed6243a4fb7ad7f046eebb24744985c1ca947`, exact-head full CI `38540658103`, deployment `97fadc4c-2663-473a-8758-d77d78ce41ea`. Device/browser: operator-reported Samsung Galaxy A16, Android 16, Chrome 155; backend aggregate counts were not supplied. |
 | Android notification click | PASS | Operator tapped the received notification and confirmed Madar opened Settings on 2026-10-14 at approximately 09:30Z. Runtime source `9a1ed6243a4fb7ad7f046eebb24744985c1ca947`, CI `38540658103`; existing service-worker assets retained. |
 | Real denied-permission usable PWA | PASS | Galaxy A16 / Android 16 / Chrome 155: operator blocked site notifications; physical Chrome screenshot at approximately 09:39Z displays denied-state message. Operator then opened Home and Subscription in installed PWA and confirmed both work without problems at 09:40Z on 2026-10-14. Source `9a1ed6243a4fb7ad7f046eebb24744985c1ca947`, CI `38540658103`; retained frontend assets. Operator confirmed restoring site notification permission to Allow on 2026-10-14 at approximately 10:02Z; no additional delivery is inferred from restoration alone. |
-| iPhone Safari Add to Home Screen | BLOCKED | Operator confirmed no access to a physical iPhone on 2026-10-14 at approximately 10:51Z, superseding an earlier availability claim. No valid Safari evidence; earlier Telegram attempt excluded. Small remaining action: later supply physical Safari installation/standalone evidence; no emulator substitute. |
-| iPhone standalone/no automatic prompt | BLOCKED | Actual Safari installation and Home Screen launch needed, with iPhone/iOS/Safari versions. |
-| iPhone real supported Push | BLOCKED | Device/version/support, explicit permission, persisted subscription and real receipt/click need evidence. Emulator is excluded. |
+| iPhone Safari Add to Home Screen | PASS | Operator later gained real iPhone access and confirmed instructed Safari installation on 2026-10-14 at 12:55Z; subsequently identified model iPhone 15. Prior unavailability is superseded. Historical staging before neon deploy; no emulator substitute. Exact iOS version remains separately unknown. |
+| iPhone standalone/no automatic prompt | PASS | Operator explicitly confirmed Home Screen launch without address bar and without automatic notification prompt at 12:56Z on 2026-10-14. iPhone 15, pre-neon staging; this is historical, not changed-frontend final acceptance. |
+| iPhone real supported Push | PASS | Operator confirmed explicit activation/Allow at 12:56Z, own-account backend test notification receipt at 12:59Z and Settings navigation on click at 13:00Z on 2026-10-14. iPhone 15; exact iOS version unknown. Historical staging runtime `9a1ed624...`, CI `38540658103`, before neon deploy; no final-candidate promotion. |
 
 ## Current reachability observation
 
@@ -88,3 +88,7 @@ Source `9a1ed6243a4fb7ad7f046eebb24744985c1ca947`, full exact-head CI `385406581
 ## Task 34 continuation boundary
 
 The operator instructed continuation despite unavailable iPhone on 2026-10-14 at 10:52Z. Available final audit/automated gates proceeded; Task 33 and Phase 10 remain incomplete. Android permission restored to Allow by operator. This report does not count the historical Android install as the separate final-candidate Task 34 reinstall/rerun. See `final-acceptance.md` for exact required statuses.
+
+## iPhone metadata and changed-frontend boundary
+
+Operator identified iPhone 15 at 13:01Z but lost access before reading exact iOS version at 13:02Z. Do not infer a version from “latest update”. Relevant final-candidate device rechecks remain BLOCKED after neon settings/frontend deployment; only needed affected deltas should be requested. Bootstrap source `836382e...` changes backend account/credential initialization, not notification transport or frontend.
