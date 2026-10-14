@@ -377,7 +377,7 @@ Expected: workflow conclusion `success`. Record exact HEAD and run ID for the re
 
 ---
 
-Execution record: historical Tasks 1–6 and Task 7 lifecycle steps 1–9 are carried from the exact-green operator handoff; Steps 10–12 were freshly completed on the separately deployed API source. Release immutability means version/tag refusal plus digest pinning; GitHub platform immutable=false. See the recovery report for timestamps and limitations. Task 8 final CI must be verified on the resulting evidence commit before handoff.
+Execution record: historical Tasks 1–6 and Task 7 lifecycle steps 1–9 are carried from the exact-green operator handoff; Steps 10–12 were freshly completed on the separately deployed API source. Release immutability means version/tag refusal plus digest pinning; GitHub platform immutable=false. See the recovery report for timestamps and limitations. Task 8 evidence commit `12bdb829c7ae85a1a43cfb1cd2b227b013880d02` was committed and verified by full successful CI `38515338135`; this closure update also requires its own exact-head CI before handoff.
 
 ### Task 7: Execute real Node2 update, retirement, remove, and clean replacement
 
@@ -466,17 +466,17 @@ Run: `python3 scripts/security_scan.py .`
 
 Expected: PASS.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add docs/test-reports/phase-10-recovery.md docs/superpowers/plans/2026-10-08-madar-implementation-plan.md
 git commit -m "docs: record Phase 10 recovery acceptance"
 ```
 
-- [ ] **Step 5: Verify final GitHub Actions on exact documentation HEAD**
+- [x] **Step 5: Verify final GitHub Actions on exact documentation HEAD**
 
 Wait for CI associated with exact HEAD and require conclusion `success`; inspect that PostgreSQL backup/restore and all normal security/build/test gates still ran.
 
-- [ ] **Step 6: Completion boundary**
+- [x] **Step 6: Completion boundary**
 
 Only if Tasks 1–8 and both CI checkpoints are green: declare **Task 32: PASS**. Do not declare **Phase 10 PASS** or **Production Ready** until every remaining Phase 10 acceptance gate, including unresolved Premium client-instance enforcement if still outstanding, is separately complete.
