@@ -37,4 +37,18 @@ These findings do not change authentication, authorization, billing or transport
 
 Publish the exact prepared merge candidate on a separate `impl/**` verification branch, run the whole normal CI, and advance the target only after success and a matching expected target head. Preserve both parents in the merge commit and all historical field evidence. Match local and remote trees before synchronizing.
 
-This integration does not deploy staging. Because frontend/settings changed, previous Android/iPhone device observations remain historical; relevant final-candidate device acceptance must be repeated after a separately authorized deploy. No new device PASS is inferred. Phase 10 remains incomplete. Current release blockers and required final field checks in `final-acceptance.md` remain authoritative.
+The merge-review operation itself did not deploy staging; the subsequent authorized deployment is recorded below. Because frontend/settings changed, previous Android/iPhone device observations remain historical; relevant final-candidate device acceptance must be repeated after a separately authorized deploy. No new device PASS is inferred. Phase 10 remains incomplete. Current release blockers and required final field checks in `final-acceptance.md` remain authoritative.
+
+## Subsequent staging deployment — 2026-10-14
+
+Operator explicitly requested deployment through the connected Cloudflare account. Runtime source `d470e45d0c77ed5d35c52e049b40f6d1d13f4abe`, exact-head full CI `38577450980` success, was rebuilt locally with the new frontend assets. No runtime/source edits were made for deployment.
+
+Direct asset upload from the connector execution environment returned a non-JSON Unauthorized response before any Worker deployment. Three short-lived asset manifest sessions were opened; no token/private value was printed or persisted. The existing Workers Builds repository connection/trigger was then discovered and reused. No new provider, API credential, VPS, Worker or paid resource was created.
+
+Existing build trigger deploy command was extended with `--keep-vars`, explicit source tag/message and `--experimental-auto-create=false`; its existing branch filters/repository connection and build command were retained. This preserves dashboard-managed vars and prevents automatic resource provisioning. Manual build requested the exact commit and current branch.
+
+Build `e07c9696-af39-4c95-b028-ab9158013b8d` completed with `build_outcome=success` and matching commit metadata. Active deployment `3b32938a-b947-4e6c-8302-bdac73412f6f`, version `9568f432-fda1-4cb4-9daf-ac52a43d042a`, 100 percent traffic, created `2026-10-14T14:30:24.667848Z`. Post-deploy settings tag matches the exact source. All 13 binding names/types are retained, including one-owner email allowlist and Secret-typed VAPID/Resend keys. Invocation logging remains false. No secret values were read/output or rotated.
+
+Local frontend build references `index-CG-u-jhv.css` and `index-BCWCrYy0.js`. Cloudflare's successful build/deploy proves completion of its configured asset workflow; target HTTP byte/hash equality is not yet observed. Public fetches from this execution environment to health/login/new CSS/new JS all returned 403. No health, rendered UI, or physical-device acceptance PASS is inferred from this environment result. Operator should open the staging URL on their real phone and refresh to observe the new UI; relevant device checks remain required on the changed frontend.
+
+Phase 10 remains incomplete. Both VPSs, SSH/firewall and historical evidence were untouched by this deploy.
