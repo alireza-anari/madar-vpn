@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createAuthService, MemoryAuthStore } from './auth';
 import { createApiApp } from './index';
+import { createAdminAuditService } from './admin-audit';
 import { MemoryPushStore, createPushService } from './push';
 
 function mutationHeaders(token: string, csrfToken: string) {
@@ -11,11 +12,12 @@ function mutationHeaders(token: string, csrfToken: string) {
   };
 }
 
-async function userSession() {
+async function userSession(admin = false) {
   const sent: string[] = [];
   let tokenNumber = 0;
   const auth = createAuthService({
     store: new MemoryAuthStore(),
+    adminEmails: admin ? ['user@example.com'] : [],
     randomToken: () => `push-route-${++tokenNumber}`,
     sender: async ({ token }) => { sent.push(token); },
   });
@@ -125,4 +127,55 @@ describe('push subscription HTTP boundary', () => {
     expect(unavailable.status).toBe(503);
     await expect(unavailable.json()).resolves.toEqual({ error: 'PUSH_UNAVAILABLE' });
   });
+});
+
+
+describe('administrator real push send route', () => {
+  it('requires admin, CSRF and origin and returns aggregate delivery counts only', async () => {
+    const { auth, session } = await userSession(true);
+    const store = new MemoryPushStore();
+    let sends = 0;
+    const push = createPushService({ store, sender: { async send() { sends += 1; return { status: 'delivered' }; } } });
+    await push.saveSubscription(session.userId, { endpoint: 'https://push.example.test/device', keys: { p256dh: 'public-key-material', auth: 'auth-secret-material' } });
+    const audits: Array<{ action: string; details: Record<string, unknown> }> = [];
+    const audit = createAdminAuditService({ store: { async appendAudit(event) { audits.push(event); } } });
+    const app = createApiApp(() => auth, () => null, () => null, () => null, () => null, () => null, () => push, () => null, () => audit);
+    const path = `/api/admin/users/${session.userId}/notifications`;
+    const body = JSON.stringify({ title: 'Madar', body: 'Device acceptance', url: '/settings' });
+    expect((await app.request(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body })).status).toBe(401);
+    expect((await app.request(path, { method: 'POST', headers: { cookie: `__Host-madar_session=${session.token}`, 'content-type': 'application/json' }, body })).status).toBe(403);
+    expect((await app.request(path, { method: 'POST', headers: { ...mutationHeaders(session.token, session.csrfToken), origin: 'https://evil.example' }, body })).status).toBe(403);
+    expect(sends).toBe(0);
+    const result = await app.request(path, { method: 'POST', headers: mutationHeaders(session.token, session.csrfToken), body });
+    expect(result.status).toBe(200);
+    expect(result.headers.get('cache-control')).toBe('no-store');
+    expect(await result.json()).toEqual({ delivered: 1, expiredRemoved: 0, failed: 0 });
+    expect(sends).toBe(1);
+    expect(audits).toEqual([expect.objectContaining({ action: 'push.notification.request', details: { userId: session.userId } }), expect.objectContaining({ action: 'push.notification.send', details: { userId: session.userId, delivered: 1, expiredRemoved: 0, failed: 0 } })]);
+    expect((await app.request(path, { method: 'POST', headers: mutationHeaders(session.token, session.csrfToken), body: '{}' })).status).toBe(400);
+    expect(sends).toBe(1);
+  });
+
+  it('denies ordinary users', async () => {
+    const { auth, session } = await userSession();
+    const push = createPushService({ store: new MemoryPushStore() });
+    const app = createApiApp(() => auth, () => null, () => null, () => null, () => null, () => null, () => push);
+    const response = await app.request(`/api/admin/users/${session.userId}/notifications`, {
+      method: 'POST', headers: mutationHeaders(session.token, session.csrfToken), body: JSON.stringify({ title: 'Madar', body: 'test' }),
+    });
+    expect(response.status).toBe(403);
+  });
+});
+
+
+it('does not send an administrator notification without durable audit availability', async () => {
+  const { auth, session } = await userSession(true);
+  const store = new MemoryPushStore();
+  let sends = 0;
+  const push = createPushService({ store, sender: { async send() { sends += 1; return { status: 'delivered' }; } } });
+  await push.saveSubscription(session.userId, { endpoint: 'https://push.example.test/device', keys: { p256dh: 'public-key-material', auth: 'auth-secret-material' } });
+  const app = createApiApp(() => auth, () => null, () => null, () => null, () => null, () => null, () => push);
+  const response = await app.request(`/api/admin/users/${session.userId}/notifications`, { method: 'POST', headers: mutationHeaders(session.token, session.csrfToken), body: JSON.stringify({ title: 'Madar', body: 'test' }) });
+  expect(response.status).toBe(503);
+  expect(sends).toBe(0);
 });

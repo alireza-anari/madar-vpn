@@ -1,3 +1,4 @@
+import { decodeBase64Url } from './web-push';
 import { PushError, type PushPayload, type PushSender, type PushSubscriptionRecord } from './index';
 
 export type VapidConfig = {
@@ -21,8 +22,13 @@ function validateConfig(config: VapidConfig): VapidConfig {
   if (!publicKey || !privateKey || !subject) {
     throw new PushError(503, 'VAPID_UNAVAILABLE', 'VAPID credentials are not configured.');
   }
-  if (!subject.startsWith('mailto:') && !subject.startsWith('https://')) {
-    throw new PushError(503, 'VAPID_INVALID', 'VAPID subject is invalid.');
+  try {
+    const publicBytes = decodeBase64Url(publicKey, 65);
+    decodeBase64Url(privateKey, 32);
+    const parsedSubject = new URL(subject);
+    if (publicBytes[0] !== 4 || !((parsedSubject.protocol === 'mailto:' && /^[^@\s]+@[^@\s]+$/.test(parsedSubject.pathname)) || (parsedSubject.protocol === 'https:' && parsedSubject.hostname && !parsedSubject.username && !parsedSubject.password))) throw new Error();
+  } catch {
+    throw new PushError(503, 'VAPID_INVALID', 'VAPID configuration is invalid.');
   }
   return { publicKey, privateKey, subject };
 }

@@ -19,6 +19,7 @@ import { createResendMagicLinkSender } from '../providers/resend-email';
 import { createPushService } from '../push';
 import { PostgresPushStore } from '../push/postgres';
 import { createVapidSender } from '../push/vapid';
+import { createWebPushTransport, validateVapidKeyPair } from '../push/web-push';
 import { createSurfaceService } from '../surfaces';
 import { PostgresSurfaceStore } from '../surfaces/postgres';
 import { PostgresUsageSettlementStore } from '../usage/postgres';
@@ -43,13 +44,16 @@ function configuredAdminEmails(value: string | undefined) {
   return (value ?? '').split(',').map((email) => email.trim()).filter(Boolean);
 }
 
-function configuredVapid(env: PostgresRuntimeBindings | undefined) {
+async function configuredVapid(env: PostgresRuntimeBindings | undefined) {
   if (!env?.VAPID_PUBLIC_KEY || !env.VAPID_PRIVATE_KEY || !env.VAPID_SUBJECT) return null;
-  return {
-    publicKey: env.VAPID_PUBLIC_KEY,
-    privateKey: env.VAPID_PRIVATE_KEY,
-    subject: env.VAPID_SUBJECT,
-  };
+  const config = { publicKey: env.VAPID_PUBLIC_KEY, privateKey: env.VAPID_PRIVATE_KEY, subject: env.VAPID_SUBJECT };
+  try {
+    const sender = createVapidSender(config, createWebPushTransport());
+    await validateVapidKeyPair({ ...config, publicKey: config.publicKey.trim(), privateKey: config.privateKey.trim(), subject: config.subject.trim() });
+    return { publicKey: config.publicKey.trim(), sender };
+  } catch {
+    return null;
+  }
 }
 
 function configuredEmailSender(env: PostgresRuntimeBindings | undefined) {
@@ -77,7 +81,7 @@ export async function createPostgresRequestRuntime(
   const credits = createCreditService({ store: creditStore });
   const accessStore = new PostgresAccessStore(database);
   const access = createAccessService({ store: accessStore });
-  const vapid = configuredVapid(env);
+  const vapid = await configuredVapid(env);
   const emailSender = configuredEmailSender(env);
 
   const auth = createAuthService({
@@ -123,7 +127,7 @@ export async function createPostgresRequestRuntime(
     push: createPushService({
       store: new PostgresPushStore(database),
       publicKey: vapid?.publicKey,
-      sender: vapid ? createVapidSender(vapid) : undefined,
+      sender: vapid?.sender,
     }),
     nodes: createNodeControlService({
       store: new PostgresNodeControlStore(database),

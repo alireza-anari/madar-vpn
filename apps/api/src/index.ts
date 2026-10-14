@@ -561,6 +561,26 @@ export function createApiApp(
     return new Response(null, { status: 204 });
   });
 
+  app.post('/api/admin/users/:id/notifications', async (c) => {
+    c.header('Cache-Control', 'no-store');
+    const auth = authFactory(c.env); const push = pushFactory(c.env);
+    if (!auth || !push) return unavailable(c, 'PUSH_UNAVAILABLE');
+    const actor = await requireAdminMutation(auth, c.req.raw);
+    const body = await c.req.json<unknown>().catch(() => null);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return c.json({ error: 'PUSH_PAYLOAD_INVALID' }, 400);
+    const input = body as Record<string, unknown>;
+    if (typeof input.title !== 'string' || typeof input.body !== 'string' || (input.url !== undefined && typeof input.url !== 'string')) {
+      return c.json({ error: 'PUSH_PAYLOAD_INVALID' }, 400);
+    }
+    const payload = input.url === undefined ? { title: input.title, body: input.body } : { title: input.title, body: input.body, url: input.url as string };
+    const audit = adminAuditFactory(c.env);
+    if (!audit) return unavailable(c, 'AUDIT_UNAVAILABLE');
+    await audit.record(actor, 'push.notification.request', { userId: c.req.param('id') });
+    const result = await push.sendNotification(c.req.param('id'), payload);
+    await audit.record(actor, 'push.notification.send', { userId: c.req.param('id'), ...result });
+    return c.json(result);
+  });
+
   app.post('/api/admin/notification-drafts', async (c) => {
     const auth = authFactory(c.env); const surfaces = surfaceFactory(c.env);
     if (!auth || !surfaces) return unavailable(c, 'ADMIN_UNAVAILABLE');
