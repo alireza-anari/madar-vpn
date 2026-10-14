@@ -170,24 +170,25 @@ export function createAccessService(options: {
     return { rawToken, version: record.version };
   }
 
+  async function getActiveClientCredential(userId: string): Promise<ClientCredential> {
+    await ensureAccessProfile(userId);
+    const createdAt = now().toISOString();
+    return options.store.ensureActiveClientCredential({
+      id: randomUuid(),
+      userId,
+      uuid: randomUuid(),
+      version: 1,
+      createdAt,
+      revokedAt: null,
+    });
+  }
+
   return {
     ensureAccessProfile,
-
-    async getActiveClientCredential(userId: string): Promise<ClientCredential> {
-      await ensureAccessProfile(userId);
-      const createdAt = now().toISOString();
-      return options.store.ensureActiveClientCredential({
-        id: randomUuid(),
-        userId,
-        uuid: randomUuid(),
-        version: 1,
-        createdAt,
-        revokedAt: null,
-      });
-    },
+    getActiveClientCredential,
 
     async rotateClientCredential(userId: string): Promise<ClientCredentialRotation> {
-      await ensureAccessProfile(userId);
+      await getActiveClientCredential(userId);
       if (!options.store.rotateClientCredential) {
         throw new Error('Client credential rotation is unavailable for this persistence adapter.');
       }

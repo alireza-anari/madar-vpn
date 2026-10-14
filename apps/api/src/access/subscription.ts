@@ -117,6 +117,7 @@ export function createSubscriptionService(options: {
 
   async function listEligibleNodes(userId: string, now: Date): Promise<NodePublicConfig[]> {
     const profile = await options.access.ensureAccessProfile(userId);
+    await options.access.getActiveClientCredential(userId);
     const cutoff = now.getTime() - staleAfterMs;
     const candidates = await options.nodes.listCandidates(userId);
 
