@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { renderPushTestPage } from './push/test-page';
 import { createAccessService } from './access';
 import { createSubscriptionService } from './access/subscription';
 import type { AdminAuditService } from './admin-audit';
@@ -417,6 +418,34 @@ export function createApiApp(
     const user = await auth.requireMutationUser(c.req.raw);
     await push.removeSubscription(user.id, c.req.param('id'));
     return new Response(null, { status: 204 });
+  });
+
+  app.get('/api/account/push/test', async (c) => {
+    c.header('Cache-Control', 'no-store');
+    c.header('Referrer-Policy', 'no-referrer');
+    const auth = authFactory(c.env); const push = pushFactory(c.env);
+    if (!auth || !push) return unavailable(c, 'PUSH_UNAVAILABLE');
+    const user = await auth.requireUser(c.req.raw);
+    const subscriptions = await push.listSubscriptions(user.id);
+    const nonce = crypto.randomUUID().replace(/-/g, '');
+    c.header('Content-Security-Policy', `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`);
+    return c.html(renderPushTestPage(nonce, push.getPublicKey() !== null, subscriptions.length));
+  });
+
+  app.post('/api/account/push/test', async (c) => {
+    c.header('Cache-Control', 'no-store');
+    const auth = authFactory(c.env); const push = pushFactory(c.env);
+    if (!auth || !push) return unavailable(c, 'PUSH_UNAVAILABLE');
+    const user = await auth.requireMutationUser(c.req.raw);
+    const allowed = await consumeRateLimit(c.env?.ADMIN_RATE_LIMITER, 'push-self-test', user.id);
+    if (!allowed) { c.header('Retry-After', '60'); return c.json({ error: 'RATE_LIMITED' }, 429); }
+    if (!push.getPublicKey()) return unavailable(c, 'PUSH_UNAVAILABLE');
+    const audit = adminAuditFactory(c.env);
+    if (!audit) return unavailable(c, 'AUDIT_UNAVAILABLE');
+    await audit.record(user, 'push.self-test.request', {});
+    const result = await push.sendNotification(user.id, { title: 'مدار — اعلان آزمایشی', body: 'ارسال واقعی اعلان از مدار انجام شد؛ برای بازکردن تنظیمات روی اعلان بزنید.', url: '/settings' });
+    await audit.record(user, 'push.self-test.send', result);
+    return c.json(result);
   });
 
   app.get('/api/account/push/vapid-public-key', async (c) => {

@@ -179,3 +179,61 @@ it('does not send an administrator notification without durable audit availabili
   expect(response.status).toBe(503);
   expect(sends).toBe(0);
 });
+
+describe('authenticated device notification test', () => {
+  it('serves an authenticated no-store test page without exposing subscriptions or requesting permission', async () => {
+    const { auth, session } = await userSession();
+    const push = createPushService({ store: new MemoryPushStore(), publicKey: 'test-public-key' });
+    const app = createApiApp(() => auth, () => null, () => null, () => null, () => null, () => null, () => push);
+    expect((await app.request('/api/account/push/test')).status).toBe(401);
+    const response = await app.request('/api/account/push/test', { headers: { cookie: `__Host-madar_session=${session.token}` } });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(response.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
+    const html = await response.text();
+    expect(html).toContain('ارسال اعلان آزمایشی');
+    expect(html).toContain('/api/auth/csrf');
+    expect(html).not.toContain('requestPermission');
+    expect(html).not.toContain('test-public-key');
+  });
+
+  it('sends only to the authenticated account, requires CSRF/origin and records safe audit counts', async () => {
+    const { auth, session } = await userSession();
+    const store = new MemoryPushStore();
+    const sentUsers: string[] = [];
+    const push = createPushService({ store, publicKey: 'test-public-key', sender: { async send(subscription, payload) { sentUsers.push(subscription.userId); expect(payload.url).toBe('/settings'); return { status: 'delivered' }; } } });
+    for (const user of [session.userId, 'other-user']) await push.saveSubscription(user, { endpoint: `https://push.example.test/${user}`, keys: { p256dh: 'public-key-material', auth: 'auth-secret-material' } });
+    const audits: Array<{ action: string; details: Record<string, unknown> }> = [];
+    const audit = createAdminAuditService({ store: { async appendAudit(event) { audits.push(event); } } });
+    const app = createApiApp(() => auth, () => null, () => null, () => null, () => null, () => null, () => push, () => null, () => audit);
+    const path = '/api/account/push/test';
+    expect((await app.request(path, { method: 'POST' })).status).toBe(401);
+    expect((await app.request(path, { method: 'POST', headers: { cookie: `__Host-madar_session=${session.token}` } })).status).toBe(403);
+    expect((await app.request(path, { method: 'POST', headers: { ...mutationHeaders(session.token, session.csrfToken), origin: 'https://evil.example' } })).status).toBe(403);
+    expect(sentUsers).toEqual([]);
+    const response = await app.request(path, { method: 'POST', headers: mutationHeaders(session.token, session.csrfToken), body: JSON.stringify({ userId: 'other-user' }) });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(await response.json()).toEqual({ delivered: 1, expiredRemoved: 0, failed: 0 });
+    expect(sentUsers).toEqual([session.userId]);
+    expect(audits.map(a => a.action)).toEqual(['push.self-test.request', 'push.self-test.send']);
+    expect(JSON.stringify(audits)).not.toContain('push.example.test');
+    expect(JSON.stringify(audits)).not.toContain('auth-secret-material');
+  });
+
+  it('fails closed without audit or valid push readiness and honors the existing hashed rate limiter', async () => {
+    const { auth, session } = await userSession();
+    const push = createPushService({ store: new MemoryPushStore(), publicKey: 'test-public-key' });
+    const app = createApiApp(() => auth, () => null, () => null, () => null, () => null, () => null, () => push);
+    const headers = mutationHeaders(session.token, session.csrfToken);
+    expect((await app.request('/api/account/push/test', { method: 'POST', headers })).status).toBe(503);
+    let rateKey = '';
+    const limited = await app.request('/api/account/push/test', { method: 'POST', headers }, { ADMIN_RATE_LIMITER: { async limit({ key }: { key: string }) { rateKey = key; return { success: false }; } } });
+    expect(limited.status).toBe(429);
+    expect(rateKey).not.toContain(session.userId);
+    expect(rateKey).toMatch(/^push-self-test:[a-f0-9]{64}$/);
+    const unavailable = createPushService({ store: new MemoryPushStore() });
+    const unavailableApp = createApiApp(() => auth, () => null, () => null, () => null, () => null, () => null, () => unavailable);
+    expect((await unavailableApp.request('/api/account/push/test', { method: 'POST', headers })).status).toBe(503);
+  });
+});
