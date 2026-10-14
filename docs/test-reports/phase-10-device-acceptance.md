@@ -40,8 +40,10 @@ No test key is a production credential; generated key material existed only in t
 | Android standalone | PASS | Operator handoff: `ANDROID_STANDALONE=true`, launched from Home Screen. Same scope limitation. |
 | No automatic prompt during Android install/startup | PASS | Operator explicitly observed no automatic prompt. Frontend/service-worker source unchanged; no repeat triggered. |
 | Required Android device/OS/browser versions | BLOCKED | Record actual current test phone/Chrome versions; do not assume the Phase 8 phone is this device. |
-| Candidate staging deployment + VAPID bindings | BLOCKED | Cloud Browser reached Cloudflare sign-in, not an authenticated dashboard. No deploy/secret mutation occurred. This session cannot establish whether bindings now exist. Earlier operator UI said unconfigured. Requires secure account sign-in/deployment access and explicit approval before any browser secret mutation. |
-| Android explicit button → prompt → Allow | BLOCKED | Candidate deployment/configuration prerequisite missing; no physical-device action requested yet. |
+| Candidate staging code deployment | PASS | Existing `madar-staging` updated from exact clean HEAD `5c956012d728c1e0e8c4e8ec31b3a364882c3d59`, exact-head full CI `38530860826` success. Cloudflare API upload 200 at `2026-10-14T08:30:31.29391Z`, version `daaf1072-7733-46e1-9f75-4ed746d6a2e3`, deployment `ecd4fe0c-487e-403e-8522-72db0b1ab662`, 100 percent. Existing assets were retained, not newly validated as final-candidate frontend artifacts. |
+| Existing VAPID binding presence and secret types | PASS | Connected Cloudflare API returned settings/secrets 200 before and after deploy; PRIVATE/PUBLIC are existing secret_text bindings and SUBJECT existing plain_text. Values were never read/output or changed. Presence alone does not prove validity or delivery. |
+| Deployed HTTP health and runtime Push readiness | BLOCKED | Scratch HTTPS returns 403; Cloud Browser health navigation reports `net::ERR_BLOCKED_BY_CLIENT`. This is client/environment reachability failure, not a proved application failure. Requires one direct operator health observation before device activation. |
+| Android explicit button → prompt → Allow | BLOCKED | Deployment and binding presence verified, but HTTP health/runtime readiness and physical-device action remain unverified. |
 | Android subscription persisted | BLOCKED | No device subscription accepted on candidate; future evidence must use counts/opaque test labels only. |
 | Android real notification received/displayed | BLOCKED | Service acceptance tests cannot substitute for physical receipt; candidate/backend/device flow not run. |
 | Android notification click | BLOCKED | SW handler exists, but actual target navigation on device remains unverified. |
@@ -54,7 +56,13 @@ No test key is a production credential; generated key material existed only in t
 
 A read-only scratch HTTPS attempt to the staging `/`, `/api/health`, `/manifest.webmanifest` and `/sw.js` returned HTTP errors. This is not candidate-deployment acceptance, and without confirmed target-versus-egress attribution it is not evidence that the Worker itself is unhealthy. The previous operator 200 results remain historical. Recheck health through the authorized target environment after actual candidate deployment.
 
-## Staging continuation
+## Connected staging deployment — 2026-10-14
+
+The operator connected the Cloudflare app. Read-only discovery found one accessible account and the existing staging Worker, including existing VAPID bindings. No key generation, secret mutation, API credential creation, new paid resource or browser login was needed. The checked-out exact-green source was rebuilt. API module SHA-256: `2daedfbbd6850f336a1e0f1d63f79c84f91cc99c1549a34e9713fe7601b085c8`. Upload used multipart main_module, keep_assets and all existing binding types, retaining compatibility date/flags, usage model and observability. Post-deploy settings prove all 12 prior binding names/types remain and invocation_logs=false. Previous version `9a69e7d4-8e43-4fea-a84c-8444a99a3541` remains historical rollback metadata; no rollback was executed.
+
+Cloudflare accepted and activated the version; this is deployment PASS only. Health, public routes, exact retained frontend assets, runtime key validity, account readiness and real Push are not upgraded by API upload success. Browser navigation to the explicit public health endpoint was blocked by the client; no alternate network, proxy or firewall workaround was used. Next manual action is direct Android Chrome health observation, with no secret or authentication input.
+
+## VAPID configuration reference (no mutation needed at this checkpoint)
 
 In Cloudflare: **Workers & Pages → madar-staging → Settings → Variables and Secrets → Add**. Configure matching unpadded base64url P-256 `VAPID_PUBLIC_KEY` (65-byte uncompressed public point), `VAPID_PRIVATE_KEY` (32-byte private scalar, **Secret**), and `VAPID_SUBJECT` (valid mailto contact or HTTPS URL). Use a securely generated matching pair, never values from tests. Do not put private material in plaintext vars, code, argv, chat, screenshots or logs. Existing credentials must not be rotated merely to simplify testing.
 
