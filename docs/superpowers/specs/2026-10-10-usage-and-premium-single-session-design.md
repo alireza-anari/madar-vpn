@@ -5,6 +5,10 @@
 **Repository:** `alireza-anari/madar-vpn`  
 **Branch:** `impl/phase-1`
 
+## Current-release precedence — approved 2026-10-14
+
+The approved `2026-10-14-premium-client-scope-decision.md` supersedes only Premium single-active-client current-release requirements in this document. Sections 10, 11 and 16 preserve future enforcement requirements and rationale; they do not gate the current release. Original implementation snapshots remain historical. Free accounting, Premium expiry and every other required acceptance gate are unchanged. Device locking is not implemented or claimed.
+
 ## 1. Purpose and authority
 
 This specification is the approved focused amendment to the Madar clean-start design for Free usage accounting and Premium concurrency semantics. It changes only the rules described here. All other authentication, entitlement, security, subscription, node, PWA, payment, provider, and operational-readiness requirements remain unchanged.
@@ -34,7 +38,7 @@ Properties:
 - retries, duplicate reports, overlapping nodes, and overlapping credentials cannot charge the same account/bucket again;
 - ambiguous intervals caused by sampler failure, process restart, Xray reset, clock discontinuity, missed scheduled boundary, or excessive observation skew are not inferred as active.
 
-### Active client instance
+### Active client instance (future scope)
 
 For Premium concurrency, an active client instance means the conceptual VPN client/device currently owning the credential's single-use slot.
 
@@ -165,7 +169,7 @@ A failure anywhere after raw telemetry insertion rolls back the raw insert too, 
 
 An unknown credential is preserved as `unmapped` telemetry with zero debit. Any unexplained `unmapped` masked report from a managed field client blocks Phase 7 PASS.
 
-## 10. Premium single-active-client rule
+## 10. Premium single-active-client rule — future scope
 
 A Premium user keeps the expiration-based entitlement model and has no Madar-imposed application speed cap.
 
@@ -198,7 +202,7 @@ Rejected shortcuts:
 
 Any future identifier must be server-verifiable, privacy-safe, appropriately scoped/revocable, and proven with the intended real client. It must not be based directly on hardware fingerprinting, email, internal user ID, public IP, or another cross-account tracking identifier.
 
-Premium single-active-client enforcement is therefore an explicit separate technical/release gate. Madar must not display or advertise it as enforced until a separately approved mechanism and real v2rayNG testing prove it.
+Premium single-active-client enforcement is therefore an explicit future technical/feature gate, excluded from current release scope by the approved 2026-10-14 amendment. Madar must not display or advertise it as enforced until a separately approved mechanism and real v2rayNG testing prove it.
 
 ## 12. Xray patch decision
 
@@ -265,9 +269,9 @@ Phase 7 still cannot pass until one exact current head is field-proven on the re
 
 Cross-node overlap is a later multi-node field gate unless a second real node is available during the rerun.
 
-## 16. Premium concurrency field gate
+## 16. Premium concurrency field gate — future scope
 
-Premium single-active-client enforcement remains unresolved and requires a separate approved design/implementation gate before Production Ready.
+Premium single-active-client enforcement remains unresolved and requires separate design/implementation and real-client gates before that future feature can be advertised. It is excluded from the current release by the approved 2026-10-14 amendment.
 
 Real acceptance must prove with the intended production client flow that:
 

@@ -22,7 +22,7 @@ Any administrator key or secret found in prior documentation is considered compr
 
 The approved focused amendment `docs/superpowers/specs/2026-10-10-usage-and-premium-single-session-design.md` supersedes this baseline wherever this document previously required distinct simultaneous VPN sessions to multiply Free-credit usage.
 
-Under the amendment, Free credit is charged by account-level server-observed active traffic time: at most one second per account per UTC second bucket, regardless of how many connections, devices, credentials, or nodes overlap in that bucket. Premium separately requires one active client instance per configuration, but that device/client-instance enforcement remains a distinct unresolved technical/release gate until a privacy-safe server-verifiable identity mechanism is approved and field-tested.
+Under the amendment, Free credit is charged by account-level server-observed active traffic time: at most one second per account per UTC second bucket, regardless of how many connections, devices, credentials, or nodes overlap in that bucket. The approved `2026-10-14-premium-client-scope-decision.md` retains stock v2rayNG and defers strict Premium device/client-instance enforcement to a future project; it is excluded from the current release and must not be advertised as enforced.
 
 ## 3. Product identity and UX
 
@@ -105,7 +105,7 @@ Free usage is charged at most once per account for each server-observed UTC seco
 
 The same telemetry evidence must also never be charged twice: retries, duplicate reports, replayed delivery identities, overlapping node reports, or repeated processing of already-settled active-second bits add no second debit.
 
-Premium usage remains expiration-based rather than Free-credit-based. The separately approved Premium concurrency rule allows a configuration to exist on multiple devices but requires at most one distinct active client instance at a time; this is not equivalent to raw Xray connection count or source IP and remains a separate implementation/release gate.
+Premium usage remains expiration-based rather than Free-credit-based. Under the approved 2026-10-14 scope amendment, the current release does not guarantee one active device for a copied configuration. Strict concurrency enforcement is future scope; raw connection count or source IP must not be represented as device identity.
 
 ### Speed policy
 
@@ -504,7 +504,7 @@ Second real node, multi-node subscription, unhealthy filtering, cross-node rotat
 
 ### Phase 10 — Production readiness
 
-Security review, failure-mode review, backup/restore, recovery, installer update/remove, logging/redaction, abuse controls, real Android/iPhone PWA checks, real Web Push, and resolution/real-client proof of the Premium single-active-client gate.
+Security review, failure-mode review, backup/restore, recovery, installer update/remove, logging/redaction, abuse controls, real Android/iPhone PWA checks, real Web Push, and honest disclosure that strict Premium device locking is excluded by the approved 2026-10-14 scope amendment.
 
 ## 21. Development workflow
 
@@ -535,7 +535,7 @@ The project is not production-ready until all of the following have passed with 
 - decrement Free time only during trusted server-observed active UTC buckets;
 - stop decrementing during idle/inactivity;
 - verify overlapping connections for the same account do not multiply Free debit and duplicate/replayed evidence adds no second debit;
-- verify the Premium single-active-client rule with the approved real client-instance mechanism once implemented, including two devices behind the same NAT;
+- verify that no current product surface falsely advertises Premium single-device enforcement; strict enforcement and its same-NAT tests are deferred by the approved 2026-10-14 scope amendment;
 - add exactly 15 minutes after a valid rewarded-ad callback;
 - reset Free at Tehran midnight;
 - keep Premium across midnight;

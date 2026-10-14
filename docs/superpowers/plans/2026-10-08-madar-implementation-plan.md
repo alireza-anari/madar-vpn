@@ -12,6 +12,8 @@
 
 **Approved accounting amendment:** `docs/superpowers/specs/2026-10-10-usage-and-premium-single-session-design.md` supersedes this older plan wherever it previously required distinct simultaneous VPN sessions to multiply Free-credit usage. The implementation plan for that amendment is `docs/superpowers/plans/2026-10-10-active-second-free-accounting.md`.
 
+**Approved release-scope amendment (2026-10-14):** `docs/superpowers/specs/2026-10-14-premium-client-scope-decision.md` retains stock v2rayNG and excludes strict Premium single-active-client enforcement from this release. Historical Phase 7/8 paragraphs retain their original snapshots; their old Premium release-gate wording is superseded. No enforcement PASS is inferred.
+
 ## Global Constraints
 
 - Clean start only: no code, database, repository history, credentials, secrets, installer assets, or architecture from Velo/WireGuard may be reused.
@@ -21,7 +23,7 @@
 - Each valid server-verified rewarded-ad event grants exactly 900 free seconds once per provider event identity.
 - Free credit expires at 00:00 Asia/Tehran; Premium does not reset and lasts through purchased expiration.
 - Free usage is charged at most once per account per trusted server-observed UTC second bucket. Overlapping connections, devices, credentials, or nodes in the same bucket do not multiply Free debit; duplicate/replayed telemetry evidence never causes a second debit.
-- Premium separately requires at most one active client instance per copied configuration, but IP address and raw Xray connection count are not approved device identity; this remains a separate unresolved design/release gate until implemented and real-client verified.
+- Premium single-active-client enforcement is excluded from current release scope by the approved 2026-10-14 amendment. Do not advertise it as enforced; IP and raw connection count remain forbidden identity substitutes.
 - Free speed cap is admin-configurable and initially 5 Mbps; Premium has no Madar-imposed application speed cap.
 - Entitlement expiry, suspension, revocation, and credential rotation must be enforced on nodes, not only hidden in UI.
 - REALITY private key and raw node credential remain only on the VPS.
@@ -579,7 +581,7 @@
 - [ ] Re-run account creation/one-time 30m grant.
 - [ ] Re-run v2rayNG import, real connection and VPS traffic.
 - [ ] Re-run active-bucket debit and idle/no-debit behavior, including duplicate/replay protection.
-- [ ] Verify Premium single-active-client behavior only after the separately approved client-instance mechanism exists: first device works, second distinct device is denied, same device's normal multiple transport connections do not self-block, and same-NAT devices are distinguished.
+- Scope exclusion: former Premium single-active-client gate is deferred by the approved 2026-10-14 amendment. Preserve it as future work; do not mark enforcement PASS. Verify no current product surface advertises that restriction as enforced.
 - [ ] Verify valid rewarded ad +15m only when a real configured provider callback exists; otherwise Production Ready remains blocked on that acceptance item.
 - [ ] Verify Tehran midnight reset and Premium survival with controlled clock/integration evidence.
 - [ ] Verify entitlement expire → real revoke; recharge → real re-enable.
@@ -625,7 +627,7 @@ Database integration tests run against an isolated PostgreSQL database and must 
 - Xray/VLESS/REALITY and real VPS validation: Tasks 26–27.
 - Real v2rayNG E2E: Task 28.
 - Multi-node and speed enforcement: Tasks 29–30.
-- Premium single-active-client identity/enforcement: separate approved design/implementation gate before final Production Ready acceptance.
+- Premium single-active-client identity/enforcement: future project under the approved 2026-10-14 scope amendment; no current-release enforcement claim.
 - Production security, recovery, real-device push/install, full acceptance: Tasks 31–34.
 
 All mandatory requirements from the approved baseline plus the approved 2026-10-10 accounting amendment are assigned to at least one task. No external provider, VPN path, active-second field path, or Premium device-locking behavior is treated as operational before its real integration gate passes.
