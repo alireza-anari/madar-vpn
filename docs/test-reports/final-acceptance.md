@@ -1,73 +1,50 @@
 # Madar Final Acceptance Matrix
 
-**Date:** 2026-10-09  
-**Branch:** `impl/phase-1`  
-**Status:** **BLOCKED — not Production Ready**
+Date: 2026-10-14. Branch: `impl/phase-10-task33-pwa-push`.
+**Phase 10 incomplete. Required release gates remain BLOCKED.**
 
-This document is the Task 34 release-gate matrix. It distinguishes deterministic repository/CI evidence from external acceptance that requires real providers, VPS hosts, VPN clients, or physical devices. Automated success is never used as a substitute for a required real integration check.
+This replaces the stale 2026-10-09 matrix. Historical Phase 7/8/9 results are preserved at their exact field sources; they are not silently upgraded to Task 34 final-candidate reruns. Task 33 is still BLOCKED, so Task 34 field execution has not started. Read-only audit and automated candidate preparation do not bypass that sequencing.
 
-## Status definitions
+Baseline: `ea0fa64308e9d17703973281c933c0a324ef811d`, full CI `38515671586` completed/success, independently queried. Candidate runtime source: `24aeeeec1d343190dcb92c398b5ce7e6a2e25470`; complete CI [38530267068](https://github.com/alireza-anari/madar-vpn/actions/runs/38530267068), job `115740207637`, completed/success, all normal steps successful on 2026-10-14 07:46Z.
 
-- **PASS** — the exact acceptance item has current evidence sufficient for the scope required by the implementation plan.
-- **BLOCKED** — prerequisite external infrastructure, provider credentials, VPS/client environment, or physical device evidence is unavailable; no failure of the implemented automated boundary is implied.
-- **FAIL** — the required acceptance was run and failed.
+PASS requires actual evidence for the stated scope. BLOCKED identifies missing prerequisites. FAIL identifies an executed, failed gate. Every current acceptance item has exactly one status below.
 
-No item below is marked PASS solely because source code exists.
+## Required Task 34 gates
 
-## Task 34 acceptance matrix
-
-| # | Acceptance item | Status | Evidence / rationale |
+| # | Acceptance item | Status | Evidence / exact remaining action |
 | --- | --- | --- | --- |
-| 1 | Run all TS/Python automated suites, typecheck and production build | **PASS** | Final repository CI run `37907030529` on commit `ef6f0a48db8eaf7e34fce00c756077ddd75ec9aa` passed secret scan, PostgreSQL schema, destructive backup/restore, restored-DB Worker HTTP smoke, PostgreSQL runtime smoke, PostgreSQL integration tests, npm/pip audits, full JS/TS tests, TypeScript typecheck, production build, and Python tests. |
-| 2 | Re-run account creation and prove the one-time 30-minute grant | **BLOCKED** | PostgreSQL integration proves the **1,800-second grant invariant exactly once**, and auth/session persistence is CI-verified. However the final acceptance item asks for the real account-creation flow; no configured real email delivery/provider acceptance has been run in this environment. Automated invariant: PASS. Real email/account creation path: NOT RUN. |
-| 3 | Re-run v2rayNG import, real connection and VPS traffic | **BLOCKED** | `docs/test-reports/phase-7-vps.md` records that no disposable real VPS was available and no real Xray/VLESS/REALITY traffic traversal was run. Without that prerequisite, current real v2rayNG import/traffic cannot be accepted. |
-| 4 | Re-run debit-start / debit-stop behavior | **BLOCKED** | Automated accounting covers telemetry identity dedupe, concurrent usage summation, Premium zero-debit behavior, and prior-day isolation. The plan requires the final debit start/stop re-run against real observed VPN activity; no real VPS traffic/activity source has been exercised. |
-| 5 | Verify a valid rewarded-ad callback grants +15 minutes only with a real configured provider | **BLOCKED** | Provider-neutral verification and PostgreSQL settlement/idempotency are automated and PASS, including exactly one 900-second reward per verified event. No real rewarded-ad provider credentials/callback acceptance exists, so the release item remains blocked exactly as required by Task 34. |
-| 6 | Verify Tehran midnight reset and Premium survival with controlled clock/integration evidence | **PASS** | `apps/api/integration/credits.postgres.test.ts` runs against PostgreSQL with instants immediately before/after Tehran midnight and proves free credit projects to the new Tehran day while Premium expiry remains unchanged. The current final CI run includes and passes this PostgreSQL integration suite. |
-| 7 | Verify entitlement expiry → real revoke; recharge → real re-enable | **BLOCKED** | Control-plane policy/revocation primitives and fail-closed behavior have automated coverage, but real Xray/VLESS/REALITY enforcement has not been exercised on a VPS. The required live revoke/re-enable proof is NOT RUN. |
-| 8 | Re-run Client ID rotation and Subscription URL rotation | **BLOCKED** | PostgreSQL/API tests prove credential/token rotation state, old bearer invalidation, and renderer behavior. The Task 34 re-run requires the real lifecycle against v2rayNG/VPS: old client credential must fail after revocation, refresh must obtain working new config, old subscription URL must fail, and the new URL must refresh successfully. That real path is NOT RUN. |
-| 9 | Re-run second node, unhealthy removal, Free speed cap and Premium no-app-cap | **BLOCKED** | No second real VPS acceptance exists. Per-client Free speed enforcement is intentionally not represented as ready: the approved design requires a real per-client mechanism and measured throughput; a node-wide or fabricated cap is forbidden. Admin readiness reports speed enforcement as unavailable until real proof exists. |
-| 10 | Re-run Android/iPhone PWA install and real Web Push | **BLOCKED** | `docs/test-reports/phase-10-device-readiness.md` proves the automated prerequisites: explicit permission gesture, denied/unsupported usability, authenticated CSRF bootstrap/rotation, public-only VAPID bootstrap, browser subscription persistence/rollback, and App wiring. Real Android install, iPhone Add to Home Screen, and real Push delivery on target devices are NOT RUN. |
-| 11 | Create this final acceptance report with PASS/FAIL/BLOCKED and evidence references | **PASS** | This file records every Task 34 item without upgrading blocked external gates to PASS. |
-| 12 | Use `Production Ready` only when every required item is PASS | **PASS as a release-control rule; release remains BLOCKED** | This report explicitly does **not** label Madar Production Ready. Multiple mandatory items remain BLOCKED. The plan's final `chore: record production acceptance` commit is intentionally not used yet. |
+| 1 | Full automated candidate: TS/Python, typecheck/build, PostgreSQL schema/integration/backup-restore, scans/audits, Go race/vet/build | PASS | Exact candidate `24aeeeec1d343190dcb92c398b5ce7e6a2e25470`, CI `38530267068`, job `115740207637`: all normal gates completed/success, including 214 Python tests. First attempt `38529764895` failed typecheck on `02c2dc7a688430eaf01391848ed56dd2dffb227b`; fixed candidate above passed its whole gate. Local API 152/Web 51/build/scans/audits pass; local Python/tool restrictions are documented in Task 33 report and are not full-suite PASS. |
+| 2 | Re-run real account creation and exactly one 1800-second grant | BLOCKED | Task 33 must complete first; configured target account/email flow on final source not exercised. Phase 8 historical account/grant PASS is retained, not reused as this rerun. |
+| 3 | Re-run physical v2rayNG import/connection/real VPS traffic | BLOCKED | Task 33 completion and current retained field-host/phone execution access required. This Work session has no approved routing/credentials for the retained private bridge. Do not paste them in chat or recreate servers. |
+| 4 | Re-run active-traffic debit, idle zero-debit, duplicate/replay protection | BLOCKED | Final-source field traffic/telemetry rerun awaits the same environment prerequisite. Historical Phase 7/8 accounting does not satisfy explicit rerun. |
+| 5 | Premium single-active-client, normal same-device transports, distinct same-NAT devices | BLOCKED | **Architecture/approval blocker.** Approved accounting amendment explicitly leaves mechanism unresolved; no separately approved implemented privacy-safe server-verifiable client-instance identity exists in audited source/specs. Needs a focused mechanism specification and separate explicit approval, implementation and real two-device proof. IP/connection count is forbidden as substitute. No architecture invented here. |
+| 6 | Real rewarded-provider callback grants +900 seconds once | BLOCKED | **External provider blocker.** PostgreSQL runtime has `rewardedAds: null` and ads unavailable. Need operator selection/configuration of a real callback-capable provider and valid signed callback acceptance. Test adapter is excluded; no paid provider registration occurred. |
+| 7 | Tehran midnight Free reset and Premium survival | PASS | Exact candidate `24aeeeec1d343190dcb92c398b5ce7e6a2e25470`, full CI `38530267068` passed the PostgreSQL integration suite. Controlled instants around `2026-10-08T20:30:00Z` represent midnight Asia/Tehran, not UTC/browser midnight; `credits.postgres.test.ts` verifies day projection and unchanged Premium expiry. No physical midnight wait is required by the plan. |
+| 8 | Entitlement expiry → real revoke, recharge → real re-enable | BLOCKED | Requires current candidate application routes/policy and real retained-node traffic evidence after Task 33; direct SQL seeding cannot replace it. |
+| 9 | Re-run Client ID and subscription URL rotation | BLOCKED | Exact final candidate real product/client lifecycle not run. Historical Phase 8/9 rotation remains valid history only. |
+| 10 | Re-run second node/unhealthy removal/cross-node dedupe/Free cap/Premium no-app-cap | BLOCKED | Main plan explicitly says **re-run**. Existing second VPS must be retained and reused once approved current access is available; historical Phase 9 cannot replace required final-candidate rerun. No Task 32 reinstall/removal repetition is needed. |
+| 11 | Re-run Android/iPhone install and real Push on final candidate | BLOCKED | Task 33 staging/account/device prerequisites outstanding. Historical narrow Android install/standalone/startup-no-prompt is retained; iPhone and real Push have no accepted evidence. See independent device matrix. |
+| 12 | Final privacy/security and temporary field cleanup | BLOCKED | Repository scan passes for the checked source and this continuation wrote no production secret. Final bounded retained-node log/token/process/listener inspection has not run; historical logs must remain. No device/provider raw endpoints/keys belong in evidence. |
+| 13 | Final safe runtime state of both retained VPSs/bridge/sessions/tokens | BLOCKED | Current remote state has not been inspected. Historical 2026-10-14 05:07Z snapshot expired at bounded policy deadlines and cannot prove current health. Need final existing-host read-only snapshot and bounded application cleanup after actual tests. No SSH/firewall/VPS/resource mutation was made in this continuation. |
+| 14 | Current independent device/final reports with explicit statuses and evidence | PASS | `phase-10-device-acceptance.md` plus this matrix document every gate, scope, historical source and blocker. Final documentation head/CI must be separately verified before handoff. This reporting PASS does not promote a runtime/device gate. |
 
-## Phase 10 recovery prerequisite outside the Task 34 row list
+## Historical evidence audit
 
-Task 32 is also required before the overall Phase 10 release gate can close:
+| Source | Valid historical scope | Exact source / CI | Final rerun disposition |
+| --- | --- | --- | --- |
+| Phase 7 VPS, Gate J appendix and acceptance reconciliation | Real active-second accounting/idle/overlap/retry and current lifecycle closure | `d4fe18b91a2da26488faedd96b4182190de31861`, CI `38073194023`; compact closure on 2026-10-11 Tehran | Preserve evidence and journals. Task 34 debit/traffic delta still required; no full Gate J matrix or installer repeat without regression. |
+| Phase 8 | Physical Galaxy A16, Android 16, v2rayNG 2.2.6; real auth/grant, import/traffic/accounting/rotations | `5f82a12a28fdadb38acb750dabbc0f96e977c7e4`, CI `38087073156`; fixture `2cd84c1f0e00692e3c242a1923796cc89620f216`, CI `38117746970` | Explicit Task 34 reruns required; historical phone versions do not identify the Task 33 Android automatically. |
+| Phase 9 multi-node/speed | Two real nodes, health/capacity exclusion, ACK withholding, overlap dedupe, Free cap/Premium bypass | `07179e48f0447782745673bb17e1f1fb4867aa13`, CI `38166200895`, real 2026-10-12 session | Explicit final rerun delta required. No new node purchase needed. Report documentation-CI caveats remain historical. |
+| Phase 10 Task 31 | Security/abuse implementation and later authoritative PostgreSQL migration | Historical `c9fab7d1bfc5f502f505ddb52d5756e75ff4c87e`, CI `37842150727`; later baseline/full CI supersedes old D1 warning | Current candidate full scans/audits and final field privacy snapshot required. Old remaining-Task32 paragraphs are historical, not current blockers. |
+| Phase 10 Task 32 | Accepted real amd64 installer/recovery field scope | Installer `7834fe6c000411e61d22208df4d50f1184a80a2e`, CI `38341099149`; app `2dfd0e3c81dba85430024a9e7e17b2970a439576`, CI `38450115960`; handoff baseline/CI above | PASS retained. No repeat. Historical limitations (specific discarded-token replay/arm64/hosted production recovery) are not silently claimed or added as new field demands. |
+| Phase 10 readiness/Task 33 | Secure gesture/subscription prerequisites; operator narrow real Android handoff; real transport continuation | `phase-10-device-readiness.md`, current independent device report | Physical iPhone/Push/denied/click evidence still required. |
 
-| Recovery item | Status | Evidence |
-| --- | --- | --- |
-| PostgreSQL disposable backup/restore and restored Worker serving | **PASS** | `docs/test-reports/postgres-runtime-migration.md`, `docs/test-reports/phase-10-recovery.md`, and current CI restore/HTTP-smoke gates. |
-| Database and node recovery runbooks | **PASS** | `docs/runbooks/database-restore.md` and `docs/runbooks/node-recovery.md`. |
-| Real node reinstall/re-enroll/recovery without secret reuse/exposure | **BLOCKED** | `docs/test-reports/phase-10-recovery.md` records disposable-VPS execution as NOT RUN. |
-| Installer `update` and `remove` on a disposable real VPS | **BLOCKED** | Automated lifecycle tests exist, but the plan explicitly requires disposable-VPS evidence; none exists in this environment. |
+## Honest current environment boundary
 
-## Supporting automated evidence that does not replace blocked real gates
+This continuation began in an empty scratch workspace, cloned the exact authorized branch, and created only the requested review branch. No retained-host files, services, policies, SSH/firewall rules, bridge or historical journals were accessed or modified. No paid resource/provider was created. Cloud Browser reached `dash.cloudflare.com/login`; no usable signed-in session was observed and no secret mutation/deployment was attempted. Personal-context retrieval was disabled, so missing live field access was not inferred from conversation memory.
 
-- **PostgreSQL runtime:** `docs/test-reports/postgres-runtime-migration.md` records PostgreSQL as the authoritative runtime, D1 retirement, destructive restore, restored Worker HTTP serving, integration/concurrency/idempotency coverage, audits, tests, typecheck, and build.
-- **Security/abuse:** `docs/test-reports/phase-10-security.md` records Task 31 hardening.
-- **Recovery:** `docs/test-reports/phase-10-recovery.md` records database recovery PASS and real disposable-VPS lifecycle BLOCKED.
-- **Real VPS:** `docs/test-reports/phase-7-vps.md` records Task 27 as BLOCKED and forbids claims of real VPN integration from automated adapter tests alone.
-- **Provider-neutral adapters:** `docs/test-reports/phase-5.md` records automated rewarded-ad/payment/mission/Push boundaries as verified while real provider/device integrations remain unverified. Its historical note that browser Push persistence was not wired is superseded for that narrow prerequisite by `docs/test-reports/phase-10-device-readiness.md`; real-device Push remains BLOCKED.
-- **PWA/Push readiness:** `docs/test-reports/phase-10-device-readiness.md` records the current secure browser subscription prerequisite path as automated-PASS / real-device-NOT-RUN.
+Last known retained-node state is **historical**, from `phase-10-recovery.md`: Node1 empty revision 34 / Node2 empty revision 5, healthy/ready at `2026-10-14T05:07:35.310Z`; their policy expiries were `07:05:01.829Z` and `07:05:01.863Z`. Those bounded policies have elapsed. Whether the bridge and nodes now refreshed, failed closed or degraded is unknown here. No current healthy-state assertion is made.
 
-## Blocking set before Production Ready
+Small next prerequisite: establish secure authenticated access to the existing Cloudflare staging account; private values must be entered only through approved secure bindings. Browser VAPID mutations require the operator's explicit approval. Then deploy exact green candidate, verify health, and collect one physical-device action at a time. Task 34 field work follows Task 33 completion. Provider and Premium architecture blockers require separate decisions and remain documented rather than hidden.
 
-The minimum unresolved external acceptance set currently includes:
-
-1. disposable real Ubuntu VPS install/enrollment/Xray/Agent health, real traffic, revoke, and stale-policy fail-closed;
-2. current real v2rayNG import/connection/traffic and credential/subscription rotation lifecycle;
-3. real server-observed debit start/stop behavior;
-4. a second real node, unhealthy/capacity filtering, and cross-node rotation/traffic;
-5. a proven **per-client** Free speed mechanism with measured Free throughput near the configured cap and Premium with no Madar-imposed application cap;
-6. real rewarded-ad provider callback acceptance for the +900-second grant;
-7. real email delivery/account-creation acceptance;
-8. real entitlement expiry/revoke and recharge/re-enable on Xray;
-9. real node recovery plus installer `update` / `remove` on a disposable VPS;
-10. Android PWA install/relaunch and iPhone Add to Home Screen/standalone acceptance;
-11. real Web Push subscription, delivery, display, and denied-permission behavior on the supported target devices;
-12. target-environment deployment acceptance such as real Cloudflare/Hyperdrive/provider secret configuration and live smoke/monitoring, where applicable to the release environment.
-
-## Release decision
-
-**BLOCKED.** The repository/CI implementation has strong automated coverage and the current full gate is green, but mandatory external acceptance remains outstanding. Madar must not be described as `Production Ready`, VPN E2E verified, v2rayNG verified, speed-cap verified, real-provider verified, or real-device Push verified until the corresponding blocking items above have current real evidence and every mandatory Task 34 row is PASS.
+The final acceptance commit/message is reserved for a fully PASS release. It is not used for this blocked checkpoint.
