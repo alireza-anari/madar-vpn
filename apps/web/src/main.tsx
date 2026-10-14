@@ -3,7 +3,9 @@ import { createRoot } from 'react-dom/client';
 import { App } from './app/App';
 import { registerServiceWorker } from './pwa/registerServiceWorker';
 import './styles/global.css';
+import './styles/neon.css';
 import './styles/surfaces.css';
+import './styles/dashboard.css';
 
 const root = document.getElementById('root');
 

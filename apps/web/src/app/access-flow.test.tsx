@@ -41,7 +41,7 @@ describe('VPN access flow', () => {
     expect(screen.getByText('۱ نود آماده')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /اتصال|connect/i })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'صدور لینک اشتراک' }));
+    fireEvent.click(screen.getByRole('button', { name: 'دریافت لینک اشتراک' }));
 
     const linkField = await screen.findByRole('textbox', { name: 'لینک اشتراک' });
     expect(linkField).toHaveValue(subscriptionUrl);
@@ -70,7 +70,7 @@ describe('VPN access flow', () => {
 
     expect(await screen.findByRole('heading', { name: 'دسترسی VPN' })).toBeInTheDocument();
     expect(screen.getByText('فعلاً نود آماده‌ای برای صدور لینک وجود ندارد.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'صدور لینک اشتراک' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'دریافت لینک اشتراک' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: /اتصال|connect/i })).not.toBeInTheDocument();
   });
 });
