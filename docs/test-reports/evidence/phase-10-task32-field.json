@@ -1,0 +1,204 @@
+{
+  "finalState": {
+    "atUtc": "2026-10-14T05:07:35.310Z",
+    "nodes": [
+      {
+        "alias": "node1",
+        "status": "ready",
+        "policy": {
+          "revision": 34,
+          "valid_until": "2026-10-14T07:05:01.829Z",
+          "fresh": true,
+          "acknowledged": true,
+          "clients": 0
+        },
+        "health": {
+          "ready": true,
+          "healthy": true
+        },
+        "capacity": {
+          "accepting": true,
+          "maxClients": 128,
+          "activeClients": 0
+        },
+        "heartbeatAgeSeconds": 4
+      },
+      {
+        "alias": "node2",
+        "status": "ready",
+        "policy": {
+          "revision": 5,
+          "valid_until": "2026-10-14T07:05:01.863Z",
+          "fresh": true,
+          "acknowledged": true,
+          "clients": 0
+        },
+        "health": {
+          "ready": true,
+          "healthy": true
+        },
+        "capacity": {
+          "accepting": true,
+          "maxClients": 128,
+          "activeClients": 0
+        },
+        "heartbeatAgeSeconds": 16
+      }
+    ],
+    "activeAdminSessions": 0,
+    "activeUnusedEnrollmentTokens": 0,
+    "fieldUnmappedReports": 0,
+    "finalFreeSeconds": 0,
+    "baselineRestored": true,
+    "replacementRecordCount": 1
+  },
+  "nodes": {
+    "madar-node1": {
+      "privacy": {
+        "atUtc": "2026-10-14T05:07:37.974713+00:00",
+        "journalSinceUtc": "2026-10-13T18:09:00Z",
+        "journalReadSucceeded": true,
+        "knownSecretMatches": 0,
+        "rawUuidMatches": 0,
+        "secretFieldLeakageMatches": 0,
+        "pendingOutboxCount": 0,
+        "activityWindowCount": 0,
+        "oldRealityWitnessCountInBoundedDirectories": 0,
+        "rawJournalDiscardedInRam": true,
+        "privacyPass": true
+      },
+      "installation": {
+        "speedBinaryExists": true,
+        "speedBinaryPinnedDigestMatch": false,
+        "threeUnitFilesPresent": true,
+        "stateDirectoryMode700": true,
+        "speedBinaryRootOwnedExecutable": true,
+        "agentEnvRootOwnedMode600": true,
+        "pendingOutboxCount": 0
+      }
+    },
+    "madar-node2": {
+      "privacy": {
+        "atUtc": "2026-10-14T05:07:42.770254+00:00",
+        "journalSinceUtc": "2026-10-13T18:09:00Z",
+        "journalReadSucceeded": true,
+        "knownSecretMatches": 0,
+        "rawUuidMatches": 0,
+        "secretFieldLeakageMatches": 0,
+        "pendingOutboxCount": 0,
+        "activityWindowCount": 0,
+        "oldRealityWitnessCountInBoundedDirectories": 0,
+        "rawJournalDiscardedInRam": true,
+        "privacyPass": true
+      },
+      "installation": {
+        "speedBinaryExists": true,
+        "speedBinaryPinnedDigestMatch": true,
+        "threeUnitFilesPresent": true,
+        "stateDirectoryMode700": true,
+        "speedBinaryRootOwnedExecutable": true,
+        "agentEnvRootOwnedMode600": true,
+        "pendingOutboxCount": 0
+      }
+    }
+  },
+  "events": [
+    {
+      "policyPublicationHttpStatus": 201,
+      "mode": "current",
+      "noStore": true,
+      "directSqlPolicyWrite": false,
+      "atUtc": "2026-10-13T18:58:39.738093+00:00",
+      "revision": 3,
+      "validUntil": "2026-10-13T20:30:00.000Z",
+      "clientCount": 1
+    },
+    {
+      "replacementInstallTokenSpecificReplayProven": false,
+      "disposableWitnessOnly": true,
+      "issueStatus": 201,
+      "consumeStatus": 201,
+      "replayStatus": 401,
+      "oneTimeReplayRejected": true,
+      "retirementStatus": 204,
+      "temporaryRecordAbsent": true,
+      "temporaryActiveCredentialsZero": true,
+      "rawTokenPersisted": false,
+      "atUtc": "2026-10-13T19:06:27.281Z"
+    },
+    {
+      "policyPublicationHttpStatus": 201,
+      "mode": "empty",
+      "noStore": true,
+      "directSqlPolicyWrite": false,
+      "atUtc": "2026-10-13T19:08:57.929990+00:00",
+      "revision": 4,
+      "validUntil": "2026-10-13T21:08:57.922Z",
+      "clientCount": 0
+    },
+    {
+      "atUtc": "2026-10-13T19:16:30.755041+00:00",
+      "auditedUnusedCreditCleanupStatus": 200,
+      "unusedCreditRemovedSeconds": 593,
+      "node1SafeEmptyPublicationStatus": 201,
+      "node1EmptyRevision": 33,
+      "node1EmptyValidUntil": "2026-10-13T21:16:30.792Z",
+      "operatorSessionLogoutStatus": 204,
+      "loggedOutSessionRejectedStatus": 401,
+      "loggedOutKnownSecretMatches": 0,
+      "temporaryAdminReferencesRemoved": true
+    },
+    {
+      "atUtc": "2026-10-14T05:05:01.931067+00:00",
+      "actualAuthRequestConsume": true,
+      "mailTokenRamOnly": true,
+      "publicMailEndpointCreated": false,
+      "emptyPublications": [
+        {
+          "node": "node1",
+          "publicationStatus": 201,
+          "revision": 34,
+          "validUntil": "2026-10-14T07:05:01.829Z",
+          "clientCount": 0
+        },
+        {
+          "node": "node2",
+          "publicationStatus": 201,
+          "revision": 5,
+          "validUntil": "2026-10-14T07:05:01.863Z",
+          "clientCount": 0
+        }
+      ],
+      "logoutStatus": 204,
+      "loggedOutSessionStatus": 401,
+      "temporarySessionFileRemoved": true,
+      "directSqlPolicyOrSessionWrite": false
+    }
+  ],
+  "traffic": {
+    "atUtc": "2026-10-13T19:02:27.591691+00:00",
+    "realVlessTrafficPass": true,
+    "exitMatchesNode2": true,
+    "clientConfigRamOnlyOnWindows": true,
+    "remoteTemporaryConfigRemoved": true,
+    "egressCurlExit": 0,
+    "transferCurlExit": 0,
+    "internetPayloadBytes": 1048576,
+    "temporaryLocalListenerAbsent": true
+  },
+  "installedNode2Source": {
+    "exactCode": "2dfd0e3c81dba85430024a9e7e17b2970a439576",
+    "filesMatched": 19,
+    "mismatches": 0
+  },
+  "runtimeCleanup": {
+    "atUtc": "2026-10-14T05:08:30Z",
+    "targetedTemporaryFilesRemainingOnBothNodes": 0,
+    "node1TemporaryFilesRemoved": 26,
+    "bothAgentAndXrayActive": true,
+    "bothSpeedEnforcerInactive": true,
+    "localClientListenerAbsent": true,
+    "operationalPrivateApiBridgeRetained": true,
+    "historicalJournalsAndVpsPreserved": true
+  }
+}

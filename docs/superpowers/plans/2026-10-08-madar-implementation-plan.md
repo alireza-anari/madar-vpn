@@ -556,12 +556,12 @@
 
 ## Task 32: Backup, restore, recovery, and installer lifecycle
 
-2026-10-13 field status: **BLOCKED / INCOMPLETE**. The lifecycle handoff records real update/retire/remove/re-enroll, but policy ACK diagnostics were SQL-seeded. Exact installer source lacks an operational application policy-publication path; real replacement traffic and final recovery/cleanup remain unproved. The operator chose documentation only, with no runtime change. See `docs/test-reports/phase-10-recovery.md`; no complete Task 32 acceptance checkbox is promoted by this partial evidence.
+2026-10-14 field status: **Task 32 recovery field scope PASS**, subject to final exact documentation-head CI. Historical installer lifecycle source `7834fe6c000411e61d22208df4d50f1184a80a2e` and CI `38341099149` are combined with fresh deployed application publication source `2dfd0e3c81dba85430024a9e7e17b2970a439576` and full successful CI `38450115960`. Real replacement ACK/eligibility, public VLESS+REALITY traffic, independent enrollment replay witness, final empty policies, privacy/outbox and cleanup passed. Specific discarded installation-token replay is not claimed. See `docs/test-reports/phase-10-recovery.md`; Phase 10 and Production Ready are not promoted.
 
-- [ ] Test PostgreSQL backup/restore on disposable database.
-- [ ] Test node reinstall/re-enroll/recovery without exposing secrets.
-- [ ] Test installer `update` and `remove` on disposable VPS.
-- [ ] Write `docs/runbooks/node-recovery.md` and DB restore runbook.
+- [x] Test PostgreSQL backup/restore on disposable database.
+- [x] Test node reinstall/re-enroll/recovery without exposing secrets.
+- [x] Test installer `update` and `remove` on disposable VPS.
+- [x] Write `docs/runbooks/node-recovery.md` and DB restore runbook.
 - [ ] Commit evidence.
 
 ## Task 33: Real PWA and Web Push device acceptance

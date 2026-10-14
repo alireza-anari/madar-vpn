@@ -22,7 +22,13 @@ Automated tests currently verify:
 - `status`, `observe`, and `remove` never require a release download;
 - PostgreSQL backup/restore and restore-smoke behavior in CI.
 
-The operator's Task 32 field handoff records real Node2 update, retirement, old-credential rejection, remove and fresh re-enrollment against installer source `7834fe6c000411e61d22208df4d50f1184a80a2e`. Complete recovery acceptance remains **BLOCKED**: policy/ACK diagnostics used direct SQL, and that source lacks an operational application policy-publication path. Real replacement traffic and final safe recovery/cleanup remain unproved. See `docs/test-reports/phase-10-recovery.md` for historical versus freshly verified evidence. Do not use direct SQL policy seeding or automated coverage to claim field PASS.
+Task 32 recovery field acceptance is recorded in `docs/test-reports/phase-10-recovery.md`: historical installer lifecycle on `7834fe6c000411e61d22208df4d50f1184a80a2e`, followed by real application publication and replacement traffic on exact green API `2dfd0e3c81dba85430024a9e7e17b2970a439576`. SQL-seeded diagnostics do not count as acceptance. This does not promote Phase 10 or Production Ready.
+
+## Publish a recovery policy through the application
+
+Use the authenticated administrator session with the application's CSRF token and same-origin checks to call `POST /api/admin/nodes/:id/policy`. The strict request is `{"mode":"current","ttlSeconds":7200}` for authoritative authorized clients, or `{"mode":"empty","ttlSeconds":7200}` for safe idle recovery. TTL must be 60–7200 seconds; effective expiry may be earlier at entitlement expiry or the Tehran Free-day boundary. Do not substitute SQL insertion, manual Xray startup or a copied configuration.
+
+Record only response revision, expiry and client count. Wait for that exact revision's ACK and a fresh healthy/ready heartbeat before checking subscription eligibility or traffic. Empty policy should ACK with Agent/Xray active, Speed inactive and zero clients. Maintain the control-plane transport until cleanup is verified; a temporary SSH bridge is an operational dependency, and expiry/transport loss must fail closed. Revoke test credit/session/credentials through application flows, remove private client/export/listener files, drain telemetry, and retain only bounded aggregate privacy evidence.
 
 ## Pinned Speed Enforcer release
 
@@ -244,20 +250,20 @@ Automated/control-plane gates:
 - [x] three-service installer lifecycle is covered by tests;
 - [x] PostgreSQL backup/restore and restore-smoke gates are in CI.
 
-Real Node2 checks still required on the exact CI-green implementation SHA:
+Real Node2 checks completed across the exact-green installer and API sources identified in the report:
 
-- [ ] record safe Node2 baseline and confirm Node1 remains healthy/eligible;
-- [ ] run real `install.sh update` and prove fresh heartbeat/readiness/policy recovery;
-- [ ] verify installed Speed Enforcer binary matches the pinned digest;
-- [ ] run bounded post-update journal privacy scan with zero known-secret matches;
-- [ ] obtain explicit operator confirmation immediately before destructive retirement;
-- [ ] retire Node2 through the real control-plane/admin path;
-- [ ] prove the previous Node2 credential is rejected;
-- [ ] run real `install.sh remove` and prove complete three-service/local cleanup;
-- [ ] reinstall/re-enroll Node2 using a fresh one-time token;
-- [ ] prove old credential and old REALITY private key were not reused;
-- [ ] prove fresh heartbeat/readiness/current policy ACK after replacement;
-- [ ] prove real VLESS/REALITY traffic through the replacement Node2;
-- [ ] scan bounded replacement logs for secret leakage and clean temporary evidence.
+- [x] record safe Node2 baseline and confirm Node1 remains healthy/eligible;
+- [x] run real `install.sh update` and verify installed runtime (historical handoff; SQL-seeded ACK diagnostic only), with acceptance-valid application recovery separately verified on the replacement;
+- [x] verify installed Speed Enforcer binary matches the pinned digest;
+- [x] run bounded post-update journal privacy scan with zero known-secret matches;
+- [x] obtain explicit operator confirmation immediately before destructive retirement;
+- [x] retire Node2 through the real control-plane/admin path;
+- [x] prove the previous Node2 credential is rejected;
+- [x] run real `install.sh remove` and prove complete three-service/local cleanup;
+- [x] reinstall/re-enroll Node2 using a fresh one-time token;
+- [x] prove old credential and old REALITY private key were not reused;
+- [x] prove fresh heartbeat/readiness/current policy ACK after replacement;
+- [x] prove real VLESS/REALITY traffic through the replacement Node2;
+- [x] scan bounded replacement logs for secret leakage and clean temporary evidence.
 
-Until every real Node2 item above passes, Phase 10 Task 32 remains **INCOMPLETE**, not PASS.
+Task 32 field scope is PASS as recorded in the report, including the explicit independent-token-witness limitation. Other Phase 10 gates remain separate.

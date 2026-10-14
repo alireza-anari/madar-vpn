@@ -1,15 +1,15 @@
 # Phase 10 Recovery / Task 32 Report
 
-Date: 2026-10-13
+Date: 2026-10-14
 Branch: `impl/phase-10-task32-installer`
 
 ## Overall status
 
-**Task 32: PARTIALLY VERIFIED / BLOCKED on application policy publication and completion of replacement-node field acceptance.**
+**Task 32: PASS within the disposable amd64 recovery field scope below. Phase 10 and Production Ready are not PASS.**
 
-The PostgreSQL recovery contract and control-plane retirement path are CI-verified. The operator handoff records real Node2 update, retirement, credential rejection, removal and fresh reinstall on the exact installer source below. Those historical field results were not repeated in this continuation. The complete recovery acceptance remains blocked: existing policy/ACK diagnostics were seeded with direct SQL, and this source has no operational application policy-publication path. The operator explicitly chose to document this blocker without changing runtime code.
+The historical operator handoff proves the real installer update, retirement, remove and fresh replacement sequence. This continuation completed the previously missing application publication, replacement ACK/eligibility, public VLESS+REALITY Internet traffic, independent one-time enrollment replay witness and final safe cleanup. Historical SQL-seeded revision 1/2 observations are diagnostic only and are excluded from acceptance.
 
-This report is evidence only. It does not upgrade the project to Production Ready.
+The operator subsequently authorized the runtime publication change and its TDD implementation. Acceptance combines the exact installer source and the separately tested/deployed API source below; it does not claim all results occurred on the old installer commit alone.
 
 ## PostgreSQL backup / restore — PASS
 
@@ -67,69 +67,85 @@ Runbooks now exist for both sides of Task 32:
 
 The node recovery runbook requires server-side retirement before local removal, a fresh one-time enrollment token for replacement, no reuse of old node credentials, and no copying of a REALITY private key when compromise is suspected.
 
-## Real node lifecycle — historical execution; complete acceptance blocked
+## Exact deployed source and release
 
-The operator handoff records real update, retirement, old-credential rejection, remove and fresh reinstall/re-enrollment. The detailed continuation below distinguishes those historical results from fresh checks and lists the missing publication/traffic/cleanup acceptance. Lack of VPS access is no longer the blocker.
+- Historical installer source: `7834fe6c000411e61d22208df4d50f1184a80a2e`; exact successful CI `38341099149`, job `115112030331`, independently queried in this continuation.
+- Fresh application source deployed on Node1: `2dfd0e3c81dba85430024a9e7e17b2970a439576`; full CI [38450115960](https://github.com/alireza-anari/madar-vpn/actions/runs/38450115960) succeeded on that exact SHA.
+- No Agent, installer or Speed Enforcer runtime source change was introduced by the application publication work. The replacement's 16 installed Agent modules and three units matched the exact green Git blobs: 19 matches, zero mismatches, freshly checked at final cleanup.
+- Speed release: `speed-enforcer-v0.1.0`; target `52d93efc0ae59d38e7ac3311e31b8f98c5ad73e5`.
+- Linux amd64 digest: `25e2c0aad88013abf1e600791dc6c6b45d3eb30f962137cc8596aca69d4a74a3`; freshly verified on Node2, root-owned/executable, no group/world write.
+- Linux arm64 digest: `a61b4b47946968cb2b3a4ee3d3817b0c76c93554ea4a40147cff08ea27367a32`; pinned release metadata only, no arm64 VPS field claim.
 
-## Release gate
+GitHub release metadata reports `immutable=false`. Version/tag refusal and repository-owned digest pinning are the verified contract, not absolute platform immutability. Node1's pre-existing binary was retained; this report does not claim Node1 was updated to Node2's release digest.
 
-Task 32 is not fully complete while the real-VPS lifecycle items are BLOCKED. The project must not claim Production Ready on the basis of PostgreSQL CI recovery and automated node-control tests alone.
+## Historical lifecycle evidence — operator handoff
 
-## Task 32 field continuation — 2026-10-13
+These actions were completed before this continuation and were deliberately not repeated:
 
-### Exact source and release
+| Check | Recorded real result |
+| --- | --- |
+| Node2 installer update | Three units, core source, binary pin/permissions and bounded update privacy passed |
+| Old authenticated policy transport | HTTP 200 |
+| Operator-approved admin retirement | DELETE 204; old record absent, active credentials zero; Node1 remained healthy |
+| Retired node credential | HTTP 401 |
+| Installer remove | Managed runtime/state paths absent; three units not-found; SSH/firewall preserved |
+| Same retained VPS reinstall | Fresh silent one-time enrollment, fresh authenticated identity, REALITY key inequality; old key witness removed |
+| Replacement identity | One replacement record and one active credential |
 
-- Installer source: `7834fe6c000411e61d22208df4d50f1184a80a2e`.
-- Deployment CI: `38341099149`, job `115112030331`. This continuation independently queried the run and verified completed/success on that exact source SHA.
-- Release: `speed-enforcer-v0.1.0`; target `52d93efc0ae59d38e7ac3311e31b8f98c5ad73e5`.
-- Linux amd64 digest: `25e2c0aad88013abf1e600791dc6c6b45d3eb30f962137cc8596aca69d4a74a3`.
-- Linux arm64 digest: `a61b4b47946968cb2b3a4ee3d3817b0c76c93554ea4a40147cff08ea27367a32`.
+Revision 1 empty and revision 2 Free policies were inserted directly into PostgreSQL before this continuation. Their ACKs do not count as application-path acceptance. No SQL policy, session or account mutation was used for the fresh acceptance below.
 
-Release metadata/digests are carried from the operator handoff, not newly re-downloaded asset evidence. The release contract is version/tag refusal and digest pinning; GitHub reports `immutable=false`, so absolute platform immutability is not claimed.
+## Application publication — TDD, review, CI and deployment
 
-### Historical real field evidence supplied by the operator
+The authenticated administrator route `POST /api/admin/nodes/:id/policy` accepts strict `current` or `empty` mode and bounded TTL (60–7200 seconds). Existing session, CSRF, Origin and rate-limit protections apply. It compiles authoritative active credentials, account verification/suspension, available Free credit, application Free speed and Premium entitlement; expiry is clamped to the entitlement/Tehran Free-day boundary. Publication, monotonic revision and audit are atomic. Responses contain only revision, expiry and client count with no-store.
 
-The continuation brief records these results on retained Node2. They are historical field evidence, not newly executed checks in this continuation:
+The PostgreSQL publisher serializes publication/ACK at the node lock and clears obsolete per-user ACK eligibility. The reviewed fixes additionally reject expired subscription ACK eligibility, recheck the clock after a blocked ACK obtains its lock, and re-read settled credit after candidate-account locks.
 
-- Real installer update: all three units present, installed core source/units match, pinned binary owner/mode/digest correct, bounded update privacy scan passed.
-- Previous node authenticated policy transport returned HTTP 200.
-- Actual administrator DELETE returned HTTP 204; retired node absent and active credential rows zero; Node1 remained healthy.
-- Old node credential subsequently returned HTTP 401.
-- Real remove left managed paths absent and all three unit load states `not-found`; firewall unchanged and SSH remained available.
-- Fresh in-place reinstall/re-enroll on the same retained VPS used exact installer source; fresh REALITY material differed from the old witness, which was removed. Secret-file/state permissions and pinned binary verification passed.
-- Replacement control-plane record count and active credential count were each one.
-- Replacement revision 1 empty-policy and revision 2 one-Free-client diagnostics reached actual ACK and fresh healthy/ready heartbeats; runtime subordinate states matched those policies.
+- Initial pure compiler/HTTP tests were observed failing before implementation, then passed.
+- RED CI `38447731672` exposed the missing PostgreSQL publisher; RED `38448444512` exposed obsolete user ACK retention.
+- GREEN `38448794422` passed the first implementation.
+- Independent code review found three expiry/concurrency issues. Regression commit `26dcb38db63ce4c4a3e262ca0141b22c87690cf4` produced RED CI `38449538584` with all three expected failures.
+- Fix commit `2dfd0e3c81dba85430024a9e7e17b2970a439576` produced full GREEN `38450115960`; local typecheck and 135 API tests across 46 files passed.
+- The real Node1 API assembly was rebuilt from that exact source against the real PostgreSQL database; HTTPS health returned 200. Agent installation and pinned sidecar release were unchanged.
 
-**The revision 1/2 policies were created by direct PostgreSQL inserts.** Their runtime results are diagnostic only and do not prove policy publication through the real application/control-plane path. No Premium traffic acceptance is claimed from this inventory.
+This is a temporary Node22/PostgreSQL control plane with private-CA HTTPS, not production Cloudflare/Hyperdrive deployment. Node2 reaches it through the retained private SSH forwarding bridge on the Work computer. The API/admin/node surfaces were not exposed publicly. That operational bridge remains required for live Node2 heartbeats; it is distinct from the removed client test listener.
 
-### Fresh investigation in this continuation
+## Fresh replacement field acceptance
 
-- SSH to the replacement remained available.
-- At `2026-10-13T18:09:09Z`, Agent was active, Xray and Speed Enforcer were inactive, and no TCP 443 listener was present.
-- The historical checkout at `/home/ubuntu/madar-vpn` was still an older SHA. It was not treated as the authoritative installed installer source, and no fresh installed-source match is claimed from it.
-- A simultaneous Windows TCP probe and bounded Node2 tcpdump observed an inbound TCP 443 packet reaching the OS, while the TCP connection failed. Raw packet output was discarded in memory; only booleans were emitted.
+| UTC evidence | Check | Result |
+| --- | --- | --- |
+| 2026-10-13 18:09 | Bounded inbound probe | TCP 443 SYN reached Node2, but expired policy left no listener; raw capture discarded |
+| 2026-10-13 18:58:39 | Actual admin current publication | HTTP 201/no-store, revision 3, one Free client, valid until 20:30 UTC; no SQL write |
+| After revision 3 | Runtime and actual subscription service | Fresh policy ACK, healthy/ready/accepting, one active client; replacement eligible through production service |
+| 2026-10-13 19:02:27 | Public VLESS+REALITY | Official Windows Xray 26.3.27 connected directly to Node2; ipify exit matched Node2; 1,048,576 Internet payload bytes received; both curl exits zero |
+| 2026-10-13 19:06:27 | Independent disposable enrollment witness | Actual issue 201, consume 201, replay 401; actual admin retirement 204; witness record absent and active credentials zero |
+| 2026-10-13 19:08:57 | Actual admin safe-idle publication | Empty revision 4, HTTP 201, ACK, clients zero, subscription service no longer eligible |
+| 2026-10-13 19:16:30 | Credit/session cleanup | Audited removal of 593 unused seconds, restoring zero baseline; logout 204 and old session rejected 401 |
 
-The earlier handoff's `INBOUND_443_PACKET_SEEN=false` is historical. The new capture proves packet arrival for this attempt; it does not prove Security Group attachment, NACL configuration, or successful VLESS traffic. No AWS rule was changed in this continuation, and no broad SSH/443 rule was introduced.
+Windows client configuration remained only in the private orchestration pipe/process memory. The remote temporary config was removed and the local TCP 19090 test listener was absent after traffic. No profile, client ID, subscription URL or raw per-client observation is retained in the evidence.
 
-### Application policy-publication blocker
+The replacement installation token had already been discarded. Its specific replay was **not proved** and it was not recovered. The operator-authorized independent fresh witness proves real one-time replay rejection, not the identity of that earlier token. The disposable witness created no VPS and was retired afterward.
 
-Inspection of the exact source found:
+## Final safe state and cleanup — 2026-10-14
 
-- `NodeControlStore` exposes `getPolicy` and `acknowledgePolicy`, but no publication primitive.
-- The production PostgreSQL adapter reads `node_policy_revisions` and updates acknowledgement fields; it has no policy creation/compiler operation.
-- The node HTTP routes retrieve and acknowledge policies. Repository policy-insert searches locate integration fixtures, not an operational application publication path.
+Overnight, the bounded empty policies expired and the disconnected bridge caused stale state. The Agents correctly stopped Xray fail-closed. The existing private bridge was restored and empty policies were republished through actual authentication and the admin endpoint, not database insertion.
 
-Therefore the required acceptance-valid publication, fresh replacement ACK, real replacement traffic and final empty-policy recovery cannot be completed on this source without implementing an operational path. No direct SQL policy write was performed in this continuation. The operator selected **retain the blocker; do not change runtime**.
+Authentication used the existing verified administrator and the real request/consume API with a temporary root-only Unix mail channel (mode 600, nonce in memory). It created no public mail endpoint. The session was logged out (204), subsequent identity access returned 401, and the private session file/mail channel were removed. The original default API assembly on exact `2dfd0e3` was restored, HTTPS health 200.
 
-### Remaining acceptance and cleanup limitations
+At `2026-10-14T05:07:35.310Z`:
 
-- Acceptance-valid policy publication and resulting fresh ACK: **BLOCKED**.
-- Real replacement-node VLESS+REALITY Internet traffic: **NOT PROVEN in this continuation**.
-- Replacement-install-token-specific replay: **NOT PROVEN**; the token was discarded after install and must not be recovered. Historical old-credential HTTP 401 is a different check.
-- A separate disposable token issue/consume/replay/retire test: **NOT RUN in this continuation**; it would not retroactively prove replay of the replacement install token.
-- Final empty policy with Agent/Xray active, Speed inactive, fresh ready heartbeat, ACK and zero clients: **NOT PROVEN through the application path**.
-- Final bounded secret scan, drained outbox, zero unmapped telemetry and complete historical harness/admin-session cleanup: **NOT VERIFIED in this continuation**.
+- Node1 empty revision 34 and Node2 empty revision 5 were fresh and ACKed; both status ready, health healthy/ready, capacity accepting with zero clients. Heartbeat ages were 4 and 16 seconds respectively.
+- Policy expiry is bounded: Node1 `2026-10-14T07:05:01.829Z`; Node2 `2026-10-14T07:05:01.863Z`. This snapshot is not a claim of indefinite readiness: expiry or loss of the retained bridge causes fail-closed behavior.
+- Active administrator sessions zero; active unused enrollment tokens zero; replacement records one; field-window unmapped telemetry zero.
+- The original field day's credit total (Tehran day derived from the October 13 start, not the next day's reset) was zero, equal to its pre-test baseline.
+- Both pending telemetry outboxes and activity-window tables were zero. State directories were mode 700 and agent environment files root-owned mode 600.
+- Bounded journals from `2026-10-13T18:09:00Z` through final scan yielded zero known-secret, raw UUID and secret-field matches on both nodes. Raw journals were read/discarded in RAM; historical journals were preserved. Bounded old REALITY witness-file counts were zero.
 
-This continuation created no VPS, changed no runtime, repeated no retirement/remove/reinstall, regenerated no REALITY material, and created no temporary client credential/config/listener. Both VPSs and historical journals were preserved. Repository documentation/security checks are separate from missing runtime cleanup evidence.
+At `05:08:28Z`/`05:08:30Z`, final cleanup confirmed Agent active, Xray active and Speed Enforcer inactive on both nodes. Twenty-six temporary field/helper/reference/rollback files were removed from Node1; targeted remaining count was zero on both nodes. The managed runtime, real API/certificates/database, operational SSH bridge, both VPSs and historical journals were preserved. No firewall or SSH rule was changed and no new paid resource was created.
 
-Task 32 remains **BLOCKED / INCOMPLETE**. No Phase 10 PASS or Production Ready claim follows from this report. A final documentation CI result, once available, verifies only the documentation head and normal repository gates; it cannot substitute for the missing field acceptance.
+Safe aggregate evidence is stored in `docs/test-reports/evidence/phase-10-task32-field.json`. It contains result metadata only; it is not a raw log or secret backup.
+
+## Completion boundary
+
+Task 32 combines the historical exact-green installer lifecycle with fresh exact-green application publication and affected field reruns. Database recovery CI, pinned replacement installation, retirement/re-enrollment, real replacement traffic, independent replay witness and bounded final cleanup are complete. The specific discarded installation-token replay, arm64 field execution and production hosted-control-plane recovery are not claimed.
+
+Final documentation CI must verify the exact evidence commit before this result is handed off as complete. Unrelated Task 31/33/34 acceptance, Phase 10 and Production Ready remain unpromoted. No next phase is started.

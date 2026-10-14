@@ -377,6 +377,8 @@ Expected: workflow conclusion `success`. Record exact HEAD and run ID for the re
 
 ---
 
+Execution record: historical Tasks 1–6 and Task 7 lifecycle steps 1–9 are carried from the exact-green operator handoff; Steps 10–12 were freshly completed on the separately deployed API source. Release immutability means version/tag refusal plus digest pinning; GitHub platform immutable=false. See the recovery report for timestamps and limitations. Task 8 final CI must be verified on the resulting evidence commit before handoff.
+
 ### Task 7: Execute real Node2 update, retirement, remove, and clean replacement
 
 **Files:**
@@ -388,51 +390,51 @@ Expected: workflow conclusion `success`. Record exact HEAD and run ID for the re
 - Uses retained Node2 only as the disposable recovery target; Node1 remains running.
 - Produces safe field evidence with booleans/counts/status codes only, never raw secrets/UUIDs.
 
-- [ ] **Step 1: Record a safe Node2 baseline**
+- [x] **Step 1: Record a safe Node2 baseline**
 
 Capture OS/architecture, boot ID, Agent/Xray/Speed service active state, installed unit presence, current pinned sidecar binary SHA match as a boolean, and fresh control-plane heartbeat/readiness. Store a one-way hash of the current Node2 REALITY private key in a root-only temporary file solely for post-replacement inequality comparison; never print the hash or key.
 
-- [ ] **Step 2: Deploy the exact Task 6 source and run real `install.sh update`**
+- [x] **Step 2: Deploy the exact Task 6 source and run real `install.sh update`**
 
 Use a trusted source checkout/copy pinned to the exact green SHA. Run the installer update from that source. Do not expose `agent.env`, node credential, REALITY private key, or sidecar config.
 
-- [ ] **Step 3: Verify post-update runtime and control-plane recovery**
+- [x] **Step 3: Historical post-update installer/runtime verification; fresh replacement application recovery below**
 
-Require: Agent active; expected three units installed; sidecar binary owner/mode correct and SHA equals repository-pinned digest; fresh heartbeat/readiness timestamp later than the update start; current policy applied/ACKed; Xray/Speed subordinate state consistent with current policy; bounded update journal scan has zero known-secret matches.
+Historical handoff verifies installer/runtime state; its SQL-seeded ACK is diagnostic only. Acceptance-valid application ACK/eligibility is provided separately by Steps 10–12 on the replacement, without repeating update. Original check requirements: Agent active; expected three units installed; sidecar binary owner/mode correct and SHA equals repository-pinned digest; fresh heartbeat/readiness timestamp later than the update start; current policy applied/ACKed; Xray/Speed subordinate state consistent with current policy; bounded update journal scan has zero known-secret matches.
 
-- [ ] **Step 4: Destructive field gate — obtain explicit operator confirmation immediately before retirement**
+- [x] **Step 4: Destructive field gate — obtain explicit operator confirmation immediately before retirement**
 
 Before the next step, confirm Node1 is still healthy/eligible and the operator still approves retiring/removing Node2. Do not infer this confirmation from earlier design approval if runtime conditions changed.
 
-- [ ] **Step 5: Retire Node2 server-side through the real control-plane/admin path**
+- [x] **Step 5: Retire Node2 server-side through the real control-plane/admin path**
 
 Use the real admin Servers retirement/delete flow so `NodeControlService.retireNode` revokes credentials before the surface record disappears. Do not emulate success by deleting local files or directly editing only the UI/surface record.
 
-- [ ] **Step 6: Prove the previous Node2 credential is rejected**
+- [x] **Step 6: Prove the previous Node2 credential is rejected**
 
 Before local removal, run a small root-only Python probe on Node2 that reads the credential file internally, reads only the API base URL from managed config, calls a node-authenticated endpoint, and prints only the HTTP status/classification. Expected: `401` / node credential invalid. Never put the credential in shell argv or output.
 
-- [ ] **Step 7: Run real `install.sh remove` and verify complete cleanup**
+- [x] **Step 7: Run real `install.sh remove` and verify complete cleanup**
 
 Require all three services inactive/absent as applicable; all three unit files absent; `/opt/madar-node-agent`, `/opt/madar-xray`, `/opt/madar-speed-enforcer`, `/etc/madar-node-agent` and node credential absent; daemon reload completed; SSH remains available and firewall unchanged.
 
-- [ ] **Step 8: Reinstall/re-enroll Node2 with a fresh one-time token**
+- [x] **Step 8: Reinstall/re-enroll Node2 with a fresh one-time token**
 
 Use the same exact green installer source from outside the removed install root. Create a new node enrollment in the real admin flow and enter the fresh token only at the silent interactive prompt. Do not paste the token into chat, command arguments, environment variables, files, or shell history. Reuse only public node parameters as appropriate; let the installer generate new node-local REALITY key material.
 
-- [ ] **Step 9: Prove old secret material was not reused**
+- [x] **Step 9: Prove old secret material was not reused**
 
 Compare the new REALITY private-key hash internally against the root-only pre-removal hash and print only `REALITY_KEY_ROTATED=true`; delete the temporary old hash immediately. Confirm the replacement has a new authenticated node identity and that the retired credential remains unauthorized; do not print either credential.
 
-- [ ] **Step 10: Obtain fresh heartbeat/readiness and policy ACK**
+- [x] **Step 10: Obtain fresh heartbeat/readiness and policy ACK**
 
 Wait for a new control-plane heartbeat after enrollment; publish/obtain the required current policy for the replacement; require a real acknowledgement for that replacement node before treating it as eligible. Enrollment alone is not Ready.
 
-- [ ] **Step 11: Re-run real Xray/VLESS/REALITY traffic through replacement Node2**
+- [x] **Step 11: Re-run real Xray/VLESS/REALITY traffic through replacement Node2**
 
 Use a disposable/reusable non-secret test account/credential under the established Phase 7/8 field method. Prove a real VLESS+REALITY client flow exits through Node2 and that subscription eligibility includes the recovered node only after readiness/policy gates. If using a phone/v2rayNG step, record only safe counts/result, never subscription URL or client UUID.
 
-- [ ] **Step 12: Restore safe idle field state and run privacy scans**
+- [x] **Step 12: Restore safe idle field state and run privacy scans**
 
 Return temporary test policy to empty/expected state, remove temporary client/origin/listener harnesses, require telemetry outbox drain, zero unmapped telemetry, no test listeners, and bounded Node1/Node2 journal scans with zero known-secret/raw-UUID matches. Retain safe JSONL/report evidence only.
 
@@ -450,15 +452,15 @@ Expected: every Node2 lifecycle/recovery item PASS. Any credential-auth success 
 - Consumes Task 1 release run, Task 6 exact green CI, and Task 7 safe field evidence.
 - Produces final Task 32 status only; it does not upgrade unrelated Phase 10 gates.
 
-- [ ] **Step 1: Rewrite the recovery report from PARTIALLY VERIFIED to factual field status**
+- [x] **Step 1: Rewrite the recovery report from PARTIALLY VERIFIED to factual field status**
 
 Record: exact repository SHA(s), CI run IDs/conclusions, release tag and target SHA, architecture asset verification, update result, retirement/old-credential rejection, remove cleanup, fresh enrollment, REALITY-key rotation boolean, fresh heartbeat/readiness/policy ACK, real traffic, privacy scans, database backup/restore CI, and any caveats. Do not include IP-sensitive secrets, raw node/client identifiers, credentials, private keys, tokens, subscription URLs, or database URLs.
 
-- [ ] **Step 2: Reconcile the parent implementation plan**
+- [x] **Step 2: Reconcile the parent implementation plan**
 
 Mark only the Task 32 checklist items actually proved by repository + field evidence. Do not alter Task 31/33 or Production Ready claims unless their own evidence independently supports it.
 
-- [ ] **Step 3: Run repository security scan on the documentation changes**
+- [x] **Step 3: Run repository security scan on the documentation changes**
 
 Run: `python3 scripts/security_scan.py .`
 
