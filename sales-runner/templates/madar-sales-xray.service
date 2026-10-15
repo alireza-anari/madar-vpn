@@ -1,0 +1,17 @@
+[Unit]
+Description=Madar Sales Xray
+After=network-online.target
+ConditionPathExists=/run/madar-sales-node/xray.json
+ConditionPathExists=/run/madar-sales-node/authorization.json
+[Service]
+Type=simple
+WorkingDirectory=/opt/madar-sales-node
+ExecStartPre=/usr/bin/python3 /opt/madar-sales-node/guard.py
+ExecStart=/opt/madar-sales-node/xray run -config /run/madar-sales-node/xray.json
+Restart=no
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+[Install]
+WantedBy=multi-user.target

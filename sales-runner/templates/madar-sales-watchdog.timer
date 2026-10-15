@@ -1,0 +1,9 @@
+[Unit]
+Description=Check Madar Sales Authorization Every Second
+[Timer]
+OnBootSec=1
+OnUnitActiveSec=1
+AccuracySec=1
+Unit=madar-sales-watchdog.service
+[Install]
+WantedBy=timers.target

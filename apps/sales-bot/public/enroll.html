@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+  <meta charset="utf-8" /><meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+  /><title>افزودن نود مدار</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    body {
+      font-family: system-ui;
+      background: #091222;
+      color: #eef3ff;
+      max-width: 620px;
+      margin: 24px auto;
+      padding: 18px;
+    }
+    input,
+    select,
+    textarea,
+    button {
+      display: block;
+      box-sizing: border-box;
+      width: 100%;
+      padding: 12px;
+      margin: 9px 0;
+      background: #142541;
+      color: #fff;
+      border: 1px solid #456;
+      border-radius: 10px;
+    }
+    button {
+      background: #3479f4;
+      cursor: pointer;
+    }
+    label {
+      display: block;
+      margin-top: 16px;
+    }
+    #fingerprint {
+      direction: ltr;
+      overflow-wrap: anywhere;
+    }
+    #status {
+      white-space: pre-wrap;
+    }
+    fieldset {
+      border: 1px solid #456;
+      border-radius: 12px;
+    }
+  </style>
+  <h1>افزودن VPS با نصب خودکار</h1>
+  <p>
+    Ubuntu 22.04 یا 24.04 تازه لازم است. رمز و کلید را فقط در این فرم وارد کن.
+  </p>
+  <form id="form">
+    <label>نام نود<input id="name" required maxlength="80" /></label
+    ><label
+      >IP عمومی VPS<input
+        id="ip"
+        dir="ltr"
+        required
+        placeholder="51.21.199.245" /></label
+    ><label
+      >پورت SSH<input
+        id="port"
+        type="number"
+        value="22"
+        min="1"
+        max="65535" /></label
+    ><button type="button" id="probe">بررسی اثر انگشت سرور</button>
+    <p id="fingerprint"></p>
+    <fieldset id="credentials" hidden>
+      <p>
+        اثر انگشت بالا را با پنل ارائه‌دهنده مقایسه کن. تأیید آن یعنی به هویت
+        این سرور اعتماد داری.
+      </p>
+      <label
+        ><input
+          id="trust"
+          type="checkbox"
+          style="width: auto; display: inline"
+        />
+        اثر انگشت سرور را تأیید می‌کنم</label
+      ><label
+        >نام کاربر<input
+          id="username"
+          dir="ltr"
+          value="ubuntu"
+          required /></label
+      ><label
+        >روش ورود<select id="method">
+          <option value="key">کلید SSH (آمازون)</option>
+          <option value="password">رمز VPS</option>
+        </select></label
+      ><label>فایل کلید خصوصی<input id="keyfile" type="file" /></label
+      ><label
+        >رمز VPS یا رمز محافظ کلید<input
+          id="password"
+          type="password"
+          autocomplete="off" /></label
+      ><button type="submit">شروع نصب خودکار</button>
+    </fieldset>
+  </form>
+  <p id="status" role="status" aria-live="polite"></p>
+  <script>
+    const tg = window.Telegram?.WebApp;
+    tg?.ready();
+    const el = (id) => document.getElementById(id);
+    let probeId = "",
+      fingerprint = "",
+      pollTimer;
+    const setStatus = (t) => (el("status").textContent = t);
+    async function api(path, body) {
+      const r = await fetch("/api/admin/" + path, {
+        method: body ? "POST" : "GET",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Telegram-Init-Data": tg?.initData || "",
+        },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
+      const d = await r.json();
+      if (!r.ok)
+        throw Error(
+          d.error === "AUTH_EXPIRED"
+            ? "فرم منقضی شد؛ از ربات دوباره باز کن."
+            : d.error || "خطای ارتباط",
+        );
+      return d;
+    }
+    const b64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
+    async function encrypt(value, jwk) {
+      const key = await crypto.subtle.generateKey(
+        { name: "AES-GCM", length: 256 },
+        true,
+        ["encrypt"],
+      );
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const data = await crypto.subtle.encrypt(
+        { name: "AES-GCM", iv },
+        key,
+        new TextEncoder().encode(JSON.stringify(value)),
+      );
+      const rsa = await crypto.subtle.importKey(
+        "jwk",
+        jwk,
+        { name: "RSA-OAEP", hash: "SHA-256" },
+        false,
+        ["encrypt"],
+      );
+      const wrapped = await crypto.subtle.encrypt(
+        "RSA-OAEP",
+        rsa,
+        await crypto.subtle.exportKey("raw", key),
+      );
+      return JSON.stringify({
+        v: 1,
+        key: b64(wrapped),
+        iv: b64(iv),
+        data: b64(data),
+      });
+    }
+    el("probe").onclick = async () => {
+      try {
+        el("probe").disabled = true;
+        const { nonce } = await api("session");
+        const result = await api("probe", {
+          targetIp: el("ip").value.trim(),
+          port: Number(el("port").value),
+          nonce,
+        });
+        probeId = result.jobId;
+        setStatus("در انتظار نصب‌کننده برای بررسی سرور…");
+        clearInterval(pollTimer);
+        pollTimer = setInterval(async () => {
+          try {
+            const d = await api("jobs/" + probeId);
+            if (d.state === "failed") {
+              clearInterval(pollTimer);
+              setStatus("بررسی سرور موفق نبود: " + d.safe_code);
+              el("probe").disabled = false;
+            }
+            if (d.state === "ready") {
+              clearInterval(pollTimer);
+              fingerprint = d.fingerprint;
+              el("fingerprint").textContent = fingerprint;
+              el("credentials").hidden = false;
+              el("ip").disabled = true;
+              el("port").disabled = true;
+              setStatus("اثر انگشت را تأیید کن و اطلاعات ورود را وارد کن.");
+            }
+          } catch (e) {
+            clearInterval(pollTimer);
+            setStatus(e.message);
+            el("probe").disabled = false;
+          }
+        }, 3000);
+      } catch (e) {
+        setStatus(e.message);
+        el("probe").disabled = false;
+      }
+    };
+    el("form").onsubmit = async (e) => {
+      e.preventDefault();
+      try {
+        if (!el("trust").checked) throw Error("ابتدا اثر انگشت را تأیید کن.");
+        const { nonce, publicKey } = await api("session");
+        if (!publicKey) throw Error("نصب‌کننده هنوز تنظیم نشده است.");
+        const method = el("method").value;
+        let credentials;
+        if (method === "key") {
+          const f = el("keyfile").files[0];
+          if (!f || f.size > 14000) throw Error("فایل کلید معتبر لازم است.");
+          credentials = {
+            method,
+            key: await f.text(),
+            passphrase: el("password").value,
+          };
+        } else {
+          if (!el("password").value) throw Error("رمز VPS را وارد کن.");
+          credentials = { method, password: el("password").value };
+        }
+        const encryptedCredentials = await encrypt(credentials, publicKey);
+        credentials = null;
+        const result = await api("enroll", {
+          name: el("name").value.trim(),
+          targetIp: el("ip").value.trim(),
+          port: Number(el("port").value),
+          username: el("username").value.trim(),
+          hostFingerprint: fingerprint,
+          probeId,
+          nonce,
+          encryptedCredentials,
+        });
+        el("password").value = "";
+        el("keyfile").value = "";
+        el("credentials").hidden = true;
+        setStatus("نصب شروع شد؛ وضعیت در ربات و این صفحه نمایش داده می‌شود.");
+        pollTimer = setInterval(async () => {
+          try {
+            const d = await api("jobs/" + result.jobId);
+            setStatus(
+              "وضعیت: " + d.state + (d.safe_code ? " · " + d.safe_code : ""),
+            );
+            if (["ready", "failed"].includes(d.state)) clearInterval(pollTimer);
+          } catch (e) {
+            clearInterval(pollTimer);
+            setStatus(e.message);
+          }
+        }, 3000);
+      } catch (e) {
+        el("password").value = "";
+        el("keyfile").value = "";
+        setStatus(e.message);
+      }
+    };
+    if (!tg?.initData) {
+      el("form").hidden = true;
+      setStatus("این فرم را از منوی ادمین ربات تلگرام باز کن.");
+    }
+  </script>
+</html>

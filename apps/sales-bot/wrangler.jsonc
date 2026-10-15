@@ -1,0 +1,45 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "madar-sales-bot",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-14",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "SALES_DB",
+      "database_name": "madar-sales-bot-db",
+      "database_id": "f59e160f-89ab-4a90-a4dc-f257883d5a61",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "vars": {
+    "ADMIN_TELEGRAM_IDS": "",
+    "PUBLIC_BASE_URL": "",
+    "RUNNER_PUBLIC_KEY": "",
+  },
+  "triggers": {
+    "crons": ["* * * * *"],
+  },
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": false,
+    },
+  },
+  "secrets": {
+    "required": [
+      "BOT_TOKEN",
+      "TELEGRAM_WEBHOOK_SECRET",
+      "RUNNER_SERVICE_SECRET",
+      "POLICY_SIGNING_SECRET",
+    ],
+  },
+  "rules": [
+    {
+      "type": "Text",
+      "globs": ["**/*.html"],
+      "fallthrough": true,
+    },
+  ],
+}

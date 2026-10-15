@@ -1,0 +1,5 @@
+[Unit]
+Description=Madar Sales Authorization Watchdog
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/madar-sales-node/agent.py --watchdog

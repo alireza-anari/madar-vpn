@@ -1,0 +1,16 @@
+[Unit]
+Description=Madar Sales Node Agent
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=simple
+WorkingDirectory=/opt/madar-sales-node
+ExecStart=/usr/bin/python3 /opt/madar-sales-node/agent.py
+ExecStopPost=/usr/bin/systemctl stop madar-sales-xray.service
+Restart=always
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+[Install]
+WantedBy=multi-user.target

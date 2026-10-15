@@ -1,0 +1,10 @@
+[project]
+name = "madar-sales-runner"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = ["paramiko==5.0.0", "cryptography==50.0.2"]
+[project.optional-dependencies]
+test = ["pytest==9.0.2"]
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

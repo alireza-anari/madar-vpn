@@ -11,3 +11,15 @@ test-results/
 .DS_Store
 .worktrees/
 .superpowers/sdd/
+
+# Sales Python test/build outputs
+sales-runner/**/__pycache__/
+sales-node/**/__pycache__/
+sales-runner/.pytest_cache/
+sales-node/.pytest_cache/
+apps/sales-bot/dist/
+/pip-metadata-*/
+/pip-unpack-*/
+/sales-runner/pytest-of-root/
+
+/pytest-of-root/
