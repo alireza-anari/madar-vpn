@@ -60,7 +60,7 @@ WantedBy=multi-user.target
 '''
 
 def request(path,data):
- req=urllib.request.Request(BASE+'/ops/runner-bootstrap/'+path,data=json.dumps(data).encode(),headers={'Content-Type':'application/json'})
+ req=urllib.request.Request(BASE+'/ops/runner-bootstrap/'+path,data=json.dumps(data).encode(),headers={'Content-Type':'application/json','User-Agent':'MadarSales/0.1'})
  with urllib.request.urlopen(req,timeout=20) as response:return json.loads(response.read(16384))
 
 def main():

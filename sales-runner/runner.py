@@ -9,7 +9,7 @@ class Api:
         if not base.startswith('https://'):raise ValueError('HTTPS_REQUIRED')
         self.base=base.rstrip('/');self.secret=secret
     def post(self,path,body):
-        req=urllib.request.Request(self.base+'/api/runner/'+path,data=json.dumps(body).encode(),headers={'Authorization':'Bearer '+self.secret,'Content-Type':'application/json'})
+        req=urllib.request.Request(self.base+'/api/runner/'+path,data=json.dumps(body).encode(),headers={'Authorization':'Bearer '+self.secret,'Content-Type':'application/json','User-Agent':'MadarSales/0.1'})
         with urllib.request.urlopen(req,timeout=15) as response:return json.loads(response.read(65536))
     def lease(self,runner_id):
         envelope=self.post('lease',{'runnerId':runner_id});payload=envelope['payload'];expected=hmac.new(self.secret.encode(),payload.encode(),hashlib.sha256).hexdigest()

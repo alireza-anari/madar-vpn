@@ -28,3 +28,11 @@ def test_service_is_separate_and_runs_unprivileged():
  assert 'Restart=always' in service
  assert 'runner.json' in service
  assert 'BOT_TOKEN' not in service
+
+def test_bootstrap_http_identifies_the_service(monkeypatch):
+ import bootstrap,io
+ def open_request(req,**kwargs):
+  assert req.get_header('User-agent')=='MadarSales/0.1'
+  return io.BytesIO(b'{"pending":true}')
+ monkeypatch.setattr(bootstrap.urllib.request,'urlopen',open_request)
+ assert bootstrap.request('pair',{'publicKey':{}})=={'pending':True}

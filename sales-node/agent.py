@@ -3,7 +3,7 @@ from policy import verify_policy
 from xray import Xray
 
 def request(config,path,data=None):
-    req=urllib.request.Request(config['baseUrl']+'/api/node/'+path,data=json.dumps(data).encode() if data is not None else None,headers={'Authorization':'Bearer '+config['nodeToken'],'Content-Type':'application/json'})
+    req=urllib.request.Request(config['baseUrl']+'/api/node/'+path,data=json.dumps(data).encode() if data is not None else None,headers={'Authorization':'Bearer '+config['nodeToken'],'Content-Type':'application/json','User-Agent':'MadarSales/0.1'})
     with urllib.request.urlopen(req,timeout=10) as response:return json.loads(response.read(1048576))
 
 def watchdog(now=None):

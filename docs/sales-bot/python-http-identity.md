@@ -1,0 +1,7 @@
+# Python HTTP identity correction — 2026-10-15
+
+Real Node1 bootstrap installed dependencies and generated the local public pairing identity. Curl from Node1 reached the exact Worker route (400 INVALID_IDENTITY for the intentionally empty body), while the Python urllib request received upstream HTTP 403 with error code 1010. No pairing candidate reached D1. This distinguishes edge rejection of the Python request from Worker IP rejection and application identity validation. Cross-language Python/JavaScript RSA public-key fingerprint compatibility was independently checked and matched.
+
+Bootstrap, Runner and new sales-node Agent HTTP requests now explicitly identify as MadarSales/0.1 instead of urllib's default. Authorization and TLS checks are retained; no SSH/firewall or broad Cloudflare protection changes are made. Three regression tests failed before the header was added and passed afterward. Full Runner suite: 26 PASS; sales-node suite: 3 PASS; security scan and diff checks PASS.
+
+The owner must apply the three-file header correction on the already bootstrapped Node1 and stop only the transient madar-sales-runner-bootstrap unit before starting the bootstrap Python directly through a new transient pairing unit. Do not restart the old shell-based unit, because it fetches the old pinned sources. Existing local RSA key is reused. After observing a candidate and matching the screenshot fingerprint, proceed with encrypted configuration delivery and permanent service verification. This correction is not yet a field success claim.

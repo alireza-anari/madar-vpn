@@ -19,3 +19,12 @@ def test_render_omits_expired_clients_and_watchdog_rejects_missing_authorization
  monkeypatch.setattr(pathlib.Path,'read_text',lambda self:json.dumps({'expiresAt':100,'clients':[]}))
  monkeypatch.setattr(subprocess,'run',lambda args,**kw:calls.append(args))
  assert watchdog(100) is False;assert calls==[['systemctl','stop','madar-sales-xray.service']]
+
+def test_node_http_identifies_the_service(monkeypatch):
+ import agent,io
+ def open_request(req,**kwargs):
+  assert req.get_header('User-agent')=='MadarSales/0.1'
+  assert req.get_header('Authorization')=='Bearer test-node'
+  return io.BytesIO(b'{}')
+ monkeypatch.setattr(agent.urllib.request,'urlopen',open_request)
+ assert agent.request({'baseUrl':'https://bot.example','nodeToken':'test-node'},'policy')=={}
