@@ -23,3 +23,5 @@ apps/sales-bot/dist/
 /sales-runner/pytest-of-root/
 
 /pytest-of-root/
+
+apps/sales-bot/dist-bootstrap/
