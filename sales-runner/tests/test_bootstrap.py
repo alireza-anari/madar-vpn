@@ -36,3 +36,16 @@ def test_bootstrap_http_identifies_the_service(monkeypatch):
   return io.BytesIO(b'{"pending":true}')
  monkeypatch.setattr(bootstrap.urllib.request,'urlopen',open_request)
  assert bootstrap.request('pair',{'publicKey':{}})=={'pending':True}
+
+def test_owned_runner_update_preserves_identity_and_never_pairs(tmp_path,monkeypatch):
+ from bootstrap import restart_owned_runner
+ import bootstrap
+ config=tmp_path/'config';config.mkdir(mode=0o700);prepare_identity(config)
+ (config/'runner.json').write_text(json.dumps({'baseUrl':'https://bot.example','serviceSecret':'same-secret','runnerId':'r','privateKeyPath':str(config/'runner-private.pem')}));(config/'runner.json').chmod(0o600)
+ root=tmp_path/'root';root.mkdir();(root/'.bootstrap-owned').touch();unit=tmp_path/'runner.service';unit.write_text(render_service())
+ before={p.name:p.read_bytes() for p in config.iterdir()};calls=[]
+ monkeypatch.setattr(bootstrap.subprocess,'run',lambda args,**kw:calls.append(args))
+ monkeypatch.setattr(bootstrap,'request',lambda *args:(_ for _ in ()).throw(AssertionError('must not pair')))
+ restart_owned_runner(root,config,unit)
+ assert before=={p.name:p.read_bytes() for p in config.iterdir()}
+ assert ['systemctl','restart','madar-sales-runner.service'] in calls

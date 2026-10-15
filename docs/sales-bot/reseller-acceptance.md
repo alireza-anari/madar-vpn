@@ -19,10 +19,12 @@ Worker tests cover role revalidation, independent/idempotent accounts and trials
 - Forwarded message opened from another Telegram account; it exposes its own usage only and no seller/admin controls.
 - Hamrah Aval, Irancell and ADSL tests when those physical networks are available.
 
-Current D1 read-only inventory contains only Madar_st1; Personal is absent. No new quota mode, database migration, node update, VPS stop, Runner move or claim of sales readiness has been made by the implementation session.
+Current D1 read-only inventory contains only Madar_st1; Personal is absent. Quota mode remains gated. No node update, VPS stop, Runner move or claim of sales readiness has been made; additive database/Worker preparation may proceed after exact-head CI.
 
 ## Independent final review and fix pass
 
 A fresh-context reviewer found three Important issues (no Critical/Minor): account startup failure stopped siblings, replayed Telegram text advanced the wizard twice, and failed port preflight stopped the existing service. Each was reproduced by a failing test, fixed and reverified. Conversation state and its reply now commit atomically with an optimistic update version. Account-local startup failure is isolated. Upgrade port checks precede service changes and recognize owned listeners only by executable plus unit cgroup.
 
 Post-fix local verification: Worker 57, browser 5, Node 21 and Runner 28 tests pass; typecheck, dry-run build, source manifests, security scan and diff checks pass. Exact-head CI and the field gates above remain separate checks.
+
+Final packaging verification: Worker 59, browser 5, Node 22, Runner 31 tests pass. A delayed TLS-destination readiness regression now covers the initial CI fixture failure. Fresh protocol-2 installation initializes durable state before Agent start, and the existing Runner has an explicit identity-preserving update path. Status database outages return a generic no-store response without an uncaught capability-bearing request.

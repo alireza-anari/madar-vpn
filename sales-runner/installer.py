@@ -27,7 +27,12 @@ if busy and owner:
   listeners=subprocess.run(['ss','-H','-ltnp','sport = :443'],capture_output=True,text=True,check=True).stdout.splitlines()
   port_owned=pid>0 and pathlib.Path('/proc/'+str(pid)+'/exe').resolve()==pathlib.Path('/opt/madar-sales-node/xray') and bool(listeners) and all(set(re.findall(r'pid=(\d+)',line))=={str(pid)} for line in listeners)
  except Exception:pass
-print(json.dumps({'os':release.get('ID'),'version':release.get('VERSION_ID'),'arch':os.uname().machine,'root':os.getuid()==0,'disk':shutil.disk_usage('/opt').free,'conflict':conflict,'portBusy':busy,'portOwned':port_owned,'owner':owner}))
+quota_busy=False
+for port in range(20000,22000):
+ with socket.socket() as probe:
+  try:probe.bind(('0.0.0.0' if port<21000 else '127.0.0.1',port))
+  except OSError:quota_busy=True;break
+print(json.dumps({'quotaPortsBusy':quota_busy,'os':release.get('ID'),'version':release.get('VERSION_ID'),'arch':os.uname().machine,'root':os.getuid()==0,'disk':shutil.disk_usage('/opt').free,'conflict':conflict,'portBusy':busy,'portOwned':port_owned,'owner':owner}))
 '''
 APPLY=r'''
 import io,json,pathlib,sys,tarfile,os,subprocess
@@ -38,6 +43,8 @@ if root.exists():
  try:owner=json.loads((root/'manifest.json').read_text())
  except Exception:raise SystemExit(2)
  if owner.get('jobId')!=job_id:raise SystemExit(2)
+was_quota_initialized=bool(root.exists() and owner.get('quotaInitialized')) if 'owner' in locals() else False
+if was_quota_initialized and not pathlib.Path('/var/lib/madar-sales-node/quota.sqlite').is_file():raise SystemExit(4)
 root.mkdir(mode=0o700,exist_ok=True);etc.mkdir(mode=0o700,exist_ok=True)
 archive=tarfile.open(fileobj=io.BytesIO(sys.stdin.buffer.read(120*1024*1024)),mode='r:')
 entries={}
@@ -46,6 +53,8 @@ for member in archive.getmembers():
  entries[member.name]=archive.extractfile(member).read()
 manifest=json.loads(entries['manifest.json'])
 if manifest['jobId']!=job_id:raise SystemExit(3)
+if was_quota_initialized:
+ manifest['quotaInitialized']=True;entries['manifest.json']=json.dumps(manifest).encode()
 # Manifest first makes interrupted installation reconcilable and protects other ownership.
 ordered=['manifest.json']+[k for k in entries if k!='manifest.json']
 for name in ordered:
@@ -53,6 +62,14 @@ for name in ordered:
  if name=='config.json' and target.exists():continue
  if name=='xray' and target.exists() and target.read_bytes()==entries[name]:continue
  temp=target.with_name(target.name+'.installing');temp.write_bytes(entries[name]);os.chmod(temp,0o755 if name=='xray' else 0o600 if name in ('config.json','manifest.json') else 0o644);os.replace(temp,target)
+config_path=etc/'config.json'
+if config_path.exists() and json.loads(config_path.read_text()).get('protocolVersion')==2:
+ state=pathlib.Path('/var/lib/madar-sales-node/quota.sqlite')
+ if was_quota_initialized and not state.is_file():raise SystemExit(4)
+ sys.path.insert(0,str(root));from quota import QuotaStore
+ QuotaStore(state).close()
+ manifest['quotaInitialized']=True
+ temp=root/'manifest.json.installing';temp.write_text(json.dumps(manifest));temp.chmod(0o600);os.replace(temp,root/'manifest.json')
 subprocess.run(['systemctl','daemon-reload'],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 subprocess.run(['systemctl','enable','--now','madar-sales-node.service','madar-sales-watchdog.timer'],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 print('INSTALLED')
@@ -87,15 +104,23 @@ def package(files):
             member=tarfile.TarInfo(name);member.size=len(data);member.mode=0o600;archive.addfile(member,io.BytesIO(data))
     return out.getvalue()
 
+def configure_protocol(config,job):
+    version=job.get('protocolVersion',1)
+    if type(version) is not int or version not in (1,2):raise ValueError('INVALID_PROTOCOL_VERSION')
+    return {**config,'protocolVersion':2} if version==2 else config
+
 def install(transport,job,api,check=lambda:None):
     info=preflight(transport,job['id']);check()
     if info['owned']:
         config=json.loads(transport.run(root_command("import pathlib; p=pathlib.Path('/etc/madar-sales-node/config.json');print(p.read_text() if p.exists() else 'null')")))
         if config is not None and config['nodeId']!=job['nodeId']:raise ValueError('EXISTING_SERVICE')
     else:config=None
+    if config is not None and job.get('protocolVersion',1)==2 and config.get('protocolVersion')!=2:raise ValueError('PROTOCOL_UPGRADE_REQUIRED')
     if config is None:
         private=X25519PrivateKey.generate();encode=lambda data:base64.urlsafe_b64encode(data).decode().rstrip('=')
         config={'baseUrl':api.base,'nodeId':job['nodeId'],'nodeToken':secrets.token_urlsafe(32),'policyKey':secrets.token_hex(32),'privateKey':encode(private.private_bytes(serialization.Encoding.Raw,serialization.PrivateFormat.Raw,serialization.NoEncryption())),'publicKey':encode(private.public_key().public_bytes(serialization.Encoding.Raw,serialization.PublicFormat.Raw)),'shortId':secrets.token_hex(8),'sni':'www.microsoft.com','port':443}
+    config=configure_protocol(config,job)
+    if config.get('protocolVersion')==2 and info.get('quotaPortsBusy'):raise ValueError('PORT_CONFLICT')
     files=download(info['arch'],job['artifactVersion']);check()
     for name in ['agent.py','policy.py','xray.py','guard.py','stats.py','quota.py','quota_runtime.py','update_owned.py']:files[name]=(BASE.parent/'sales-node'/name).read_bytes()
     for path in (BASE/'templates').iterdir():files[path.name]=path.read_bytes()

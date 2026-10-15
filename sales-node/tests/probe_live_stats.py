@@ -5,6 +5,18 @@ from stats import read_counters
 
 def port():
     with socket.socket() as s:s.bind(('127.0.0.1',0));return s.getsockname()[1]
+def wait_tls(port,context=None):
+    import ssl
+    context=context or ssl._create_unverified_context();deadline=time.monotonic()+5
+    while True:
+        try:
+            with context.wrap_socket(socket.create_connection(('127.0.0.1',port),timeout=.3),server_hostname='probe.example') as connection:
+                if connection.version()!='TLSv1.3':raise ValueError('TLS13_REQUIRED')
+                return
+        except OSError:
+            if time.monotonic()>=deadline:raise RuntimeError('TLS_DESTINATION_NOT_READY') from None
+            time.sleep(.05)
+
 def main(binary):
     processes=[]
     with tempfile.TemporaryDirectory() as td:
@@ -36,9 +48,7 @@ def main(binary):
             processes.append(subprocess.Popen(['openssl','s_server','-accept',f'127.0.0.1:{tls}','-cert',str(base/'cert.pem'),'-key',str(base/'key.pem'),'-tls1_3','-alpn','h2','-www','-quiet'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL))
             for name,config in [('server',serverconfig),('client',clientconfig)]:
                 file=base/(name+'.json');file.write_text(json.dumps(config));processes.append(subprocess.Popen([binary,'run','-c',str(file)],stdout=(base/(name+'.log')).open('w'),stderr=subprocess.STDOUT))
-            import ssl
-            context=ssl._create_unverified_context()
-            with context.wrap_socket(socket.create_connection(('127.0.0.1',tls)),server_hostname='probe.example') as check:assert check.version()=='TLSv1.3'
+            wait_tls(tls)
             time.sleep(.6);threading.Thread(target=serve,daemon=True).start();threading.Thread(target=consume,daemon=True).start()
             ready=time.monotonic()+10
             while True:

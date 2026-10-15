@@ -152,3 +152,11 @@ test("conversation and durable reply roll back together on storage failure", asy
     ).step,
   ).toBe("days");
 });
+test("reseller-mode provisioning jobs carry the compatible protocol version", async () => {
+  await env.SALES_DB.prepare(
+    "INSERT INTO installation_jobs(id,kind,user_id,target_ip,port,created_at,expires_at) VALUES('probe-job','probe','9','8.8.4.4',22,100,1000)",
+  ).run();
+  const { leaseJob } = await import("../src/runner-api");
+  const job = await leaseJob(E, "test-runner", 101);
+  expect(job?.protocolVersion).toBe(2);
+});

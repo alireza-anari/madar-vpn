@@ -63,8 +63,23 @@ def request(path,data):
  req=urllib.request.Request(BASE+'/ops/runner-bootstrap/'+path,data=json.dumps(data).encode(),headers={'Content-Type':'application/json','User-Agent':'MadarSales/0.1'})
  with urllib.request.urlopen(req,timeout=20) as response:return json.loads(response.read(16384))
 
+def restart_owned_runner(root,directory,unit):
+ root=pathlib.Path(root);directory=pathlib.Path(directory);unit=pathlib.Path(unit)
+ if not (root/'.bootstrap-owned').is_file() or unit.read_text()!=render_service():raise ValueError('RUNNER_OWNERSHIP_MISMATCH')
+ config_path=directory/'runner.json';key_path=directory/'runner-private.pem'
+ if config_path.stat().st_mode & 0o077 or key_path.stat().st_mode & 0o077:raise ValueError('CONFIG_PERMISSIONS')
+ config=json.loads(config_path.read_text())
+ if not config.get('baseUrl','').startswith('https://') or not config.get('serviceSecret') or pathlib.Path(config['privateKeyPath']).resolve()!=key_path.resolve():raise ValueError('INVALID_CONFIG')
+ serialization.load_pem_private_key(key_path.read_bytes(),None)
+ subprocess.run(['systemctl','restart','madar-sales-runner.service'],check=True,timeout=20)
+ subprocess.run(['systemctl','is-active','--quiet','madar-sales-runner.service'],check=True,timeout=10)
+ print('RUNNER_UPDATED; existing identity and credentials preserved.',flush=True)
+
 def main():
  if os.geteuid()!=0:raise ValueError('ROOT_REQUIRED')
+ parser=argparse.ArgumentParser();parser.add_argument('--update',action='store_true');args=parser.parse_args()
+ if args.update:
+  restart_owned_runner('/opt/madar-sales-runner',CONFIG,'/etc/systemd/system/madar-sales-runner.service');return
  identity=prepare_identity(CONFIG)
  print('PAIRING '+identity['fingerprint'],flush=True)
  deadline=time.monotonic()+1800

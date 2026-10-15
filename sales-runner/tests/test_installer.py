@@ -38,3 +38,32 @@ def test_recovery_keeps_running_xray_inode(tmp_path):
  with patch.object(pathlib,'Path',side_effect=redirected),patch.object(subprocess,'run'),patch.object(sys,'argv',['apply','job']),patch.object(sys,'stdin',Input()):
   exec(APPLY,{})
  assert binary.stat().st_ino==inode
+
+def test_new_config_follows_signed_job_protocol_without_changing_existing_keys():
+ from installer import configure_protocol
+ original={'nodeId':'node','privateKey':'same-private','nodeToken':'same-token','policyKey':'same-policy'}
+ assert configure_protocol(original,{'protocolVersion':2})=={**original,'protocolVersion':2}
+ assert configure_protocol(original,{})==original
+ with pytest.raises(ValueError):configure_protocol(original,{'protocolVersion':3})
+
+def test_quota_install_initializes_durable_state_before_starting_agent(tmp_path):
+ from installer import APPLY,package,BASE
+ from unittest.mock import patch
+ import io,pathlib,subprocess,sys,sqlite3
+ (tmp_path/'etc/systemd/system').mkdir(parents=True);(tmp_path/'opt').mkdir()
+ config={'nodeId':'node','protocolVersion':2,'privateKey':'unchanged','nodeToken':'same-token'}
+ archive=package({'manifest.json':b'{"jobId":"job","nodeId":"node"}','config.json':json.dumps(config).encode(),'quota.py':(BASE.parent/'sales-node/quota.py').read_bytes()})
+ real_path=pathlib.Path
+ def redirected(value):return tmp_path/str(value).lstrip('/') if str(value).startswith(('/opt/','/etc/','/var/')) else real_path(value)
+ state=tmp_path/'var/lib/madar-sales-node/quota.sqlite'
+ def run(args,**kw):
+  if 'enable' in args:assert state.is_file()
+ class Input:buffer=io.BytesIO(archive)
+ original_modules=dict(sys.modules)
+ try:
+  with patch.object(pathlib,'Path',side_effect=redirected),patch.object(subprocess,'run',side_effect=run),patch.object(sys,'argv',['apply','job']),patch.object(sys,'stdin',Input()):exec(APPLY,{})
+ finally:
+  if 'quota' not in original_modules:sys.modules.pop('quota',None)
+ assert json.loads((tmp_path/'etc/madar-sales-node/config.json').read_text())==config
+ with sqlite3.connect(state) as db:assert db.execute('SELECT revision FROM meta').fetchone()[0]==0
+ assert json.loads((tmp_path/'opt/madar-sales-node/manifest.json').read_text())['quotaInitialized'] is True

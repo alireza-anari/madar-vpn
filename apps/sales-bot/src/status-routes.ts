@@ -38,7 +38,7 @@ export async function accountStatus(
     lastReportAt: a.last_report_at,
   };
 }
-export async function statusResponse(request: Request, env: Env, now: number) {
+async function renderStatusResponse(request: Request, env: Env, now: number) {
   if (request.method !== "GET")
     return new Response("Method not allowed", { status: 405, headers });
   const url = new URL(request.url),
@@ -50,4 +50,15 @@ export async function statusResponse(request: Request, env: Env, now: number) {
   return new Response(statusHtml, {
     headers: { ...headers, "Content-Type": "text/html; charset=utf-8" },
   });
+}
+
+export async function statusResponse(request: Request, env: Env, now: number) {
+  try {
+    return await renderStatusResponse(request, env, now);
+  } catch {
+    return new Response("اطلاعات موقتاً در دسترس نیست", {
+      status: 503,
+      headers,
+    });
+  }
 }

@@ -73,6 +73,7 @@ def main():
         config['protocolVersion']=2
         target=etc/'config.json';temp=etc/'config.json.updating';temp.write_text(json.dumps(config));temp.chmod(0o600);os.replace(temp,target)
     owner=json.loads((root/'manifest.json').read_text());owner['sourceRef']=args.source_ref
+    if config.get('protocolVersion')==2:owner['quotaInitialized']=True
     temp=root/'manifest.json.updating';temp.write_text(json.dumps(owner));temp.chmod(0o600);os.replace(temp,root/'manifest.json')
     pathlib.Path('/run/madar-sales-node/quota-heartbeat.json').unlink(missing_ok=True)
     subprocess.run(['systemctl','start','madar-sales-node.service'],check=True,timeout=20)

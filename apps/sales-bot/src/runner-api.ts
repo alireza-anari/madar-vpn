@@ -1,3 +1,4 @@
+import { salesMode } from "./resellers";
 import { boundedText, equalSecret } from "./auth";
 import { hash, sign } from "./crypto";
 import { enqueue } from "./telegram";
@@ -14,6 +15,7 @@ export type LeasedJob = {
   leaseId: string;
   leaseUntil: number;
   artifactVersion: string;
+  protocolVersion: 1 | 2;
 };
 export async function leaseJob(
   env: Env,
@@ -44,6 +46,7 @@ export async function leaseJob(
     leaseId,
     leaseUntil: now + 120,
     artifactVersion: String(row.artifact_version),
+    protocolVersion: (await salesMode(env.SALES_DB)) ? 2 : 1,
   };
 }
 export async function reportJob(

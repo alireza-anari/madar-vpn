@@ -59,3 +59,21 @@ test("delivery waits for activation then is durable and capability scoped", asyn
   );
   expect(await accountStatus(env.SALES_DB, token, 104)).toBe(null);
 });
+test("database outage returns a generic response without an uncaught capability request", async () => {
+  const broken = {
+    ...env,
+    SALES_DB: {
+      prepare() {
+        throw Error("database unavailable");
+      },
+    },
+  } as unknown as Env;
+  const response = await statusResponse(
+    new Request("https://example.com/api/usage/" + "a".repeat(64)),
+    broken,
+    100,
+  );
+  expect(response.status).toBe(503);
+  expect(response.headers.get("Cache-Control")).toBe("no-store");
+  expect(await response.text()).not.toContain("a".repeat(64));
+});
