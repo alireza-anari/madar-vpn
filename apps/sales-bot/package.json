@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "vitest run && node --test test/enroll-browser.node.mjs",
+    "test": "vitest run && node --test test/enroll-browser.node.mjs test/status-browser.node.mjs",
     "typecheck": "node node_modules/typescript-js/lib/tsc.js --noEmit",
     "build": "wrangler deploy --dry-run --outdir dist",
     "types": "wrangler types --strict-vars false"

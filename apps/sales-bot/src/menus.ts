@@ -1,3 +1,5 @@
+import { handleResellerUpdate } from "./reseller-menus";
+import { salesMode } from "./resellers";
 import { getSubscription, subscriptionLink } from "./subscriptions";
 import { resolveActor } from "./auth";
 import { admin, type Actor, type TelegramUpdate } from "./contracts";
@@ -19,6 +21,10 @@ export async function handleUpdate(env: Env, u: TelegramUpdate, now: number) {
   const id = u.message?.from?.id ?? u.callback_query?.from.id;
   const chat = u.message?.chat ?? u.callback_query?.message?.chat;
   if (!id || !chat || chat.type !== "private" || chat.id !== id) return;
+  if (await salesMode(env.SALES_DB)) {
+    await handleResellerUpdate(env, u, now);
+    return;
+  }
   const actor = resolveActor(String(id), env);
   const db = env.SALES_DB;
   await ensureUser(db, actor.telegramId);

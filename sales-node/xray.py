@@ -1,7 +1,13 @@
 import json,os,pathlib,socket,subprocess,tempfile
 
 def render_config(settings,clients,now):
-    return {'log':{'loglevel':'none'},'inbounds':[{'listen':'0.0.0.0','port':settings.get('port',443),'protocol':'vless','settings':{'clients':[{'id':c['uuid'],'flow':'xtls-rprx-vision'} for c in clients if c['validUntil']>now],'decryption':'none'},'streamSettings':{'network':'tcp','security':'reality','realitySettings':{'show':False,'dest':settings['sni']+':443','xver':0,'serverNames':[settings['sni']],'privateKey':settings['privateKey'],'shortIds':[settings['shortId']]}}}],'outbounds':[{'protocol':'freedom','tag':'direct'},{'protocol':'blackhole','tag':'blocked'}],'routing':{'rules':[{'type':'field','ip':['geoip:private'],'outboundTag':'blocked'}]}}
+    quota=any('accountId' in c for c in clients)
+    config={'log':{'loglevel':'none'},'inbounds':[{'listen':'0.0.0.0','port':settings.get('port',443),'protocol':'vless','settings':{'clients':[dict({'id':c['uuid'],'flow':'' if quota else 'xtls-rprx-vision'},**({'email':c['accountId'],'level':0} if quota else {})) for c in clients if c['validUntil']>now],'decryption':'none'},'streamSettings':{'network':'tcp','security':'reality','realitySettings':{'show':False,'dest':settings['sni']+':443','xver':0,'serverNames':[settings['sni']],'privateKey':settings['privateKey'],'shortIds':[settings['shortId']]}}}],'outbounds':[{'protocol':'freedom','tag':'direct'},{'protocol':'blackhole','tag':'blocked'}],'routing':{'rules':[{'type':'field','ip':['geoip:private'],'outboundTag':'blocked'}]}}
+    if quota:
+        config.update({'stats':{},'api':{'tag':'quota-api','services':['StatsService']},'policy':{'levels':{'0':{'statsUserUplink':True,'statsUserDownlink':True}}}})
+        config['inbounds'].append({'listen':'127.0.0.1','port':settings.get('statsPort',10085),'protocol':'dokodemo-door','tag':'quota-api','settings':{'address':'127.0.0.1'}})
+        config['routing']['rules'].insert(0,{'type':'field','inboundTag':['quota-api'],'outboundTag':'quota-api'})
+    return config
 
 def atomic_write(path,value):
     target=pathlib.Path(path);target.parent.mkdir(parents=True,exist_ok=True)

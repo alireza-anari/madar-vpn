@@ -1,0 +1,11 @@
+CREATE TABLE resellers(telegram_id TEXT PRIMARY KEY,enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),created_at INTEGER NOT NULL);
+CREATE TABLE node_purposes(purpose TEXT PRIMARY KEY CHECK(purpose IN ('sale','trial')),node_id TEXT NOT NULL UNIQUE REFERENCES nodes(id));
+ALTER TABLE nodes ADD COLUMN agent_capabilities TEXT NOT NULL DEFAULT '';
+CREATE TABLE managed_accounts(id TEXT PRIMARY KEY,seller_id TEXT NOT NULL,request_key TEXT NOT NULL,node_id TEXT NOT NULL REFERENCES nodes(id),kind TEXT NOT NULL CHECK(kind IN ('sale','trial')),label TEXT NOT NULL,uuid TEXT NOT NULL UNIQUE,state TEXT NOT NULL DEFAULT 'preparing' CHECK(state IN ('preparing','active','exhausted','expired','revoked','blocked')),quota_bytes INTEGER CHECK(quota_bytes>0),used_bytes INTEGER NOT NULL DEFAULT 0 CHECK(used_bytes>=0),quota_epoch INTEGER NOT NULL DEFAULT 1,duration_seconds INTEGER NOT NULL CHECK(duration_seconds>0),started_at INTEGER,valid_until INTEGER NOT NULL DEFAULT 0,prepared_revision INTEGER,activation_revision INTEGER,status_token_hash TEXT UNIQUE,last_report_at INTEGER,created_at INTEGER NOT NULL,UNIQUE(seller_id,request_key));
+CREATE INDEX managed_account_node ON managed_accounts(node_id,state);
+CREATE TABLE account_quota_reports(node_id TEXT NOT NULL,account_id TEXT NOT NULL REFERENCES managed_accounts(id),quota_epoch INTEGER NOT NULL,sequence INTEGER NOT NULL,total_bytes INTEGER NOT NULL,generation TEXT NOT NULL,observed_at INTEGER NOT NULL,PRIMARY KEY(node_id,account_id,quota_epoch,sequence));
+ALTER TABLE managed_accounts ADD COLUMN listen_port INTEGER;
+CREATE UNIQUE INDEX account_listen_port ON managed_accounts(node_id,listen_port);
+ALTER TABLE account_quota_reports ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0 CHECK(blocked IN (0,1));
+CREATE TRIGGER quota_report_conflict BEFORE INSERT ON account_quota_reports WHEN EXISTS(SELECT 1 FROM account_quota_reports r WHERE r.node_id=NEW.node_id AND r.account_id=NEW.account_id AND r.quota_epoch=NEW.quota_epoch AND r.sequence=NEW.sequence AND (r.total_bytes<>NEW.total_bytes OR r.generation<>NEW.generation OR r.observed_at<>NEW.observed_at OR r.blocked<>NEW.blocked)) BEGIN SELECT RAISE(ABORT,'CONFLICTING_REPORT'); END;
+ALTER TABLE users ADD COLUMN sales_update_id INTEGER NOT NULL DEFAULT 0;

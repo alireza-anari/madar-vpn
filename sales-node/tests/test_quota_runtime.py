@@ -1,0 +1,86 @@
+import json,pathlib
+from quota_runtime import meter_authorized
+
+def test_meter_must_be_recent_and_authorized(tmp_path):
+    p=tmp_path/'heartbeat';p.write_text(json.dumps({'expiresAt':200,'sampledAt':100}))
+    assert meter_authorized(p,102)
+    assert not meter_authorized(p,106)
+    assert not meter_authorized(p,201)
+    p.write_text('bad');assert not meter_authorized(p,100)
+
+def test_meter_cuts_exhausted_account_while_other_account_keeps_transferring(tmp_path,monkeypatch):
+    import quota_runtime as runtime
+    from quota import QuotaStore
+    path=tmp_path/'quota.sqlite';QuotaStore(path).close();stops=[];samples={};ticks=[0]
+    class Process:
+        def __init__(self,config,client,base):self.client=client;self.generation='process-'+client['accountId'];samples[client['accountId']]=0
+        def sample(self):
+            ident=self.client['accountId'];samples[ident]+=30;return samples[ident]
+        def stop(self):stops.append((self.client['accountId'],ticks[0]))
+    monkeypatch.setattr(runtime.time,'time',lambda:100+ticks[0])
+    controller=runtime.QuotaRuntime({'policyKey':'test','nodeId':'node'},lambda *args:None,lambda envelope,*args:envelope,base=tmp_path/'run',database=path,process_factory=Process)
+    controller.network=lambda:None
+    clients=[{'accountId':a,'quotaEpoch':1,'quotaBytes':cap,'usedBytes':0,'validUntil':1000,'generation':a+':1','listenPort':20000+i} for i,(a,cap) in enumerate([('a',50),('b',1000)])]
+    controller.incoming.put(('policy',{'version':2,'revision':1,'expiresAt':400,'clients':clients}))
+    def advance(delay):
+        ticks[0]+=1
+        if ticks[0]==3:controller.stopping.set()
+    monkeypatch.setattr(runtime.time,'sleep',advance);controller.run()
+    assert ('a',1) in stops
+    assert ('b',1) not in stops and samples['b']==90
+    store=QuotaStore(path);assert store.remaining('a')==0;store.close()
+
+def test_missing_or_empty_database_never_reinitializes_quota(tmp_path):
+    import pytest
+    from quota_runtime import QuotaRuntime
+    for file in (tmp_path/'missing',tmp_path/'empty'):
+        if file.name=='empty':file.touch()
+        with pytest.raises(Exception):QuotaRuntime({},None,None,base=tmp_path/'run',database=file)
+
+def test_failed_meter_commit_stops_all_children_without_refreshing_liveness(tmp_path,monkeypatch):
+    import pytest,quota_runtime as runtime
+    from quota import QuotaStore
+    path=tmp_path/'q';QuotaStore(path).close();stopped=[]
+    class Process:
+        def __init__(self,config,client,base):self.generation='p';self.client=client
+        def sample(self):return 20
+        def stop(self):stopped.append(self.client['accountId'])
+    controller=runtime.QuotaRuntime({'policyKey':'k','nodeId':'n'},None,lambda envelope,*args:envelope,base=tmp_path/'run',database=path,process_factory=Process);controller.network=lambda:None
+    client={'accountId':'a','quotaEpoch':1,'quotaBytes':100,'usedBytes':0,'validUntil':int(__import__('time').time())+100,'generation':'a:1','listenPort':20000}
+    controller.incoming.put(('policy',{'version':2,'revision':1,'expiresAt':int(__import__('time').time())+300,'clients':[client]}))
+    real=controller.store.observe
+    def disk_error(ident,generation,counter,now):
+        if counter:raise OSError('disk failure')
+        return real(ident,generation,counter,now)
+    monkeypatch.setattr(controller.store,'observe',disk_error)
+    monkeypatch.setattr(controller.store,'block',lambda *args:(_ for _ in ()).throw(OSError('disk failure')))
+    with pytest.raises(OSError):controller.run()
+    assert stopped==['a']
+
+def test_watchdog_stops_entire_quota_service_when_meter_hangs(monkeypatch):
+    import agent,pathlib,subprocess
+    monkeypatch.setattr(pathlib.Path,'exists',lambda self:True)
+    monkeypatch.setattr(pathlib.Path,'read_text',lambda self:json.dumps({'expiresAt':300,'sampledAt':100}))
+    calls=[];monkeypatch.setattr(subprocess,'run',lambda args,**kw:calls.append(args))
+    assert not agent.watchdog(105)
+    assert calls==[['systemctl','stop','madar-sales-node.service']]
+
+def test_new_account_startup_failure_does_not_stop_healthy_sibling(tmp_path,monkeypatch):
+    import quota_runtime as runtime
+    from quota import QuotaStore
+    path=tmp_path/'q';QuotaStore(path).close();ticks=[0];stops=[];healthy=[]
+    class Process:
+        def __init__(self,config,client,base):
+            if client['accountId']=='b':raise ValueError('XRAY_NOT_READY')
+            self.generation='p';self.total=0
+        def sample(self):self.total+=10;return self.total
+        def stop(self):stops.append(ticks[0])
+    monkeypatch.setattr(runtime.time,'time',lambda:100+ticks[0])
+    c=runtime.QuotaRuntime({'policyKey':'k','nodeId':'n'},None,lambda p,*args:p,base=tmp_path/'run',database=path,process_factory=Process);c.network=lambda:None
+    clients=[{'accountId':a,'quotaEpoch':1,'quotaBytes':1000,'usedBytes':0,'validUntil':1000,'generation':a+':1','listenPort':20000+i} for i,a in enumerate(['a','b'])]
+    c.incoming.put(('policy',{'version':2,'revision':1,'expiresAt':400,'clients':clients}))
+    def advance(delay):
+        healthy.append(c.store.allowed('a',100+ticks[0]));ticks[0]+=1
+        if ticks[0]==3:c.stopping.set()
+    monkeypatch.setattr(runtime.time,'sleep',advance);c.run()
+    assert healthy==[True,True,True] and stops==[3]

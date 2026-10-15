@@ -9,6 +9,12 @@ def request(config,path,data=None):
 def watchdog(now=None):
     import subprocess
     now=int(time.time()) if now is None else now
+    heartbeat=pathlib.Path('/run/madar-sales-node/quota-heartbeat.json')
+    if heartbeat.exists():
+        from quota_runtime import meter_authorized
+        valid=meter_authorized(heartbeat,now)
+        if not valid:subprocess.run(['systemctl','stop','madar-sales-node.service'],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=15)
+        return valid
     try:
         auth=json.loads(pathlib.Path('/run/madar-sales-node/authorization.json').read_text());valid=auth['expiresAt']>now
     except Exception:valid=False
@@ -18,7 +24,11 @@ def watchdog(now=None):
 def main():
     p=argparse.ArgumentParser();p.add_argument('--config',default='/etc/madar-sales-node/config.json');p.add_argument('--watchdog',action='store_true');args=p.parse_args()
     if args.watchdog:watchdog();return
-    config=json.loads(pathlib.Path(args.config).read_text());xray=Xray(config);xray.stop();revision=0;deadline=0
+    config=json.loads(pathlib.Path(args.config).read_text())
+    if config.get('protocolVersion')==2:
+        from quota_runtime import QuotaRuntime
+        QuotaRuntime(config,request,verify_policy).run();return
+    xray=Xray(config);xray.stop();revision=0;deadline=0
     while True:
         now=int(time.time())
         try:

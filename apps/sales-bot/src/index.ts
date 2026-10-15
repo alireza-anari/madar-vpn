@@ -1,3 +1,4 @@
+import { statusResponse } from "./status-routes";
 import { nodeApi } from "./node-api";
 import { subscriptionResponse } from "./subscriptions";
 import { runnerApi } from "./runner-api";
@@ -16,6 +17,8 @@ export default {
     ctx?: ExecutionContext,
   ): Promise<Response> {
     const path = new URL(request.url).pathname;
+    if (path.startsWith("/usage/") || path.startsWith("/api/usage/"))
+      return statusResponse(request, env, epoch());
     if (path.startsWith("/api/node/")) return nodeApi(request, env, epoch());
     if (path.startsWith("/subscription/"))
       return subscriptionResponse(env, path.slice(14), epoch());
