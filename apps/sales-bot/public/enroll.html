@@ -4,7 +4,7 @@
     name="viewport"
     content="width=device-width,initial-scale=1"
   /><title>افزودن نود مدار</title>
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script async src="https://telegram.org/js/telegram-web-app.js" onload="window.Telegram?.WebApp?.ready()"></script>
   <style>
     body {
       font-family: system-ui;
@@ -104,6 +104,7 @@
   <p id="status" role="status" aria-live="polite"></p>
   <script>
     const tg = window.Telegram?.WebApp;
+    const initData = tg?.initData || new URLSearchParams(location.hash.slice(1)).get("tgWebAppData") || "";
     tg?.ready();
     const el = (id) => document.getElementById(id);
     let probeId = "",
@@ -115,7 +116,7 @@
         method: body ? "POST" : "GET",
         headers: {
           "Content-Type": "application/json",
-          "X-Telegram-Init-Data": tg?.initData || "",
+          "X-Telegram-Init-Data": initData,
         },
         ...(body ? { body: JSON.stringify(body) } : {}),
       });
@@ -254,7 +255,7 @@
         setStatus(e.message);
       }
     };
-    if (!tg?.initData) {
+    if (!initData) {
       el("form").hidden = true;
       setStatus("این فرم را از منوی ادمین ربات تلگرام باز کن.");
     }
