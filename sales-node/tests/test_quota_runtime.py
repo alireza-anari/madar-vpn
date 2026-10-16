@@ -85,6 +85,16 @@ def test_new_account_startup_failure_does_not_stop_healthy_sibling(tmp_path,monk
     monkeypatch.setattr(runtime.time,'sleep',advance);c.run()
     assert healthy==[True,True,True] and stops==[3]
 
+def test_shared_frontend_factory_selects_owned_for_fresh_and_attaches_personal(monkeypatch):
+    import quota_runtime as runtime,shared443
+    calls=[]
+    class Frontend:pass
+    monkeypatch.setattr(shared443,'start_owned_frontend',lambda settings,binary,base:(calls.append(('owned',settings.get('frontendManaged'))) or Frontend()))
+    monkeypatch.setattr(shared443,'SharedFrontend',lambda settings,binary:(calls.append(('attach',settings.get('frontendManaged'))) or Frontend()))
+    assert isinstance(runtime.shared_frontend({'shared443':True,'frontendManaged':True},'xray',pathlib.Path('/tmp')),Frontend)
+    assert isinstance(runtime.shared_frontend({'shared443':True},'xray',pathlib.Path('/tmp')),Frontend)
+    assert calls==[('owned',True),('attach',None)]
+
 def test_shared443_capability_requires_live_frontend(tmp_path):
     from quota import QuotaStore
     from quota_runtime import QuotaRuntime
@@ -116,6 +126,38 @@ def test_shared443_failure_forces_ack_unhealthy(tmp_path):
     assert calls and calls[0]['healthy'] is False
     assert 'shared-443' not in calls[0]['capabilities']
     c.store.close()
+
+def test_dead_shared_frontend_stops_and_blocks_workers_before_next_tick(tmp_path,monkeypatch):
+    import quota_runtime as runtime
+    from quota import QuotaStore
+    path=tmp_path/'q';QuotaStore(path).close();stopped=[];observed=[]
+    class Frontend:
+        def check(self):raise ValueError('FRONTEND_DOWN')
+    class Process:
+        def __init__(self,config,client,base):self.generation='p';self.client=client
+        def sample(self):return 1
+        def stop(self):stopped.append(self.client['accountId'])
+    c=runtime.QuotaRuntime({'policyKey':'k','nodeId':'n','shared443':True},None,lambda p,*args:p,base=tmp_path/'run',database=path,process_factory=Process,frontend_factory=lambda *args:Frontend());c.network=lambda:None
+    client={'accountId':'a','quotaEpoch':1,'quotaBytes':1000,'usedBytes':0,'validUntil':1000,'generation':'a:1','listenPort':20000}
+    c.incoming.put(('policy',{'version':2,'revision':1,'expiresAt':400,'clients':[client]}))
+    monkeypatch.setattr(runtime.time,'time',lambda:100)
+    def advance(delay):
+        observed.append((list(stopped),c.store.allowed('a',100),c.healthy));c.stopping.set()
+    monkeypatch.setattr(runtime.time,'sleep',advance);c.run()
+    assert observed==[(['a'],False,False)]
+
+def test_empty_desired_set_cannot_hide_dead_shared_frontend(tmp_path,monkeypatch):
+    import quota_runtime as runtime
+    from quota import QuotaStore
+    path=tmp_path/'q';QuotaStore(path).close();observed=[]
+    class Frontend:
+        def check(self):raise ValueError('FRONTEND_DOWN')
+    c=runtime.QuotaRuntime({'policyKey':'k','nodeId':'n','shared443':True},None,lambda p,*args:p,base=tmp_path/'run',database=path,frontend_factory=lambda *args:Frontend());c.network=lambda:None
+    c.incoming.put(('policy',{'version':2,'revision':1,'expiresAt':400,'clients':[]}))
+    monkeypatch.setattr(runtime.time,'time',lambda:100)
+    def advance(delay):observed.append(c.healthy);c.stopping.set()
+    monkeypatch.setattr(runtime.time,'sleep',advance);c.run()
+    assert observed==[False]
 
 def test_quota_heartbeat_is_armed_before_fresh_frontend_start(tmp_path):
     import time
