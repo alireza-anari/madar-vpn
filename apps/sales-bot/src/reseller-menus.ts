@@ -1,3 +1,8 @@
+import {
+  createSellerInvite,
+  claimSellerInvite,
+  sellerInviteUrl,
+} from "./reseller-invites";
 import type { TelegramUpdate } from "./contracts";
 import { enqueue } from "./telegram";
 import {
@@ -54,9 +59,20 @@ export async function handleResellerUpdate(
       text,
       ...(rows ? { reply_markup: { inline_keyboard: rows } } : {}),
     });
+  if (text?.startsWith("/start seller_")) {
+    const token = text.slice(14);
+    const accepted = await claimSellerInvite(db, token, String(id), now);
+    await ordinaryReply(
+      accepted
+        ? "✅ دسترسی فروشندگی شما فعال شد.\nاز منوی زیر برای صدور کانفیگ یا دریافت تست شروع کن."
+        : "این دعوت معتبر نیست، منقضی شده یا قبلاً استفاده شده است. از مدیر یک لینک تازه بگیر.",
+      accepted ? [[btn("🏠 ورود به پنل فروشنده", "rs:home")]] : undefined,
+    );
+    return;
+  }
   if (actor.role === "ordinary") {
     await ordinaryReply(
-      `به مدار خوش آمدی.\nاین ربات ویژهٔ فروشندگان مجاز است. برای دریافت دسترسی، شناسهٔ عددی خود را به مدیر بده:\n${id}`,
+      `به مدار خوش آمدی.\nاین ربات ویژهٔ فروشندگان مجاز است. برای دریافت دسترسی، از مدیر بخواه لینک دعوت فروشندگی را برایت بفرستد.`,
     );
     return;
   }
@@ -190,6 +206,26 @@ export async function handleResellerUpdate(
       );
       return;
     }
+    if (data === "rs:invite") {
+      requireSalesAdmin(actor);
+      const token = await createSellerInvite(
+        env,
+        actor,
+        String(u.update_id),
+        now,
+      );
+      const url = await sellerInviteUrl(env, token);
+      await reply(
+        `👥 دعوت فروشنده\n\nاین لینک را فقط برای فروشندهٔ موردنظر بفرست:\n${url}\n\nبا بازکردن لینک و زدن Start، دسترسی فعال می‌شود. هر لینک برای یک نفر است و ۲۴ ساعت اعتبار دارد.`,
+        [
+          [{ text: "📋 کپی لینک دعوت", copy_text: { text: url } }],
+          [btn("ساخت دعوت جدید", "rs:invite")],
+          [btn("بازگشت به فروشندگان", "rs:sellers")],
+        ],
+        { link_preview_options: { is_disabled: true } },
+      );
+      return;
+    }
     if (data === "rs:sellers") {
       requireSalesAdmin(actor);
       const sellers = await db
@@ -200,7 +236,8 @@ export async function handleResellerUpdate(
       await reply(
         `👥 فروشندگان\n${sellers.results.length ? sellers.results.map((s) => `${s.enabled ? "🟢 فعال" : "⚪ غیرفعال"} · ${s.telegram_id}`).join("\n") : "هنوز فروشنده‌ای اضافه نشده است."}\n\nغیرفعال‌کردن فروشنده، کانفیگ‌های مشتریانش را لغو نمی‌کند.`,
         [
-          [btn("➕ افزودن یا فعال‌سازی", "rs:seller")],
+          [btn("🔗 دعوت فروشنده با لینک", "rs:invite")],
+          [btn("افزودن با شناسهٔ عددی", "rs:seller")],
           [btn("قطع دسترسی فروشنده", "rs:disable")],
           home(),
         ],
@@ -534,21 +571,25 @@ export async function handleResellerUpdate(
     if (error instanceof Error && error.message === "CONVERSATION_RETRY")
       throw error;
     await reply(
-      error instanceof Error && error.message === "NODE_FULL"
-        ? "ظرفیت این سرور تکمیل شده است. از گزینهٔ تغییر سرور، سرور دیگری انتخاب کن."
-        : error instanceof Error && error.message === "NODE_UNAVAILABLE"
-          ? "این سرور فعلاً آماده نیست. سرور دیگری انتخاب کن."
-          : error instanceof Error && error.message === "INVALID_CAPACITY"
-            ? "ظرفیت باید عددی از ۱ تا ۱۰۰۰۰ باشد. دوباره بفرست."
-            : error instanceof Error && error.message === "NODE_NOT_CONFIGURED"
-              ? "سرور این سرویس هنوز انتخاب نشده است. مدیر باید از بخش سرورها، سرور فروش یا تست را مشخص کند."
-              : error instanceof Error && error.message === "ACCOUNT_NOT_READY"
-                ? "پیام این کانفیگ هنوز آماده نیست یا اعتبارش تمام شده است. وضعیت کانفیگ را بررسی کن."
-                : state?.step === "quota"
-                  ? "حجم باید یک عدد از ۱ تا ۱۰۰۰ گیگابایت باشد. دوباره بفرست یا از منو خارج شو."
-                  : state?.step === "days"
-                    ? "مدت باید یک عدد از ۱ تا ۳۶۵ روز باشد. دوباره بفرست یا از منو خارج شو."
-                    : "این درخواست در دسترس نیست یا اجازهٔ انجام آن را نداری. از منو ادامه بده.",
+      error instanceof Error && error.message === "INVITE_UNAVAILABLE"
+        ? "ساخت لینک دعوت فعلاً ممکن نشد. کمی بعد دوباره تلاش کن."
+        : error instanceof Error && error.message === "NODE_FULL"
+          ? "ظرفیت این سرور تکمیل شده است. از گزینهٔ تغییر سرور، سرور دیگری انتخاب کن."
+          : error instanceof Error && error.message === "NODE_UNAVAILABLE"
+            ? "این سرور فعلاً آماده نیست. سرور دیگری انتخاب کن."
+            : error instanceof Error && error.message === "INVALID_CAPACITY"
+              ? "ظرفیت باید عددی از ۱ تا ۱۰۰۰۰ باشد. دوباره بفرست."
+              : error instanceof Error &&
+                  error.message === "NODE_NOT_CONFIGURED"
+                ? "سرور این سرویس هنوز انتخاب نشده است. مدیر باید از بخش سرورها، سرور فروش یا تست را مشخص کند."
+                : error instanceof Error &&
+                    error.message === "ACCOUNT_NOT_READY"
+                  ? "پیام این کانفیگ هنوز آماده نیست یا اعتبارش تمام شده است. وضعیت کانفیگ را بررسی کن."
+                  : state?.step === "quota"
+                    ? "حجم باید یک عدد از ۱ تا ۱۰۰۰ گیگابایت باشد. دوباره بفرست یا از منو خارج شو."
+                    : state?.step === "days"
+                      ? "مدت باید یک عدد از ۱ تا ۳۶۵ روز باشد. دوباره بفرست یا از منو خارج شو."
+                      : "این درخواست در دسترس نیست یا اجازهٔ انجام آن را نداری. از منو ادامه بده.",
       state?.step === "confirm"
         ? [[btn("تغییر سرور", "rs:servers")], home()]
         : [home()],
