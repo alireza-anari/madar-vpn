@@ -1,0 +1,1 @@
+UPDATE managed_accounts SET quota_bytes=1000000000,state=CASE WHEN state IN ('preparing','active') AND used_bytes>=1000000000 THEN 'exhausted' ELSE state END WHERE kind='trial' AND (quota_bytes IS NULL OR quota_bytes>1000000000);

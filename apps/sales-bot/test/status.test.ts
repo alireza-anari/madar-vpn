@@ -41,7 +41,9 @@ test("delivery waits for activation then is durable and capability scoped", asyn
   }>();
   expect(rows.results).toHaveLength(1);
   const message = JSON.parse(rows.results[0]!.payload);
-  const url = message.reply_markup.inline_keyboard[0][0].url;
+  const url = message.reply_markup.inline_keyboard
+    .flat()
+    .find((b: any) => b.url).url;
   const token = url.split("/").pop();
   expect(message.text).not.toContain("seller");
   expect(message.text).toContain(":20000?");
@@ -100,4 +102,72 @@ test("shared frontend exports public443 rather than private worker port", async 
   ).first<string>("payload");
   expect(JSON.parse(payload!).text).toContain(":443?");
   expect(JSON.parse(payload!).text).not.toContain(":20000?");
+});
+test("delivery is forwardable HTML with private usage button and one-touch config copy", async () => {
+  await env.SALES_DB.prepare(
+    "UPDATE nodes SET public_key=?,sni='www.microsoft.com',short_id='1234567890abcdef',agent_capabilities='quota-v2,per-account-process,shared-443',policy_payload=?",
+  )
+    .bind(
+      "p".repeat(43),
+      JSON.stringify({
+        version: 2,
+        expiresAt: 400,
+        clients: [{ accountId: "a", uuid: "private-uuid", validUntil: 1900 }],
+      }),
+    )
+    .run();
+  await env.SALES_DB.exec(
+    "UPDATE managed_accounts SET state='active',kind='trial',quota_bytes=1000000000,label='<b>مشتری</b>';",
+  );
+  await queueAccountDelivery(
+    { ...env, PUBLIC_BASE_URL: "https://example.com" },
+    "a",
+    102,
+  );
+  const payload = JSON.parse(
+    (await env.SALES_DB.prepare("SELECT payload FROM outbox").first<string>(
+      "payload",
+    ))!,
+  );
+  const buttons = payload.reply_markup.inline_keyboard.flat();
+  const copy = buttons.find((b: any) => b.copy_text),
+    status = buttons.find((b: any) => b.url);
+  expect(payload.parse_mode).toBe("HTML");
+  expect(payload.text).not.toContain(status.url);
+  expect(payload.text).not.toContain("/usage/");
+  expect(payload.text).toContain("&lt;b&gt;مشتری&lt;/b&gt;");
+  expect(payload.text).toContain("۱ گیگابایت");
+  expect(copy.copy_text.text.length).toBeLessThanOrEqual(256);
+  expect(copy.copy_text.text).toMatch(/^vless:\/\/private-uuid@8.8.8.8:443\?/);
+  expect(payload.text).toContain("<pre>");
+  expect(payload.text).not.toContain("headerType=");
+});
+
+test("long config retains a complete code block without invalid copy_text", async () => {
+  await env.SALES_DB.prepare("UPDATE nodes SET sni=?,policy_payload=?")
+    .bind(
+      "a".repeat(240),
+      JSON.stringify({
+        version: 2,
+        expiresAt: 400,
+        clients: [{ accountId: "a", uuid: "private-uuid", validUntil: 1900 }],
+      }),
+    )
+    .run();
+  await env.SALES_DB.exec("UPDATE managed_accounts SET state='active';");
+  await queueAccountDelivery(
+    { ...env, PUBLIC_BASE_URL: "https://example.com" },
+    "a",
+    102,
+  );
+  const payload = JSON.parse(
+    (await env.SALES_DB.prepare("SELECT payload FROM outbox").first<string>(
+      "payload",
+    ))!,
+  );
+  expect(
+    payload.reply_markup.inline_keyboard.flat().some((b: any) => b.copy_text),
+  ).toBe(false);
+  expect(payload.text).toContain("a".repeat(240));
+  expect(payload.text).toContain("<pre>");
 });

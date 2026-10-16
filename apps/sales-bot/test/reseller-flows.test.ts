@@ -5,6 +5,7 @@ import a from "../migrations/0001.sql?raw";
 import b from "../migrations/0002.sql?raw";
 import c from "../migrations/0003.sql?raw";
 import d from "../migrations/0004-reseller-accounts.sql?raw";
+import trialQuota from "../migrations/0006-trial-quota.sql?raw";
 import { handleUpdate } from "../src/menus";
 const E = { ...env, ADMIN_TELEGRAM_IDS: "9" };
 let seq = 1;
@@ -159,4 +160,115 @@ test("reseller-mode provisioning jobs carry the compatible protocol version", as
   const { leaseJob } = await import("../src/runner-api");
   const job = await leaseJob(E, "test-runner", 101);
   expect(job?.protocolVersion).toBe(2);
+});
+
+test("Persian and Arabic numerals work and cancellation clears issuance", async () => {
+  await click(10, "rs:sale");
+  await send(10, "مشتری فارسی");
+  await send(10, "۳۰");
+  await send(10, "٧");
+  const state = JSON.parse(
+    (await env.SALES_DB.prepare(
+      "SELECT conversation FROM users WHERE id='10'",
+    ).first<string>("conversation"))!,
+  );
+  expect(state.quotaBytes).toBe(30e9);
+  expect(state.durationSeconds).toBe(7 * 86400);
+  await click(10, "rs:home");
+  await click(10, `rs:confirm:${state.requestKey}`);
+  expect(
+    await env.SALES_DB.prepare("SELECT COUNT(*) n FROM managed_accounts").first(
+      "n",
+    ),
+  ).toBe(0);
+});
+test("revocation requires admin confirmation", async () => {
+  await click(10, "rs:trial", 2100);
+  await click(10, "rs:confirm:trial:2100", 2101);
+  const id = await env.SALES_DB.prepare(
+    "SELECT id FROM managed_accounts",
+  ).first<string>("id");
+  await click(9, `rs:revoke:${id}`);
+  expect(
+    await env.SALES_DB.prepare("SELECT state FROM managed_accounts").first(
+      "state",
+    ),
+  ).toBe("preparing");
+  await click(10, `rs:revokeok:${id}`);
+  expect(
+    await env.SALES_DB.prepare("SELECT state FROM managed_accounts").first(
+      "state",
+    ),
+  ).toBe("preparing");
+  await click(9, `rs:revokeok:${id}`);
+  expect(
+    await env.SALES_DB.prepare("SELECT state FROM managed_accounts").first(
+      "state",
+    ),
+  ).toBe("revoked");
+});
+
+test("account pages preserve seller ownership", async () => {
+  for (let i = 0; i < 10; i++)
+    await env.SALES_DB.prepare(
+      "INSERT INTO managed_accounts(id,seller_id,request_key,node_id,kind,label,uuid,quota_bytes,duration_seconds,created_at) VALUES(?, '10', ?, 's', 'sale', ?, ?, 1000000000,86400,100)",
+    )
+      .bind(`a${i}`, `k${i}`, `client${i}`, `uuid${i}`)
+      .run();
+  await click(10, "rs:list", 2200);
+  const first = JSON.parse(
+    (await env.SALES_DB.prepare(
+      "SELECT payload FROM outbox WHERE id='u2200:reply'",
+    ).first<string>("payload"))!,
+  );
+  expect(
+    first.reply_markup.inline_keyboard
+      .flat()
+      .filter((b: any) => b.callback_data.startsWith("rs:view:")),
+  ).toHaveLength(8);
+  await click(10, "rs:list:1", 2201);
+  const second = JSON.parse(
+    (await env.SALES_DB.prepare(
+      "SELECT payload FROM outbox WHERE id='u2201:reply'",
+    ).first<string>("payload"))!,
+  );
+  expect(
+    second.reply_markup.inline_keyboard
+      .flat()
+      .filter((b: any) => b.callback_data.startsWith("rs:view:")),
+  ).toHaveLength(2);
+  await env.SALES_DB.exec("INSERT INTO resellers VALUES('12',1,100)");
+  await click(12, "rs:list", 2202);
+  const other = JSON.parse(
+    (await env.SALES_DB.prepare(
+      "SELECT payload FROM outbox WHERE id='u2202:reply'",
+    ).first<string>("payload"))!,
+  );
+  expect(
+    other.reply_markup.inline_keyboard
+      .flat()
+      .some((b: any) => b.callback_data.startsWith("rs:view:")),
+  ).toBe(false);
+});
+
+test("trial cap migration preserves usage, expiry and revocation", async () => {
+  await env.SALES_DB.exec(
+    "INSERT INTO managed_accounts(id,seller_id,request_key,node_id,kind,label,uuid,quota_bytes,duration_seconds,created_at,state,used_bytes,valid_until) VALUES('old','10','old','t','trial','old','old',NULL,1800,100,'active',1100000000,999),('rev','10','rev','t','trial','rev','rev',NULL,1800,100,'revoked',123,888);",
+  );
+  await env.SALES_DB.exec(trialQuota);
+  expect(
+    await env.SALES_DB.prepare(
+      "SELECT quota_bytes,state,used_bytes,valid_until FROM managed_accounts WHERE id='old'",
+    ).first(),
+  ).toEqual({
+    quota_bytes: 1e9,
+    state: "exhausted",
+    used_bytes: 1100000000,
+    valid_until: 999,
+  });
+  expect(
+    await env.SALES_DB.prepare(
+      "SELECT state FROM managed_accounts WHERE id='rev'",
+    ).first("state"),
+  ).toBe("revoked");
 });

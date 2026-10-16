@@ -12,6 +12,22 @@ import {
   revokeAccount,
   type AccountInput,
 } from "./accounts";
+const digits = (value: string) =>
+  value
+    .trim()
+    .replace(/[۰-۹]/g, (c) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(c)))
+    .replace(/[٠-٩]/g, (c) => String("٠١٢٣٤٥٦٧٨٩".indexOf(c)));
+const statusLabel = (state: string) =>
+  ({
+    preparing: "⏳ در حال آماده‌سازی",
+    active: "🟢 فعال",
+    expired: "⌛ پایان اعتبار",
+    exhausted: "📦 پایان حجم",
+    revoked: "⛔ لغوشده",
+    failed: "⚠️ نیاز به بررسی",
+    blocked: "⛔ متوقف‌شده",
+  })[state] || "⏳ در حال بررسی";
+const cancel = () => [btn("✖️ انصراف و منوی اصلی", "rs:home")];
 const btn = (text: string, callback_data: string) => ({ text, callback_data });
 export async function handleResellerUpdate(
   env: Env,
@@ -24,7 +40,7 @@ export async function handleResellerUpdate(
   const db = env.SALES_DB,
     actor = await resolveSalesActor(db, String(id), env),
     data = u.callback_query?.data,
-    text = u.message?.text;
+    text = u.message?.text?.trim();
   const ordinaryReply = (text: string, rows?: Record<string, unknown>[][]) =>
     enqueue(db, `u${u.update_id}:reply`, String(id), {
       text,
@@ -95,8 +111,11 @@ export async function handleResellerUpdate(
     if (text === "/start" || data === "home" || data === "rs:home") {
       await set({});
       const rows: Record<string, unknown>[][] = [
-        [btn("صدور کانفیگ", "rs:sale"), btn("تست نیم‌ساعته", "rs:trial")],
-        [btn("کانفیگ‌های من", "rs:list")],
+        [
+          btn("➕ صدور کانفیگ", "rs:sale"),
+          btn("🎁 تست ۱ گیگ · ۳۰ دقیقه", "rs:trial"),
+        ],
+        [btn("📋 کانفیگ‌های من", "rs:list")],
       ];
       if (actor.role === "admin")
         rows.push(
@@ -112,12 +131,18 @@ export async function handleResellerUpdate(
             },
           ],
         );
-      await reply("مدیریت کانفیگ مدار", rows);
+      await reply(
+        "مدار | پنل فروشنده\nبرای مشتری کانفیگ بساز یا یک تست جدید بگیر. پیام تحویل آمادهٔ ارسال به مشتری است.",
+        rows,
+      );
       return;
     }
     if (data === "rs:sale") {
       await set({ step: "label", requestKey: `sale:${u.update_id}` });
-      await reply("نام یا برچسب مشتری را بفرست (حداکثر ۸۰ نویسه).");
+      await reply(
+        "۱ از ۳ · نام مشتری\nنام یا برچسب مشتری را بفرست (حداکثر ۸۰ نویسه).",
+        [cancel()],
+      );
       return;
     }
     if (data === "rs:trial") {
@@ -126,12 +151,13 @@ export async function handleResellerUpdate(
         requestKey: `trial:${u.update_id}`,
         kind: "trial",
         label: "تست نیم‌ساعته",
-        quotaBytes: null,
+        quotaBytes: 1e9,
         durationSeconds: 1800,
       });
-      await reply("یک تست مستقل ۳۰ دقیقه‌ای ساخته شود؟", [
-        [btn("تأیید تست", `rs:confirm:trial:${u.update_id}`)],
-      ]);
+      await reply(
+        "🎁 تست جدید\nحجم: ۱ گیگابایت\nاعتبار: ۳۰ دقیقه از زمان فعال‌شدن\nهر درخواست یک کانفیگ مستقل می‌سازد.",
+        [[btn("✅ ساخت تست", `rs:confirm:trial:${u.update_id}`)], cancel()],
+      );
       return;
     }
     if (data?.startsWith("rs:confirm:")) {
@@ -147,59 +173,118 @@ export async function handleResellerUpdate(
         now,
       );
       await reply(
-        `درخواست ثبت شد. شناسه: ${account.id}\nپس از تأیید آماده‌بودن سرور، پیام قابل ارسال به مشتری تحویل می‌شود.`,
+        `⏳ درخواست ثبت شد.\nپس از آماده‌شدن سرور، کانفیگ در یک پیام جداگانه می‌رسد؛ همان پیام را برای مشتری بفرست.`,
+        [
+          [btn("وضعیت درخواست", `rs:view:${account.id}`)],
+          [btn("🏠 منوی اصلی", "rs:home")],
+        ],
       );
       return;
     }
-    if (data === "rs:list") {
+    if (data === "rs:list" || data?.startsWith("rs:list:")) {
+      const page = data === "rs:list" ? 0 : Number(data!.slice(8));
+      if (!Number.isSafeInteger(page) || page < 0 || page > 100000)
+        throw Error("INVALID");
       const items = await db
         .prepare(
-          "SELECT id,label,state FROM managed_accounts WHERE (seller_id=? OR ?=1) ORDER BY created_at DESC LIMIT 30",
+          "SELECT id,label,state FROM managed_accounts WHERE (seller_id=? OR ?=1) ORDER BY created_at DESC,id DESC LIMIT 9 OFFSET ?",
         )
-        .bind(String(id), actor.role === "admin" ? 1 : 0)
+        .bind(String(id), actor.role === "admin" ? 1 : 0, page * 8)
         .all<{ id: string; label: string; state: string }>();
       await reply(
         items.results.length
-          ? "کانفیگ را انتخاب کن."
+          ? `کانفیگ را انتخاب کن · صفحهٔ ${(page + 1).toLocaleString("fa-IR")}`
           : "هنوز کانفیگی ثبت نشده.",
-        items.results.map((a) => [
-          btn(`${a.label} · ${a.state}`, `rs:view:${a.id}`),
-        ]),
+        [
+          ...items.results
+            .slice(0, 8)
+            .map((a) => [
+              btn(`${a.label} · ${statusLabel(a.state)}`, `rs:view:${a.id}`),
+            ]),
+          ...(page > 0 || items.results.length > 8
+            ? [
+                [
+                  ...(page > 0 ? [btn("قبلی", `rs:list:${page - 1}`)] : []),
+                  ...(items.results.length > 8
+                    ? [btn("بعدی", `rs:list:${page + 1}`)]
+                    : []),
+                ],
+              ]
+            : []),
+          [btn("🏠 منوی اصلی", "rs:home")],
+        ],
       );
       return;
     }
     if (data?.startsWith("rs:view:")) {
       const a = await ownedAccount(db, actor, data.slice(8));
+      const rows = [
+        [btn("🔄 به‌روزرسانی", `rs:view:${a.id}`)],
+        [btn("بازگشت به کانفیگ‌ها", "rs:list")],
+      ];
+      if (
+        actor.role === "admin" &&
+        !["revoked", "expired", "exhausted"].includes(a.state)
+      )
+        rows.push([btn("لغو کانفیگ", `rs:revoke:${a.id}`)]);
+      const quota =
+        a.quota_bytes === null
+          ? "—"
+          : `${(a.quota_bytes / 1e9).toLocaleString("fa-IR")} گیگابایت`;
+      const remaining =
+        a.quota_bytes === null
+          ? "—"
+          : `${(Math.max(0, a.quota_bytes - a.used_bytes) / 1e9).toLocaleString("fa-IR", { maximumFractionDigits: 3 })} گیگابایت`;
       await reply(
-        `${a.label}\nوضعیت: ${a.state}\nمصرف ثبت‌شده: ${(a.used_bytes / 1e9).toFixed(3)} گیگابایت\nحجم: ${a.quota_bytes === null ? "تست زمانی" : a.quota_bytes / 1e9 + " گیگابایت"}`,
-        actor.role === "admin"
-          ? [[btn("لغو کانفیگ", `rs:revoke:${a.id}`)]]
-          : undefined,
+        `${a.label}\nوضعیت: ${statusLabel(a.state)}\nحجم کل: ${quota}\nمصرف ثبت‌شده: ${(a.used_bytes / 1e9).toLocaleString("fa-IR", { maximumFractionDigits: 3 })} گیگابایت\nباقی‌مانده: ${remaining}\nانقضا: ${a.valid_until ? new Date(a.valid_until * 1000).toLocaleString("fa-IR", { timeZone: "Asia/Tehran" }) + " (تهران)" : "پس از فعال‌شدن مشخص می‌شود"}\nآخرین گزارش: ${a.last_report_at ? new Date(a.last_report_at * 1000).toLocaleString("fa-IR", { timeZone: "Asia/Tehran" }) : "هنوز دریافت نشده"}`,
+        rows,
       );
       return;
     }
     if (data?.startsWith("rs:revoke:")) {
-      await revokeAccount(db, actor, data.slice(10), now);
-      await reply("کانفیگ لغو شد.");
+      requireSalesAdmin(actor);
+      const a = await ownedAccount(db, actor, data.slice(10));
+      await reply(`کانفیگ «${a.label}» لغو شود؟ اتصال مشتری قطع می‌شود.`, [
+        [btn("بله، لغو شود", `rs:revokeok:${a.id}`)],
+        [btn("بازگشت", `rs:view:${a.id}`)],
+      ]);
+      return;
+    }
+    if (data?.startsWith("rs:revokeok:")) {
+      await revokeAccount(db, actor, data.slice(12), now);
+      await reply("کانفیگ لغو شد.", [
+        [btn("کانفیگ‌ها", "rs:list")],
+        [btn("منوی اصلی", "rs:home")],
+      ]);
       return;
     }
     if (data === "rs:seller" || data === "rs:disable") {
       requireSalesAdmin(actor);
       await set({ step: data === "rs:seller" ? "seller" : "disable" });
-      await reply("شناسه عددی تلگرام فروشنده را بفرست.");
+      await reply("شناسه عددی تلگرام فروشنده را بفرست.", [cancel()]);
       return;
     }
     if (data === "rs:nodes") {
       requireSalesAdmin(actor);
       const nodes = await db
-        .prepare("SELECT id,name FROM nodes")
-        .all<{ id: string; name: string }>();
+        .prepare(
+          "SELECT n.id,n.name,n.healthy,(SELECT GROUP_CONCAT(purpose) FROM node_purposes p WHERE p.node_id=n.id) purposes FROM nodes n",
+        )
+        .all<{
+          id: string;
+          name: string;
+          healthy: number;
+          purposes: string | null;
+        }>();
       await reply(
-        "کاربرد هر سرور را انتخاب کن.",
-        nodes.results.map((n) => [
-          btn(`${n.name}: فروش`, `rs:node:sale:${n.id}`),
-          btn(`${n.name}: تست`, `rs:node:trial:${n.id}`),
-        ]),
+        `کاربرد سرورها\n${nodes.results.map((n) => `${n.name}: ${n.purposes?.includes("sale") ? "فروش " : ""}${n.purposes?.includes("trial") ? "تست " : ""}${!n.purposes ? "بدون کاربرد" : ""} · ${n.healthy ? "آخرین گزارش سالم" : "نیاز به بررسی"}`).join("\n")}\n\nبرای تغییر، دکمهٔ زیر سرور را بزن.`,
+        [
+          ...nodes.results.map((n) => [
+            btn(`${n.name}: فروش`, `rs:node:sale:${n.id}`),
+            btn(`${n.name}: تست`, `rs:node:trial:${n.id}`),
+          ]),
+          [btn("🏠 منوی اصلی", "rs:home")],
+        ],
       );
       return;
     }
@@ -213,14 +298,17 @@ export async function handleResellerUpdate(
         purpose as "sale" | "trial",
         now,
       );
-      await reply("کاربرد سرور ثبت شد.");
+      await reply("کاربرد سرور ثبت شد. کانفیگ‌های قبلی جابه‌جا نمی‌شوند.", [
+        [btn("سرورها", "rs:nodes")],
+        [btn("منوی اصلی", "rs:home")],
+      ]);
       return;
     }
     if (
       (text && state.step === "seller") ||
       (text && state.step === "disable")
     ) {
-      await setReseller(db, actor, text!, state.step === "seller", now);
+      await setReseller(db, actor, digits(text!), state.step === "seller", now);
       await set({});
       await reply("دسترسی فروشنده به‌روزرسانی شد.");
       return;
@@ -228,28 +316,32 @@ export async function handleResellerUpdate(
     if (text && state.step === "label") {
       if (!text.trim() || text.length > 80) throw Error("INVALID");
       await set({ ...state, step: "quota", label: text.trim() });
-      await reply("حجم را به گیگابایت بفرست (۱ تا ۱۰۰۰).");
+      await reply("۲ از ۳ · حجم\nحجم را به گیگابایت بفرست (۱ تا ۱۰۰۰).", [
+        cancel(),
+      ]);
       return;
     }
     if (text && state.step === "quota") {
-      if (!/^\d+$/.test(text) || +text < 1 || +text > 1000)
+      const amount = digits(text);
+      if (!/^\d+$/.test(amount) || +amount < 1 || +amount > 1000)
         throw Error("INVALID");
-      await set({ ...state, step: "days", quotaBytes: +text * 1e9 });
-      await reply("مدت را به روز بفرست (۱ تا ۳۶۵).");
+      await set({ ...state, step: "days", quotaBytes: +amount * 1e9 });
+      await reply("۳ از ۳ · مدت\nمدت را به روز بفرست (۱ تا ۳۶۵).", [cancel()]);
       return;
     }
     if (text && state.step === "days") {
-      if (!/^\d+$/.test(text) || +text < 1 || +text > 365)
+      const amount = digits(text);
+      if (!/^\d+$/.test(amount) || +amount < 1 || +amount > 365)
         throw Error("INVALID");
       await set({
         ...state,
         step: "confirm",
         kind: "sale",
-        durationSeconds: +text * 86400,
+        durationSeconds: +amount * 86400,
       });
       await reply(
         `${state.label}\n${state.quotaBytes / 1e9} گیگابایت · ${text} روز`,
-        [[btn("تأیید صدور", `rs:confirm:${state.requestKey}`)]],
+        [[btn("✅ تأیید صدور", `rs:confirm:${state.requestKey}`)], cancel()],
       );
       return;
     }
@@ -257,6 +349,11 @@ export async function handleResellerUpdate(
   } catch (error) {
     if (error instanceof Error && error.message === "CONVERSATION_RETRY")
       throw error;
-    await reply("درخواست معتبر نیست یا دسترسی کافی نداری. ورودی را بررسی کن.");
+    await reply(
+      error instanceof Error && error.message === "NODE_NOT_CONFIGURED"
+        ? "سرور این سرویس هنوز انتخاب نشده است. مدیر باید از بخش سرورها، سرور فروش یا تست را مشخص کند."
+        : "ورودی معتبر نیست یا دسترسی کافی نداری. مقدار خواسته‌شده را بررسی و دوباره ارسال کن.",
+      [cancel()],
+    );
   }
 }

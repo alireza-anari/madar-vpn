@@ -107,6 +107,23 @@ test("each new trial has 1800 seconds and distinct request identity", async () =
     ),
   ).rejects.toThrow("INVALID_ACCOUNT");
 });
+test("new trials always receive one decimal GB, including an old pending null quota", async () => {
+  const a = await createAccount(
+    env.SALES_DB,
+    seller,
+    {
+      kind: "trial",
+      label: "test",
+      quotaBytes: null,
+      durationSeconds: 1800,
+      requestKey: "new-cap",
+    },
+    100,
+  );
+  expect((await ownedAccount(env.SALES_DB, seller, a.id)).quota_bytes).toBe(
+    1000000000,
+  );
+});
 test("invalid amounts, revoked seller and unauthorized account revocation are denied", async () => {
   const input = {
     kind: "sale" as const,

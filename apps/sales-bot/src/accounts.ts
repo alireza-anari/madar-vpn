@@ -45,7 +45,8 @@ export async function createAccount(
     input.durationSeconds < 1 ||
     input.durationSeconds > 31536000 ||
     (input.kind === "trial"
-      ? input.durationSeconds !== 1800 || input.quotaBytes !== null
+      ? input.durationSeconds !== 1800 ||
+        (input.quotaBytes !== null && input.quotaBytes !== 1e9)
       : !Number.isSafeInteger(input.quotaBytes) ||
         Number(input.quotaBytes) <= 0 ||
         Number(input.quotaBytes) > 1e12)
@@ -77,7 +78,7 @@ export async function createAccount(
         input.kind,
         input.label.trim(),
         crypto.randomUUID(),
-        input.quotaBytes,
+        input.kind === "trial" ? 1e9 : input.quotaBytes,
         input.durationSeconds,
         now,
       ),

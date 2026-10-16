@@ -54,7 +54,6 @@ export async function queueAccountDelivery(
     pbk: node.public_key,
     sid: node.short_id,
     type: "tcp",
-    headerType: "none",
   });
   const host = node.target_ip.includes(":")
     ? `[${node.target_ip}]`
@@ -62,13 +61,20 @@ export async function queueAccountDelivery(
   const publicPort = node.agent_capabilities.split(",").includes("shared-443")
     ? node.vpn_port
     : a.listen_port;
-  const config = `vless://${a.uuid}@${host}:${publicPort}?${q}#${encodeURIComponent(a.label)}`;
-  const text = `اشتراک مدار · ${a.label}\n${a.kind === "trial" ? "تست ۳۰ دقیقه‌ای" : `حجم کل: ${Number(a.quota_bytes) / 1e9} گیگابایت · مدت: ${a.duration_seconds / 86400} روز`}\nانقضا: ${new Date(a.valid_until * 1000).toLocaleString("fa-IR", { timeZone: "Asia/Tehran" })} (تهران)\n\n${config}\n\nمشاهده مصرف و حجم باقی‌مانده:\n${url}\nاطلاعات مصرف در لینک به‌روزرسانی می‌شود. این پیام و لینک را خصوصی نگه دارید.`;
+  const config = `vless://${a.uuid}@${host}:${publicPort}?${q}#Madar-${a.id.slice(0, 6)}`;
+  const escape = (value: string) =>
+    value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const text = `🟢 اشتراک مدار · ${escape(a.label)}\n${a.kind === "trial" ? "🎁 تست ۳۰ دقیقه‌ای · حجم: ۱ گیگابایت" : `📦 حجم: ${(Number(a.quota_bytes) / 1e9).toLocaleString("fa-IR")} گیگابایت · مدت: ${(a.duration_seconds / 86400).toLocaleString("fa-IR")} روز`}\n⏳ انقضا: ${new Date(a.valid_until * 1000).toLocaleString("fa-IR", { timeZone: "Asia/Tehran" })} (تهران)\n\n<pre>${escape(config)}</pre>\n\nکانفیگ را کپی و در برنامهٔ اتصال وارد کنید.\nبرای دیدن مصرف و حجم باقی‌مانده، دکمهٔ «مصرف و اعتبار» را بزنید.\n🔒 این پیام مخصوص شماست؛ آن را خصوصی نگه دارید.`;
+  const rows: Record<string, unknown>[][] = [];
+  // Telegram accepts at most 256 characters in copy_text. Never truncate a URI.
+  if (config.length <= 256)
+    rows.push([{ text: "📋 کپی کانفیگ", copy_text: { text: config } }]);
+  rows.push([{ text: "📊 مصرف و اعتبار", url }]);
   const payload = JSON.stringify({
     text,
-    reply_markup: {
-      inline_keyboard: [[{ text: "مشاهده مصرف و اعتبار", url }]],
-    },
+    parse_mode: "HTML",
+    link_preview_options: { is_disabled: true },
+    reply_markup: { inline_keyboard: rows },
   });
   // Capability and its only recoverable raw copy are committed in one atomic D1 batch.
   await db.batch([
