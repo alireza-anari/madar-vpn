@@ -77,3 +77,27 @@ test("database outage returns a generic response without an uncaught capability 
   expect(response.headers.get("Cache-Control")).toBe("no-store");
   expect(await response.text()).not.toContain("a".repeat(64));
 });
+test("shared frontend exports public443 rather than private worker port", async () => {
+  await env.SALES_DB.exec(
+    "UPDATE nodes SET agent_capabilities='quota-v2,per-account-process,shared-443';UPDATE managed_accounts SET state='active';",
+  );
+  await env.SALES_DB.prepare("UPDATE nodes SET policy_payload=?")
+    .bind(
+      JSON.stringify({
+        version: 2,
+        expiresAt: 400,
+        clients: [{ accountId: "a", uuid: "private-uuid", validUntil: 1900 }],
+      }),
+    )
+    .run();
+  await queueAccountDelivery(
+    { ...env, PUBLIC_BASE_URL: "https://example.com" },
+    "a",
+    102,
+  );
+  const payload = await env.SALES_DB.prepare(
+    "SELECT payload FROM outbox",
+  ).first<string>("payload");
+  expect(JSON.parse(payload!).text).toContain(":443?");
+  expect(JSON.parse(payload!).text).not.toContain(":20000?");
+});

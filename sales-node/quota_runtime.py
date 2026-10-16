@@ -12,7 +12,12 @@ def meter_authorized(path,now):
 class AccountProcess:
     def __init__(self,settings,client,base,binary='/opt/madar-sales-node/xray'):
         self.client=client;self.generation=uuid.uuid4().hex;self.api=client['listenPort']+1000;self.seen=False
-        config=render_config({**settings,'port':client['listenPort'],'statsPort':self.api},[client],int(time.time()))
+        self.frontend=None
+        if settings.get('shared443'):
+            from shared443 import backend_config,SharedFrontend
+            self.frontend=SharedFrontend(settings,binary)
+            config=backend_config(settings,client,int(time.time()))
+        else:config=render_config({**settings,'port':client['listenPort'],'statsPort':self.api},[client],int(time.time()))
         self.path=base/(client['accountId']+'.json');atomic_write(self.path,config)
         subprocess.run([binary,'run','-test','-c',str(self.path)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=True,timeout=3)
         self.process=subprocess.Popen([binary,'run','-c',str(self.path)],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
@@ -25,7 +30,11 @@ class AccountProcess:
             except OSError:
                 if self.process.poll() is not None or time.monotonic()>=deadline:self.stop();raise ValueError('XRAY_NOT_READY')
                 time.sleep(.05)
+        if self.frontend:
+            try:self.frontend.add(client,base)
+            except Exception:self.stop();raise
     def sample(self):
+        if self.frontend:self.frontend.check()
         if self.process.poll() is not None:raise ValueError('XRAY_EXITED')
         try:
             values=read_counters(f'127.0.0.1:{self.api}',[self.client['accountId']],self.binary,allow_unregistered=not self.seen)
@@ -38,6 +47,9 @@ class AccountProcess:
             try:self.process.wait(timeout=2)
             except subprocess.TimeoutExpired:self.process.kill();self.process.wait(timeout=2)
         self.path.unlink(missing_ok=True)
+        if self.frontend:
+            try:self.frontend.remove(self.client)
+            except Exception:pass  # Stopped loopback worker is the enforcement boundary.
 
 class QuotaRuntime:
     def __init__(self,config,request,verify,*,base=None,database=None,process_factory=AccountProcess):
@@ -57,7 +69,7 @@ class QuotaRuntime:
                 except queue.Empty:message=None
                 if message:
                     revision,healthy,reports=message
-                    if revision:self.request(self.config,'ack-v2',{'revision':revision,'healthy':healthy,'capabilities':['quota-v2','per-account-process']})
+                    if revision:self.request(self.config,'ack-v2',{'revision':revision,'healthy':healthy,'capabilities':['quota-v2','per-account-process']+(['shared-443'] if self.config.get('shared443') else [])})
                     if reports:
                         self.request(self.config,'quota-reports',{'reports':reports})
                         self.incoming.put(('reports',[(r['accountId'],r['sequence']) for r in reports]))

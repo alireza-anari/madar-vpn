@@ -1,3 +1,4 @@
+import { adoptionApi } from "./node-adoption";
 import { statusResponse } from "./status-routes";
 import { nodeApi } from "./node-api";
 import { subscriptionResponse } from "./subscriptions";
@@ -17,6 +18,8 @@ export default {
     ctx?: ExecutionContext,
   ): Promise<Response> {
     const path = new URL(request.url).pathname;
+    if (path === "/api/adoption/register")
+      return adoptionApi(request, env, epoch());
     if (path.startsWith("/usage/") || path.startsWith("/api/usage/"))
       return statusResponse(request, env, epoch());
     if (path.startsWith("/api/node/")) return nodeApi(request, env, epoch());

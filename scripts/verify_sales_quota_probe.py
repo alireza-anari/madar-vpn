@@ -8,3 +8,4 @@ with tempfile.TemporaryDirectory() as temp:
     for name,data in download('x86_64',VERSION).items():(base/name).write_bytes(data)
     binary=base/'xray';binary.chmod(0o700)
     subprocess.run([sys.executable,str(ROOT/'sales-node/tests/probe_live_stats.py'),str(binary),'23450'],check=True,timeout=35)
+    subprocess.run([sys.executable,str(ROOT/'sales-node/tests/probe_shared443.py'),str(binary)],check=True,timeout=50)

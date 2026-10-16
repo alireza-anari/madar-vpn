@@ -116,9 +116,16 @@ export async function ackQuotaPolicy(
   if (policy.version !== 2 || policy.expiresAt <= now) return;
   await db
     .prepare(
-      "UPDATE nodes SET acked_revision=?,last_seen=?,healthy=1,agent_capabilities='quota-v2,per-account-process',state='ready' WHERE id=? AND revision=?",
+      "UPDATE nodes SET acked_revision=?,last_seen=?,healthy=1,agent_capabilities=?,state='ready' WHERE id=? AND revision=?",
     )
-    .bind(revision, now, nodeId, revision)
+    .bind(
+      revision,
+      now,
+      "quota-v2,per-account-process" +
+        (health.capabilities.includes("shared-443") ? ",shared-443" : ""),
+      nodeId,
+      revision,
+    )
     .run();
   for (const c of policy.clients) {
     await db

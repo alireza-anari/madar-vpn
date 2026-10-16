@@ -59,7 +59,10 @@ export async function queueAccountDelivery(
   const host = node.target_ip.includes(":")
     ? `[${node.target_ip}]`
     : node.target_ip;
-  const config = `vless://${a.uuid}@${host}:${a.listen_port}?${q}#${encodeURIComponent(a.label)}`;
+  const publicPort = node.agent_capabilities.split(",").includes("shared-443")
+    ? node.vpn_port
+    : a.listen_port;
+  const config = `vless://${a.uuid}@${host}:${publicPort}?${q}#${encodeURIComponent(a.label)}`;
   const text = `اشتراک مدار · ${a.label}\n${a.kind === "trial" ? "تست ۳۰ دقیقه‌ای" : `حجم کل: ${Number(a.quota_bytes) / 1e9} گیگابایت · مدت: ${a.duration_seconds / 86400} روز`}\nانقضا: ${new Date(a.valid_until * 1000).toLocaleString("fa-IR", { timeZone: "Asia/Tehran" })} (تهران)\n\n${config}\n\nمشاهده مصرف و حجم باقی‌مانده:\n${url}\nاطلاعات مصرف در لینک به‌روزرسانی می‌شود. این پیام و لینک را خصوصی نگه دارید.`;
   const payload = JSON.stringify({
     text,

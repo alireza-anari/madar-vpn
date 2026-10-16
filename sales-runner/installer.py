@@ -38,7 +38,7 @@ APPLY=r'''
 import io,json,pathlib,sys,tarfile,os,subprocess
 job_id=sys.argv[1]
 root=pathlib.Path('/opt/madar-sales-node');etc=pathlib.Path('/etc/madar-sales-node')
-allowed={'manifest.json','config.json','xray','geoip.dat','geosite.dat','agent.py','policy.py','xray.py','guard.py','stats.py','quota.py','quota_runtime.py','update_owned.py','madar-sales-node.service','madar-sales-xray.service','madar-sales-watchdog.service','madar-sales-watchdog.timer'}
+allowed={'manifest.json','config.json','xray','geoip.dat','geosite.dat','agent.py','policy.py','xray.py','guard.py','stats.py','quota.py','quota_runtime.py','shared443.py','update_owned.py','madar-sales-node.service','madar-sales-xray.service','madar-sales-watchdog.service','madar-sales-watchdog.timer'}
 if root.exists():
  try:owner=json.loads((root/'manifest.json').read_text())
  except Exception:raise SystemExit(2)
@@ -122,7 +122,7 @@ def install(transport,job,api,check=lambda:None):
     config=configure_protocol(config,job)
     if config.get('protocolVersion')==2 and info.get('quotaPortsBusy'):raise ValueError('PORT_CONFLICT')
     files=download(info['arch'],job['artifactVersion']);check()
-    for name in ['agent.py','policy.py','xray.py','guard.py','stats.py','quota.py','quota_runtime.py','update_owned.py']:files[name]=(BASE.parent/'sales-node'/name).read_bytes()
+    for name in ['agent.py','policy.py','xray.py','guard.py','stats.py','quota.py','quota_runtime.py','shared443.py','update_owned.py']:files[name]=(BASE.parent/'sales-node'/name).read_bytes()
     for path in (BASE/'templates').iterdir():files[path.name]=path.read_bytes()
     files['config.json']=json.dumps(config).encode();files['manifest.json']=json.dumps({'jobId':job['id'],'nodeId':job['nodeId'],'version':VERSION}).encode()
     api.post('register',{'id':job['id'],'leaseId':job['leaseId'],'nodeToken':config['nodeToken'],'policyKey':config['policyKey'],'publicKey':config['publicKey'],'shortId':config['shortId'],'sni':config['sni']})

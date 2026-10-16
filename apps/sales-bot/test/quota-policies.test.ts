@@ -70,3 +70,21 @@ test("only capable ready ACK starts expiry once and final ACK activates", async 
     ).first("valid_until"),
   ).toBe(1902);
 });
+test("shared443 capability survives authenticated ready ACK", async () => {
+  const p = await buildQuotaPolicy(env.SALES_DB, "n", 100);
+  await ackQuotaPolicy(
+    env.SALES_DB,
+    "n",
+    p.revision,
+    {
+      healthy: true,
+      capabilities: ["quota-v2", "per-account-process", "shared-443"],
+    },
+    101,
+  );
+  expect(
+    await env.SALES_DB.prepare(
+      "SELECT agent_capabilities FROM nodes WHERE id='n'",
+    ).first("agent_capabilities"),
+  ).toBe("quota-v2,per-account-process,shared-443");
+});
