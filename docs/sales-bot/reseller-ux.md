@@ -7,3 +7,5 @@ Every new trial has 1,000,000,000 bytes and 1,800 seconds. Legacy pending confir
 Seller flows accept Persian, Arabic and ASCII digits, provide cancellation and request-status navigation, and paginate accounts with ownership checks. Account details show recorded consumption and report time. Administrators see assigned server purposes and must confirm account revocation.
 
 Release: run sales-bot tests, typecheck and build; apply migration 0006; deploy the Worker preserving existing bindings, schedules and secrets. No node reinstall is needed. Verify a fresh delivery in Telegram; old forwarded messages retain their previous appearance.
+
+Full UI pass: role-aware home with active-account summary and help; administrator seller directory; quick quota/day choices and backward editing; authenticated resend of the original customer delivery without token rotation. Mobile pages use the same dark palette, visible focus styles, larger touch targets and status announcements. Consumption remains based on dated reports rather than a claimed realtime connection count. No credentials, node purposes or working VPN transport are changed by this release.

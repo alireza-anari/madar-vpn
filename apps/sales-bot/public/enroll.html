@@ -47,13 +47,14 @@
       border: 1px solid #456;
       border-radius: 12px;
     }
+    *{box-sizing:border-box}body{line-height:1.8;background:radial-gradient(ellipse at top,#17334c,#091222 70%);min-height:100vh}h1{font-size:26px;margin-bottom:8px}p{color:#bccbe0}form{background:#101e30;padding:22px;border:1px solid #2c415a;border-radius:20px;box-shadow:0 20px 60px #0003}input,select,textarea,button{font:inherit;min-height:48px}input:focus,select:focus,textarea:focus{outline:2px solid #63dfc2;outline-offset:2px}button{font-weight:650;border:0;background:#237bce}button:hover{background:#318bdc}button:disabled{opacity:.55;cursor:wait}fieldset{padding:16px;margin-top:20px}legend{color:#63dfc2}#status{padding:14px;border-radius:12px;background:#142541;overflow-wrap:anywhere}#status:empty{display:none}input[type=file]{font-size:14px}input[type=checkbox]{min-height:0}small{color:#aabbd3}@media(max-width:440px){body{padding:12px;margin:12px auto}form{padding:16px}h1{font-size:23px}}
   </style>
-  <h1>افزودن VPS با نصب خودکار</h1>
+  <small>MADAR · مدیریت سرورها</small><h1>افزودن سرور</h1>
   <p>
-    Ubuntu 22.04 یا 24.04 تازه لازم است. رمز و کلید را فقط در این فرم وارد کن.
+    سرور تازه با Ubuntu 22.04 یا 24.04 آماده کن. ابتدا اتصال را بررسی می‌کنیم؛ سپس اطلاعات ورود را برای نصب خودکار می‌گیریم.
   </p>
   <form id="form">
-    <label>نام نود<input id="name" required maxlength="80" /></label
+    <label>نام سرور<input id="name" required maxlength="80" placeholder="مثلاً سرور فروش اروپا" /></label
     ><label
       >IP عمومی VPS<input
         id="ip"
@@ -67,9 +68,9 @@
         value="22"
         min="1"
         max="65535" /></label
-    ><button type="button" id="probe">بررسی اثر انگشت سرور</button>
+    ><button type="button" id="probe">۱ · بررسی اتصال سرور</button>
     <p id="fingerprint"></p>
-    <fieldset id="credentials" hidden>
+    <fieldset id="credentials" hidden><legend>۲ · تأیید هویت و ورود</legend>
       <p>
         اثر انگشت بالا را با پنل ارائه‌دهنده مقایسه کن. تأیید آن یعنی به هویت
         این سرور اعتماد داری.
@@ -101,7 +102,7 @@
       ><button type="submit">شروع نصب خودکار</button>
     </fieldset>
   </form>
-  <p id="status" role="status" aria-live="polite"></p>
+  <p role="status" aria-live="polite" id="status" role="status" aria-live="polite"></p>
   <script>
     const tg = window.Telegram?.WebApp;
     const initData = tg?.initData || new URLSearchParams(location.hash.slice(1)).get("tgWebAppData") || "";
@@ -241,7 +242,7 @@
           try {
             const d = await api("jobs/" + result.jobId);
             setStatus(
-              "وضعیت: " + d.state + (d.safe_code ? " · " + d.safe_code : ""),
+              "وضعیت: " + ({pending:"در صف نصب",leased:"در حال اتصال",running:"در حال نصب",ready:"✅ سرور آماده است؛ به ربات برگرد و کاربرد آن را انتخاب کن",failed:"نصب کامل نشد؛ با پشتیبانی بررسی کن"}[d.state] || "در حال بررسی") + (d.safe_code ? " · کد پیگیری: " + d.safe_code : ""),
             );
             if (["ready", "failed"].includes(d.state)) clearInterval(pollTimer);
           } catch (e) {

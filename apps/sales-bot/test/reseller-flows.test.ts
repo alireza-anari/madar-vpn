@@ -272,3 +272,81 @@ test("trial cap migration preserves usage, expiry and revocation", async () => {
     ).first("state"),
   ).toBe("revoked");
 });
+
+test("quick choices and edit preserve a single sale request", async () => {
+  await click(10, "rs:sale");
+  await send(10, "مشتری");
+  await click(10, "rs:pick:quota:30");
+  await click(10, "rs:pick:days:30");
+  const current = async () =>
+    JSON.parse(
+      (await env.SALES_DB.prepare(
+        "SELECT conversation FROM users WHERE id='10'",
+      ).first<string>("conversation"))!,
+    );
+  const before = await current();
+  expect(before.quotaBytes).toBe(30e9);
+  expect(before.durationSeconds).toBe(2592000);
+  await click(10, "rs:back:quota");
+  await click(10, "rs:pick:quota:50");
+  await click(10, "rs:pick:days:7");
+  const after = await current();
+  expect(after.requestKey).toBe(before.requestKey);
+  expect(after.quotaBytes).toBe(50e9);
+  expect(after.durationSeconds).toBe(604800);
+});
+test("seller administration is restricted and home has help", async () => {
+  await click(10, "rs:sellers", 2300);
+  const denied = JSON.parse(
+    (await env.SALES_DB.prepare(
+      "SELECT payload FROM outbox WHERE id='u2300:reply'",
+    ).first<string>("payload"))!,
+  );
+  expect(denied.text).not.toContain("غیرفعال‌کردن");
+  await click(9, "rs:sellers", 2301);
+  const admin = JSON.parse(
+    (await env.SALES_DB.prepare(
+      "SELECT payload FROM outbox WHERE id='u2301:reply'",
+    ).first<string>("payload"))!,
+  );
+  expect(admin.text).toContain("فروشندگان");
+  await send(10, "/help");
+});
+test("resending delivery preserves private capability and rejects other owners", async () => {
+  await env.SALES_DB.exec(
+    "INSERT INTO managed_accounts(id,seller_id,request_key,node_id,kind,label,uuid,quota_bytes,duration_seconds,created_at,state,valid_until,status_token_hash) VALUES('resend','10','resend','s','sale','client','uuid',1000000000,86400,100,'active',999,'hash'); INSERT INTO resellers VALUES('12',1,100);",
+  );
+  await env.SALES_DB.prepare(
+    "INSERT INTO outbox(id,chat_id,payload,available_at) VALUES('account:resend','10',?,0)",
+  )
+    .bind(
+      JSON.stringify({
+        text: "private config",
+        parse_mode: "HTML",
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "usage", url: "https://example.com/usage/private" }],
+          ],
+        },
+      }),
+    )
+    .run();
+  await click(12, "rs:resend:resend", 2302);
+  const denied = JSON.parse(
+    (await env.SALES_DB.prepare(
+      "SELECT payload FROM outbox WHERE id='u2302:reply'",
+    ).first<string>("payload"))!,
+  );
+  expect(denied.text).not.toContain("private config");
+  await click(10, "rs:resend:resend", 2303);
+  const allowed = JSON.parse(
+    (await env.SALES_DB.prepare(
+      "SELECT payload FROM outbox WHERE id='u2303:reply'",
+    ).first<string>("payload"))!,
+  );
+  expect(allowed.text).toBe("private config");
+  expect(allowed.parse_mode).toBe("HTML");
+  expect(allowed.reply_markup.inline_keyboard[0][0].url).toContain(
+    "/usage/private",
+  );
+});
