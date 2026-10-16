@@ -1,5 +1,6 @@
 import hashlib,json,pytest
-from installer import validate_preflight,verify_artifact,owned_recovery
+import installer
+from installer import validate_preflight,verify_artifact,owned_recovery,configure_protocol
 
 def info(**changes):
  base={'os':'ubuntu','version':'24.04','arch':'x86_64','root':True,'disk':2000000000,'conflict':False,'portBusy':False,'owner':None};return {**base,**changes}
@@ -40,11 +41,31 @@ def test_recovery_keeps_running_xray_inode(tmp_path):
  assert binary.stat().st_ino==inode
 
 def test_new_config_follows_signed_job_protocol_without_changing_existing_keys():
- from installer import configure_protocol
  original={'nodeId':'node','privateKey':'same-private','nodeToken':'same-token','policyKey':'same-policy'}
  assert configure_protocol(original,{'protocolVersion':2})=={**original,'protocolVersion':2}
  assert configure_protocol(original,{})==original
  with pytest.raises(ValueError):configure_protocol(original,{'protocolVersion':3})
+
+def test_protocol_v2_fresh_config_uses_shared_443_cloudflare():
+ assert getattr(installer,'DEFAULT_REALITY_SNI',None)=='www.cloudflare.com'
+ original={'policyKey':'a'*64,'sni':'www.cloudflare.com','port':443}
+ result=configure_protocol(original,{'protocolVersion':2})
+ assert original=={'policyKey':'a'*64,'sni':'www.cloudflare.com','port':443}
+ assert result['protocolVersion']==2
+ assert result['shared443'] is True
+ assert result['frontendManaged'] is True
+ assert result['frontendService']=='madar-sales-xray.service'
+ assert result['bridgeKey']=='a'*64
+ assert result['port']==443
+ assert result['sni']=='www.cloudflare.com'
+
+def test_protocol_v2_recovery_requires_shared_443_contract():
+ validator=getattr(installer,'validate_protocol_recovery',None)
+ assert validator is not None
+ with pytest.raises(ValueError,match='PROTOCOL_UPGRADE_REQUIRED'):
+  validator({'protocolVersion':2,'shared443':False},2)
+ existing={'protocolVersion':2,'shared443':True,'frontendManaged':True,'frontendService':'madar-sales-xray.service','bridgeKey':'a'*64,'nodeId':'node','privateKey':'same-private','nodeToken':'same-token','policyKey':'a'*64,'port':443,'sni':'www.cloudflare.com'}
+ assert validator(existing,2) is existing
 
 def test_quota_install_initializes_durable_state_before_starting_agent(tmp_path):
  from installer import APPLY,package,BASE
