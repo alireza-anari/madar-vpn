@@ -84,3 +84,35 @@ def test_new_account_startup_failure_does_not_stop_healthy_sibling(tmp_path,monk
         if ticks[0]==3:c.stopping.set()
     monkeypatch.setattr(runtime.time,'sleep',advance);c.run()
     assert healthy==[True,True,True] and stops==[3]
+
+def test_shared443_capability_requires_live_frontend(tmp_path):
+    from quota import QuotaStore
+    from quota_runtime import QuotaRuntime
+    path=tmp_path/'q';QuotaStore(path).close()
+    class Frontend:
+        live=True
+        def check(self):
+            if not self.live:raise ValueError('FRONTEND_DOWN')
+    frontend=Frontend()
+    c=QuotaRuntime({'policyKey':'k','nodeId':'n','shared443':True},None,lambda p,*args:p,base=tmp_path/'run',database=path,frontend_factory=lambda *args:frontend)
+    assert 'shared-443' in c.capabilities()
+    frontend.live=False
+    assert 'shared-443' not in c.capabilities()
+    c.store.close()
+
+def test_shared443_failure_forces_ack_unhealthy(tmp_path):
+    import threading
+    from quota import QuotaStore
+    from quota_runtime import QuotaRuntime
+    path=tmp_path/'q';QuotaStore(path).close();calls=[]
+    class Frontend:
+        def check(self):raise ValueError('FRONTEND_DOWN')
+    c=QuotaRuntime({'policyKey':'k','nodeId':'n','shared443':True},None,lambda p,*args:p,base=tmp_path/'run',database=path,frontend_factory=lambda *args:Frontend())
+    def request(config,route,data=None):
+        if route=='ack-v2':calls.append(data);c.stopping.set()
+        return {}
+    c.request=request;c.outgoing.put((1,True,[]))
+    thread=threading.Thread(target=c.network);thread.start();thread.join(2)
+    assert calls and calls[0]['healthy'] is False
+    assert 'shared-443' not in calls[0]['capabilities']
+    c.store.close()
