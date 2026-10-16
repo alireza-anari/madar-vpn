@@ -60,6 +60,6 @@ def ensure_network(target,ssh_port,api=call,load_identity=identity):
  if not groups:raise AwsNetworkError('AWS_NETWORK_FAILED')
  group=groups[0].text
  if not re.fullmatch(r'sg-[a-f0-9]+',group or ''):raise AwsNetworkError('AWS_NETWORK_FAILED')
- for start,end,cidr in [(ssh_port,ssh_port,source),(443,443,'0.0.0.0/0'),(20000,20999,'0.0.0.0/0')]:
+ for start,end,cidr in [(ssh_port,ssh_port,source),(443,443,'0.0.0.0/0')]:
   api(region,credentials,{'Action':'AuthorizeSecurityGroupIngress','GroupId':group,'IpPermissions.1.IpProtocol':'tcp','IpPermissions.1.FromPort':str(start),'IpPermissions.1.ToPort':str(end),'IpPermissions.1.IpRanges.1.CidrIp':cidr,'IpPermissions.1.IpRanges.1.Description':'Madar automatic enrollment'})
  return True
