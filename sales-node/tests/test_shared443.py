@@ -1,4 +1,4 @@
-import copy, importlib.util, pathlib, pytest
+import copy, importlib.util, json, pathlib, pytest
 
 def module():
     path=pathlib.Path(__file__).parents[1]/'shared443.py'
@@ -42,6 +42,30 @@ def test_fresh_frontend_owns_public_443_and_keeps_bridges_loopback():
         assert out['settings']['vnext'][0]['address']=='127.0.0.1'
     assert runtime['frontendService']=='madar-sales-xray.service'
     assert runtime['frontendApi']=='127.0.0.1:19999'
+
+def test_start_owned_frontend_tests_config_writes_marker_and_restarts(tmp_path,monkeypatch):
+    import subprocess
+    m=module();calls=[]
+    settings={'nodeId':'node','bridgeKey':'a'*64,'sni':'www.cloudflare.com','privateKey':'private','shortId':'abcd','port':443,'frontendManaged':True,'frontendService':'madar-sales-xray.service'}
+    def run(args,**kw):
+        calls.append(args)
+        if args[:3]==['systemctl','show','madar-sales-xray.service']:
+            return subprocess.CompletedProcess(args,0,stdout='123\n',stderr='')
+        return subprocess.CompletedProcess(args,0,stdout='',stderr='')
+    monkeypatch.setattr(subprocess,'run',run)
+    original_read=pathlib.Path.read_text
+    def read_text(path,*args,**kwargs):
+        if str(path)=='/proc/123/stat':return '123 (x) S '+' '.join(str(i) for i in range(1,25))
+        return original_read(path,*args,**kwargs)
+    monkeypatch.setattr(pathlib.Path,'read_text',read_text)
+    front=m.start_owned_frontend(settings,'/opt/madar-sales-node/xray',tmp_path)
+    candidate=json.loads((tmp_path/'xray.json').read_text())
+    public=next(i for i in candidate['inbounds'] if i.get('port')==443)
+    assert public['settings']['clients']==[]
+    assert json.loads((tmp_path/'authorization.json').read_text())=={'mode':'shared-frontend','nodeId':'node'}
+    assert ['/opt/madar-sales-node/xray','run','-test','-c',str(tmp_path/'xray.json')] in calls
+    assert ['systemctl','restart','madar-sales-xray.service'] in calls
+    assert isinstance(front,m.SharedFrontend)
 
 def test_existing_api_and_reserved_tags_are_rejected():
     m=module()
