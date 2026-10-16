@@ -26,6 +26,23 @@ def test_frontend_preserves_personal_credential_and_transport():
         rule=next(x for x in new['routing']['rules'] if x.get('user')==[f'madar-{p}'])
         assert rule['outboundTag']==f'madar-{p}'
 
+def test_fresh_frontend_owns_public_443_and_keeps_bridges_loopback():
+    m=module();settings={'bridgeKey':'a'*64,'sni':'www.cloudflare.com','privateKey':'private','shortId':'abcd','port':443,'frontendService':'madar-sales-xray.service'}
+    frontend,runtime=m.build_fresh_frontend(settings,ports=range(20000,20002))
+    public=[i for i in frontend['inbounds'] if i.get('port')==443]
+    assert len(public)==1
+    assert public[0]['listen']=='0.0.0.0'
+    assert public[0]['protocol']=='vless'
+    assert public[0]['streamSettings']['security']=='reality'
+    assert public[0]['settings']['clients']==[]
+    api=next(i for i in frontend['inbounds'] if i.get('tag')==m.API_TAG)
+    assert api['listen']=='127.0.0.1' and api['port']==19999
+    for p in (20000,20001):
+        out=next(x for x in frontend['outbounds'] if x.get('tag')==f'madar-{p}')
+        assert out['settings']['vnext'][0]['address']=='127.0.0.1'
+    assert runtime['frontendService']=='madar-sales-xray.service'
+    assert runtime['frontendApi']=='127.0.0.1:19999'
+
 def test_existing_api_and_reserved_tags_are_rejected():
     m=module()
     for conf in ({**personal(),'api':{'tag':'existing'}},{**personal(),'outbounds':[{'tag':'madar-20000','protocol':'freedom'}]}):
@@ -55,3 +72,15 @@ def test_api_zero_exit_does_not_count_as_success_when_no_user_added(tmp_path,mon
 def test_frontend_restart_is_not_treated_as_healthy():
  m=module();front=object.__new__(m.SharedFrontend);front.pid=(1,'first');front.current_pid=lambda:(1,'reused-pid')
  with pytest.raises(ValueError,match='FRONTEND_RESTARTED'):front.check()
+
+def test_frontend_service_is_configurable_for_fresh_and_defaults_for_personal(monkeypatch):
+    import subprocess
+    m=module();calls=[]
+    monkeypatch.setattr(subprocess,'run',lambda args,**kw:(calls.append(args) or subprocess.CompletedProcess(args,0,stdout='123\n',stderr='')))
+    monkeypatch.setattr(pathlib.Path,'read_text',lambda self:'123 (x) S '+' '.join(str(i) for i in range(1,25)))
+    fresh=object.__new__(m.SharedFrontend);fresh.settings={'frontendService':'madar-sales-xray.service'};fresh.binary='xray'
+    assert fresh.current_pid()[0]==123
+    assert calls[-1][2]=='madar-sales-xray.service'
+    personal_front=object.__new__(m.SharedFrontend);personal_front.settings={};personal_front.binary='xray'
+    assert personal_front.current_pid()[0]==123
+    assert calls[-1][2]=='xray.service'
