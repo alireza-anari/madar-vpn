@@ -46,7 +46,7 @@ def test_fresh_frontend_owns_public_443_and_keeps_bridges_loopback():
 def test_start_owned_frontend_tests_config_writes_marker_and_restarts(tmp_path,monkeypatch):
     import subprocess
     m=module();calls=[]
-    settings={'nodeId':'node','bridgeKey':'a'*64,'sni':'www.cloudflare.com','privateKey':'private','shortId':'abcd','port':443,'frontendManaged':True,'frontendService':'madar-sales-xray.service'}
+    settings={'nodeId':'node','bridgeKey':'a'*64,'sni':'www.cloudflare.com','privateKey':'private','shortId':'abcd','port':443,'shared443':True,'frontendManaged':True,'frontendService':'madar-sales-xray.service'}
     def run(args,**kw):
         calls.append(args)
         if args[:3]==['systemctl','show','madar-sales-xray.service']:
