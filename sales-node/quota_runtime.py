@@ -150,7 +150,10 @@ class QuotaRuntime:
                                 self.store.observe(ident,self.processes[ident].generation,future.result(),int(time.time()))
                                 if not self.store.allowed(ident,int(time.time())):self.stop_account(ident)
                             except Exception:self.stop_account(ident,True);self.healthy=False
-                    self.healthy=self.healthy and all(ident in self.processes for ident in desired) and self.frontend_ready()
+                    if not self.frontend_ready():
+                        for ident in list(self.processes):self.stop_account(ident,True)
+                        self.healthy=False
+                    else:self.healthy=self.healthy and all(ident in self.processes for ident in desired)
                     # Existing processes use original config expiry only as metadata; local signed policy controls time.
                     atomic_write(self.base/'quota-heartbeat.json',{'expiresAt':self.policy['expiresAt'],'sampledAt':int(time.time())})
                 message=(self.revision,self.healthy,self.store.pending_reports()[:100])
