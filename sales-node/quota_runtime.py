@@ -9,6 +9,11 @@ def meter_authorized(path,now):
         h=json.loads(pathlib.Path(path).read_text());return h['expiresAt']>now and 0<=now-h['sampledAt']<=4
     except Exception:return False
 
+def shared_frontend(settings,binary,base):
+    from shared443 import SharedFrontend,start_owned_frontend
+    if settings.get('frontendManaged') is True:return start_owned_frontend(settings,binary,base)
+    return SharedFrontend(settings,binary)
+
 class AccountProcess:
     def __init__(self,settings,client,base,binary='/opt/madar-sales-node/xray'):
         self.client=client;self.generation=uuid.uuid4().hex;self.api=client['listenPort']+1000;self.seen=False
@@ -52,7 +57,7 @@ class AccountProcess:
             except Exception:pass  # Stopped loopback worker is the enforcement boundary.
 
 class QuotaRuntime:
-    def __init__(self,config,request,verify,*,base=None,database=None,process_factory=AccountProcess):
+    def __init__(self,config,request,verify,*,base=None,database=None,process_factory=AccountProcess,frontend_factory=shared_frontend):
         self.config=config;self.request=request;self.verify=verify;self.base=pathlib.Path(base or '/run/madar-sales-node');self.base.mkdir(parents=True,exist_ok=True)
         database=pathlib.Path(database or '/var/lib/madar-sales-node/quota.sqlite')
         self.process_factory=process_factory
@@ -61,7 +66,21 @@ class QuotaRuntime:
         with sqlite3.connect(str(database)) as existing:existing.execute('SELECT revision FROM meta WHERE id=1').fetchone()
         self.store=QuotaStore(database);self.processes={};self.policy=None;self.revision=0
         self.incoming=queue.Queue();self.outgoing=queue.Queue(maxsize=1);self.stopping=threading.Event();self.healthy=False
+        self.frontend=None
+        if self.config.get('shared443'):
+            try:self.frontend=frontend_factory(self.config,'/opt/madar-sales-node/xray',self.base)
+            except Exception:
+                self.store.close();raise
         atomic_write(self.base/'quota-heartbeat.json',{'expiresAt':int(time.time())+5,'sampledAt':int(time.time())})
+    def frontend_ready(self):
+        if not self.config.get('shared443'):return True
+        if self.frontend is None:return False
+        try:self.frontend.check();return True
+        except Exception:return False
+    def capabilities(self):
+        result=['quota-v2','per-account-process']
+        if self.config.get('shared443') and self.frontend_ready():result.append('shared-443')
+        return result
     def network(self):
         while not self.stopping.is_set():
             try:
@@ -69,7 +88,9 @@ class QuotaRuntime:
                 except queue.Empty:message=None
                 if message:
                     revision,healthy,reports=message
-                    if revision:self.request(self.config,'ack-v2',{'revision':revision,'healthy':healthy,'capabilities':['quota-v2','per-account-process']+(['shared-443'] if self.config.get('shared443') else [])})
+                    if revision:
+                        capabilities=self.capabilities();frontend_ok=not self.config.get('shared443') or 'shared-443' in capabilities
+                        self.request(self.config,'ack-v2',{'revision':revision,'healthy':healthy and frontend_ok,'capabilities':capabilities})
                     if reports:
                         self.request(self.config,'quota-reports',{'reports':reports})
                         self.incoming.put(('reports',[(r['accountId'],r['sequence']) for r in reports]))
@@ -128,7 +149,7 @@ class QuotaRuntime:
                                 self.store.observe(ident,self.processes[ident].generation,future.result(),int(time.time()))
                                 if not self.store.allowed(ident,int(time.time())):self.stop_account(ident)
                             except Exception:self.stop_account(ident,True);self.healthy=False
-                    self.healthy=self.healthy and all(ident in self.processes for ident in desired)
+                    self.healthy=self.healthy and all(ident in self.processes for ident in desired) and self.frontend_ready()
                     # Existing processes use original config expiry only as metadata; local signed policy controls time.
                     atomic_write(self.base/'quota-heartbeat.json',{'expiresAt':self.policy['expiresAt'],'sampledAt':int(time.time())})
                 message=(self.revision,self.healthy,self.store.pending_reports()[:100])
