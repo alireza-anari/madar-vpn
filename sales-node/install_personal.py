@@ -34,9 +34,22 @@ def replace_config(path,data):
     stat=path.stat();fd,name=tempfile.mkstemp(dir=path.parent)
     try:
         with os.fdopen(fd,'wb') as stream:stream.write(data);stream.flush();os.fsync(stream.fileno())
-        os.chmod(name,stat.st_mode&0o777);os.chown(name,stat.st_uid,stat.st_gid);os.replace(name,path)
+        os.chown(name,stat.st_uid,stat.st_gid);shutil.copystat(path,name);os.replace(name,path)
     finally:
         if os.path.exists(name):os.unlink(name)
+
+def prepare_candidate(source,data):
+    source=pathlib.Path(source);target=source.with_name('madar-candidate.json')
+    if target.exists() or target.is_symlink():raise ValueError('CANDIDATE_FILE_EXISTS')
+    stat=source.stat()
+    try:
+        shutil.copy2(source,target)
+        # copy2 preserves mode/xattrs, but explicitly does NOT preserve owner/group.
+        os.chown(target,stat.st_uid,stat.st_gid)
+        replace_config(target,data)
+        return target
+    except Exception:
+        target.unlink(missing_ok=True);raise
 
 def private_json(path,value):
     path=pathlib.Path(path);path.write_text(json.dumps(value));path.chmod(0o600)
@@ -108,10 +121,12 @@ def main():
     private_json(ETC/'config.json',config)
     candidate=ROOT/'frontend.json';private_json(candidate,frontend)
     # Test under existing service user, with a temporary file readable by that user.
-    check=FRONT.with_name('madar-candidate.json')
-    if check.exists():raise ValueError('CANDIDATE_FILE_EXISTS')
-    shutil.copy2(FRONT,check);replace_config(check,json.dumps(frontend).encode())
-    try:run(['runuser','-u','xray','--',binary,'run','-test','-c',str(check)])
+    check=prepare_candidate(FRONT,json.dumps(frontend).encode())
+    try:
+        try:run(['runuser','-u','xray','--','test','-r',str(check)])
+        except subprocess.CalledProcessError:raise ValueError('CANDIDATE_NOT_READABLE_BY_XRAY') from None
+        try:run(['runuser','-u','xray','--',binary,'run','-test','-c',str(check)])
+        except subprocess.CalledProcessError:raise ValueError('CANDIDATE_CONFIG_TEST_FAILED') from None
     finally:check.unlink(missing_ok=True)
     register={'publicIp':public_ip,'nodeToken':config['nodeToken'],'policyKey':config['policyKey'],'publicKey':config['publicKey'],'shortId':sid,'sni':sni,'instanceId':INSTANCE}
     result=json.loads(fetch(BASE+'/api/adoption/register',method='POST',headers={'Authorization':'Bearer '+args.grant,'Content-Type':'application/json'},data=json.dumps(register).encode()))

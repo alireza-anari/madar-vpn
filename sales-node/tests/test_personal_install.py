@@ -40,3 +40,24 @@ def test_failed_atomic_rollback_keeps_working_config(tmp_path,monkeypatch):
  monkeypatch.setattr(os,'replace',lambda *a:(_ for _ in ()).throw(OSError('disk failure')))
  with pytest.raises(OSError):exec(compile(script,'rollback','exec'),{})
  assert live.read_text()=='working' and pending.exists()
+
+def test_candidate_preserves_original_group_not_copying_process_group(tmp_path):
+ import os
+ m=module();source=tmp_path/'config.json';source.write_text('{}');source.chmod(0o640)
+ if os.geteuid()!=0:pytest.skip('requires chown to a distinct service group')
+ try:os.chown(source,0,60000)
+ except OSError:pytest.skip("service gid not mapped in executor namespace")
+ candidate=m.prepare_candidate(source,b'{"inbounds":[]}')
+ assert candidate.stat().st_gid==60000
+ assert candidate.stat().st_uid==source.stat().st_uid
+ assert candidate.stat().st_mode&0o777==0o640
+ assert source.read_text()=='{}'
+
+
+def test_candidate_retains_source_permissions_without_changing_source(tmp_path):
+ m=module();source=tmp_path/'config.json';source.write_text('{}');source.chmod(0o640)
+ candidate=m.prepare_candidate(source,b'{"inbounds":[]}')
+ assert candidate.stat().st_uid==source.stat().st_uid
+ assert candidate.stat().st_gid==source.stat().st_gid
+ assert candidate.stat().st_mode&0o777==0o640
+ assert source.read_text()=='{}'
