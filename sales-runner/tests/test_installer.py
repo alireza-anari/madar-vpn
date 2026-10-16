@@ -42,7 +42,8 @@ def test_recovery_keeps_running_xray_inode(tmp_path):
 
 def test_new_config_follows_signed_job_protocol_without_changing_existing_keys():
  original={'nodeId':'node','privateKey':'same-private','nodeToken':'same-token','policyKey':'same-policy'}
- assert configure_protocol(original,{'protocolVersion':2})=={**original,'protocolVersion':2}
+ assert configure_protocol(original,{'protocolVersion':2})=={**original,'protocolVersion':2,'shared443':True,'frontendManaged':True,'frontendService':'madar-sales-xray.service','bridgeKey':'same-policy','port':443}
+ assert original=={'nodeId':'node','privateKey':'same-private','nodeToken':'same-token','policyKey':'same-policy'}
  assert configure_protocol(original,{})==original
  with pytest.raises(ValueError):configure_protocol(original,{'protocolVersion':3})
 
