@@ -2,6 +2,7 @@ import { admin, type Actor } from "./contracts";
 import { hash } from "./crypto";
 import { publicTarget, validatePort } from "./targets";
 export type EnrollmentInput = {
+  maxAccounts?: number;
   targetIp: string;
   port: number;
   username: string;
@@ -61,6 +62,13 @@ export async function createEnrollment(
   admin(actor);
   const ip = publicTarget(input.targetIp);
   validatePort(input.port);
+  const maxAccounts = input.maxAccounts ?? 100;
+  if (
+    !Number.isSafeInteger(maxAccounts) ||
+    maxAccounts < 1 ||
+    maxAccounts > 10000
+  )
+    throw Error("INVALID_CAPACITY");
   if (
     !/^[a-z_][a-z0-9_-]{0,31}$/.test(input.username) ||
     !input.name.trim() ||
@@ -124,8 +132,8 @@ export async function createEnrollment(
         "UPDATE installation_jobs SET state='queued',safe_code=NULL,encrypted_credentials=?,credentials_expire_at=?,expires_at=?,lease_id=NULL,lease_until=0,runner_id=NULL WHERE id=? AND state='failed'",
       ).bind(input.encryptedCredentials, now + 900, now + 900, existing.id),
       env.SALES_DB.prepare(
-        "UPDATE nodes SET name=?,state='installing',healthy=0 WHERE id=? AND EXISTS(SELECT 1 FROM installation_jobs WHERE id=? AND state='queued')",
-      ).bind(input.name, existing.node_id, existing.id),
+        "UPDATE nodes SET name=?,max_accounts=?,state='installing',healthy=0 WHERE id=? AND EXISTS(SELECT 1 FROM installation_jobs WHERE id=? AND state='queued')",
+      ).bind(input.name, maxAccounts, existing.node_id, existing.id),
       env.SALES_DB.prepare(
         "INSERT INTO audit_events(actor_id,action,target_id,created_at) VALUES(?,'retry_enroll_node',?,?)",
       ).bind(actor.telegramId, existing.node_id, now),
@@ -143,8 +151,8 @@ export async function createEnrollment(
       "UPDATE installation_jobs SET expires_at=? WHERE id=? AND kind='probe'",
     ).bind(now - 1, input.probeId!),
     env.SALES_DB.prepare(
-      "INSERT INTO nodes(id,name,target_ip) VALUES(?,?,?)",
-    ).bind(nodeId, input.name, ip),
+      "INSERT INTO nodes(id,name,target_ip,max_accounts) VALUES(?,?,?,?)",
+    ).bind(nodeId, input.name, ip, maxAccounts),
     env.SALES_DB.prepare(
       "INSERT INTO installation_jobs(id,node_id,kind,user_id,target_ip,port,username,fingerprint,encrypted_credentials,credentials_expire_at,created_at,expires_at) VALUES(?,?,'install',?,?,?,?,?,?,?,?,?)",
     ).bind(

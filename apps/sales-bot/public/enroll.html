@@ -55,7 +55,7 @@
   </p>
   <form id="form">
     <label>نام سرور<input id="name" required maxlength="80" placeholder="مثلاً سرور فروش اروپا" /></label
-    ><label
+    ><label>سقف کانفیگ‌های همزمان<input id="maxAccounts" type="number" min="1" max="10000" value="100" required /><small>کانفیگ‌های فعال و در حال ساخت از ظرفیت استفاده می‌کنند.</small></label><label
       >IP عمومی VPS<input
         id="ip"
         dir="ltr"
@@ -226,6 +226,7 @@
         credentials = null;
         const result = await api("enroll", {
           name: el("name").value.trim(),
+          maxAccounts: Number(el("maxAccounts").value),
           targetIp: el("ip").value.trim(),
           port: Number(el("port").value),
           username: el("username").value.trim(),

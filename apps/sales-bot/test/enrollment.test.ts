@@ -1,3 +1,5 @@
+import accountsMigration from "../migrations/0004-reseller-accounts.sql?raw";
+import capacity from "../migrations/0007-node-capacity.sql?raw";
 import { env } from "cloudflare:workers";
 import { expect, test, beforeEach } from "vitest";
 import { createHmac } from "node:crypto";
@@ -36,6 +38,8 @@ beforeEach(async () => {
   await env.SALES_DB.exec(b);
   await env.SALES_DB.exec(s);
   await env.SALES_DB.exec(n);
+  await env.SALES_DB.exec(accountsMigration);
+  await env.SALES_DB.exec(capacity);
 });
 test("Mini App verifies signature freshness and role", async () => {
   expect((await verifyMiniApp(signed(9), e, 100)).role).toBe("admin");
@@ -102,6 +106,7 @@ test("confirmed enrollment consumes nonce once and retains only encrypted input"
       port: 22,
       username: "ubuntu",
       name: "new",
+      maxAccounts: 17,
       hostFingerprint: fingerprint,
       encryptedCredentials: '{"v":1,"key":"AA==","iv":"AA==","data":"AA=="}',
       nonce,
@@ -109,6 +114,11 @@ test("confirmed enrollment consumes nonce once and retains only encrypted input"
     };
   const result = await createEnrollment(e, actor, input, 100);
   expect(result.jobId).toBeTruthy();
+  expect(
+    await env.SALES_DB.prepare(
+      "SELECT max_accounts FROM nodes WHERE name='new'",
+    ).first("max_accounts"),
+  ).toBe(17);
   await expect(createEnrollment(e, actor, input, 100)).rejects.toThrow(
     "FINGERPRINT_UNCONFIRMED",
   );

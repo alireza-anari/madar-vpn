@@ -1,3 +1,4 @@
+import capacity from "../migrations/0007-node-capacity.sql?raw";
 import { env } from "cloudflare:workers";
 import { beforeEach, expect, test } from "vitest";
 import { resetDb } from "./db";
@@ -39,7 +40,7 @@ const click = (id: number, data: string, update = seq++) =>
   );
 beforeEach(async () => {
   await resetDb();
-  for (const s of [a, b, c, d]) await env.SALES_DB.exec(s);
+  for (const s of [a, b, c, d, capacity]) await env.SALES_DB.exec(s);
   await env.SALES_DB.exec(
     "INSERT INTO settings VALUES('app_mode','reseller'); INSERT INTO nodes(id,name,target_ip) VALUES('s','sale','8.8.8.8'),('t','trial','1.1.1.1'); INSERT INTO node_purposes VALUES('sale','s'),('trial','t'); INSERT INTO resellers VALUES('10',1,100);",
   );
@@ -349,4 +350,51 @@ test("resending delivery preserves private capability and rejects other owners",
   expect(allowed.reply_markup.inline_keyboard[0][0].url).toContain(
     "/usage/private",
   );
+});
+
+test("server picker shows remaining capacity and persists the selected server", async () => {
+  await env.SALES_DB.exec(
+    "UPDATE nodes SET healthy=1,last_seen=100,agent_capabilities='quota-v2',max_accounts=4;",
+  );
+  await click(10, "rs:sale");
+  await send(10, "انتخاب سرور");
+  await send(10, "30");
+  await click(10, "rs:pick:days:30", 2400);
+  const p = JSON.parse(
+    (await env.SALES_DB.prepare(
+      "SELECT payload FROM outbox WHERE id='u2400:reply'",
+    ).first<string>("payload"))!,
+  );
+  expect(
+    p.reply_markup.inline_keyboard
+      .flat()
+      .some((b: any) => b.text.includes("۴ ظرفیت باقی‌مانده")),
+  ).toBe(true);
+  await click(10, "rs:choose:t");
+  const state = JSON.parse(
+    (await env.SALES_DB.prepare(
+      "SELECT conversation FROM users WHERE id='10'",
+    ).first<string>("conversation"))!,
+  );
+  expect(state.nodeId).toBe("t");
+  await click(10, `rs:confirm:${state.requestKey}`);
+  expect(
+    await env.SALES_DB.prepare("SELECT node_id FROM managed_accounts").first(
+      "node_id",
+    ),
+  ).toBe("t");
+  await click(10, "rs:capacity:s");
+  await send(10, "1");
+  expect(
+    await env.SALES_DB.prepare(
+      "SELECT max_accounts FROM nodes WHERE id='s'",
+    ).first("max_accounts"),
+  ).toBe(4);
+  await click(9, "rs:capacity:s");
+  await send(9, "۱۲");
+  expect(
+    await env.SALES_DB.prepare(
+      "SELECT max_accounts FROM nodes WHERE id='s'",
+    ).first("max_accounts"),
+  ).toBe(12);
 });

@@ -116,6 +116,28 @@ export async function handleResellerUpdate(
     )
       throw Error("CONVERSATION_RETRY");
   };
+  const chooseServer = async () => {
+    const nodes = await db
+      .prepare(
+        "SELECT n.id,n.name,n.max_accounts,(SELECT COUNT(*) FROM managed_accounts a WHERE a.node_id=n.id AND (a.state='preparing' OR (a.state='active' AND a.valid_until>? AND (a.quota_bytes IS NULL OR a.used_bytes<a.quota_bytes)))) used FROM nodes n WHERE n.healthy=1 AND n.last_seen>? AND instr(n.agent_capabilities,'quota-v2')>0 ORDER BY n.name LIMIT 50",
+      )
+      .bind(now, now - 90)
+      .all<{ id: string; name: string; max_accounts: number; used: number }>();
+    await reply(
+      nodes.results.length
+        ? "🌍 انتخاب سرور\nسرور کانفیگ را انتخاب کن. ظرفیت هنگام تأیید نهایی دوباره بررسی می‌شود."
+        : "در حال حاضر سرور آماده‌ای در دسترس نیست. کمی بعد دوباره تلاش کن یا به مدیر اطلاع بده.",
+      [
+        ...nodes.results.map((n) => [
+          btn(
+            `${n.name} · ${Math.max(0, n.max_accounts - n.used).toLocaleString("fa-IR")} ظرفیت باقی‌مانده`,
+            `rs:choose:${n.id}`,
+          ),
+        ]),
+        home(),
+      ],
+    );
+  };
   let state: any;
   try {
     try {
@@ -206,6 +228,32 @@ export async function handleResellerUpdate(
       );
       return;
     }
+    if (data?.startsWith("rs:choose:")) {
+      if (state.step !== "confirm" || !state.requestKey) throw Error("INVALID");
+      const nodeId = data.slice(10);
+      const node = await db
+        .prepare(
+          "SELECT id,name FROM nodes WHERE id=? AND healthy=1 AND last_seen>?",
+        )
+        .bind(nodeId, now - 90)
+        .first<{ id: string; name: string }>();
+      if (!node) throw Error("NODE_UNAVAILABLE");
+      await set({ ...state, nodeId });
+      await reply(
+        `✅ بررسی نهایی\nمشتری: ${state.label}\nسرور: ${node.name}\nحجم: ${(state.quotaBytes / 1e9).toLocaleString("fa-IR")} گیگابایت\nمدت: ${state.kind === "trial" ? "۳۰ دقیقه" : (state.durationSeconds / 86400).toLocaleString("fa-IR") + " روز"}`,
+        [
+          [btn("✅ تأیید و ساخت", `rs:confirm:${state.requestKey}`)],
+          [btn("تغییر سرور", "rs:servers")],
+          home(),
+        ],
+      );
+      return;
+    }
+    if (data === "rs:servers") {
+      if (state.step !== "confirm") throw Error("INVALID");
+      await chooseServer();
+      return;
+    }
     if (data === "rs:sale") {
       await set({ step: "label", requestKey: `sale:${u.update_id}` });
       await reply(
@@ -223,10 +271,7 @@ export async function handleResellerUpdate(
         quotaBytes: 1e9,
         durationSeconds: 1800,
       });
-      await reply(
-        "🎁 تست جدید\nحجم: ۱ گیگابایت\nاعتبار: ۳۰ دقیقه از زمان فعال‌شدن\nهر درخواست یک کانفیگ مستقل می‌سازد.",
-        [[btn("✅ ساخت تست", `rs:confirm:trial:${u.update_id}`)], cancel()],
-      );
+      await chooseServer();
       return;
     }
     if (data?.startsWith("rs:confirm:")) {
@@ -357,16 +402,54 @@ export async function handleResellerUpdate(
       await reply("شناسه عددی تلگرام فروشنده را بفرست.", [cancel()]);
       return;
     }
+    if (data?.startsWith("rs:capacity:")) {
+      requireSalesAdmin(actor);
+      const nodeId = data.slice(12);
+      const node = await db
+        .prepare("SELECT name,max_accounts FROM nodes WHERE id=?")
+        .bind(nodeId)
+        .first<{ name: string; max_accounts: number }>();
+      if (!node) throw Error("INVALID");
+      await set({ step: "capacity", nodeId });
+      await reply(
+        `ظرفیت سرور ${node.name}\nسقف فعلی: ${node.max_accounts.toLocaleString("fa-IR")}\nسقف جدید را از ۱ تا ۱۰۰۰۰ بفرست. کانفیگ‌های فعلی حذف نمی‌شوند.`,
+        [home()],
+      );
+      return;
+    }
+    if (text && state.step === "capacity") {
+      requireSalesAdmin(actor);
+      const count = Number(digits(text));
+      if (!Number.isSafeInteger(count) || count < 1 || count > 10000)
+        throw Error("INVALID_CAPACITY");
+      await db.batch([
+        db
+          .prepare("UPDATE nodes SET max_accounts=? WHERE id=?")
+          .bind(count, state.nodeId),
+        db
+          .prepare(
+            "INSERT INTO audit_events(actor_id,action,target_id,created_at) VALUES(?,'node_capacity',?,?)",
+          )
+          .bind(String(id), state.nodeId, now),
+      ]);
+      await set({});
+      await reply("✅ سقف کانفیگ سرور به‌روزرسانی شد.", [
+        [btn("سرورها", "rs:nodes")],
+        home(),
+      ]);
+      return;
+    }
     if (data === "rs:nodes") {
       requireSalesAdmin(actor);
       const nodes = await db
         .prepare(
-          "SELECT n.id,n.name,n.healthy,(SELECT GROUP_CONCAT(purpose) FROM node_purposes p WHERE p.node_id=n.id) purposes FROM nodes n",
+          "SELECT n.id,n.name,n.healthy,n.max_accounts,(SELECT GROUP_CONCAT(purpose) FROM node_purposes p WHERE p.node_id=n.id) purposes FROM nodes n",
         )
         .all<{
           id: string;
           name: string;
           healthy: number;
+          max_accounts: number;
           purposes: string | null;
         }>();
       await reply(
@@ -375,6 +458,7 @@ export async function handleResellerUpdate(
           ...nodes.results.map((n) => [
             btn(`${n.name}: فروش`, `rs:node:sale:${n.id}`),
             btn(`${n.name}: تست`, `rs:node:trial:${n.id}`),
+            btn(`ظرفیت ${n.max_accounts}`, `rs:capacity:${n.id}`),
           ]),
           [btn("🏠 منوی اصلی", "rs:home")],
         ],
@@ -442,17 +526,7 @@ export async function handleResellerUpdate(
         kind: "sale",
         durationSeconds: +amount * 86400,
       });
-      await reply(
-        `✅ بررسی نهایی\n\nمشتری: ${state.label}\nحجم: ${(state.quotaBytes / 1e9).toLocaleString("fa-IR")} گیگابایت\nمدت: ${(+amount).toLocaleString("fa-IR")} روز از زمان فعال‌شدن\n\nاطلاعات درست است؟`,
-        [
-          [btn("✅ تأیید و ساخت", `rs:confirm:${state.requestKey}`)],
-          [
-            btn("ویرایش مدت", "rs:back:days"),
-            btn("ویرایش حجم", "rs:back:quota"),
-          ],
-          cancel(),
-        ],
-      );
+      await chooseServer();
       return;
     }
     await reply("از منوی فروشندگان استفاده کن.", [[btn("منو", "rs:home")]]);
@@ -460,16 +534,24 @@ export async function handleResellerUpdate(
     if (error instanceof Error && error.message === "CONVERSATION_RETRY")
       throw error;
     await reply(
-      error instanceof Error && error.message === "NODE_NOT_CONFIGURED"
-        ? "سرور این سرویس هنوز انتخاب نشده است. مدیر باید از بخش سرورها، سرور فروش یا تست را مشخص کند."
-        : error instanceof Error && error.message === "ACCOUNT_NOT_READY"
-          ? "پیام این کانفیگ هنوز آماده نیست یا اعتبارش تمام شده است. وضعیت کانفیگ را بررسی کن."
-          : state?.step === "quota"
-            ? "حجم باید یک عدد از ۱ تا ۱۰۰۰ گیگابایت باشد. دوباره بفرست یا از منو خارج شو."
-            : state?.step === "days"
-              ? "مدت باید یک عدد از ۱ تا ۳۶۵ روز باشد. دوباره بفرست یا از منو خارج شو."
-              : "این درخواست در دسترس نیست یا اجازهٔ انجام آن را نداری. از منو ادامه بده.",
-      [home()],
+      error instanceof Error && error.message === "NODE_FULL"
+        ? "ظرفیت این سرور تکمیل شده است. از گزینهٔ تغییر سرور، سرور دیگری انتخاب کن."
+        : error instanceof Error && error.message === "NODE_UNAVAILABLE"
+          ? "این سرور فعلاً آماده نیست. سرور دیگری انتخاب کن."
+          : error instanceof Error && error.message === "INVALID_CAPACITY"
+            ? "ظرفیت باید عددی از ۱ تا ۱۰۰۰۰ باشد. دوباره بفرست."
+            : error instanceof Error && error.message === "NODE_NOT_CONFIGURED"
+              ? "سرور این سرویس هنوز انتخاب نشده است. مدیر باید از بخش سرورها، سرور فروش یا تست را مشخص کند."
+              : error instanceof Error && error.message === "ACCOUNT_NOT_READY"
+                ? "پیام این کانفیگ هنوز آماده نیست یا اعتبارش تمام شده است. وضعیت کانفیگ را بررسی کن."
+                : state?.step === "quota"
+                  ? "حجم باید یک عدد از ۱ تا ۱۰۰۰ گیگابایت باشد. دوباره بفرست یا از منو خارج شو."
+                  : state?.step === "days"
+                    ? "مدت باید یک عدد از ۱ تا ۳۶۵ روز باشد. دوباره بفرست یا از منو خارج شو."
+                    : "این درخواست در دسترس نیست یا اجازهٔ انجام آن را نداری. از منو ادامه بده.",
+      state?.step === "confirm"
+        ? [[btn("تغییر سرور", "rs:servers")], home()]
+        : [home()],
     );
   }
 }

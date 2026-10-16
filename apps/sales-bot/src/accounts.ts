@@ -1,5 +1,6 @@
 import { requireSeller, requireSalesAdmin, type SalesActor } from "./resellers";
 export type AccountInput = {
+  nodeId?: string;
   kind: "sale" | "trial";
   label: string;
   quotaBytes: number | null;
@@ -59,16 +60,28 @@ export async function createAccount(
     .bind(actor.telegramId, input.requestKey)
     .first<{ id: string; state: string }>();
   if (previous) return previous;
-  const nodeId = await db
-    .prepare("SELECT node_id FROM node_purposes WHERE purpose=?")
-    .bind(input.kind)
-    .first<string>("node_id");
+  const nodeId =
+    input.nodeId ||
+    (await db
+      .prepare("SELECT node_id FROM node_purposes WHERE purpose=?")
+      .bind(input.kind)
+      .first<string>("node_id"));
   if (!nodeId) throw Error("NODE_NOT_CONFIGURED");
+  if (
+    input.nodeId &&
+    !(await db
+      .prepare(
+        "SELECT id FROM nodes WHERE id=? AND healthy=1 AND last_seen>? AND instr(agent_capabilities,'quota-v2')>0",
+      )
+      .bind(nodeId, now - 90)
+      .first())
+  )
+    throw Error("NODE_UNAVAILABLE");
   const id = crypto.randomUUID();
   await db.batch([
     db
       .prepare(
-        "INSERT OR IGNORE INTO managed_accounts(id,seller_id,request_key,node_id,kind,label,uuid,quota_bytes,duration_seconds,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+        "INSERT OR IGNORE INTO managed_accounts(id,seller_id,request_key,node_id,kind,label,uuid,quota_bytes,duration_seconds,created_at) SELECT ?,?,?,?,?,?,?,?,?,? FROM nodes n WHERE n.id=? AND (SELECT COUNT(*) FROM managed_accounts a WHERE a.node_id=n.id AND (a.state='preparing' OR (a.state='active' AND a.valid_until>? AND (a.quota_bytes IS NULL OR a.used_bytes<a.quota_bytes))))<n.max_accounts",
       )
       .bind(
         id,
@@ -80,6 +93,8 @@ export async function createAccount(
         crypto.randomUUID(),
         input.kind === "trial" ? 1e9 : input.quotaBytes,
         input.durationSeconds,
+        now,
+        nodeId,
         now,
       ),
     db
@@ -94,7 +109,7 @@ export async function createAccount(
     )
     .bind(actor.telegramId, input.requestKey)
     .first<{ id: string; state: string }>();
-  if (!result) throw Error("ACCOUNT_CREATE_FAILED");
+  if (!result) throw Error("NODE_FULL");
   return result;
 }
 export async function ownedAccount(

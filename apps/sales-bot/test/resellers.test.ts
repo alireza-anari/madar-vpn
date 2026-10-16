@@ -1,3 +1,4 @@
+import capacity from "../migrations/0007-node-capacity.sql?raw";
 import { env } from "cloudflare:workers";
 import { beforeEach, expect, test } from "vitest";
 import { resetDb } from "./db";
@@ -20,6 +21,7 @@ beforeEach(async () => {
     "INSERT INTO ledger VALUES('old','old-user',10,1)",
   ).run();
   await env.SALES_DB.exec(migration);
+  await env.SALES_DB.exec(capacity);
   await env.SALES_DB.prepare(
     "INSERT INTO nodes(id,name,target_ip) VALUES('sale','sale','8.8.8.8'),('trial','trial','1.1.1.1')",
   ).run();
@@ -146,4 +148,50 @@ test("invalid amounts, revoked seller and unauthorized account revocation are de
   await expect(
     createAccount(env.SALES_DB, seller, { ...input, requestKey: "new" }, 100),
   ).rejects.toThrow("SELLER_REQUIRED");
+});
+
+test("node capacity is atomic, replay-safe and released by revocation", async () => {
+  await env.SALES_DB.exec(
+    "UPDATE nodes SET max_accounts=1,healthy=1,last_seen=100,agent_capabilities='quota-v2' WHERE id='sale';",
+  );
+  const input = {
+    kind: "sale" as const,
+    label: "capacity",
+    quotaBytes: 1e9,
+    durationSeconds: 86400,
+    nodeId: "sale",
+    requestKey: "capacity1",
+  };
+  const results = await Promise.allSettled([
+    createAccount(env.SALES_DB, seller, input, 100),
+    createAccount(
+      env.SALES_DB,
+      seller,
+      { ...input, requestKey: "capacity2" },
+      100,
+    ),
+  ]);
+  expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+  const row = await env.SALES_DB.prepare(
+    "SELECT id,request_key FROM managed_accounts",
+  ).first<{ id: string; request_key: string }>();
+  expect(
+    (
+      await createAccount(
+        env.SALES_DB,
+        seller,
+        { ...input, requestKey: row!.request_key },
+        100,
+      )
+    ).id,
+  ).toBe(row!.id);
+  await revokeAccount(env.SALES_DB, admin, row!.id, 101);
+  await expect(
+    createAccount(
+      env.SALES_DB,
+      seller,
+      { ...input, requestKey: "capacity3" },
+      102,
+    ),
+  ).resolves.toBeTruthy();
 });
