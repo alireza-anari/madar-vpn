@@ -116,3 +116,18 @@ def test_shared443_failure_forces_ack_unhealthy(tmp_path):
     assert calls and calls[0]['healthy'] is False
     assert 'shared-443' not in calls[0]['capabilities']
     c.store.close()
+
+def test_quota_heartbeat_is_armed_before_fresh_frontend_start(tmp_path):
+    import time
+    from quota import QuotaStore
+    from quota_runtime import QuotaRuntime,meter_authorized
+    path=tmp_path/'q';QuotaStore(path).close();seen=[];base=tmp_path/'run'
+    class Frontend:
+        def check(self):return None
+    def factory(*args):
+        heartbeat=base/'quota-heartbeat.json'
+        seen.append(heartbeat.exists() and meter_authorized(heartbeat,int(time.time())))
+        return Frontend()
+    c=QuotaRuntime({'policyKey':'k','nodeId':'n','shared443':True,'frontendManaged':True},None,lambda p,*args:p,base=base,database=path,frontend_factory=factory)
+    assert seen==[True]
+    c.store.close()
