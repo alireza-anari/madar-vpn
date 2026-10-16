@@ -1,9 +1,5 @@
-"""Preserve an existing REALITY frontend; isolate managed traffic behind loopback workers.
-
-No private key is copied into public artifacts. The original user stays on the
-original outbound. Only API-added users are routed through independent workers.
-"""
-import copy, hashlib, hmac, json, pathlib, subprocess, uuid
+"""Share one REALITY 443 frontend while isolating managed traffic behind loopback workers."""
+import copy, hashlib, hmac, json, os, pathlib, subprocess, uuid
 from xray import render_config, atomic_write
 
 API_TAG='madar-shared-api'
@@ -32,6 +28,12 @@ def build_frontend(original,key,*,ports=range(20000,21000),api_port=19999):
     routing=conf.setdefault('routing',{});routing['rules']=rules+routing.get('rules',[])
     return conf,{'bridgeKey':key,'frontendTag':tag,'frontendApi':f'127.0.0.1:{api_port}'}
 
+def build_fresh_frontend(settings,*,ports=range(20000,21000),api_port=19999):
+    if settings.get('port',443)!=443 or not settings.get('bridgeKey'):raise ValueError('INVALID_FRESH_FRONTEND')
+    original=render_config({**settings,'port':443},[],0)
+    frontend,shared=build_frontend(original,settings['bridgeKey'],ports=ports,api_port=api_port)
+    return frontend,{**settings,**shared}
+
 def backend_config(settings,client,now):
     local={**client,'uuid':bridge_uuid(settings['bridgeKey'],client['listenPort'])}
     conf=render_config({**settings,'port':client['listenPort'],'statsPort':client['listenPort']+1000},[local],now)
@@ -44,7 +46,8 @@ class SharedFrontend:
         self.settings=settings;self.binary=binary
         self.pid=self.current_pid()
     def current_pid(self):
-        result=subprocess.run(['systemctl','show','xray.service','--property=MainPID','--value'],capture_output=True,text=True,check=True,timeout=2)
+        service=self.settings.get('frontendService','xray.service')
+        result=subprocess.run(['systemctl','show',service,'--property=MainPID','--value'],capture_output=True,text=True,check=True,timeout=2)
         pid=int(result.stdout.strip())
         if pid<=0:raise ValueError('FRONTEND_NOT_RUNNING')
         # PID reuse cannot conceal a restart.
@@ -61,3 +64,17 @@ class SharedFrontend:
         finally:path.unlink(missing_ok=True)
     def remove(self,client):
         subprocess.run([self.binary,'api','rmu','--server='+self.settings['frontendApi'],'-timeout','1','-tag='+self.settings['frontendTag'],f"madar-{client['listenPort']}"],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=2)
+
+def start_owned_frontend(settings,binary,base):
+    if settings.get('shared443') is not True or settings.get('frontendManaged') is not True:raise ValueError('FRONTEND_NOT_OWNED')
+    base=pathlib.Path(base);base.mkdir(parents=True,exist_ok=True)
+    frontend,runtime=build_fresh_frontend(settings)
+    config_path=base/'xray.json';authorization=base/'authorization.json'
+    # Remove prior startup authorization before changing the candidate so a failed test cannot authorize a restart.
+    authorization.unlink(missing_ok=True)
+    atomic_write(config_path,frontend)
+    subprocess.run([binary,'run','-test','-c',str(config_path)],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=15)
+    atomic_write(authorization,{'mode':'shared-frontend','nodeId':settings['nodeId']})
+    service=runtime.get('frontendService','madar-sales-xray.service')
+    subprocess.run(['systemctl','restart',service],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=15)
+    return SharedFrontend(runtime,binary)
