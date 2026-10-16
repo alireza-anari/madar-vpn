@@ -66,12 +66,13 @@ class QuotaRuntime:
         with sqlite3.connect(str(database)) as existing:existing.execute('SELECT revision FROM meta WHERE id=1').fetchone()
         self.store=QuotaStore(database);self.processes={};self.policy=None;self.revision=0
         self.incoming=queue.Queue();self.outgoing=queue.Queue(maxsize=1);self.stopping=threading.Event();self.healthy=False
+        # Arm the fail-closed watchdog before frontend setup can restart Xray.
+        now=int(time.time());atomic_write(self.base/'quota-heartbeat.json',{'expiresAt':now+5,'sampledAt':now})
         self.frontend=None
         if self.config.get('shared443'):
             try:self.frontend=frontend_factory(self.config,'/opt/madar-sales-node/xray',self.base)
             except Exception:
                 self.store.close();raise
-        atomic_write(self.base/'quota-heartbeat.json',{'expiresAt':int(time.time())+5,'sampledAt':int(time.time())})
     def frontend_ready(self):
         if not self.config.get('shared443'):return True
         if self.frontend is None:return False
