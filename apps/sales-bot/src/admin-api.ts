@@ -1,5 +1,6 @@
 import { verifyMiniApp } from "./miniapp-auth";
 import {
+  enrollmentJobStatus,
   createEnrollment,
   createProbe,
   issueNonce,
@@ -26,11 +27,12 @@ export async function adminApi(
           : null,
       });
     if (path.startsWith("/api/admin/jobs/") && request.method === "GET") {
-      const row = await env.SALES_DB.prepare(
-        "SELECT id,kind,state,safe_code,fingerprint FROM installation_jobs WHERE id=? AND user_id=?",
-      )
-        .bind(path.split("/").at(-1), actor.telegramId)
-        .first();
+      const row = await enrollmentJobStatus(
+        env.SALES_DB,
+        path.split("/").at(-1)!,
+        actor.telegramId,
+        now,
+      );
       return Response.json(row || { error: "NOT_FOUND" }, {
         status: row ? 200 : 404,
       });
@@ -54,6 +56,8 @@ export async function adminApi(
       "INVALID_TARGET",
       "INVALID_PORT",
       "INVALID_INPUT",
+      "INVALID_CAPACITY",
+      "EXISTING_NODE",
       "FINGERPRINT_UNCONFIRMED",
       "INVALID_CIPHERTEXT",
     ];

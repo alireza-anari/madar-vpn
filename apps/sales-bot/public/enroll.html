@@ -51,7 +51,7 @@
   </style>
   <small>MADAR · مدیریت سرورها</small><h1>افزودن سرور</h1>
   <p>
-    سرور تازه با Ubuntu 22.04 یا 24.04 آماده کن. ابتدا اتصال را بررسی می‌کنیم؛ سپس اطلاعات ورود را برای نصب خودکار می‌گیریم.
+    سرور تازه با Ubuntu 22.04 یا 24.04 آماده کن. در AWS باید پورت SSH و پورت‌های سرویس در Security Group مجاز باشند. ابتدا اتصال را بررسی می‌کنیم؛ سپس اطلاعات ورود را برای نصب خودکار می‌گیریم.
   </p>
   <form id="form">
     <label>نام سرور<input id="name" required maxlength="80" placeholder="مثلاً سرور فروش اروپا" /></label
@@ -243,7 +243,7 @@
           try {
             const d = await api("jobs/" + result.jobId);
             setStatus(
-              "وضعیت: " + ({pending:"در صف نصب",leased:"در حال اتصال",running:"در حال نصب",ready:"✅ سرور آماده است؛ به ربات برگرد و کاربرد آن را انتخاب کن",failed:"نصب کامل نشد؛ با پشتیبانی بررسی کن"}[d.state] || "در حال بررسی") + (d.safe_code ? " · کد پیگیری: " + d.safe_code : ""),
+              "وضعیت: " + ({pending:"در صف نصب",leased:"در حال اتصال",running:"در حال نصب",preflight:"بررسی پیش‌نیازها",installing:"در حال نصب",verifying:"در انتظار گزارش سلامت و تأیید تنظیمات سرور",ready:"✅ سرور آماده است؛ به ربات برگرد و کاربرد آن را انتخاب کن",failed:"نصب کامل نشد؛ با پشتیبانی بررسی کن"}[d.state] || "در حال بررسی") + (d.safe_code ? " · کد پیگیری: " + d.safe_code : ""),
             );
             if (["ready", "failed"].includes(d.state)) clearInterval(pollTimer);
           } catch (e) {

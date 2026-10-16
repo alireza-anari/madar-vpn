@@ -5,7 +5,11 @@ import { expect, test, beforeEach } from "vitest";
 import { createHmac } from "node:crypto";
 import { verifyMiniApp } from "../src/miniapp-auth";
 import { publicTarget } from "../src/targets";
-import { createEnrollment, issueNonce } from "../src/enrollment";
+import {
+  enrollmentJobStatus,
+  createEnrollment,
+  issueNonce,
+} from "../src/enrollment";
 import { resetDb } from "./db";
 import b from "../migrations/0001.sql?raw";
 import s from "../migrations/0002.sql?raw";
@@ -234,4 +238,25 @@ test("a probe is consumed after enrollment, even if installation fails quickly",
       101,
     ),
   ).rejects.toThrow("FINGERPRINT_UNCONFIRMED");
+});
+
+test("installation is not ready until fresh node health and exact policy ACK", async () => {
+  await env.SALES_DB.exec(
+    "INSERT INTO nodes(id,name,target_ip,healthy,last_seen,revision,acked_revision) VALUES('check','check','8.8.8.8',0,100,2,1); INSERT INTO installation_jobs(id,node_id,kind,user_id,target_ip,port,state,created_at,expires_at) VALUES('check','check','install','9','8.8.8.8',22,'ready',100,1000);",
+  );
+  expect(
+    ((await enrollmentJobStatus(env.SALES_DB, "check", "9", 100)) as any).state,
+  ).toBe("verifying");
+  await env.SALES_DB.exec(
+    "UPDATE nodes SET healthy=1,acked_revision=2 WHERE id='check'",
+  );
+  expect(
+    ((await enrollmentJobStatus(env.SALES_DB, "check", "9", 100)) as any).state,
+  ).toBe("ready");
+  expect(
+    ((await enrollmentJobStatus(env.SALES_DB, "check", "9", 200)) as any).state,
+  ).toBe("verifying");
+  expect(
+    await enrollmentJobStatus(env.SALES_DB, "check", "10", 100),
+  ).toBeNull();
 });

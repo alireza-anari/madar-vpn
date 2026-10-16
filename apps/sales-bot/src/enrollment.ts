@@ -192,3 +192,17 @@ export async function cleanupCredentials(db: D1Database, now: number) {
     db.prepare("DELETE FROM admin_nonces WHERE expires_at<?").bind(now),
   ]);
 }
+
+export async function enrollmentJobStatus(
+  db: D1Database,
+  jobId: string,
+  userId: string,
+  now: number,
+) {
+  return db
+    .prepare(
+      "SELECT j.id,j.kind,CASE WHEN j.kind='install' AND j.state='ready' AND NOT(COALESCE(n.healthy,0)=1 AND n.last_seen>? AND n.revision=n.acked_revision) THEN 'verifying' ELSE j.state END state,j.safe_code,j.fingerprint FROM installation_jobs j LEFT JOIN nodes n ON n.id=j.node_id WHERE j.id=? AND j.user_id=?",
+    )
+    .bind(now - 90, jobId, userId)
+    .first();
+}
