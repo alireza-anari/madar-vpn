@@ -11,3 +11,7 @@
 آزمون محلی واقعی SSH با کلید و رمز و بررسی نحوی config توسط باینری pinned انجام می‌شود. نصب Ubuntu/systemd واقعی و آزمون عبور اینترنت، gate جدا هستند؛ شبیه‌سازی آن‌ها PASS میدانی نیست.
 
 اگر نصب شکست خورد یا اطلاعات اتصال منقضی شد، فرم افزودن نود را دوباره باز کن و ابتدا بررسی اثر انگشت تازه بگیر. با همان IP، پورت، نام کاربری و اثر انگشت تأییدشده، اطلاعات ورود تازه را وارد کن؛ تلاش مجدد شناسهٔ نصب و نود قبلی را نگه می‌دارد. تغییر اثر انگشت یا مشخصات نصب قبلی نیازمند بررسی مالک است و خودکار جایگزین نمی‌شود.
+
+## AWS automatic ingress
+
+The EC2 runner uses IMDSv2 temporary instance-role credentials (no AWS keys in forms, Telegram, logs or disk). It discovers exact running public-IP matches in eu-north-1. For a match, it adds TCP SSH from the runner public IPv4 /32, TCP443 and TCP20000–20999 from 0.0.0.0/0 to the first attached security group. Existing rules are preserved. If a group is shared, its new rules also apply to the other instances using that group. No instance, role, route, outbound rule or security group attachment is changed. No matching AWS instance means the ordinary VPS SSH flow continues. Missing/denied IAM access fails explicitly; other AWS regions are not yet supported by the current role. A role attachment alone does not update runner code: run pinned bootstrap.sh REF --update once, then test a new probe for AWS_NETWORK_READY and complete a fresh install/client connectivity test. The current installer does not modify host firewalls.

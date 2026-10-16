@@ -28,7 +28,11 @@ def run_job(job,api,private_key,clock=time.time):
     renewer=threading.Thread(target=renew,daemon=True);renewer.start()
     credentials={}
     try:
-        if job['kind']=='probe':report('ready','OK',{'fingerprint':probe(job['targetIp'],job['port'])});return 'ready'
+        if job['kind'] != 'probe' and job['credentialsExpireAt'] <= int(clock()):raise ValueError('CREDENTIALS_EXPIRED')
+        from aws_network import ensure_network
+        aws_managed=ensure_network(job['targetIp'],job['port'])
+        check()
+        if job['kind']=='probe':report('ready','AWS_NETWORK_READY' if aws_managed else 'OK',{'fingerprint':probe(job['targetIp'],job['port'])});return 'ready'
         credentials=decrypt_credentials(job['encryptedCredentials'],private_key,int(clock()),job['credentialsExpireAt']);job['encryptedCredentials']=None
         with SshTransport(job['targetIp'],job['port'],job['username'],job['hostFingerprint'],credentials) as transport:
             from installer import install
@@ -36,7 +40,7 @@ def run_job(job,api,private_key,clock=time.time):
             check();report('ready','INSTALLED',result)
         return 'ready'
     except Exception as error:
-        allowed={'CREDENTIALS_EXPIRED','HOST_KEY_CHANGED','INVALID_TARGET','INVALID_SSH_KEY','SSH_AUTH_FAILED','UNSUPPORTED_UBUNTU','EXISTING_SERVICE','PORT_CONFLICT','SUDO_REQUIRED','CHECKSUM_MISMATCH','LEASE_EXPIRED','SSH_COMMAND_TIMEOUT','INSUFFICIENT_DISK','ARTIFACT_NOT_PINNED','PROTOCOL_UPGRADE_REQUIRED'}
+        allowed={'CREDENTIALS_EXPIRED','HOST_KEY_CHANGED','INVALID_TARGET','INVALID_SSH_KEY','SSH_AUTH_FAILED','UNSUPPORTED_UBUNTU','EXISTING_SERVICE','PORT_CONFLICT','SUDO_REQUIRED','CHECKSUM_MISMATCH','LEASE_EXPIRED','SSH_COMMAND_TIMEOUT','INSUFFICIENT_DISK','ARTIFACT_NOT_PINNED','PROTOCOL_UPGRADE_REQUIRED','AWS_ROLE_UNAVAILABLE','AWS_REGION_UNSUPPORTED','AWS_NETWORK_PERMISSION_DENIED','AWS_NETWORK_FAILED','AWS_TARGET_AMBIGUOUS'}
         code=str(error) if str(error) in allowed else 'INSTALLATION_FAILED'
         try:report('failed',code)
         except Exception:pass
