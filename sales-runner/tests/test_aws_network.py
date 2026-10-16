@@ -7,9 +7,11 @@ def test_exact_target_opens_only_required_ports_and_limits_ssh_to_runner():
  calls=[]
  def api(region,credentials,params):calls.append(params);return response()
  assert ensure_network('8.8.8.8',22,api,lambda:('eu-north-1','56.228.6.3/32',CREDS))
- assert [p['IpPermissions.1.FromPort'] for p in calls[1:]]==['22','443','20000']
+ ingress=calls[1:]
+ assert [p['IpPermissions.1.FromPort'] for p in ingress]==['22','443']
  assert calls[1]['IpPermissions.1.IpRanges.1.CidrIp']=='56.228.6.3/32'
- assert all(p['GroupId']=='sg-123abc' for p in calls[1:])
+ assert all(p['GroupId']=='sg-123abc' for p in ingress)
+ assert all(not (int(p['IpPermissions.1.FromPort'])<=20999 and int(p['IpPermissions.1.ToPort'])>=20000) for p in ingress)
  calls.clear()
  assert not ensure_network('1.1.1.1',22,api,lambda:('eu-north-1','56.228.6.3/32',CREDS))
  assert len(calls)==1
