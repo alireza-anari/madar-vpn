@@ -9,3 +9,4 @@ with tempfile.TemporaryDirectory() as temp:
     binary=base/'xray';binary.chmod(0o700)
     subprocess.run([sys.executable,str(ROOT/'sales-node/tests/probe_live_stats.py'),str(binary),'23450'],check=True,timeout=35)
     subprocess.run([sys.executable,str(ROOT/'sales-node/tests/probe_shared443.py'),str(binary)],check=True,timeout=50)
+    subprocess.run([sys.executable,str(ROOT/'sales-node/tests/probe_fresh_shared443.py'),str(binary)],check=True,timeout=50)
