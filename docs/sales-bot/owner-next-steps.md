@@ -1,49 +1,65 @@
 # مرحلهٔ بعد در AWS
 
-کد منبع این دستورات روی نسخهٔ ثابت `254803ab6dc859f7ff5c4436a25613fd5de53115` است. اجرای آن‌ها به دسترسی داخل سرور نیاز دارد؛ اتصال SSH فعالی از محیط اجرای این گفتگو در اختیار نیست. حالت فروش جدید تا تست واقعی فعال نمی‌شود.
+این runbook مربوط به معماری fresh `shared-443` است. دستورهای قدیمی که public ingress بازهٔ `20000–20999` می‌ساختند منسوخ‌اند و نباید اجرا شوند. rollout فقط از روی **exact green commit** انجام شود؛ یعنی همان SHA چهل‌کاراکتری که هر دو workflow `CI` و `Telegram sales bot` برای آن موفق شده‌اند. از `main`، `latest` یا یک SHA قدیمی استفاده نکن.
 
-## ۱. پورت‌های سرور فروش
+اجرای این مراحل به دسترسی داخل Runner و VPS هدف نیاز دارد. محیط گفت‌وگو به SSH سرورها دسترسی مستقیم ندارد، بنابراین تغییرات live باید در ترمینال همان سرورها اجرا و خروجی غیرمحرمانه بررسی شود. هیچ private key، token، password، credential، UUID مشتری یا config کامل را در چت قرار نده.
 
-در AWS برای Security Group مربوط به Madar_st1، ورودی TCP بازهٔ `20000–20999` را برای اتصال مشتریان مجاز کن. بازهٔ `21000–21999` فقط داخلی است و نباید در AWS باز شود. تنظیم SSH را تغییر نده.
+## ۱. قبل از نصب مجدد VPS هدف
 
-## ۲. به‌روزرسانی Runner روی Node1 قدیمی
+روی VPS هدف فقط مالکیت و conflictهای قبلی را بررسی کن. installer عمداً روی سرویس یا مسیر ناشناخته overwrite نمی‌کند. اگر `EXISTING_SERVICE` دیدی، ابتدا مشخص کن دقیقاً کدام unit/path مربوط به نصب قدیمی Madar است؛ سرویس ناشناخته یا VPN دیگر را حذف نکن.
 
-این دستور را در ترمینال EC2 سروری که Runner روی آن نصب است (Node1 قدیمی، نه Personal) اجرا کن. کلید و اتصال فعلی Runner حفظ می‌شود و جفت‌سازی دوباره انجام نمی‌شود.
-
-```bash
-f=$(mktemp) &&
-curl -fsSL https://raw.githubusercontent.com/alireza-anari/madar-vpn/254803ab6dc859f7ff5c4436a25613fd5de53115/sales-runner/bootstrap.sh -o "$f" &&
-printf '%s  %s\n' '186920de8ea924b139d90b1fbf8900b078679777bd42b0ecfcd5f44849e47113' "$f" | sha256sum -c - &&
-sudo bash "$f" 254803ab6dc859f7ff5c4436a25613fd5de53115 --update &&
-rm "$f"
-```
-
-## ۳. ارتقای Madar_st1
-
-این دستور مخصوص ترمینال EC2 نود Madar_st1 با شناسهٔ ثبت‌شدهٔ زیر است. اسکریپت مالکیت، هویت و پورت‌ها را بررسی می‌کند و کلیدها را نگه می‌دارد. Worker باید قبلاً برای آماده‌سازی پروتکل فعال شده باشد؛ منوی فروش هنوز تغییر نمی‌کند.
+برای بررسی read-only:
 
 ```bash
-f=$(mktemp) &&
-curl -fsSL https://raw.githubusercontent.com/alireza-anari/madar-vpn/254803ab6dc859f7ff5c4436a25613fd5de53115/sales-node/update_owned.py -o "$f" &&
-printf '%s  %s\n' 'baca681331d9d48a20eab593f414d52885b6aace63de3eeab4ce27338bf28b4b' "$f" | sha256sum -c - &&
-sudo python3 "$f" --node-id f0e91435-c67d-4541-ae17-5c83832a260f --source-ref 254803ab6dc859f7ff5c4436a25613fd5de53115 --manifest-sha256 127ed930539b84636f63c7102eee1ed132c2ad18af02fd317752a6527f81ea18 --enable-quota &&
-rm "$f"
+printf '\n=== MADAR/XRAY UNITS ===\n'
+systemctl list-unit-files --no-legend --no-pager \
+  | grep -E '^(madar-|xray|v2ray|sing-box)' || true
+
+printf '\n=== OLD PATHS ===\n'
+for p in \
+  /etc/madar-node-agent \
+  /opt/madar-node-agent \
+  /opt/madar-speed-enforcer \
+  /etc/xray \
+  /usr/local/etc/xray \
+  /usr/local/bin/xray \
+  /opt/madar-sales-node
+do
+  [ -e "$p" ] && echo "EXISTS $p"
+done
+
+printf '\n=== PORT 443 ===\n'
+sudo ss -ltnp | grep ':443 ' || echo 'PORT_443_FREE'
 ```
 
-خروجی موفق `OWNED_UPDATE_INSTALLED` است. اگر رد شد، متن خطا را بفرست؛ هیچ دستور حذف یا نصب مجدد جایگزین اجرا نکن.
+## ۲. Runner را روی exact green commit به‌روز کن
 
-## ۴. بررسی Personal
+روی EC2ای که `madar-sales-runner` اجرا می‌شود، `sales-runner/bootstrap.sh` را از exact green commit بگیر و ابتدا SHA256 همان فایل دانلودشده را با مقدار مستقلی که از همان commit محاسبه و ثبت شده تطبیق بده. سپس فقط این bootstrap را با همان REF و گزینهٔ update اجرا کن:
 
-روی ترمینال Personal، فقط این بررسی خواندنی را اجرا کن و خروجی آن را بفرست. وجود سرویس قبلی نیاز به بررسی دارد و به معنی اجازهٔ جایگزینی خودکار آن نیست.
+```text
+sudo bash <verified-bootstrap-file> <EXACT_GREEN_REF> --update
+```
+
+`--update` pairing و کلیدهای Runner موجود را نگه می‌دارد. role attachment بدون این update کافی نیست. پس از update، probe قدیمی را reuse نکن؛ از ربات/Mini App یک probe تازه بگیر. برای EC2 منطبق در `eu-north-1` نتیجهٔ شبکه باید `AWS_NETWORK_READY` باشد. `AWS_ROLE_UNAVAILABLE` یا `AWS_NETWORK_PERMISSION_DENIED` باید به‌عنوان خطای IAM بررسی شود، نه با بازکردن دستی پورت‌های حساب.
+
+## ۳. قواعد شبکهٔ fresh shared-443
+
+برای enrollment جدید AWS فقط SSH از public IPv4 Runner با `/32` و TCP 443 عمومی لازم است. پورت‌های `20000–20999` bridge داخلی حساب و `21000–21999` stats داخلی‌اند و نباید public ingress داشته باشند. Rule قدیمی `20000–20999` را تا قبل از موفقیت field test روی 443 حذف نکن؛ بعد از اثبات اتصال واقعی روی 443 می‌توان آن rule قدیمی را از Security Group پاک کرد.
+
+## ۴. نصب تازه از خود ربات
+
+بعد از رفع conflictهای مالکیت، اطلاعات VPS را فقط از flow رسمی افزودن VPS وارد کن. نصب موفق باید به `INSTALLED` برسد و سپس نود فقط وقتی آمادهٔ فروش است که health تازه، exact policy ACK و capability `shared-443` ثبت شوند. هیچ state دیتابیس را دستی به ready تغییر نده.
+
+روی VPS تازه با یک حساب فعال، این listenerها را بررسی کن:
 
 ```bash
-python3 - <<'PY'
-import json, pathlib, subprocess
-units=subprocess.run(['systemctl','list-unit-files','--no-legend','--no-pager'],capture_output=True,text=True,check=True).stdout
-print(json.dumps({'os':pathlib.Path('/etc/os-release').read_text(),'vpnUnits':[line for line in units.splitlines() if line.startswith(('madar-','xray','v2ray','sing-box'))],'listeners':subprocess.run(['ss','-H','-ltn'],capture_output=True,text=True,check=True).stdout,'ownedManifest':pathlib.Path('/opt/madar-sales-node/manifest.json').exists()},indent=2))
-PY
+sudo ss -ltnp | grep -E ':(443|19999|20000|21000) ' || true
 ```
 
-بعد از این مراحل، تست واقعی کانفیگ روی گوشی و لپ‌تاپ، قطع سقف حجم، تست نیم‌ساعته و فوروارد لینک مصرف انجام می‌شود؛ سپس فروشنده از منوی مدیر اضافه و حالت فروش فعال می‌شود.
+انتظار: public `*:443`، HandlerService روی `127.0.0.1:19999`، bridge حساب روی `127.0.0.1:20000` و stats روی `127.0.0.1:21000`. وجود public `*:20000` خطاست.
 
-محدودیت نسخهٔ فعلی: اگر پس از ری‌استارت، پیوستگی شمارنده قابل اثبات نباشد، حساب متوقف می‌شود و پشتیبانی باید آن را بررسی/دوباره صادر کند؛ حجم خودکار صفر نمی‌شود. Runner و VPSهای دیگر در این مراحل جابه‌جا یا خاموش نمی‌شوند.
+## ۵. field acceptance قبل از فروش
+
+یک تست تازه از ربات صادر کن. URI تحویلی برای نود `shared-443` باید public port `443` و SNI تعیین‌شدهٔ نود را داشته باشد و هرگز port داخلی account را نشان ندهد. سپس روی کلاینت واقعی اینترنت را تست کن، مصرف را بالا ببر و ثبت usage را بررسی کن، و cutoff حجم، لغو و انقضا را جداگانه ثابت کن. افت frontend باید capability `shared-443` و health را fail-closed کند و workerهای managed فعال را متوقف/مسدود کند.
+
+فقط بعد از عبور این field gate می‌توان نود را sales-ready دانست و rule عمومی قدیمی `20000–20999` را، اگر از rollout قبلی باقی مانده، حذف کرد.
