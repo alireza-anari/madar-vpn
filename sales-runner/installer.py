@@ -4,6 +4,7 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from cryptography.hazmat.primitives import serialization
 from artifacts import download,verify_artifact,VERSION
 BASE=pathlib.Path(__file__).resolve().parent
+DEFAULT_REALITY_SNI='www.cloudflare.com'
 PREFLIGHT=r'''
 import json,pathlib,os,shutil,socket,subprocess,re
 release={}
@@ -107,7 +108,13 @@ def package(files):
 def configure_protocol(config,job):
     version=job.get('protocolVersion',1)
     if type(version) is not int or version not in (1,2):raise ValueError('INVALID_PROTOCOL_VERSION')
-    return {**config,'protocolVersion':2} if version==2 else config
+    if version==2:
+        return {**config,'protocolVersion':2,'shared443':True,'frontendManaged':True,'frontendService':'madar-sales-xray.service','bridgeKey':config['policyKey'],'port':443}
+    return config
+
+def validate_protocol_recovery(config,version):
+    if version==2 and (config.get('protocolVersion')!=2 or config.get('shared443') is not True):raise ValueError('PROTOCOL_UPGRADE_REQUIRED')
+    return config
 
 def install(transport,job,api,check=lambda:None):
     info=preflight(transport,job['id']);check()
@@ -115,10 +122,10 @@ def install(transport,job,api,check=lambda:None):
         config=json.loads(transport.run(root_command("import pathlib; p=pathlib.Path('/etc/madar-sales-node/config.json');print(p.read_text() if p.exists() else 'null')")))
         if config is not None and config['nodeId']!=job['nodeId']:raise ValueError('EXISTING_SERVICE')
     else:config=None
-    if config is not None and job.get('protocolVersion',1)==2 and config.get('protocolVersion')!=2:raise ValueError('PROTOCOL_UPGRADE_REQUIRED')
+    if config is not None:validate_protocol_recovery(config,job.get('protocolVersion',1))
     if config is None:
         private=X25519PrivateKey.generate();encode=lambda data:base64.urlsafe_b64encode(data).decode().rstrip('=')
-        config={'baseUrl':api.base,'nodeId':job['nodeId'],'nodeToken':secrets.token_urlsafe(32),'policyKey':secrets.token_hex(32),'privateKey':encode(private.private_bytes(serialization.Encoding.Raw,serialization.PrivateFormat.Raw,serialization.NoEncryption())),'publicKey':encode(private.public_key().public_bytes(serialization.Encoding.Raw,serialization.PublicFormat.Raw)),'shortId':secrets.token_hex(8),'sni':'www.microsoft.com','port':443}
+        config={'baseUrl':api.base,'nodeId':job['nodeId'],'nodeToken':secrets.token_urlsafe(32),'policyKey':secrets.token_hex(32),'privateKey':encode(private.private_bytes(serialization.Encoding.Raw,serialization.PrivateFormat.Raw,serialization.NoEncryption())),'publicKey':encode(private.public_key().public_bytes(serialization.Encoding.Raw,serialization.PublicFormat.Raw)),'shortId':secrets.token_hex(8),'sni':DEFAULT_REALITY_SNI,'port':443}
     config=configure_protocol(config,job)
     if config.get('protocolVersion')==2 and info.get('quotaPortsBusy'):raise ValueError('PORT_CONFLICT')
     files=download(info['arch'],job['artifactVersion']);check()
