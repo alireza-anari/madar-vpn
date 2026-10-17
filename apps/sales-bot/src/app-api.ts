@@ -1,3 +1,4 @@
+import QRCode from "qrcode";
 import { boundedText } from "./auth";
 import { ownedAccount } from "./accounts";
 import { buildAccountDeliveryArtifact } from "./account-delivery";
@@ -207,9 +208,14 @@ export async function appApi(
       if (resultMatch) {
         const account = await ownedAccount(env.SALES_DB, actor, resultMatch[1]!);
         const artifact = await buildAccountDeliveryArtifact(env, account.id, now);
-        return artifact
-          ? json({ state: account.state, ready: true, ...artifact })
-          : json({ accountId: account.id, state: account.state, ready: false });
+        if (!artifact)
+          return json({ accountId: account.id, state: account.state, ready: false });
+        const qrSvg = await QRCode.toString(artifact.config, {
+          type: "svg",
+          errorCorrectionLevel: "M",
+          margin: 1,
+        });
+        return json({ state: account.state, ready: true, ...artifact, qrSvg });
       }
       return json({ error: "NOT_FOUND" }, 404);
     }
