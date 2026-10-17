@@ -4,18 +4,30 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <meta name="color-scheme" content="dark" />
+  <meta name="theme-color" content="#08111f" />
   <title>مدار</title>
   <link rel="stylesheet" href="/app.css" />
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
-  <main id="app" aria-live="polite">
-    <section class="card loading-card">
-      <div class="brand">MADAR</div>
-      <h1>مدار</h1>
-      <p>در حال بارگذاری پنل…</p>
-    </section>
-  </main>
+  <div id="app-shell" class="app-shell">
+    <header class="topbar">
+      <div class="brand-lockup" aria-label="Madar">
+        <span class="brand-mark" aria-hidden="true">M</span>
+        <span><strong>مدار</strong><small>MADAR CONTROL</small></span>
+      </div>
+      <button class="icon-button" type="button" data-action="refresh" aria-label="به‌روزرسانی">↻</button>
+    </header>
+    <main id="app-content" class="app-content" aria-live="polite" aria-busy="true">
+      <section class="card state-card loading-card">
+        <span class="loading-orbit" aria-hidden="true"></span>
+        <h1>در حال آماده‌سازی مدار</h1>
+        <p>اطلاعات پنل در حال دریافت است…</p>
+      </section>
+    </main>
+    <nav id="app-nav" class="bottom-nav" aria-label="ناوبری اصلی"></nav>
+    <div id="app-toast" class="toast" role="status" aria-live="polite" hidden></div>
+  </div>
   <script src="/app.js"></script>
 </body>
 </html>
