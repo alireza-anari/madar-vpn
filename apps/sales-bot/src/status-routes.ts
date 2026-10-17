@@ -36,7 +36,7 @@ export async function accountStatus(
   token: string,
   now: number,
 ) {
-  if (!/^[a-f0-9]{64}$/.test(token)) return null;
+  if (token.length < 32 || token.length > 512) return null;
   const a = await db
     .prepare(
       "SELECT label,quota_bytes,used_bytes,valid_until,state,last_report_at FROM managed_accounts WHERE status_token_hash=? AND state<>'revoked'",
