@@ -8,6 +8,13 @@ import {
   loadAdminReportOverview,
   loadAdminSellerDetail,
 } from "./app-admin";
+import {
+  createEnrollment,
+  createProbe,
+  enrollmentJobStatus,
+  issueNonce,
+  type EnrollmentInput,
+} from "./enrollment";
 import { authenticateMiniApp } from "./miniapp-auth";
 import {
   listAppConfigs,
@@ -65,6 +72,12 @@ function mappedError(code: string): { code: string; status: number } | null {
       "INVALID_CAPACITY",
       "INVALID_ALLOCATION_CAP",
       "INVALID_SELLER_LIMITS",
+      "NONCE_REPLAY",
+      "INVALID_TARGET",
+      "INVALID_PORT",
+      "EXISTING_NODE",
+      "FINGERPRINT_UNCONFIRMED",
+      "INVALID_CIPHERTEXT",
     ].includes(code)
   )
     return { code, status: 400 };
@@ -129,6 +142,26 @@ export async function appApi(
         return json(await loadSellerSelfStats(env.SALES_DB, actor, now));
       }
 
+      if (path === "/api/app/admin/enrollment/session") {
+        const enrollmentActor = { telegramId: actor.telegramId, role: "admin" as const };
+        return json({
+          nonce: await issueNonce(env.SALES_DB, enrollmentActor, now),
+          publicKey: env.RUNNER_PUBLIC_KEY ? JSON.parse(env.RUNNER_PUBLIC_KEY) : null,
+        });
+      }
+      const enrollmentJobMatch = path.match(
+        /^\/api\/app\/admin\/enrollment\/jobs\/([^/]+)$/,
+      );
+      if (enrollmentJobMatch) {
+        const row = await enrollmentJobStatus(
+          env.SALES_DB,
+          decodeURIComponent(enrollmentJobMatch[1]!),
+          actor.telegramId,
+          now,
+        );
+        return row ? json(row) : json({ error: "NOT_FOUND" }, 404);
+      }
+
       if (path === "/api/app/admin/nodes")
         return json(await listAppNodes(env.SALES_DB, actor, now));
       if (path === "/api/app/admin/sellers")
@@ -182,6 +215,33 @@ export async function appApi(
     }
 
     if (request.method === "POST") {
+      if (path === "/api/app/admin/enrollment/probe") {
+        const enrollmentActor = { telegramId: actor.telegramId, role: "admin" as const };
+        return json(
+          await createProbe(
+            env,
+            enrollmentActor,
+            (await body(request)) as unknown as {
+              targetIp: string;
+              port: number;
+              nonce: string;
+            },
+            now,
+          ),
+        );
+      }
+      if (path === "/api/app/admin/enrollment/enroll") {
+        const enrollmentActor = { telegramId: actor.telegramId, role: "admin" as const };
+        return json(
+          await createEnrollment(
+            env,
+            enrollmentActor,
+            (await body(request)) as unknown as EnrollmentInput,
+            now,
+          ),
+        );
+      }
+
       const nodeAccountsMatch = path.match(
         /^\/api\/app\/admin\/nodes\/([^/]+)\/accounts$/,
       );
