@@ -2,6 +2,7 @@ import {
   canAllocate,
   liveCommitmentPredicate,
   nodeCapacities,
+  remainingSlots,
 } from "./node-capacity";
 import { sellerLimits } from "./seller-accounting";
 import { requireSeller, requireSalesAdmin, type SalesActor } from "./resellers";
@@ -135,7 +136,7 @@ export async function createAccount(
         CROSS JOIN seller_usage su
         LEFT JOIN reseller_controls sc ON sc.seller_id=?
         WHERE n.id=?
-          AND nu.slots<n.max_accounts
+          AND (n.max_accounts_unlimited=1 OR nu.slots<n.max_accounts)
           AND (
             n.max_allocated_bytes IS NULL OR
             (nu.uncapped=0 AND nu.committed_bytes+nu.finalized_bytes+?<=n.max_allocated_bytes)
@@ -201,7 +202,9 @@ export async function createAccount(
   }
 
   const n = (await nodeCapacities(db, now, nodeId)).find((item) => item.id === nodeId);
-  if (!n || n.reserved_accounts >= n.max_accounts) throw Error("NODE_FULL");
+  if (!n) throw Error("NODE_FULL");
+  const slots = remainingSlots(n);
+  if (slots !== null && slots < 1) throw Error("NODE_FULL");
   if (n.max_allocated_bytes !== null && !canAllocate(n, requestedBytes))
     throw Error("NODE_ALLOCATION_FULL");
   throw Error("NODE_FULL");
