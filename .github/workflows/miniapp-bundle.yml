@@ -1,0 +1,28 @@
+name: Mini App bundle
+
+on:
+  push:
+    branches:
+      - ops/miniapp-bundle-20261017
+
+jobs:
+  bundle:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 813313ff0326fac7879e3430e1b2b46f9a0fdd3a
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: corepack prepare pnpm@12.9.1 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @madar/sales-bot build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: madar-sales-bot-813313ff
+          path: apps/sales-bot/dist
+          if-no-files-found: error
+          retention-days: 1
