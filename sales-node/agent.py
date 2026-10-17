@@ -26,8 +26,11 @@ def main():
     if args.watchdog:watchdog();return
     config=json.loads(pathlib.Path(args.config).read_text())
     if config.get('protocolVersion')==2:
+        import signal
         from quota_runtime import QuotaRuntime
-        QuotaRuntime(config,request,verify_policy).run();return
+        runtime=QuotaRuntime(config,request,verify_policy)
+        signal.signal(signal.SIGTERM,lambda *_:runtime.stopping.set())
+        runtime.run();return
     xray=Xray(config);xray.stop();revision=0;deadline=0
     while True:
         now=int(time.time())
