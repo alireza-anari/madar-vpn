@@ -27,7 +27,7 @@ def test_meter_cuts_exhausted_account_while_other_account_keeps_transferring(tmp
         if ticks[0]==3:controller.stopping.set()
     monkeypatch.setattr(runtime.time,'sleep',advance);controller.run()
     assert ('a',1) in stops
-    assert ('b',1) not in stops and samples['b']==90
+    assert ('b',1) not in stops and ('b',3) in stops and samples['b']==120
     store=QuotaStore(path);assert store.remaining('a')==0;store.close()
 
 def test_missing_or_empty_database_never_reinitializes_quota(tmp_path):
