@@ -9,25 +9,134 @@ permissions:
   contents: write
 
 jobs:
-  lock:
-    if: contains(github.event.head_commit.message, 'generate qrcode lockfile')
+  patch:
+    if: contains(github.event.head_commit.message, 'patch miniapp recovery client')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 12.9.1
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @madar/sales-bot add --save-exact qrcode@1.5.4
-      - run: pnpm --filter @madar/sales-bot add --save-exact -D @types/qrcode@1.5.6
-      - name: Commit generated dependency metadata
+      - name: Patch reviewed Mini App client
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('apps/sales-bot/public/app.js')
+          text = path.read_text()
+
+          anchor = '''  const fa = new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 1 });'''
+          recovery = '''  const RECOVERY_KEY = "madar.pendingAccountId";
+
+  function rememberPendingAccount(accountId) {
+    if (!accountId) return;
+    try {
+      window.sessionStorage?.setItem(RECOVERY_KEY, String(accountId));
+    } catch {}
+  }
+
+  function readPendingAccount() {
+    try {
+      const value = window.sessionStorage?.getItem(RECOVERY_KEY);
+      return value && value.length <= 120 ? value : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function forgetPendingAccount() {
+    try {
+      window.sessionStorage?.removeItem(RECOVERY_KEY);
+    } catch {}
+  }
+
+'''
+          if 'const RECOVERY_KEY = "madar.pendingAccountId";' not in text:
+            assert anchor in text
+            text = text.replace(anchor, recovery + anchor, 1)
+
+          old_qr = '''  function drawQr() {
+    const r = state.result;
+    if (!r?.config || !window.QRCode) return;
+    const target = document.getElementById("result-qr");
+    if (!target) return;
+    target.innerHTML = "";
+    try {
+      new window.QRCode(target, {
+        text: r.config,
+        width: 210,
+        height: 210,
+        correctLevel: window.QRCode.CorrectLevel?.M,
+      });
+    } catch {}
+  }
+'''
+          new_qr = '''  function drawQr() {
+    const r = state.result;
+    if (!r?.qrSvg) return;
+    const target = document.getElementById("result-qr");
+    if (!target) return;
+    target.innerHTML = String(r.qrSvg);
+  }
+'''
+          if old_qr in text:
+            text = text.replace(old_qr, new_qr, 1)
+
+          old_qr_slot = '''<div class="qr-box"><div id="result-qr" aria-label="QR کانفیگ"></div><small>'''
+          new_qr_slot = '''<div class="qr-box"><div id="result-qr" aria-label="QR کانفیگ">' + (typeof result.qrSvg === "string" ? result.qrSvg : "") + '</div><small>'''
+          assert old_qr_slot in text or new_qr_slot in text
+          text = text.replace(old_qr_slot, new_qr_slot, 1)
+          text = text.replace('''    setTimeout(drawQr, 0);\n''', '''    drawQr();\n''', 1)
+
+          old_ready = '''      if (result?.ready) {
+        renderReadyResult(result);
+        return result;
+      }'''
+          new_ready = '''      if (result?.ready) {
+        forgetPendingAccount();
+        renderReadyResult(result);
+        return result;
+      }'''
+          assert old_ready in text or new_ready in text
+          text = text.replace(old_ready, new_ready, 1)
+
+          old_missing = '''      if (error?.code === "ACCOUNT_NOT_FOUND") {
+        showToast("این کانفیگ پیدا نشد یا متعلق به این حساب نیست.");'''
+          new_missing = '''      if (error?.code === "ACCOUNT_NOT_FOUND") {
+        forgetPendingAccount();
+        showToast("این کانفیگ پیدا نشد یا متعلق به این حساب نیست.");'''
+          assert old_missing in text or new_missing in text
+          text = text.replace(old_missing, new_missing, 1)
+
+          old_create = '''      renderPendingResult(result.accountId, result.state);
+      await recoverAccount(result.accountId, 0);'''
+          new_create = '''      rememberPendingAccount(result.accountId);
+      renderPendingResult(result.accountId, result.state);
+      await recoverAccount(result.accountId, 0);'''
+          assert old_create in text or new_create in text
+          text = text.replace(old_create, new_create, 1)
+
+          old_refresh = '''      if (!options.keepView) state.view = "home";
+      await renderView(state.view);'''
+          new_refresh = '''      if (!options.keepView) state.view = "home";
+      await renderView(state.view);
+      if (!options.keepView) {
+        const pendingId = readPendingAccount();
+        if (pendingId) await recoverAccount(pendingId, 0);
+      }'''
+          assert old_refresh in text or new_refresh in text
+          text = text.replace(old_refresh, new_refresh, 1)
+
+          path.write_text(text)
+
+          sales_test = Path('apps/sales-bot/test/app-sales.test.ts')
+          sales = sales_test.read_text()
+          old = 'expect(ownedBody.qrSvg).toMatch(/^<svg[\\s\\S]*<\\/svg>$/);'
+          new = 'expect(ownedBody.qrSvg.trim()).toMatch(/^<svg[\\s\\S]*<\\/svg>$/);'
+          assert old in sales or new in sales
+          sales_test.write_text(sales.replace(old, new, 1))
+          PY
+      - name: Commit client recovery patch
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add apps/sales-bot/package.json pnpm-lock.yaml
-          git commit -m "chore: pin qrcode dependency"
+          git add apps/sales-bot/public/app.js apps/sales-bot/test/app-sales.test.ts
+          git commit -m "fix: make Mini App QR self-contained and recover pending sales"
           git push origin HEAD:impl/telegram-miniapp-dashboard-20261017
