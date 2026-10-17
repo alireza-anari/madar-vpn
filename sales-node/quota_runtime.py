@@ -107,6 +107,14 @@ class QuotaRuntime:
                 # Stop every child even when storage is failing. Never refresh liveness on error.
                 self.healthy=False
                 raise
+    def checkpoint_account(self,ident):
+        process=self.processes.get(ident)
+        if not process:return
+        try:self.store.checkpoint_restart(ident,process.generation,process.sample(),int(time.time()))
+        except Exception:
+            self.stop_account(ident,True)
+            return
+        self.stop_account(ident)
     def run(self):
         threading.Thread(target=self.network,daemon=True).start()
         try:
@@ -131,7 +139,7 @@ class QuotaRuntime:
                         if ident not in desired or not self.store.allowed(ident,now):self.stop_account(ident,True)
                     for ident,client in desired.items():
                         if ident not in self.processes and self.store.allowed(ident,now):
-                            # A fresh local generation is allowed only for accounts never observed.
+                            # A fresh local generation is allowed only for accounts never observed or cleanly checkpointed.
                             row=self.store.db.execute('SELECT process_generation FROM accounts WHERE id=?',(ident,)).fetchone()
                             if row['process_generation'] is not None:self.store.block(ident);continue
                             try:process=self.process_factory(self.config,client,self.base)
@@ -164,6 +172,6 @@ class QuotaRuntime:
         finally:
             self.stopping.set()
             for ident in list(self.processes):
-                try:self.stop_account(ident,True)
+                try:self.checkpoint_account(ident)
                 except Exception:pass
             self.store.close()
