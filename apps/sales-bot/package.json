@@ -3,18 +3,20 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "vitest run && node --test test/enroll-browser.node.mjs test/status-browser.node.mjs",
+    "test": "vitest run && node --test test/enroll-browser.node.mjs test/status-browser.node.mjs test/app-browser.node.mjs test/app-admin-browser.node.mjs test/app-recovery-browser.node.mjs",
     "typecheck": "node node_modules/typescript-js/lib/tsc.js --noEmit",
     "build": "wrangler deploy --dry-run --outdir dist",
     "types": "wrangler types --strict-vars false"
   },
   "dependencies": {
-    "hono": "4.13.13"
+    "hono": "4.13.13",
+    "qrcode": "1.5.4"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.62.4",
     "@cloudflare/vitest-plugin": "1.3.7",
     "@types/node": "26.6.5",
+    "@types/qrcode": "1.5.6",
     "prettier": "3.6.2",
     "typescript-js": "npm:typescript@5.9.3",
     "vite": "8.3.2",

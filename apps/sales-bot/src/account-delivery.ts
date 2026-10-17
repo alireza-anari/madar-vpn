@@ -1,19 +1,32 @@
 import { hash } from "./crypto";
 import type { ManagedAccount } from "./accounts";
 import type { QuotaPolicy } from "./quota-policies";
-export async function queueAccountDelivery(
+
+export interface AccountDeliveryArtifact {
+  accountId: string;
+  sellerId: string;
+  label: string;
+  kind: "sale" | "trial";
+  quotaBytes: number | null;
+  durationSeconds: number;
+  validUntil: number;
+  serverName: string;
+  config: string;
+}
+
+export async function buildAccountDeliveryArtifact(
   env: Env,
   accountId: string,
   now: number,
-) {
-  const db = env.SALES_DB,
-    a = await db
-      .prepare(
-        "SELECT * FROM managed_accounts WHERE id=? AND state='active' AND valid_until>?",
-      )
-      .bind(accountId, now)
-      .first<ManagedAccount & { listen_port: number }>();
-  if (!a) return;
+): Promise<AccountDeliveryArtifact | null> {
+  const db = env.SALES_DB;
+  const a = await db
+    .prepare(
+      "SELECT * FROM managed_accounts WHERE id=? AND state='active' AND valid_until>?",
+    )
+    .bind(accountId, now)
+    .first<ManagedAccount & { listen_port: number }>();
+  if (!a) return null;
   const node = await db
     .prepare(
       "SELECT * FROM nodes WHERE id=? AND healthy=1 AND revision=acked_revision AND last_seen>?",
@@ -26,7 +39,7 @@ export async function queueAccountDelivery(
     !node.public_key ||
     !node.policy_payload
   )
-    return;
+    return null;
   const policy = JSON.parse(node.policy_payload) as QuotaPolicy;
   if (
     policy.version !== 2 ||
@@ -39,12 +52,7 @@ export async function queueAccountDelivery(
         c.validUntil === a.valid_until,
     )
   )
-    return;
-  const token = Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) =>
-    b.toString(16).padStart(2, "0"),
-  ).join("");
-  const digest = hash(token),
-    url = `${env.PUBLIC_BASE_URL}/usage/${token}`;
+    return null;
   const q = new URLSearchParams({
     encryption: "none",
     flow: "",
@@ -61,14 +69,40 @@ export async function queueAccountDelivery(
   const publicPort = node.agent_capabilities.split(",").includes("shared-443")
     ? node.vpn_port
     : a.listen_port;
-  const config = `vless://${a.uuid}@${host}:${publicPort}?${q}#Madar-${a.id.slice(0, 6)}`;
-  const escape = (value: string) =>
-    value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const text = `🟢 اشتراک مدار · ${escape(a.label)}\n${a.kind === "trial" ? "🎁 تست ۳۰ دقیقه‌ای · حجم: ۱ گیگابایت" : `📦 حجم: ${(Number(a.quota_bytes) / 1e9).toLocaleString("fa-IR")} گیگابایت · مدت: ${(a.duration_seconds / 86400).toLocaleString("fa-IR")} روز`}\n⏳ انقضا: ${new Date(a.valid_until * 1000).toLocaleString("fa-IR", { timeZone: "Asia/Tehran" })} (تهران)\n\n<pre>${escape(config)}</pre>\n\nکانفیگ را کپی و در برنامهٔ اتصال وارد کنید.\nبرای دیدن مصرف و حجم باقی‌مانده، دکمهٔ «مصرف و اعتبار» را بزنید.\n🔒 این پیام مخصوص شماست؛ آن را خصوصی نگه دارید.`;
+  return {
+    accountId: a.id,
+    sellerId: a.seller_id,
+    label: a.label,
+    kind: a.kind,
+    quotaBytes: a.quota_bytes,
+    durationSeconds: a.duration_seconds,
+    validUntil: a.valid_until,
+    serverName: node.name,
+    config: `vless://${a.uuid}@${host}:${publicPort}?${q}#Madar-${a.id.slice(0, 6)}`,
+  };
+}
+
+const escape = (value: string) =>
+  value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+export async function queueAccountDelivery(
+  env: Env,
+  accountId: string,
+  now: number,
+) {
+  const db = env.SALES_DB;
+  const artifact = await buildAccountDeliveryArtifact(env, accountId, now);
+  if (!artifact) return;
+  const token = Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) =>
+    b.toString(16).padStart(2, "0"),
+  ).join("");
+  const digest = hash(token);
+  const url = `${env.PUBLIC_BASE_URL}/usage/${token}`;
+  const text = `🟢 اشتراک مدار · ${escape(artifact.label)}\n${artifact.kind === "trial" ? "🎁 تست ۳۰ دقیقه‌ای · حجم: ۱ گیگابایت" : `📦 حجم: ${(Number(artifact.quotaBytes) / 1e9).toLocaleString("fa-IR")} گیگابایت · مدت: ${(artifact.durationSeconds / 86400).toLocaleString("fa-IR")} روز`}\n⏳ انقضا: ${new Date(artifact.validUntil * 1000).toLocaleString("fa-IR", { timeZone: "Asia/Tehran" })} (تهران)\n\n<pre>${escape(artifact.config)}</pre>\n\nکانفیگ را کپی و در برنامهٔ اتصال وارد کنید.\nبرای دیدن مصرف و حجم باقی‌مانده، دکمهٔ «مصرف و اعتبار» را بزنید.\n🔒 این پیام مخصوص شماست؛ آن را خصوصی نگه دارید.`;
   const rows: Record<string, unknown>[][] = [];
   // Telegram accepts at most 256 characters in copy_text. Never truncate a URI.
-  if (config.length <= 256)
-    rows.push([{ text: "📋 کپی کانفیگ", copy_text: { text: config } }]);
+  if (artifact.config.length <= 256)
+    rows.push([{ text: "📋 کپی کانفیگ", copy_text: { text: artifact.config } }]);
   rows.push([{ text: "📊 مصرف و اعتبار", url }]);
   const payload = JSON.stringify({
     text,
@@ -82,14 +116,20 @@ export async function queueAccountDelivery(
       .prepare(
         "UPDATE managed_accounts SET status_token_hash=? WHERE id=? AND status_token_hash IS NULL AND state='active'",
       )
-      .bind(digest, a.id),
+      .bind(digest, artifact.accountId),
     db
       .prepare(
         "INSERT OR IGNORE INTO outbox(id,chat_id,payload,available_at) SELECT ?,seller_id,?,0 FROM managed_accounts WHERE id=? AND status_token_hash=? AND state='active'",
       )
-      .bind(`account:${a.id}`, payload, a.id, digest),
+      .bind(
+        `account:${artifact.accountId}`,
+        payload,
+        artifact.accountId,
+        digest,
+      ),
   ]);
 }
+
 export async function deliverReadyAccounts(env: Env, now: number) {
   const accounts = await env.SALES_DB.prepare(
     "SELECT id FROM managed_accounts WHERE state='active' AND status_token_hash IS NULL AND valid_until>? LIMIT 100",

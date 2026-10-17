@@ -1,5 +1,12 @@
-import { reservationPredicate, nodeCapacities } from "./node-capacity";
+import {
+  canAllocate,
+  liveCommitmentPredicate,
+  nodeCapacities,
+  remainingSlots,
+} from "./node-capacity";
+import { sellerLimits } from "./seller-accounting";
 import { requireSeller, requireSalesAdmin, type SalesActor } from "./resellers";
+
 export type AccountInput = {
   nodeId?: string;
   kind: "sale" | "trial";
@@ -8,6 +15,7 @@ export type AccountInput = {
   durationSeconds: number;
   requestKey: string;
 };
+
 export interface ManagedAccount {
   id: string;
   seller_id: string;
@@ -27,7 +35,9 @@ export interface ManagedAccount {
   status_token_hash: string | null;
   last_report_at: number | null;
   created_at: number;
+  seller_settlement_epoch: number;
 }
+
 export async function createAccount(
   db: D1Database,
   actor: SalesActor,
@@ -54,6 +64,7 @@ export async function createAccount(
         Number(input.quotaBytes) > 1e12)
   )
     throw Error("INVALID_ACCOUNT");
+
   const previous = await db
     .prepare(
       "SELECT id,state FROM managed_accounts WHERE seller_id=? AND request_key=?",
@@ -61,6 +72,7 @@ export async function createAccount(
     .bind(actor.telegramId, input.requestKey)
     .first<{ id: string; state: string }>();
   if (previous) return previous;
+
   const nodeId =
     input.nodeId ||
     (await db
@@ -78,15 +90,68 @@ export async function createAccount(
       .first())
   )
     throw Error("NODE_UNAVAILABLE");
+
   const id = crypto.randomUUID();
+  const requestedBytes = input.kind === "trial" ? 1e9 : Number(input.quotaBytes);
+  const isAdmin = actor.role === "admin" ? 1 : 0;
+
   await db.batch([
     db
       .prepare(
-        `WITH reserved AS (SELECT COUNT(*) slots,COALESCE(SUM(a.quota_bytes),0) bytes,COUNT(*)-COUNT(a.quota_bytes) uncapped FROM managed_accounts a WHERE a.node_id=? AND ${reservationPredicate}) INSERT OR IGNORE INTO managed_accounts(id,seller_id,request_key,node_id,kind,label,uuid,quota_bytes,duration_seconds,created_at) SELECT ?,?,?,?,?,?,?,?,?,? FROM nodes n CROSS JOIN reserved r WHERE n.id=? AND r.slots<n.max_accounts AND (n.max_allocated_bytes IS NULL OR (r.uncapped=0 AND r.bytes+?<=n.max_allocated_bytes))`,
+        `WITH
+        node_rows AS (
+          SELECT a.*,CASE WHEN ${liveCommitmentPredicate} THEN 1 ELSE 0 END is_live
+          FROM managed_accounts a WHERE a.node_id=?
+        ),
+        node_usage AS (
+          SELECT
+            COALESCE(SUM(CASE WHEN is_live=1 THEN 1 ELSE 0 END),0) slots,
+            COALESCE(SUM(CASE WHEN is_live=1 AND quota_bytes IS NOT NULL THEN quota_bytes ELSE 0 END),0) committed_bytes,
+            COALESCE(SUM(CASE WHEN is_live=1 AND quota_bytes IS NULL THEN 1 ELSE 0 END),0) uncapped,
+            COALESCE(SUM(CASE
+              WHEN is_live=1 THEN 0
+              WHEN state='exhausted' AND quota_bytes IS NOT NULL THEN MIN(used_bytes,quota_bytes)
+              ELSE used_bytes
+            END),0) finalized_bytes
+          FROM node_rows
+        ),
+        seller_rows AS (
+          SELECT a.*,CASE WHEN ${liveCommitmentPredicate} THEN 1 ELSE 0 END is_live
+          FROM managed_accounts a WHERE a.seller_id=?
+        ),
+        seller_usage AS (
+          SELECT
+            COALESCE(SUM(CASE WHEN is_live=1 THEN 1 ELSE 0 END),0) slots,
+            COALESCE(SUM(CASE WHEN is_live=1 AND quota_bytes IS NOT NULL THEN quota_bytes ELSE 0 END),0) committed_bytes,
+            COALESCE(SUM(CASE WHEN is_live=1 AND quota_bytes IS NULL THEN 1 ELSE 0 END),0) uncapped
+          FROM seller_rows
+        )
+        INSERT OR IGNORE INTO managed_accounts(
+          id,seller_id,request_key,node_id,kind,label,uuid,quota_bytes,
+          duration_seconds,created_at,seller_settlement_epoch
+        )
+        SELECT ?,?,?,?,?,?,?,?,?,?,COALESCE(sc.current_settlement_epoch,0)
+        FROM nodes n
+        CROSS JOIN node_usage nu
+        CROSS JOIN seller_usage su
+        LEFT JOIN reseller_controls sc ON sc.seller_id=?
+        WHERE n.id=?
+          AND (n.max_accounts_unlimited=1 OR nu.slots<n.max_accounts)
+          AND (
+            n.max_allocated_bytes IS NULL OR
+            (nu.uncapped=0 AND nu.committed_bytes+nu.finalized_bytes+?<=n.max_allocated_bytes)
+          )
+          AND (?=1 OR sc.max_reserved_accounts IS NULL OR su.slots<sc.max_reserved_accounts)
+          AND (
+            ?=1 OR sc.max_committed_bytes IS NULL OR
+            (su.uncapped=0 AND su.committed_bytes+?<=sc.max_committed_bytes)
+          )`,
       )
       .bind(
+        now,
         nodeId,
         now,
+        actor.telegramId,
         id,
         actor.telegramId,
         input.requestKey,
@@ -94,11 +159,15 @@ export async function createAccount(
         input.kind,
         input.label.trim(),
         crypto.randomUUID(),
-        input.kind === "trial" ? 1e9 : input.quotaBytes,
+        requestedBytes,
         input.durationSeconds,
         now,
+        actor.telegramId,
         nodeId,
-        input.kind === "trial" ? 1e9 : input.quotaBytes,
+        requestedBytes,
+        isAdmin,
+        isAdmin,
+        requestedBytes,
       ),
     db
       .prepare(
@@ -106,26 +175,41 @@ export async function createAccount(
       )
       .bind(actor.telegramId, now, id),
   ]);
+
   const result = await db
     .prepare(
       "SELECT id,state FROM managed_accounts WHERE seller_id=? AND request_key=?",
     )
     .bind(actor.telegramId, input.requestKey)
     .first<{ id: string; state: string }>();
-  if (!result) {
-    const n = (await nodeCapacities(db, now, nodeId)).find(
-      (n) => n.id === nodeId,
-    );
-    throw Error(
-      n &&
-        n.reserved_accounts < n.max_accounts &&
-        n.max_allocated_bytes !== null
-        ? "NODE_ALLOCATION_FULL"
-        : "NODE_FULL",
-    );
+  if (result) return result;
+
+  // Classification is advisory only; the INSERT above is the atomic authority.
+  // Prefer a seller-specific explanation when that seller is independently capped.
+  if (actor.role !== "admin") {
+    const limits = await sellerLimits(db, actor.telegramId, now);
+    if (
+      limits.maxReservedAccounts !== null &&
+      limits.reservedAccounts >= limits.maxReservedAccounts
+    )
+      throw Error("SELLER_ACCOUNT_LIMIT");
+    if (
+      limits.maxCommittedBytes !== null &&
+      (limits.uncappedAccounts > 0 ||
+        limits.committedBytes + requestedBytes > limits.maxCommittedBytes)
+    )
+      throw Error("SELLER_ALLOCATION_FULL");
   }
-  return result;
+
+  const n = (await nodeCapacities(db, now, nodeId)).find((item) => item.id === nodeId);
+  if (!n) throw Error("NODE_FULL");
+  const slots = remainingSlots(n);
+  if (slots !== null && slots < 1) throw Error("NODE_FULL");
+  if (n.max_allocated_bytes !== null && !canAllocate(n, requestedBytes))
+    throw Error("NODE_ALLOCATION_FULL");
+  throw Error("NODE_FULL");
 }
+
 export async function ownedAccount(
   db: D1Database,
   actor: SalesActor,
@@ -141,6 +225,7 @@ export async function ownedAccount(
   if (!account) throw Error("ACCOUNT_NOT_FOUND");
   return account;
 }
+
 export async function revokeAccount(
   db: D1Database,
   actor: SalesActor,

@@ -1,16 +1,34 @@
 import { adoptionApi } from "./node-adoption";
+import { refreshAllCapacityAlerts } from "./capacity-alerts";
 import { statusResponse } from "./status-routes";
 import { nodeApi } from "./node-api";
 import { subscriptionResponse } from "./subscriptions";
 import { runnerApi } from "./runner-api";
 import enrollHtml from "../public/enroll.html";
+import appHtml from "../public/app.html";
+import appCss from "../public/app.css";
+import appAdminCss from "../public/app-admin.css";
+import appJs from "../public/app.js";
+import appAdminJs from "../public/app-admin.js";
 import { adminApi } from "./admin-api";
+import { appApi } from "./app-api";
 import { cleanupCredentials } from "./enrollment";
 import { drainInbox } from "./inbox";
 import { authenticateUpdate } from "./auth";
 import { recordUpdate } from "./telegram";
 import { deliverOutbox } from "./outbox";
 import { epoch } from "./contracts";
+
+const textResponse = (body: string, contentType: string, noStore = false) =>
+  new Response(body, {
+    headers: {
+      "Content-Type": contentType,
+      ...(noStore ? { "Cache-Control": "no-store" } : {}),
+      "Referrer-Policy": "no-referrer",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+
 export default {
   async fetch(
     request: Request,
@@ -25,15 +43,19 @@ export default {
     if (path.startsWith("/api/node/")) return nodeApi(request, env, epoch());
     if (path.startsWith("/subscription/"))
       return subscriptionResponse(env, path.slice(14), epoch());
+    if (path === "/app")
+      return textResponse(appHtml, "text/html; charset=utf-8", true);
+    if (path === "/app.css")
+      return textResponse(appCss, "text/css; charset=utf-8");
+    if (path === "/app-admin.css")
+      return textResponse(appAdminCss, "text/css; charset=utf-8");
+    if (path === "/app.js")
+      return textResponse(appJs, "text/javascript; charset=utf-8");
+    if (path === "/app-admin.js")
+      return textResponse(appAdminJs, "text/javascript; charset=utf-8");
+    if (path.startsWith("/api/app/")) return appApi(request, env, epoch());
     if (path === "/enroll")
-      return new Response(enrollHtml, {
-        headers: {
-          "Content-Type": "text/html; charset=utf-8",
-          "Cache-Control": "no-store",
-          "Referrer-Policy": "no-referrer",
-          "X-Content-Type-Options": "nosniff",
-        },
-      });
+      return textResponse(enrollHtml, "text/html; charset=utf-8", true);
     if (path.startsWith("/api/runner/") && request.method === "POST")
       return runnerApi(request, env, epoch());
     if (path.startsWith("/api/admin/")) return adminApi(request, env, epoch());
@@ -68,8 +90,10 @@ export default {
     return new Response("Not found", { status: 404 });
   },
   async scheduled(_event: ScheduledController, env: Env) {
-    await cleanupCredentials(env.SALES_DB, epoch());
-    await drainInbox(env, epoch());
-    await deliverOutbox(env, epoch());
+    const now = epoch();
+    await cleanupCredentials(env.SALES_DB, now);
+    await drainInbox(env, now);
+    await refreshAllCapacityAlerts(env, now);
+    await deliverOutbox(env, now);
   },
 };
