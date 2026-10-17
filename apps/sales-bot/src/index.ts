@@ -12,6 +12,7 @@ import appJs from "../public/app.js";
 import appAdminJs from "../public/app-admin.js";
 import { adminApi } from "./admin-api";
 import { appApi } from "./app-api";
+import { appLifecycleApi } from "./app-lifecycle-api";
 import { cleanupCredentials } from "./enrollment";
 import { drainInbox } from "./inbox";
 import { authenticateUpdate } from "./auth";
@@ -53,6 +54,10 @@ export default {
       return textResponse(appJs, "text/javascript; charset=utf-8");
     if (path === "/app-admin.js")
       return textResponse(appAdminJs, "text/javascript; charset=utf-8");
+    if (path.startsWith("/api/app/configs")) {
+      const lifecycle = await appLifecycleApi(request, env, epoch());
+      if (lifecycle) return lifecycle;
+    }
     if (path.startsWith("/api/app/")) return appApi(request, env, epoch());
     if (path === "/enroll")
       return textResponse(enrollHtml, "text/html; charset=utf-8", true);
