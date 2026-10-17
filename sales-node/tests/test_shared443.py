@@ -51,7 +51,7 @@ def test_start_owned_frontend_tests_config_writes_marker_and_restarts(tmp_path,m
         calls.append(args)
         if args[:3]==['systemctl','show','madar-sales-xray.service']:
             return subprocess.CompletedProcess(args,0,stdout='123\n',stderr='')
-        return subprocess.CompletedProcess(args,0,stdout='',stderr='')
+        return subprocess.CompletedProcess(args,0,stdout='Added 1 user(s) in total.' if 'adu' in args else '',stderr='')
     monkeypatch.setattr(subprocess,'run',run)
     original_read=pathlib.Path.read_text
     def read_text(path,*args,**kwargs):
@@ -66,6 +66,12 @@ def test_start_owned_frontend_tests_config_writes_marker_and_restarts(tmp_path,m
     assert ['/opt/madar-sales-node/xray','run','-test','-c',str(tmp_path/'xray.json')] in calls
     assert ['systemctl','restart','madar-sales-xray.service'] in calls
     assert isinstance(front,m.SharedFrontend)
+    # AccountProcess receives the original settings, not front.settings.
+    assert settings['frontendTag']==public['tag']
+    assert settings['frontendApi']=='127.0.0.1:19999'
+    attached=m.SharedFrontend(settings,'/opt/madar-sales-node/xray')
+    attached.add({'accountId':'account','uuid':'22222222-2222-4222-8222-222222222222','listenPort':20000},tmp_path)
+    assert any('adu' in args for args in calls)
 
 def test_existing_api_and_reserved_tags_are_rejected():
     m=module()

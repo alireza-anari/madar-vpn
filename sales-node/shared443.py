@@ -77,4 +77,7 @@ def start_owned_frontend(settings,binary,base):
     atomic_write(authorization,{'mode':'shared-frontend','nodeId':settings['nodeId']})
     service=runtime.get('frontendService','madar-sales-xray.service')
     subprocess.run(['systemctl','restart',service],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=15)
-    return SharedFrontend(runtime,binary)
+    frontend=SharedFrontend(runtime,binary)
+    # AccountProcess receives the same settings object: propagate derived API/tag.
+    settings.update(runtime)
+    return frontend
