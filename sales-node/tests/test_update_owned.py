@@ -29,3 +29,16 @@ def test_rejected_port_preflight_never_stops_existing_service(tmp_path,monkeypat
     with pytest.raises(ValueError,match='QUOTA_PORT_CONFLICT'):updater.main()
     assert not any('stop' in command for command in calls)
     assert json.loads((etc/'config.json').read_text())==config
+
+def test_owned_unit_sources_require_existing_markers_and_pinned_templates(tmp_path,monkeypatch):
+    import update_owned as updater,pathlib
+    unit_root=tmp_path/'systemd';unit_root.mkdir()
+    (unit_root/'madar-sales-node.service').write_text('[Service]\nExecStart=/usr/bin/python3 /opt/madar-sales-node/agent.py\n')
+    (unit_root/'madar-sales-watchdog.service').write_text('[Service]\nExecStart=/usr/bin/python3 /opt/madar-sales-node/agent.py --watchdog\n')
+    templates=pathlib.Path(__file__).parents[2]/'sales-runner'/'templates'
+    monkeypatch.setattr(updater,'fetch',lambda url:(templates/url.rsplit('/',1)[-1]).read_bytes())
+    units=updater.load_owned_units('a'*40,unit_root)
+    assert units['madar-sales-node.service']==(templates/'madar-sales-node.service').read_bytes()
+    assert units['madar-sales-watchdog.service']==(templates/'madar-sales-watchdog.service').read_bytes()
+    (unit_root/'madar-sales-watchdog.service').write_text('[Service]\nExecStart=/bin/false\n')
+    with pytest.raises(ValueError,match='UNIT_OWNERSHIP_MISMATCH'):updater.load_owned_units('a'*40,unit_root)
