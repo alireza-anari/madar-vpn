@@ -101,12 +101,15 @@ test("unknown app API paths return stable 404 without internal errors", async ()
   expect(await response.json()).toEqual({ error: "NOT_FOUND" });
 });
 
-test("worker serves the Mini App shell and static CSS/JS with no-store HTML", async () => {
+test("worker serves the Mini App shell and static CSS/JS with no-store HTML and no QR CDN", async () => {
   const html = await worker.fetch(new Request("https://example.test/app"), e);
   expect(html.status).toBe(200);
   expect(html.headers.get("Content-Type")).toContain("text/html");
   expect(html.headers.get("Cache-Control")).toBe("no-store");
-  expect(await html.text()).toContain("مدار");
+  const htmlText = await html.text();
+  expect(htmlText).toContain("مدار");
+  expect(htmlText).not.toContain("cdnjs.cloudflare.com");
+  expect(htmlText).not.toContain("qrcode.min.js");
 
   const css = await worker.fetch(new Request("https://example.test/app.css"), e);
   expect(css.status).toBe(200);
