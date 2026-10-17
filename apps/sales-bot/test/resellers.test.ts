@@ -1,6 +1,7 @@
 import allocation from "../migrations/0009-node-allocation-cap.sql?raw";
 import capacity from "../migrations/0007-node-capacity.sql?raw";
 import accounting from "../migrations/0010-capacity-accounting-resellers.sql?raw";
+import slotMode from "../migrations/0011-node-account-slot-mode.sql?raw";
 import { env } from "cloudflare:workers";
 import { beforeEach, expect, test } from "vitest";
 import { resetDb } from "./db";
@@ -26,6 +27,7 @@ beforeEach(async () => {
   await env.SALES_DB.exec(capacity);
   await env.SALES_DB.exec(allocation);
   await env.SALES_DB.exec(accounting);
+  await env.SALES_DB.exec(slotMode);
   await env.SALES_DB.prepare(
     "INSERT INTO nodes(id,name,target_ip) VALUES('sale','sale','8.8.8.8'),('trial','trial','1.1.1.1')",
   ).run();
