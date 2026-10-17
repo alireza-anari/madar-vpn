@@ -31,4 +31,5 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: 2e4e0d025c81b9134fd2d19f17535e30
-        run: pnpm exec wrangler versions upload --keep-vars --message "feat: Telegram Mini App dashboard production rollout"
+        run: >-
+          pnpm exec wrangler versions upload --keep-vars --message "feat: Telegram Mini App dashboard production rollout"
