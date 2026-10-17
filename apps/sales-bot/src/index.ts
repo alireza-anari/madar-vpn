@@ -1,4 +1,5 @@
 import { adoptionApi } from "./node-adoption";
+import { refreshAllCapacityAlerts } from "./capacity-alerts";
 import { statusResponse } from "./status-routes";
 import { nodeApi } from "./node-api";
 import { subscriptionResponse } from "./subscriptions";
@@ -68,8 +69,10 @@ export default {
     return new Response("Not found", { status: 404 });
   },
   async scheduled(_event: ScheduledController, env: Env) {
-    await cleanupCredentials(env.SALES_DB, epoch());
-    await drainInbox(env, epoch());
-    await deliverOutbox(env, epoch());
+    const now = epoch();
+    await cleanupCredentials(env.SALES_DB, now);
+    await drainInbox(env, now);
+    await refreshAllCapacityAlerts(env, now);
+    await deliverOutbox(env, now);
   },
 };
