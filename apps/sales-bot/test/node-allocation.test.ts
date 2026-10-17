@@ -175,6 +175,7 @@ test("terminal rows release seller caps but not finalized node traffic", async (
 });
 
 test("admin-issued configs bypass reseller caps but still obey node caps", async () => {
+  await env.SALES_DB.exec("INSERT INTO resellers VALUES('9',1,100)");
   await setControls("9", 1, GB);
   await createAccount(env.SALES_DB, admin, input("admin-a", 10 * GB), 100);
   await expect(
