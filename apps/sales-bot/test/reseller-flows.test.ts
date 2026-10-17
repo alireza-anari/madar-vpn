@@ -432,6 +432,6 @@ test("only admins edit volume caps and picker displays allocated GB remaining", 
   expect(
     payload.reply_markup.inline_keyboard
       .flat()
-      .some((b: any) => b.text.includes("۵۰۰ گیگ باقی‌مانده")),
+      .some((b: any) => b.text.includes("قابل فروش: ۵۰۰ GB")),
   ).toBe(true);
 });
