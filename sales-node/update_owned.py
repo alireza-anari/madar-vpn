@@ -1,6 +1,18 @@
 """Checksum-pinned owned-node upgrade. No SSH credentials, firewall or foreign services."""
 import argparse,hashlib,json,os,pathlib,re,subprocess,sys,tempfile,urllib.request
 FILES={'agent.py','policy.py','xray.py','guard.py','stats.py','quota.py','quota_runtime.py','shared443.py','update_owned.py'}
+UNIT_SOURCES={
+    'madar-sales-node.service':(
+        'sales-runner/templates/madar-sales-node.service',
+        '0116aedf3a7e39c7ba639ee8a7351977a23703250b340dddf4ab680630fd4452',
+        'ExecStart=/usr/bin/python3 /opt/madar-sales-node/agent.py',
+    ),
+    'madar-sales-watchdog.service':(
+        'sales-runner/templates/madar-sales-watchdog.service',
+        '355fa950ff33b8abdb03281d343885bc5d07b9ac0a3e6530b2797dfdfd0110d5',
+        'ExecStart=/usr/bin/python3 /opt/madar-sales-node/agent.py --watchdog',
+    ),
+}
 
 def validate_owned_update(root,etc,node_id):
     try:
@@ -16,6 +28,21 @@ def fetch(url):
         data=r.read(1048577)
         if len(data)>1048576:raise ValueError('SOURCE_TOO_LARGE')
         return data
+
+def load_owned_units(source_ref,unit_root=pathlib.Path('/etc/systemd/system')):
+    unit_root=pathlib.Path(unit_root);result={}
+    for name,(source,digest,marker) in UNIT_SOURCES.items():
+        live=unit_root/name
+        try:
+            if live.is_symlink() or not live.is_file() or marker not in live.read_text():raise ValueError()
+        except Exception:raise ValueError('UNIT_OWNERSHIP_MISMATCH') from None
+        data=fetch('https://raw.githubusercontent.com/alireza-anari/madar-vpn/'+source_ref+'/'+source)
+        if hashlib.sha256(data).hexdigest()!=digest or marker.encode() not in data:raise ValueError('UNIT_SOURCE_MISMATCH')
+        result[name]=data
+    return result
+
+def atomic_bytes(target,data,mode=0o644):
+    temp=target.with_name(target.name+'.updating');temp.write_bytes(data);temp.chmod(mode);os.replace(temp,target)
 
 def preflight_quota_ports(root,config):
     import socket
@@ -48,7 +75,8 @@ def main():
     if os.getuid()!=0:raise ValueError('ROOT_REQUIRED')
     if not re.fullmatch('[a-f0-9]{40}',args.source_ref) or not re.fullmatch('[a-f0-9]{64}',args.manifest_sha256):raise ValueError('INVALID_SOURCE')
     root=pathlib.Path('/opt/madar-sales-node');etc=pathlib.Path('/etc/madar-sales-node');config=validate_owned_update(root,etc,args.node_id)
-    unit=pathlib.Path('/etc/systemd/system/madar-sales-node.service').read_text()
+    unit_root=pathlib.Path('/etc/systemd/system')
+    unit=(unit_root/'madar-sales-node.service').read_text()
     if 'ExecStart=/usr/bin/python3 /opt/madar-sales-node/agent.py' not in unit:raise ValueError('UNIT_OWNERSHIP_MISMATCH')
     state=pathlib.Path('/var/lib/madar-sales-node');database=state/'quota.sqlite'
     if config.get('protocolVersion')==2 and not database.is_file():raise ValueError('QUOTA_STATE_MISSING')
@@ -63,9 +91,12 @@ def main():
         compile(data,name,'exec')
     # Reject foreign listeners before any service side effect. Owned v2 listeners are verified by executable and unit cgroup.
     if args.enable_quota:preflight_quota_ports(root,config)
+    units=load_owned_units(args.source_ref,unit_root)
+    # Prevent the one-second watchdog from racing the controlled stop/start window.
+    subprocess.run(['systemctl','stop','madar-sales-watchdog.timer'],check=True,timeout=20)
     subprocess.run(['systemctl','stop','madar-sales-node.service'],check=True,timeout=20)
-    for name,data in files.items():
-        target=root/name;temp=target.with_name(name+'.updating');temp.write_bytes(data);temp.chmod(0o644);os.replace(temp,target)
+    for name,data in files.items():atomic_bytes(root/name,data)
+    for name,data in units.items():atomic_bytes(unit_root/name,data)
     if args.enable_quota:
         if config.get('protocolVersion')!=2:
             sys.path.insert(0,str(root));from quota import QuotaStore
@@ -76,7 +107,10 @@ def main():
     if config.get('protocolVersion')==2:owner['quotaInitialized']=True
     temp=root/'manifest.json.updating';temp.write_text(json.dumps(owner));temp.chmod(0o600);os.replace(temp,root/'manifest.json')
     pathlib.Path('/run/madar-sales-node/quota-heartbeat.json').unlink(missing_ok=True)
+    subprocess.run(['systemctl','daemon-reload'],check=True,timeout=20)
+    subprocess.run(['systemctl','reset-failed','madar-sales-watchdog.service'],check=True,timeout=20)
     subprocess.run(['systemctl','start','madar-sales-node.service'],check=True,timeout=20)
+    subprocess.run(['systemctl','start','madar-sales-watchdog.timer'],check=True,timeout=20)
     print('OWNED_UPDATE_INSTALLED')
 if __name__=='__main__':
     try:main()
