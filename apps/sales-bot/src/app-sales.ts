@@ -79,7 +79,7 @@ export async function createAppSale(
 ): Promise<{ accountId: string; state: string }> {
   validateSale(input);
   const accountInput: AccountInput = {
-    nodeId: input.nodeId,
+    ...(input.nodeId ? { nodeId: input.nodeId } : {}),
     kind: "sale",
     label: input.label,
     quotaBytes: input.quotaBytes,
