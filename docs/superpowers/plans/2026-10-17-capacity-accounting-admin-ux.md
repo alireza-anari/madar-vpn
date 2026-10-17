@@ -2,47 +2,46 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make finite-bandwidth node inventory impossible to oversell, add admin-only 80/90/95% capacity warnings, add auditable seller limits/settlements/statistics, and replace the current reseller bot screens with a compact role-specific Telegram dashboard.
+**Goal:** Prevent finite-bandwidth nodes from being oversold, add admin-only 80/90/95% warnings, add auditable seller limits/settlements/statistics, and replace the current reseller bot screens with a compact role-specific Telegram dashboard.
 
-**Architecture:** Keep the current Worker + D1 + Telegram outbox architecture. Centralize node math in `node-capacity.ts`, add seller accounting in `seller-accounting.ts`, add idempotent threshold notifications in `capacity-alerts.ts`, and keep `reseller-menus.ts` as orchestration/presentation rather than duplicating accounting SQL. Use additive D1 schema changes, stamp every new account with the seller settlement epoch active at creation, and keep the final account insert as the authoritative atomic guard for both node and seller capacity.
+**Architecture:** Keep the Worker + D1 + Telegram outbox architecture. Make `node-capacity.ts` the single source of truth for server inventory, add `seller-accounting.ts` for seller limits/reporting/settlements, add `capacity-alerts.ts` for durable threshold state, and keep `reseller-menus.ts` focused on orchestration and presentation. Use an additive migration and stamp each new account with a seller settlement epoch so settlement boundaries are exact even under concurrency. The final account insert remains the authoritative atomic guard.
 
-**Tech Stack:** TypeScript 5.9, Cloudflare Workers, Cloudflare D1/SQLite, Hono, Telegram Bot API through the existing durable `outbox`, Vitest 4.1, Wrangler 4.148, pnpm.
+**Tech Stack:** TypeScript 5.9, Cloudflare Workers, D1/SQLite, Hono, Telegram Bot API through the durable `outbox`, Vitest 4.1, Wrangler 4.148, pnpm.
 
 **Spec:** `docs/superpowers/specs/2026-10-17-capacity-accounting-admin-ux-design.md`
 
 ## Global Constraints
 
-- Work on `impl/telegram-sales-bot`; approved design commit: `ee2150736695854188cdd616eb75ea708df8e26e`.
-- TDD is mandatory. For each task: add a failing focused test, run it and confirm the intended failure, implement the smallest correct change, rerun to green, then commit.
-- Preserve shared-443 and the node-agent protocol. This feature is Worker/D1/Telegram UI work only.
-- Never expose bot tokens, node tokens, REALITY keys, UUID-bearing VLESS URIs, AWS credentials, or other secrets in tests, logs, screenshots, commits, or field notes.
-- D1 changes are additive. Do not rebuild `managed_accounts` just to add a `failed` state. The existing elapsed pre-activation `preparing` row is the terminal failed-before-activation equivalent.
-- Existing account rows survive migration. They receive `seller_settlement_epoch=0` and keep contributing to node accounting from current quota, usage, deadline, and state.
-- `max_allocated_bytes IS NULL` means bandwidth-unlimited. Finite nodes enforce byte budget and account slots independently.
-- A live commitment is `preparing`, `active`, or `blocked`, with a still-usable service window (`valid_until=0` or `valid_until>now`), and not already exhausted by a finite quota. A live finite account reserves the full sold quota. A live uncapped legacy account makes a finite node unsellable.
-- Non-live rows charge finalized traffic only: revoked/expired/deadline-ended rows charge `used_bytes`; exhausted finite rows charge `min(used_bytes, quota_bytes)`. Never add used bytes again on top of a live account's full-quota commitment.
-- Seller limits are current-commitment limits, not lifetime punishment. Terminal rows stop consuming seller caps while remaining in settlement/all-time reports.
-- Admin-issued configs obey node limits but not reseller-specific caps.
-- Capacity-alert failures must never roll back account creation, revocation, node-cap changes, or quota-report acceptance.
-- No production D1 migration or Worker deployment occurs without explicit rollout authorization at execution time. Existing production secrets/bindings must be preserved.
+- Branch: `impl/telegram-sales-bot`; approved design commit: `ee2150736695854188cdd616eb75ea708df8e26e`.
+- TDD for every task: failing focused test -> verify intended failure -> minimum implementation -> focused green -> commit.
+- No shared-443 or node-agent protocol change.
+- Never expose bot/node tokens, REALITY keys, UUID-bearing VLESS URIs, AWS credentials, or other secrets.
+- Schema changes are additive. Do not rebuild `managed_accounts` to add a `failed` enum value; an elapsed pre-activation `preparing` row is the existing failed-before-activation equivalent.
+- Existing accounts survive migration and default to seller settlement epoch `0`.
+- `nodes.max_allocated_bytes IS NULL` means bandwidth-unlimited.
+- Live commitment: `preparing|active|blocked`, service window still usable (`valid_until=0 OR valid_until>now`), finite quota not already exhausted. Live finite rows reserve full sold quota. A live uncapped legacy row makes a finite node unsellable.
+- Non-live charge: revoked/expired/deadline-ended rows charge `used_bytes`; exhausted finite rows charge `min(used_bytes,quota_bytes)`. Do not double-count used bytes inside a live full-quota reservation.
+- Seller caps apply to current live commitments, not lifetime sales. Admin-issued configs obey node caps but not seller-specific caps.
+- Alert failures never roll back account creation, revocation, quota acceptance, or admin node-cap changes.
+- Production D1 migration/deploy requires explicit rollout authorization after exact-green CI; preserve production secrets/bindings.
 
 ## Review Focus
 
-1. **Accounting invariants:** valid blocked/live rows reserve full quota; revoked/expired retain only actual usage; stale blocked rows past deadline do not reserve forever; exhausted node charge is capped at sold quota.
-2. **Atomicity:** concurrent sellers cannot consume the same final slot/GB or bypass seller caps.
-3. **Settlement exactness:** each sale belongs to exactly one settlement epoch even if a sale and settlement happen concurrently; settlement never changes customer service.
-4. **Alert idempotency:** 80/90/95 alerts are admin-only, non-spamming, concurrency-safe, and re-arm after utilization drops.
-5. **Authorization/UX:** sellers see only their own accounting/operations; admin mutations remain admin-only and confirmation is retained for settlement/revoke actions.
+1. Node accounting invariant, especially valid blocked vs stale blocked-after-deadline.
+2. Atomic node + seller capacity under concurrent sales.
+3. Exact, idempotent settlement epochs under sale/settlement races.
+4. Alert dedupe/re-arm and admin-only delivery.
+5. Seller/admin authorization boundaries and Telegram replay safety.
 
 ---
 
-## Task 1: Add additive accounting and settlement persistence
+## Task 1: Add additive persistence for settlements, seller caps, and alert state
 
 **Files:**
 - Create: `apps/sales-bot/migrations/0010-capacity-accounting-resellers.sql`
 - Create: `apps/sales-bot/test/capacity-accounting-migration.test.ts`
 
-**Schema contract:**
+**Schema:**
 
 ```sql
 ALTER TABLE managed_accounts
@@ -98,24 +97,20 @@ CREATE INDEX reseller_settlements_seller
   ON reseller_settlements(seller_id,ended_at DESC);
 ```
 
-The epoch column is intentional: `created_at` only has second resolution, so timestamps alone cannot unambiguously assign a sale that races a manual settlement. Epoch stamping makes the boundary exact.
+The epoch is required because `created_at` only has second resolution; timestamp-only settlement boundaries can double-assign or omit a sale racing the settlement action.
 
-- [ ] **Step 1: Write the failing migration test.** Apply migrations through `0009`, insert an existing reseller and account, then import/apply `0010`. Assert that the old account remains and defaults to epoch 0; all new tables exist; nullable caps accept `NULL`; invalid zero/negative caps fail; alert levels outside 0/80/90/95 fail.
-
-Run:
+- [ ] **Step 1:** Write migration test applying through `0009`, inserting an old reseller/account, then applying `0010`. Assert old data survives with epoch 0; four new tables exist; nullable caps work; invalid zero/negative caps fail; invalid alert levels fail.
 
 ```bash
 cd apps/sales-bot
 npx vitest run test/capacity-accounting-migration.test.ts
 ```
 
-Expected before implementation: FAIL because `0010` does not exist.
+Expected before implementation: FAIL because `0010` is absent.
 
-- [ ] **Step 2: Add `0010-capacity-accounting-resellers.sql` exactly as an additive migration.** Do not edit old migrations.
-
-- [ ] **Step 3: Rerun the focused migration test.** Expected: PASS.
-
-- [ ] **Step 4: Commit.**
+- [ ] **Step 2:** Add the migration exactly as additive SQL; do not alter prior migration files.
+- [ ] **Step 3:** Rerun focused test; expected PASS.
+- [ ] **Step 4:** Commit.
 
 ```bash
 git add apps/sales-bot/migrations/0010-capacity-accounting-resellers.sql apps/sales-bot/test/capacity-accounting-migration.test.ts
@@ -124,7 +119,7 @@ git commit -m "feat: add capacity accounting persistence"
 
 ---
 
-## Task 2: Replace reservation-only node math with committed + finalized accounting
+## Task 2: Make node capacity math account for live commitments and finalized traffic
 
 **Files:**
 - Modify: `apps/sales-bot/src/node-capacity.ts`
@@ -146,45 +141,38 @@ export interface NodeCapacity {
   finalized_used_bytes: number;
   uncapped_accounts: number;
 }
-
 export const liveCommitmentPredicate: string;
 export function chargedBytes(n: NodeCapacity): number;
 export function remainingAllocation(n: NodeCapacity): number | null;
 export function utilizationPercent(n: NodeCapacity): number | null;
 export function canAllocate(n: NodeCapacity, requestedBytes: number): boolean;
 export function allocationLabel(n: NodeCapacity): string;
-export async function nodeCapacities(
-  db: D1Database,
-  now: number,
-  nodeId?: string | null,
-): Promise<NodeCapacity[]>;
+export async function nodeCapacities(db: D1Database, now: number, nodeId?: string | null): Promise<NodeCapacity[]>;
 ```
 
-`nodeCapacities` must aggregate across **all** accounts on the node with conditional sums, rather than joining only live rows.
+Math:
 
 ```text
-live finite          => committed += quota_bytes
-live uncapped        => uncapped_accounts += 1
-non-live exhausted   => finalized += min(used_bytes, quota_bytes)
-other non-live       => finalized += used_bytes
-finite sellable      => max(0, max_allocated_bytes - committed - finalized)
-unlimited sellable   => null
+live finite        -> committed += quota_bytes
+live uncapped      -> uncapped_accounts += 1
+non-live exhausted -> finalized += min(used_bytes,quota_bytes)
+other non-live     -> finalized += used_bytes
+finite sellable    -> max(0,max_allocated_bytes-committed-finalized)
+unlimited          -> remainingAllocation() = null
 ```
 
-- [ ] **Step 1: Create failing `node-capacity.test.ts`.** Cover valid blocked full reservation; blocked after deadline charging only actual usage; revoked 30GB/8GB charging 8GB; expired 30GB/8GB charging 8GB; exhausted 30GB/31GB charging 30GB; partial active charging full quota; elapsed pre-activation preparing consuming neither slot nor quota; unlimited node returning `null`; live uncapped legacy account making a finite node unsellable. Directly assert `nodeCapacities`, `remainingAllocation`, `utilizationPercent`, and `canAllocate`.
+- [ ] **Step 1:** Add failing direct helper tests for valid blocked full reservation; blocked past deadline actual-only; revoked/expired 30GB sold + 8GB used charging 8GB; exhausted 30GB + 31GB reported charging 30GB; partial active full reservation; elapsed pre-activation preparing releasing slot/quota; unlimited node; finite node with live uncapped legacy account.
 
 ```bash
 cd apps/sales-bot
 npx vitest run test/node-capacity.test.ts
 ```
 
-Expected: FAIL under the current live-reservation-only query.
+Expected: FAIL under current reservation-only query.
 
-- [ ] **Step 2: Implement centralized node accounting.** Use one live predicate consistently; deadline must override stale `blocked` for accounting. Change Persian `allocationLabel` wording to `قابل فروش` rather than implying the configured cap is untouched.
-
-- [ ] **Step 3: Rerun only `node-capacity.test.ts`.** Expected: PASS, giving this task an independent green checkpoint without touching `createAccount` yet.
-
-- [ ] **Step 4: Commit.**
+- [ ] **Step 2:** Rewrite `nodeCapacities` to aggregate all node accounts with conditional sums and one shared live predicate. Deadline must prevent a stale `blocked` row from reserving forever. Change capacity copy to `قابل فروش` rather than configured-cap wording.
+- [ ] **Step 3:** Run only `node-capacity.test.ts`; expected PASS so this task is independently green.
+- [ ] **Step 4:** Commit.
 
 ```bash
 git add apps/sales-bot/src/node-capacity.ts apps/sales-bot/test/node-capacity.test.ts
@@ -193,12 +181,12 @@ git commit -m "fix: account for finalized node traffic"
 
 ---
 
-## Task 3: Add seller statistics, exact settlement epochs, snapshots, and limits
+## Task 3: Add seller accounting, exact settlement epochs, snapshots, and limits
 
 **Files:**
 - Create: `apps/sales-bot/src/seller-accounting.ts`
 - Create: `apps/sales-bot/test/seller-accounting.test.ts`
-- Modify: `apps/sales-bot/src/resellers.ts` only if a small exported authorization/validation helper is genuinely shared.
+- Modify: `apps/sales-bot/src/resellers.ts` only if a small shared auth/validation helper is required.
 
 **Interfaces:**
 
@@ -216,7 +204,6 @@ export interface SellerStats {
   revokedCount: number;
   exhaustedCount: number;
 }
-
 export interface SellerNodeStats {
   nodeId: string;
   nodeName: string;
@@ -224,7 +211,6 @@ export interface SellerNodeStats {
   soldBytes: number;
   usedBytes: number;
 }
-
 export interface SellerLimits {
   maxReservedAccounts: number | null;
   maxCommittedBytes: number | null;
@@ -232,57 +218,29 @@ export interface SellerLimits {
   committedBytes: number;
   uncappedAccounts: number;
 }
-
-export async function sellerStats(
-  db: D1Database,
-  sellerId: string,
-  scope: "current" | "all",
-  now: number,
-): Promise<SellerStats>;
-export async function sellerNodeStats(
-  db: D1Database,
-  sellerId: string,
-  scope: "current" | "all",
-  now: number,
-): Promise<SellerNodeStats[]>;
-export async function sellerLimits(
-  db: D1Database,
-  sellerId: string,
-  now: number,
-): Promise<SellerLimits>;
-export async function setSellerLimits(
-  db: D1Database,
-  actor: SalesActor,
-  sellerId: string,
-  limits: { maxReservedAccounts: number | null; maxCommittedBytes: number | null },
-  now: number,
-): Promise<void>;
-export async function settleSeller(
-  db: D1Database,
-  actor: SalesActor,
-  sellerId: string,
-  now: number,
-): Promise<{ settlementId: string; closedEpoch: number }>;
+export async function sellerStats(db: D1Database, sellerId: string, scope: "current" | "all", now: number): Promise<SellerStats>;
+export async function sellerNodeStats(db: D1Database, sellerId: string, scope: "current" | "all", now: number): Promise<SellerNodeStats[]>;
+export async function sellerLimits(db: D1Database, sellerId: string, now: number): Promise<SellerLimits>;
+export async function setSellerLimits(db: D1Database, actor: SalesActor, sellerId: string, limits: {maxReservedAccounts:number|null; maxCommittedBytes:number|null}, now: number): Promise<void>;
+export async function settleSeller(db: D1Database, actor: SalesActor, sellerId: string, now: number): Promise<{settlementId:string; closedEpoch:number}>;
 ```
 
-Reporting rules: normalize an elapsed deadline before calling stale active/blocked rows live; `soldBytes=COALESCE(quota_bytes,0)`; `usedBytes` is actual reported traffic and is not capped for seller reporting. Current scope selects the seller's current epoch; all-time has no epoch filter.
+Rules: current stats select `seller_settlement_epoch=current_settlement_epoch`; all-time has no epoch filter. `soldBytes=COALESCE(quota_bytes,0)`. `usedBytes` is actual traffic for seller reporting. Effective state treats elapsed stale active/blocked rows as expired. `liveCount` is preparing+active; blocked is reported separately.
 
-Settlement must be transactional: ensure/lazily create `reseller_controls` using seller `created_at` as first start time; snapshot current epoch summary and per-node rows; insert one unique `(seller_id,epoch)` settlement; increment epoch once; set new start time; audit. A retry must not close the same epoch twice.
+Settlement is one D1 transactional batch: lazily ensure controls (first `settlement_started_at` from reseller `created_at`), snapshot current epoch + node breakdown, insert unique `(seller_id,epoch)`, increment epoch once, update start time, audit. Replay cannot close the same epoch twice.
 
-- [ ] **Step 1: Write failing seller-accounting tests.** Apply `0010` in fixture setup. Cover current initially equal to all-time at epoch 0; settlement snapshots epoch 0 and starts empty epoch 1; all-time unchanged; customer rows/states unchanged; a new epoch-1 account appears only in current; old snapshot stays frozen if an old account later reports more usage; node breakdown sums correctly; stale blocked past deadline reports expired; valid blocked reports blocked; limits count full live quota and ignore terminal rows; only admin can set limits/settle.
+- [ ] **Step 1:** Write failing tests with `0010`: epoch0 current equals all-time; settlement freezes epoch0 and starts empty epoch1; all-time unchanged; customer rows untouched; new epoch1 sale belongs only to current; old snapshot stays frozen if old usage later rises; node breakdown sums; valid blocked vs stale blocked-after-deadline; terminal rows release seller current limits; only admin can set limits/settle.
 
 ```bash
 cd apps/sales-bot
 npx vitest run test/seller-accounting.test.ts
 ```
 
-Expected: FAIL because the module does not exist.
+Expected: FAIL because module is absent.
 
-- [ ] **Step 2: Implement `seller-accounting.ts`.** Reuse the approved live-commitment semantics from `node-capacity.ts`; do not create a contradictory predicate. Validate optional limits as `null` or account 1..10000 / bytes 1..1e15.
-
-- [ ] **Step 3: Rerun focused test.** Expected: PASS.
-
-- [ ] **Step 4: Commit.**
+- [ ] **Step 2:** Implement using the same live-commitment semantics as node capacity. Validate caps as `null`, count 1..10000, bytes 1..1e15.
+- [ ] **Step 3:** Focused test PASS.
+- [ ] **Step 4:** Commit.
 
 ```bash
 git add apps/sales-bot/src/seller-accounting.ts apps/sales-bot/src/resellers.ts apps/sales-bot/test/seller-accounting.test.ts
@@ -291,59 +249,43 @@ git commit -m "feat: add reseller settlement accounting"
 
 ---
 
-## Task 4: Enforce node budget and seller caps atomically at account creation
+## Task 4: Enforce node and seller limits atomically in `createAccount`
 
 **Files:**
 - Modify: `apps/sales-bot/src/accounts.ts`
-- Modify: `apps/sales-bot/src/node-capacity.ts` only for a shared SQL fragment if required
+- Modify: `apps/sales-bot/src/node-capacity.ts` only for a shared SQL fragment if needed
 - Modify: `apps/sales-bot/test/node-allocation.test.ts`
-- Modify: `apps/sales-bot/test/seller-accounting.test.ts` only for creation/epoch integration cases
+- Modify: `apps/sales-bot/test/seller-accounting.test.ts` for epoch-insert integration only
 
-**Atomic insert contract:**
-
-The final `INSERT ... SELECT`/CTE in `createAccount` must evaluate, in the same statement:
+**Atomic insert requirements:**
 
 ```text
 node reserved slots + 1 <= max_accounts
-finite node charged_bytes + requested quota <= max_allocated_bytes
+finite node charged + requested quota <= max_allocated_bytes
 finite node has no live uncapped legacy account
-seller max_reserved_accounts when configured
-seller max_committed_bytes when configured
-seller with a finite byte cap has no live uncapped commitment
+seller max_reserved_accounts if configured
+seller max_committed_bytes if configured
+finite seller cap has no live uncapped seller commitment
+new row gets current seller settlement epoch (default 0)
 ```
 
-The new row stores:
+Admin bypasses seller caps, never node caps. Keep `(seller_id,request_key)` idempotency.
 
-```text
-seller_settlement_epoch = current reseller_controls.current_settlement_epoch
-                          or 0 if no controls row exists
-```
+Stable errors: `NODE_FULL`, `NODE_ALLOCATION_FULL`, `SELLER_ACCOUNT_LIMIT`, `SELLER_ALLOCATION_FULL`, plus existing node/validation errors.
 
-Admin actors bypass seller-specific caps but not node caps. Existing `(seller_id,request_key)` idempotency remains first-class.
-
-Stable errors:
-- `NODE_FULL`
-- `NODE_ALLOCATION_FULL`
-- `SELLER_ACCOUNT_LIMIT`
-- `SELLER_ALLOCATION_FULL`
-- retain existing `NODE_UNAVAILABLE`, `NODE_NOT_CONFIGURED`, and validation codes.
-
-- [ ] **Step 1: Update `node-allocation.test.ts` fixture to apply `0010`, then rewrite/add failing creation tests.** Replace the obsolete `blocked releases reservation` assertion. Prove: 100GB node + 100GB account used90/revoked leaves only 10GB sellable; 30GB/8GB revoke releases exactly22; valid blocked cannot be bypassed; expired leaves only actual usage; concurrent sellers cannot over-allocate last node bytes; concurrent requests from one seller cannot overrun count or byte cap; seller caps return distinct errors; terminal rows release seller current caps; admin bypasses seller caps but not node caps; creation stamps current settlement epoch; request replay does not double-consume capacity.
+- [ ] **Step 1:** Update `node-allocation.test.ts` fixture to apply `0010`. Replace obsolete blocked-release expectation. Add failing cases: 100GB sold/90GB used/revoked leaves only10GB; 30/8 revoke releases22; valid blocked blocks sale; expired charges actual; concurrent sellers cannot oversubscribe last node bytes; concurrent same-seller requests cannot bypass count/byte cap; seller errors distinct; terminal rows free seller caps; admin bypasses seller caps; success stamps current settlement epoch; request replay does not double-charge.
 
 ```bash
 cd apps/sales-bot
 npx vitest run test/node-allocation.test.ts test/seller-accounting.test.ts
 ```
 
-Expected: FAIL under the old reservation-only insert and absent seller enforcement.
+Expected: FAIL on old atomic SQL.
 
-- [ ] **Step 2: Replace `WITH reserved ... INSERT` in `createAccount` with node-usage + seller-usage CTEs.** The same effective-live rule used by `nodeCapacities` must be represented in the atomic SQL. Do not trust UI/precheck capacity.
-
-- [ ] **Step 3: Classify failed insert from current authoritative state.** For seller actors, return a seller-limit error when that seller is independently capped; otherwise return node slot/byte error. Admin skips seller classification.
-
-- [ ] **Step 4: Rerun focused tests.** Expected: PASS including concurrency/idempotency.
-
-- [ ] **Step 5: Commit.**
+- [ ] **Step 2:** Replace the old `WITH reserved ... INSERT` with node-usage + seller-usage CTEs inside the same authoritative insert. Do not trust UI/precomputed capacity.
+- [ ] **Step 3:** On insert failure, classify from current authoritative seller/node state. Seller-specific cap error wins when the seller is independently capped; admin skips seller classification.
+- [ ] **Step 4:** Focused tests PASS including concurrency/idempotency.
+- [ ] **Step 5:** Commit.
 
 ```bash
 git add apps/sales-bot/src/accounts.ts apps/sales-bot/src/node-capacity.ts apps/sales-bot/test/node-allocation.test.ts apps/sales-bot/test/seller-accounting.test.ts
@@ -352,54 +294,39 @@ git commit -m "feat: enforce node and reseller sale caps"
 
 ---
 
-## Task 5: Add concurrency-safe admin-only capacity threshold alerts
+## Task 5: Add deduplicated admin-only threshold alerts and reliable re-arming
 
 **Files:**
 - Create: `apps/sales-bot/src/capacity-alerts.ts`
 - Create: `apps/sales-bot/test/capacity-alerts.test.ts`
 - Modify: `apps/sales-bot/src/reseller-menus.ts`
 - Modify: `apps/sales-bot/src/node-api.ts`
+- Modify: `apps/sales-bot/src/index.ts`
 - Modify: `apps/sales-bot/test/quota-reports.test.ts`
-- Modify: `apps/sales-bot/test/reseller-flows.test.ts` only for create/revoke alert orchestration coverage
+- Modify: `apps/sales-bot/test/reseller-flows.test.ts`
 
-**Interface:**
+**Interfaces:**
 
 ```ts
-export async function refreshCapacityAlert(
-  env: Env,
-  nodeId: string,
-  now: number,
-): Promise<number | null>;
+export async function refreshCapacityAlert(env: Env, nodeId: string, now: number): Promise<number | null>;
+export async function refreshAllCapacityAlerts(env: Env, now: number): Promise<void>;
 ```
 
-Threshold target:
+Targets: `<80 =>0`, `80..<90 =>80`, `90..<95 =>90`, `>=95 =>95`, unlimited =>0/no bandwidth alert.
 
-```text
-<80% => 0
-80..<90 => 80
-90..<95 => 90
->=95 => 95
-unlimited => 0, no bandwidth alert
-```
+Use `node_capacity_alert_state.sequence` plus deterministic outbox IDs `capacity:<node>:<sequence>:<admin>`. State transition and outbox rows belong to one D1 transactional batch using compare/update + `INSERT OR IGNORE`; concurrent refreshes may attempt the same deterministic IDs but can never create duplicate messages. A direct jump 79->96 sends one 95 warning. Downward refresh only re-arms; no recovery spam.
 
-Rules: repeated same-level refresh emits nothing; lower utilization lowers/re-arms stored level without recovery spam; a future upward crossing alerts again; a direct jump 79->96 emits one 95% warning; only valid IDs from `ADMIN_TELEGRAM_IDS` receive the alert.
-
-Use `node_capacity_alert_state.sequence` and deterministic outbox IDs such as `capacity:<nodeId>:<sequence>:<adminId>`. Make the conditional state advance and corresponding `INSERT OR IGNORE ... SELECT` outbox writes a D1 transactional batch so concurrent refreshers cannot both create distinct notifications for the same crossing, and a failed batch does not persist an advanced level without its outbox rows.
-
-- [ ] **Step 1: Write failing alert tests.** Cover 80 -> duplicate -> 90 -> 95; drop below80/re-cross; jump directly to95; unlimited; multiple admins; seller ID absent; concurrent refresh calls produce one alert per admin per crossing.
+- [ ] **Step 1:** Write failing alert tests: 80 -> duplicate ->90 ->95; drop below80/re-cross; direct jump to95; unlimited; multiple admins; seller IDs absent; concurrent refresh produces one alert/admin/crossing.
 
 ```bash
 cd apps/sales-bot
 npx vitest run test/capacity-alerts.test.ts
 ```
 
-Expected: FAIL because module does not exist.
-
-- [ ] **Step 2: Implement `capacity-alerts.ts`.** Message includes node name, threshold, committed, finalized, and sellable summary only—no private config material.
-
-- [ ] **Step 3: Hook alerts at explicit orchestration boundaries, always best-effort.** In `reseller-menus.ts`, after successful `createAccount`, load the created account/node and call `refreshCapacityAlert` in `try/catch`; after successful revoke, do the same for the revoked account's node. In `node-api.ts`, after `acceptQuotaReports` succeeds, refresh that authenticated node in `try/catch`. Do not add an `Env` dependency to core `createAccount`/`revokeAccount` just for alerts.
-
-- [ ] **Step 4: Add tests that force alert failure while create/revoke/quota acceptance still succeeds.** Quota reports must remain accepted and account state transitions must remain committed.
+- [ ] **Step 2:** Implement `refreshCapacityAlert` and `refreshAllCapacityAlerts`. Alert text includes node name, threshold, committed, finalized, sellable only—no credentials/config secrets. `refreshAllCapacityAlerts` catches failures per node so one bad alert does not stop the sweep.
+- [ ] **Step 3:** Re-arm **before** and evaluate **after** every sale in `reseller-menus.ts`: best-effort `refreshCapacityAlert` on the selected node immediately before `createAccount`, then again after successful creation. This handles a silent deadline expiry that lowered utilization since the last alert refresh. After successful revoke, refresh once (downward/re-arm path).
+- [ ] **Step 4:** In `node-api.ts`, refresh the authenticated node after successful quota-report acceptance; this captures terminal transitions/re-arm. In `index.ts` scheduled handler, call `refreshAllCapacityAlerts(env,now)` once per cron before outbox delivery so time-only expiries re-arm even when no sale/report occurs.
+- [ ] **Step 5:** Add failure-injection tests proving alert errors do not make create/revoke/quota acceptance fail.
 
 ```bash
 cd apps/sales-bot
@@ -408,16 +335,16 @@ npx vitest run test/capacity-alerts.test.ts test/quota-reports.test.ts test/node
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit.**
+- [ ] **Step 6:** Commit.
 
 ```bash
-git add apps/sales-bot/src/capacity-alerts.ts apps/sales-bot/src/reseller-menus.ts apps/sales-bot/src/node-api.ts apps/sales-bot/test/capacity-alerts.test.ts apps/sales-bot/test/quota-reports.test.ts apps/sales-bot/test/reseller-flows.test.ts
+git add apps/sales-bot/src/capacity-alerts.ts apps/sales-bot/src/reseller-menus.ts apps/sales-bot/src/node-api.ts apps/sales-bot/src/index.ts apps/sales-bot/test/capacity-alerts.test.ts apps/sales-bot/test/quota-reports.test.ts apps/sales-bot/test/reseller-flows.test.ts
 git commit -m "feat: warn admins on node capacity thresholds"
 ```
 
 ---
 
-## Task 6: Redesign home screens and sale flow around real sellable capacity
+## Task 6: Redesign admin/seller home and sale flow around true sellable capacity
 
 **Files:**
 - Create: `apps/sales-bot/src/sales-format.ts`
@@ -425,7 +352,7 @@ git commit -m "feat: warn admins on node capacity thresholds"
 - Modify: `apps/sales-bot/src/reseller-menus.ts`
 - Modify: `apps/sales-bot/test/reseller-flows.test.ts`
 
-**Pure presentation helpers:**
+**Helpers:**
 
 ```ts
 export function formatBytes(bytes: number): string;
@@ -433,42 +360,23 @@ export function formatOptionalBytes(bytes: number | null): string;
 export function nodeCapacitySummary(n: NodeCapacity): string;
 ```
 
-Use decimal GB/TB because existing quotas are decimal (`1e9` bytes/GB).
+Use decimal GB/TB (`1e9` bytes/GB), matching existing quota semantics.
 
-**Admin home:** operational summary (`سرورها`, in-service configs, committed volume, finalized usage, active sellers) with rows for sale/trial, nodes/sellers, configs/reports, help.
+Admin home shows active servers, in-service configs, committed volume, finalized usage, active sellers. Buttons: sale/trial, nodes/sellers, configs/reports, help. Seller home shows only own in-service count, current-settlement count+sold bytes, all-time count+sold bytes, plus own sale/trial/config/stats/help actions.
 
-**Seller home:** only own in-service count, current-settlement config count/sold quota, all-time count/sold quota, and buttons for new config/trial, own configs/stats, help. Never expose global admin data.
+Wizard remains label -> quota -> days -> server -> confirmation. Once quota is known, selectable nodes must be healthy/recent/`quota-v2`, have slot capacity, fit seller limits, and fit requested bytes. Confirmation shows finite capacity before/after; unlimited says `نامحدود`. Final atomic insert still decides success.
 
-**Sale wizard:** keep label -> quota -> days -> server -> final confirmation. After requested quota is known, only nodes that are healthy/recent/`quota-v2`, have a slot, satisfy seller caps, and can fit requested bytes are selectable. Final confirmation shows node, quota, duration, current finite sellable capacity, and projected capacity after sale; unlimited says `نامحدود`. The atomic insert still decides success.
-
-- [ ] **Step 1: Write failing formatting tests.** Cover zero, GB/TB, finite summary, unlimited label.
-
-```bash
-cd apps/sales-bot
-npx vitest run test/sales-format.test.ts
-```
-
-- [ ] **Step 2: Update `reseller-flows.test.ts` fixture to apply `0010`, then add failing UX assertions.** Seller home excludes admin controls; admin home has operational summary; seller home has current + all-time totals; server selection displays current sellable, not configured max; valid blocked reduces displayed capacity; revoked/expired restores only unused; requested quota that does not fit is not selectable; final confirmation shows before/after; stale confirm gets safe Persian capacity message; seller count vs byte limit errors have distinct Persian messages.
-
-```bash
-cd apps/sales-bot
-npx vitest run test/reseller-flows.test.ts
-```
-
-Expected: FAIL on the current home/server/confirmation copy.
-
-- [ ] **Step 3: Implement `sales-format.ts` and refactor home/server/confirmation screens.** Use `nodeCapacities`, `sellerStats`, and `sellerLimits`; never duplicate the accounting formula in menu code. Add `rs:stats` for seller self-statistics. If `rs:reports` exists on admin home, implement a real aggregate screen; do not add empty decorative buttons.
-
-- [ ] **Step 4: Preserve current replay-safe `users.conversation` + outbox behavior and existing ownership rules.** Run:
+- [ ] **Step 1:** Failing formatting tests for zero, GB/TB, finite summary, unlimited.
+- [ ] **Step 2:** Update reseller-flow fixture to apply `0010`, then add failing UI tests: seller hides admin data; admin summary present; seller current+all-time shown; server button uses current sellable not configured max; valid blocked reduces it; revoked/expired restores only unused; non-fitting node not selectable; confirmation includes before/after; stale confirm gets safe Persian capacity error; seller count/byte errors are distinct Persian messages.
 
 ```bash
 cd apps/sales-bot
 npx vitest run test/sales-format.test.ts test/reseller-flows.test.ts
 ```
 
-Expected: PASS.
-
-- [ ] **Step 5: Commit.**
+- [ ] **Step 3:** Implement formatting and refactor menus using `nodeCapacities`, `sellerStats`, `sellerLimits`; no duplicate accounting formula in menu code. Add `rs:stats` for seller self-statistics. If admin has `rs:reports`, implement a real aggregate report; do not add empty decorative buttons.
+- [ ] **Step 4:** Preserve current conversation/outbox replay guards and ownership checks. Focused tests PASS.
+- [ ] **Step 5:** Commit.
 
 ```bash
 git add apps/sales-bot/src/sales-format.ts apps/sales-bot/src/reseller-menus.ts apps/sales-bot/test/sales-format.test.ts apps/sales-bot/test/reseller-flows.test.ts
@@ -488,59 +396,35 @@ git commit -m "feat: redesign reseller sales dashboard"
 **Node settings interfaces:**
 
 ```ts
-export async function setNodeMaxAccounts(
-  db: D1Database,
-  actor: SalesActor,
-  nodeId: string,
-  maxAccounts: number,
-  now: number,
-): Promise<void>;
-export async function setNodeMaxAllocatedBytes(
-  db: D1Database,
-  actor: SalesActor,
-  nodeId: string,
-  maxAllocatedBytes: number | null,
-  now: number,
-): Promise<void>;
+export async function setNodeMaxAccounts(db: D1Database, actor: SalesActor, nodeId: string, maxAccounts: number, now: number): Promise<void>;
+export async function setNodeMaxAllocatedBytes(db: D1Database, actor: SalesActor, nodeId: string, maxAllocatedBytes: number | null, now: number): Promise<void>;
 ```
 
-Validation: slots 1..10000; finite bytes 1..1e15; `null` means unlimited; admin only; every mutation audited.
+Validate slots 1..10000; finite bytes 1..1e15; `null` = unlimited; admin-only; audit every change.
 
 **Callbacks/screens:**
-- `rs:nodes`: compact node list, one detail button per node; move the existing four-per-node controls off this crowded list.
-- `rs:nodedetail:<nodeId>`: health, limited/unlimited mode, configured cap, committed, finalized, sellable, utilization, slots, purposes.
-- Keep existing `rs:node:sale:<nodeId>` / `rs:node:trial:<nodeId>` purpose actions.
-- `rs:capacity:<nodeId>`: slot-cap numeric conversation routed through `node-settings.ts`.
-- `rs:allocation:<nodeId>`: finite-GB numeric conversation; separate `rs:unlimit:<nodeId>` sets byte cap to `NULL`.
-- `rs:sellers`: enabled status + concise current settlement summary, seller IDs selectable.
-- `rs:seller:<telegramId>`: current settlement + all-time totals, actual traffic, effective state counts, limits, node breakdown.
-- `rs:settle:<id>` -> confirmation; `rs:settleok:<id>` -> `settleSeller`.
-- `rs:settlements:<id>`: recent closed snapshots for audit.
-- `rs:limits:<id>` -> limit summary; `rs:limitcount:<id>` and `rs:limitbytes:<id>` start numeric conversations. Input `0` clears that seller cap.
+- `rs:nodes`: compact one-button-per-node list.
+- `rs:nodedetail:<nodeId>`: health, limited/unlimited, total cap, committed, finalized, sellable, utilization, slots, purposes.
+- retain `rs:node:sale:<id>` / `rs:node:trial:<id>` purpose actions.
+- `rs:capacity:<id>`: slot edit through `node-settings.ts`.
+- `rs:allocation:<id>`: finite GB edit; `rs:unlimit:<id>` sets byte cap NULL.
+- `rs:sellers`: enabled state + current settlement summary, each seller selectable.
+- `rs:seller:<telegramId>`: current + all-time, actual traffic, effective states, limits, node breakdown.
+- `rs:settle:<id>` -> confirmation, `rs:settleok:<id>` -> settle.
+- `rs:settlements:<id>` -> recent frozen settlement snapshots.
+- `rs:limits:<id>` -> limits, with `rs:limitcount:<id>` and `rs:limitbytes:<id>` numeric conversation actions; input `0` clears that cap.
 
-- [ ] **Step 1: Write failing `node-settings.test.ts`.** Prove admin-only finite/unlimited byte cap, slot cap, validation, and audit events.
-
-```bash
-cd apps/sales-bot
-npx vitest run test/node-settings.test.ts
-```
-
-- [ ] **Step 2: Add failing admin flow tests.** Node detail shows committed/finalized/sellable; unlimited changes detail and byte eligibility; seller detail shows current/all-time/node breakdown; seller caps set/clear and are hidden from sellers; settlement requires confirmation and is replay-safe; settlement leaves customer service untouched; sellers cannot invoke node settings/limits/settlement.
+- [ ] **Step 1:** Write failing `node-settings.test.ts` for admin-only finite/unlimited byte cap, slot cap, validation, audit.
+- [ ] **Step 2:** Add failing admin UI tests: node detail metrics; unlimited mode; seller detail current/all-time/node breakdown; set/clear seller caps; settlement confirmation/idempotency; customer state untouched; seller cannot invoke admin callbacks.
 
 ```bash
 cd apps/sales-bot
 npx vitest run test/node-settings.test.ts test/reseller-flows.test.ts
 ```
 
-Expected: FAIL before implementation.
-
-- [ ] **Step 3: Implement `node-settings.ts` and move the existing direct node-cap SQL out of `reseller-menus.ts`.** Keep audit action names stable or deliberately migrate tests if renamed.
-
-- [ ] **Step 4: Implement node/seller detail, settlement-history, and limit screens using the accounting modules.** Destructive/financial boundary actions keep confirmation.
-
-- [ ] **Step 5: After a node byte-cap change, best-effort call `refreshCapacityAlert(env,nodeId,now)` from the menu orchestration layer.** Raising cap can re-arm; lowering cap can move to the appropriate warning level. Alert failure never fails the setting change.
-
-- [ ] **Step 6: Run focused tests.**
+- [ ] **Step 3:** Implement `node-settings.ts` and remove direct cap-update SQL from menus.
+- [ ] **Step 4:** Implement node/seller detail, settlement history, and limit screens using accounting modules.
+- [ ] **Step 5:** Around a node byte-cap change, best-effort refresh alerts **before and after** the mutation. This preserves crossing semantics when an old alert level was stale because capacity had fallen since the last refresh. Alert failure cannot fail the setting update.
 
 ```bash
 cd apps/sales-bot
@@ -549,7 +433,7 @@ npx vitest run test/node-settings.test.ts test/seller-accounting.test.ts test/re
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit.**
+- [ ] **Step 6:** Commit.
 
 ```bash
 git add apps/sales-bot/src/node-settings.ts apps/sales-bot/src/reseller-menus.ts apps/sales-bot/test/node-settings.test.ts apps/sales-bot/test/reseller-flows.test.ts
@@ -560,11 +444,7 @@ git commit -m "feat: add admin capacity and reseller controls"
 
 ## Task 8: Full regression, CI, production gate, and field acceptance
 
-**Files:**
-- Modify tests only for genuine regressions discovered during verification; never weaken assertions just to make CI green.
-- Do not edit production config placeholders merely to deploy.
-
-- [ ] **Step 1: Run complete app verification.**
+- [ ] **Step 1: Full app verification.**
 
 ```bash
 cd apps/sales-bot
@@ -575,7 +455,7 @@ npm run build
 
 Expected: all PASS / dry-run build succeeds.
 
-- [ ] **Step 2: Run repo-level targeted verification matching CI.**
+- [ ] **Step 2: Repo-level targeted verification matching CI.**
 
 ```bash
 pnpm --filter @madar/sales-bot types
@@ -585,58 +465,41 @@ pnpm --filter @madar/sales-bot build
 python scripts/verify_sales_quota_probe.py
 ```
 
-The branch `Telegram sales bot` workflow also runs runner/node regressions. No unrelated node/runner change is expected.
+The `Telegram sales bot` workflow also runs runner/node regressions. No unrelated node/runner change is expected.
 
-- [ ] **Step 3: Push exact implementation commit and wait for both relevant GitHub Actions workflows to be green.** Do not roll out on red or pending required checks. Record exact green SHA and run IDs.
-
-- [ ] **Step 4: Obtain explicit production rollout authorization.** State the exact planned mutations: one additive D1 migration (`0010`) plus one Worker deployment from the exact green commit; no node-agent rollout; preserve all existing secrets/bindings.
-
-- [ ] **Step 5: After authorization, inspect pending remote migrations before applying.** From `apps/sales-bot` in the approved Cloudflare production context:
+- [ ] **Step 3:** Push exact implementation SHA and wait for relevant GitHub Actions to be green; record exact SHA/run IDs. Never roll out on red/pending checks.
+- [ ] **Step 4:** Obtain explicit production authorization, stating exact mutations: additive D1 `0010`, exact-green Worker deploy, no node-agent rollout, preserve secrets/bindings.
+- [ ] **Step 5:** After authorization inspect remote pending migrations:
 
 ```bash
+cd apps/sales-bot
 npx wrangler d1 migrations list madar-sales-bot-db --remote
 ```
 
-Expected: only the intended new migration is pending. Then apply:
+Expected: only intended `0010` pending. Then:
 
 ```bash
 npx wrangler d1 migrations apply madar-sales-bot-db --remote
 ```
 
-Immediately verify the new tables/column with read-only D1 queries and verify existing node/account counts are unchanged.
+Verify new tables/column read-only and existing node/account counts unchanged.
 
-- [ ] **Step 6: Deploy the exact green Worker through the project's established production method while preserving bindings/secrets.** Do not use a path that overwrites production vars with the empty placeholders in `wrangler.jsonc`. Record Worker version/deployment ID.
-
-- [ ] **Step 7: Field-accept the accounting on a dedicated/low-impact finite test node or test account.** Never induce a global frontend failure on a production node that carries real customers merely to create `blocked` state.
-
-Validate, without exposing customer secrets:
-1. Admin server detail shows configured budget, committed, finalized, sellable, slots, utilization.
-2. Create a finite test sale; sellable drops by sold quota.
-3. Generate normal measured usage; while account remains live, partial use does not release capacity.
-4. Revoke after measured use; only unused quota returns (e.g. 30GB sold/8GB used => 8GB remains charged, 22GB returns).
-5. Expire a dedicated test account and verify the same release-only-unused invariant.
-6. Validate blocked semantics on a dedicated test setup that does not disrupt unrelated customers: valid blocked holds full quota; once its deadline is effectively elapsed, only actual usage remains charged.
-7. Exercise 80/90/95 on a safe low-cap test node/data set; only admins receive one alert per crossing; repeated reports do not spam; utilization drop/re-cross re-alerts.
-8. Seller detail shows current + all-time; temporarily set seller count/byte cap and prove distinct refusal; clear it.
-9. Close a seller settlement; configs continue working, current resets to new epoch, all-time remains unchanged, closed snapshot is visible.
-10. On a non-production/test node, switch byte mode to unlimited and verify `نامحدود`/eligibility, then restore intended setting if needed.
-
-- [ ] **Step 8: Final read-only acceptance checks.** Confirm no duplicate `(seller_id,epoch)` settlement; alert levels only 0/80/90/95; no seller chat received admin-alert outbox IDs; no negative charged math is exposed as positive sellable capacity; production nodes remain healthy/recent with shared-443 capability; no public-port or node-protocol change occurred.
-
-- [ ] **Step 9: Record evidence only after it exists.** Include green commit, CI run IDs, migration result, Worker deployment/version ID, and non-secret field observations. Do not claim completion with any unverified acceptance item.
+- [ ] **Step 6:** Deploy exact-green Worker through the established production method that preserves current bindings/secrets. Do not deploy through a path that writes empty `wrangler.jsonc` placeholders over production vars. Record Worker version/deployment ID.
+- [ ] **Step 7: Field acceptance on a dedicated/low-impact finite test node/account.** Never induce a global frontend failure on a node carrying real customers merely to manufacture blocked state. Validate: server detail numbers; sale reduces sellable by full sold quota; partial usage does not release while live; 30GB/8GB revoke leaves8 charged/returns22; expiry same; safe blocked setup holds full until deadline then actual-only; 80/90/95 admin-only non-spam + re-arm; seller detail/current/all-time; temporary seller caps and distinct refusal; settlement starts a new current epoch without touching configs; non-production/test node unlimited mode.
+- [ ] **Step 8:** Final read-only checks: unique `(seller_id,epoch)` settlements; alert levels only 0/80/90/95; no seller chat has capacity-alert outbox IDs; no negative accounting exposed as positive sellable; production nodes remain healthy/recent/shared-443; no port/protocol change.
+- [ ] **Step 9:** Record evidence only after observed: green SHA, CI run IDs, migration result, Worker deployment/version, non-secret field results. Do not claim completion with an unverified item.
 
 ---
 
 ## Final Definition of Done
 
-- Finite node sellable traffic equals configured budget minus live full-quota commitments minus terminal finalized traffic.
-- Valid blocked rows cannot hide overselling; stale blocked rows past deadline do not reserve forever.
-- Revoked/expired configs release only their unused sold quota.
-- Slot and byte limits are independently and atomically enforced.
+- Finite sellable bytes = configured budget - live full-quota commitments - terminal finalized traffic.
+- Valid blocked rows reserve fully; stale blocked rows past deadline do not reserve forever.
+- Revoked/expired rows release only unused quota.
+- Node slot/byte limits and seller current limits are atomically enforced under concurrency.
 - Unlimited nodes skip byte eligibility while preserving health/slot checks.
-- Seller current caps are independently and atomically enforced; admin is not accidentally seller-capped.
-- Current-settlement and all-time seller reports are exact; settlement is idempotent and never affects customer service.
-- Admin receives deduplicated 80/90/95 warnings; sellers never receive them.
-- Telegram admin/seller screens match the approved compact hierarchy and display true current sellable capacity.
+- Current and all-time seller reports are correct; settlement is exact/idempotent and never affects customer service.
+- Admin-only 80/90/95 warnings are deduplicated and reliably re-arm.
+- Telegram admin/seller screens show the approved compact hierarchy and true current sellable capacity.
 - Existing quota cutoff, expiry, revoke, delivery, shared-443, runner, and enrollment regressions stay green.
-- The additive production migration and exact-green Worker rollout pass field acceptance without exposing or rotating secrets.
+- Additive production migration + exact-green Worker deployment pass field acceptance without exposing or rotating secrets.
