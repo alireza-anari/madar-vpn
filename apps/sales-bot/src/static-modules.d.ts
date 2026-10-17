@@ -3,7 +3,7 @@ declare module "*.css" {
   export default value;
 }
 
-declare module "public/*.js" {
+declare module "*.js" {
   const value: string;
   export default value;
 }
