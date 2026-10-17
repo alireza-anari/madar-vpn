@@ -2,12 +2,27 @@ import { createHmac } from "node:crypto";
 import { equalSecret, resolveActor } from "./auth";
 import { admin, type Actor } from "./contracts";
 import { resolveSalesActor, type SalesActor } from "./resellers";
+import {
+  upsertTelegramProfile,
+  type VerifiedTelegramUser,
+} from "./telegram-profiles";
 
-export function verifyMiniAppTelegramId(
+function boundedProfileString(
+  user: Record<string, unknown>,
+  key: string,
+  max: number,
+): string | null {
+  const value = user[key];
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed.slice(0, max) : null;
+}
+
+export function verifyMiniAppTelegramUser(
   initData: string,
   env: Pick<Env, "BOT_TOKEN">,
   now: number,
-): string {
+): VerifiedTelegramUser {
   if (!env.BOT_TOKEN || initData.length > 8192)
     throw new Error("INVALID_SIGNATURE");
   const p = new URLSearchParams(initData);
@@ -28,21 +43,31 @@ export function verifyMiniAppTelegramId(
   const date = Number(p.get("auth_date"));
   if (!Number.isSafeInteger(date) || date > now + 30 || now - date > 300)
     throw new Error("AUTH_EXPIRED");
-  let user: unknown;
+  let rawUser: unknown;
   try {
-    user = JSON.parse(p.get("user") || "null");
+    rawUser = JSON.parse(p.get("user") || "null");
   } catch {
     throw new Error("INVALID_SIGNATURE");
   }
-  if (
-    !user ||
-    typeof user !== "object" ||
-    !("id" in user) ||
-    !Number.isSafeInteger(user.id) ||
-    Number(user.id) <= 0
-  )
+  if (!rawUser || typeof rawUser !== "object")
     throw new Error("INVALID_SIGNATURE");
-  return String(user.id);
+  const user = rawUser as Record<string, unknown>;
+  if (!Number.isSafeInteger(user.id) || Number(user.id) <= 0)
+    throw new Error("INVALID_SIGNATURE");
+  return {
+    telegramId: String(user.id),
+    username: boundedProfileString(user, "username", 64),
+    firstName: boundedProfileString(user, "first_name", 128),
+    lastName: boundedProfileString(user, "last_name", 128),
+  };
+}
+
+export function verifyMiniAppTelegramId(
+  initData: string,
+  env: Pick<Env, "BOT_TOKEN">,
+  now: number,
+): string {
+  return verifyMiniAppTelegramUser(initData, env, now).telegramId;
 }
 
 export async function authenticateMiniApp(
@@ -50,13 +75,14 @@ export async function authenticateMiniApp(
   env: Env,
   now: number,
 ): Promise<SalesActor> {
-  const telegramId = verifyMiniAppTelegramId(initData, env, now);
-  const actor = await resolveSalesActor(env.SALES_DB, telegramId, env);
+  const profile = verifyMiniAppTelegramUser(initData, env, now);
+  await upsertTelegramProfile(env.SALES_DB, profile, now);
+  const actor = await resolveSalesActor(env.SALES_DB, profile.telegramId, env);
   if (actor.role === "ordinary") {
     const reseller = await env.SALES_DB.prepare(
       "SELECT enabled FROM resellers WHERE telegram_id=?",
     )
-      .bind(telegramId)
+      .bind(profile.telegramId)
       .first<{ enabled: number }>();
     if (reseller?.enabled === 0) throw Error("SELLER_DISABLED");
   }
