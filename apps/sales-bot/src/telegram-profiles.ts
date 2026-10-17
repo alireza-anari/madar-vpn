@@ -24,10 +24,32 @@ export async function upsertTelegramProfile(
       )
       .run();
   } catch (error) {
-    // Keep rolling deployments functional if Worker code reaches an old schema
-    // before the additive profile migration has propagated.
     if (error instanceof Error && /no such table:\s*telegram_profiles/i.test(error.message))
       return;
+    throw error;
+  }
+}
+
+export async function loadTelegramProfile(
+  db: D1Database,
+  telegramId: string,
+): Promise<VerifiedTelegramUser> {
+  try {
+    const row = await db
+      .prepare(
+        "SELECT username,first_name,last_name FROM telegram_profiles WHERE telegram_id=?",
+      )
+      .bind(telegramId)
+      .first<{ username: string | null; first_name: string | null; last_name: string | null }>();
+    return {
+      telegramId,
+      username: row?.username || null,
+      firstName: row?.first_name || null,
+      lastName: row?.last_name || null,
+    };
+  } catch (error) {
+    if (error instanceof Error && /no such table:\s*telegram_profiles/i.test(error.message))
+      return { telegramId, username: null, firstName: null, lastName: null };
     throw error;
   }
 }
