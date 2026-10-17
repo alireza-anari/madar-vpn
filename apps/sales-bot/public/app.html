@@ -13,11 +13,13 @@
 <body>
   <div id="app-shell" class="app-shell">
     <header class="topbar">
-      <div class="brand-lockup" aria-label="Madar">
+      <div class="brand-lockup" aria-label="مدار">
         <span class="brand-mark" aria-hidden="true">M</span>
-        <span><strong>مدار</strong><small>MADAR CONTROL</small></span>
+        <span><strong>مدار</strong><small>پنل مدیریت</small></span>
       </div>
-      <button class="icon-button" type="button" data-action="refresh" aria-label="به‌روزرسانی">↻</button>
+      <button class="icon-button refresh-button" type="button" data-action="refresh" aria-label="به‌روزرسانی">
+        <svg class="app-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5"/><path d="M4 17v-5h5"/><path d="M18 9a7 7 0 0 0-12-2L4 10M6 15a7 7 0 0 0 12 2l2-3"/></svg>
+      </button>
     </header>
     <main id="app-content" class="app-content" aria-live="polite" aria-busy="true">
       <section class="card state-card loading-card">

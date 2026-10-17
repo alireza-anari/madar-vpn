@@ -1,6 +1,7 @@
 import { hash } from "./crypto";
 import type { ManagedAccount } from "./accounts";
 import type { QuotaPolicy } from "./quota-policies";
+import { usageUrl as createUsageUrl } from "./usage-links";
 
 export interface AccountDeliveryArtifact {
   accountId: string;
@@ -12,6 +13,7 @@ export interface AccountDeliveryArtifact {
   validUntil: number;
   serverName: string;
   config: string;
+  usageUrl: string;
 }
 
 export async function buildAccountDeliveryArtifact(
@@ -69,6 +71,13 @@ export async function buildAccountDeliveryArtifact(
   const publicPort = node.agent_capabilities.split(",").includes("shared-443")
     ? node.vpn_port
     : a.listen_port;
+  let usageUrl = "";
+  try {
+    usageUrl = createUsageUrl(env, a.id);
+  } catch {
+    // During rolling deployment the new secret may not be present yet. The
+    // delivery queue retains the legacy random-token path until it is.
+  }
   return {
     accountId: a.id,
     sellerId: a.seller_id,
@@ -79,6 +88,7 @@ export async function buildAccountDeliveryArtifact(
     validUntil: a.valid_until,
     serverName: node.name,
     config: `vless://${a.uuid}@${host}:${publicPort}?${q}#Madar-${a.id.slice(0, 6)}`,
+    usageUrl,
   };
 }
 
@@ -93,14 +103,20 @@ export async function queueAccountDelivery(
   const db = env.SALES_DB;
   const artifact = await buildAccountDeliveryArtifact(env, accountId, now);
   if (!artifact) return;
-  const token = Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) =>
-    b.toString(16).padStart(2, "0"),
-  ).join("");
+  let token: string;
+  let url: string;
+  if (artifact.usageUrl) {
+    url = artifact.usageUrl;
+    token = new URL(url).pathname.split("/").pop() || "";
+  } else {
+    token = Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) =>
+      b.toString(16).padStart(2, "0"),
+    ).join("");
+    url = `${env.PUBLIC_BASE_URL}/usage/${token}`;
+  }
   const digest = hash(token);
-  const url = `${env.PUBLIC_BASE_URL}/usage/${token}`;
   const text = `🟢 اشتراک مدار · ${escape(artifact.label)}\n${artifact.kind === "trial" ? "🎁 تست ۳۰ دقیقه‌ای · حجم: ۱ گیگابایت" : `📦 حجم: ${(Number(artifact.quotaBytes) / 1e9).toLocaleString("fa-IR")} گیگابایت · مدت: ${(artifact.durationSeconds / 86400).toLocaleString("fa-IR")} روز`}\n⏳ انقضا: ${new Date(artifact.validUntil * 1000).toLocaleString("fa-IR", { timeZone: "Asia/Tehran" })} (تهران)\n\n<pre>${escape(artifact.config)}</pre>\n\nکانفیگ را کپی و در برنامهٔ اتصال وارد کنید.\nبرای دیدن مصرف و حجم باقی‌مانده، دکمهٔ «مصرف و اعتبار» را بزنید.\n🔒 این پیام مخصوص شماست؛ آن را خصوصی نگه دارید.`;
   const rows: Record<string, unknown>[][] = [];
-  // Telegram accepts at most 256 characters in copy_text. Never truncate a URI.
   if (artifact.config.length <= 256)
     rows.push([{ text: "📋 کپی کانفیگ", copy_text: { text: artifact.config } }]);
   rows.push([{ text: "📊 مصرف و اعتبار", url }]);
@@ -110,7 +126,6 @@ export async function queueAccountDelivery(
     link_preview_options: { is_disabled: true },
     reply_markup: { inline_keyboard: rows },
   });
-  // Capability and its only recoverable raw copy are committed in one atomic D1 batch.
   await db.batch([
     db
       .prepare(

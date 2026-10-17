@@ -7,11 +7,13 @@ import { runnerApi } from "./runner-api";
 import enrollHtml from "../public/enroll.html";
 import appHtml from "../public/app.html";
 import appCss from "../public/app.css";
+import appResultCss from "../public/app-result.css";
 import appAdminCss from "../public/app-admin.css";
 import appJs from "../public/app.js";
 import appAdminJs from "../public/app-admin.js";
 import { adminApi } from "./admin-api";
 import { appApi } from "./app-api";
+import { appLifecycleApi } from "./app-lifecycle-api";
 import { cleanupCredentials } from "./enrollment";
 import { drainInbox } from "./inbox";
 import { authenticateUpdate } from "./auth";
@@ -46,13 +48,17 @@ export default {
     if (path === "/app")
       return textResponse(appHtml, "text/html; charset=utf-8", true);
     if (path === "/app.css")
-      return textResponse(appCss, "text/css; charset=utf-8");
+      return textResponse(appCss + "\n" + appResultCss, "text/css; charset=utf-8");
     if (path === "/app-admin.css")
       return textResponse(appAdminCss, "text/css; charset=utf-8");
     if (path === "/app.js")
       return textResponse(appJs, "text/javascript; charset=utf-8");
     if (path === "/app-admin.js")
       return textResponse(appAdminJs, "text/javascript; charset=utf-8");
+    if (path.startsWith("/api/app/configs")) {
+      const lifecycle = await appLifecycleApi(request, env, epoch());
+      if (lifecycle) return lifecycle;
+    }
     if (path.startsWith("/api/app/")) return appApi(request, env, epoch());
     if (path === "/enroll")
       return textResponse(enrollHtml, "text/html; charset=utf-8", true);

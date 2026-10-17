@@ -11,6 +11,49 @@ import {
   sellerStats,
 } from "./seller-accounting";
 import { requireSalesAdmin, type SalesActor } from "./resellers";
+import { loadTelegramProfile, profileDisplayName } from "./telegram-profiles";
+
+type NodeHealthReason =
+  | "OK"
+  | "STALE_HEARTBEAT"
+  | "REVISION_NOT_ACKED"
+  | "MISSING_QUOTA_CAPABILITY"
+  | "AGENT_REPORTED_UNHEALTHY";
+
+function nodeHealth(
+  technical: {
+    revision: number;
+    acked_revision: number;
+    last_seen: number;
+    healthy: number;
+    agent_capabilities: string;
+  },
+  now: number,
+): {
+  healthy: boolean;
+  healthReason: NodeHealthReason;
+  lastSeenAgeSeconds: number;
+  agentCapabilities: string[];
+} {
+  const lastSeenAgeSeconds = Math.max(0, now - technical.last_seen);
+  const agentCapabilities = technical.agent_capabilities
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  let healthReason: NodeHealthReason = "OK";
+  if (lastSeenAgeSeconds >= 90) healthReason = "STALE_HEARTBEAT";
+  else if (technical.revision !== technical.acked_revision)
+    healthReason = "REVISION_NOT_ACKED";
+  else if (!agentCapabilities.includes("quota-v2"))
+    healthReason = "MISSING_QUOTA_CAPABILITY";
+  else if (technical.healthy !== 1) healthReason = "AGENT_REPORTED_UNHEALTHY";
+  return {
+    healthy: healthReason === "OK",
+    healthReason,
+    lastSeenAgeSeconds,
+    agentCapabilities,
+  };
+}
 
 export async function loadAdminNodeDetail(
   db: D1Database,
@@ -52,6 +95,7 @@ export async function loadAdminNodeDetail(
     .bind(nodeId)
     .all<{ purpose: string }>();
   const slots = remainingSlots(capacity);
+  const health = nodeHealth(technical, now);
   return {
     id: capacity.id,
     displayName: capacity.name,
@@ -61,14 +105,10 @@ export async function loadAdminNodeDetail(
     revision: technical.revision,
     ackedRevision: technical.acked_revision,
     lastSeen: technical.last_seen,
-    healthy:
-      technical.healthy === 1 &&
-      technical.last_seen > now - 90 &&
-      technical.agent_capabilities.split(",").includes("quota-v2"),
-    agentCapabilities: technical.agent_capabilities
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean),
+    lastSeenAgeSeconds: health.lastSeenAgeSeconds,
+    healthy: health.healthy,
+    healthReason: health.healthReason,
+    agentCapabilities: health.agentCapabilities,
     publicKey: technical.public_key,
     shortId: technical.short_id,
     sni: technical.sni,
@@ -98,15 +138,18 @@ export async function loadAdminSellerDetail(
     .bind(sellerId)
     .first<{ enabled: number; created_at: number }>();
   if (!seller) throw Error("INVALID_SELLER");
-  const [current, all, limits, currentNodes, allNodes] = await Promise.all([
+  const [current, all, limits, currentNodes, allNodes, profile] = await Promise.all([
     sellerStats(db, sellerId, "current", now),
     sellerStats(db, sellerId, "all", now),
     sellerLimits(db, sellerId, now),
     sellerNodeStats(db, sellerId, "current", now),
     sellerNodeStats(db, sellerId, "all", now),
+    loadTelegramProfile(db, sellerId),
   ]);
   return {
     sellerId,
+    username: profile.username,
+    displayName: profileDisplayName(profile),
     enabled: seller.enabled === 1,
     createdAt: seller.created_at,
     current,
@@ -130,13 +173,16 @@ export async function listAdminSellerCards(
     .all<{ telegram_id: string; enabled: number; created_at: number }>();
   return Promise.all(
     sellers.results.map(async (seller) => {
-      const [current, all, limits] = await Promise.all([
+      const [current, all, limits, profile] = await Promise.all([
         sellerStats(db, seller.telegram_id, "current", now),
         sellerStats(db, seller.telegram_id, "all", now),
         sellerLimits(db, seller.telegram_id, now),
+        loadTelegramProfile(db, seller.telegram_id),
       ]);
       return {
         sellerId: seller.telegram_id,
+        username: profile.username,
+        displayName: profileDisplayName(profile),
         enabled: seller.enabled === 1,
         createdAt: seller.created_at,
         current,

@@ -4,6 +4,7 @@ const adminClient = String.raw`(() => {
   const content = document.getElementById("app-content");
   const shell = document.getElementById("app-shell");
   const nav = document.getElementById("app-nav");
+  const icon = (name) => app.icon?.(name) || "";
   const adminState = {
     node: null,
     seller: null,
@@ -43,7 +44,7 @@ const adminClient = String.raw`(() => {
   }
   function adminHead(kicker, title, subtitle, backView) {
     return '<div class="admin-page-head">' +
-      (backView ? '<button class="icon-button" type="button" data-admin-back="' + esc(backView) + '" aria-label="بازگشت">›</button>' : "") +
+      (backView ? '<button class="icon-button" type="button" data-admin-back="' + esc(backView) + '" aria-label="بازگشت">' + icon("back") + '</button>' : "") +
       '<div><div class="eyebrow">' + esc(kicker) + '</div><h1>' + esc(title) + '</h1><p>' + esc(subtitle) + '</p></div></div>';
   }
   function statCard(label, value, note) {
@@ -72,8 +73,8 @@ const adminClient = String.raw`(() => {
         statCard("استفاده", node.utilizationPercent === null ? "—" : count(node.utilizationPercent) + "٪") +
         '</div></button>';
     }).join("");
-    content.innerHTML = adminHead("ADMIN · SERVERS", "سرورها", "مدیریت ظرفیت، سقف‌ها و افزودن VPS", "home") +
-      '<button class="primary-action admin-add-vps" type="button" data-admin-action="begin-enrollment"><div><strong>افزودن VPS جدید</strong><br><span>بررسی SSH و نصب خودکار امن</span></div><b>＋</b></button>' +
+    content.innerHTML = adminHead("مدیریت سرورها", "سرورها", "مدیریت ظرفیت، سقف‌ها و افزودن VPS", "home") +
+      '<button class="primary-action admin-add-vps" type="button" data-admin-action="begin-enrollment"><div><strong>افزودن VPS جدید</strong><br><span>بررسی SSH و نصب خودکار امن</span></div><b>' + icon("servers") + '</b></button>' +
       '<div class="admin-entity-grid">' + (cards || '<div class="card empty-inline">سروری ثبت نشده است.</div>') + '</div>';
   }
 
@@ -82,11 +83,11 @@ const adminClient = String.raw`(() => {
     const bandwidthMode = detail.maxAllocatedBytes === null ? "نامحدود" : bytes(detail.maxAllocatedBytes);
     const slotsMode = detail.accountSlotsUnlimited || detail.maxAccounts === null ? "نامحدود" : count(detail.maxAccounts);
     content.innerHTML = '<section class="admin-detail">' +
-      adminHead("SERVER DETAIL", detail.displayName || detail.id, "اطلاعات عملیاتی و سقف‌های فروش", "servers") +
+      adminHead("جزئیات سرور", detail.displayName || detail.id, "اطلاعات عملیاتی و سقف‌های فروش", "servers") +
       '<div class="card technical-card"><div class="technical-row"><span>IP</span><b dir="ltr">' + esc(detail.targetIp) + '</b></div><div class="technical-row"><span>VPN Port</span><b dir="ltr">' + esc(detail.vpnPort) + '</b></div><div class="technical-row"><span>Revision / ACK</span><b dir="ltr">' + esc(detail.revision) + ' / ' + esc(detail.ackedRevision) + '</b></div><div class="technical-row"><span>SNI</span><b dir="ltr">' + esc(detail.sni || "—") + '</b></div><div class="technical-row"><span>قابلیت Agent</span><b dir="ltr">' + esc((detail.agentCapabilities || []).join(", ") || "—") + '</b></div></div>' +
       '<div class="admin-card-grid detail-stats">' +
       statCard("سقف حجم", bandwidthMode) + statCard("رزرو فعال", bytes(detail.committedBytes || 0)) + statCard("مصرف واقعی", bytes(detail.finalizedUsedBytes || 0)) + statCard("قابل فروش", bytes(detail.sellableBytes)) +
-      statCard("سقف کانفیگ", slotsMode) + statCard("اشغال", count(detail.reservedAccounts || 0)) + statCard("باقی‌مانده", detail.remainingSlots === null ? "نامحدود" : count(detail.remainingSlots)) + statCard("Alert", count(detail.alertLevel || 0) + "٪") + '</div>' +
+      statCard("سقف کانفیگ", slotsMode) + statCard("اشغال", count(detail.reservedAccounts || 0)) + statCard("باقی‌مانده", detail.remainingSlots === null ? "نامحدود" : count(detail.remainingSlots)) + statCard("هشدار", count(detail.alertLevel || 0) + "٪") + '</div>' +
       '<section class="card admin-control-card"><h2>سقف حجم سرور</h2><p>عدد گیگابایت یا حالت نامحدود را انتخاب کنید.</p><div class="inline-form"><input id="admin-node-bandwidth" class="field-input" inputmode="numeric" value="' + (detail.maxAllocatedBytes === null ? "" : esc(detail.maxAllocatedBytes / 1e9)) + '" placeholder="1000"/><button class="mini-button" data-admin-action="save-bandwidth">ذخیره سقف حجم</button><button class="mini-button" data-admin-action="unlimited-bandwidth">نامحدود</button></div></section>' +
       '<section class="card admin-control-card"><h2>سقف کانفیگ همزمان</h2><p>حالت محدود یا نامحدود فقط روی تعداد اسلات اثر دارد.</p><div class="inline-form"><input id="admin-node-slots" class="field-input" inputmode="numeric" value="' + (detail.maxAccounts === null ? "" : esc(detail.maxAccounts)) + '" placeholder="20"/><button class="mini-button" data-admin-action="save-slots">ذخیره سقف کانفیگ</button><button class="mini-button" data-admin-action="unlimited-slots">نامحدود</button></div></section>' +
       '<section class="card admin-control-card"><h2>کانفیگ‌های مرتبط</h2>' + relatedConfigs(configs?.items || [], detail.id) + '</section></section>';
@@ -125,9 +126,9 @@ const adminClient = String.raw`(() => {
   async function renderAdminSellers() {
     const sellers = await app.api("/api/app/admin/sellers");
     const cards = (sellers || []).map((seller) =>
-      '<button type="button" class="card admin-entity-card" data-admin-seller-id="' + esc(seller.sellerId) + '"><div class="admin-entity-top"><div><strong dir="ltr">' + esc(seller.sellerId) + '</strong><span>فروش دوره جاری ' + esc(bytes(seller.current?.soldBytes || 0)) + '</span></div>' + statusPill(seller.enabled !== false, "فعال", "غیرفعال") + '</div><div class="admin-card-grid">' + statCard("کانفیگ جاری", count(seller.current?.configCount || 0)) + statCard("فروش جاری", bytes(seller.current?.soldBytes || 0)) + statCard("مصرف واقعی", bytes(seller.all?.usedBytes || 0)) + statCard("کل فروش", bytes(seller.all?.soldBytes || 0)) + '</div></button>',
+      '<button type="button" class="card admin-entity-card" data-admin-seller-id="' + esc(seller.sellerId) + '"><div class="admin-entity-top"><div><strong>' + esc(seller.displayName || seller.sellerId) + '</strong><span>شناسه <b dir="ltr">' + esc(seller.sellerId) + '</b> · فروش دوره جاری ' + esc(bytes(seller.current?.soldBytes || 0)) + '</span></div>' + statusPill(seller.enabled !== false, "فعال", "غیرفعال") + '</div><div class="admin-card-grid">' + statCard("کانفیگ جاری", count(seller.current?.configCount || 0)) + statCard("فروش جاری", bytes(seller.current?.soldBytes || 0)) + statCard("مصرف واقعی", bytes(seller.all?.usedBytes || 0)) + statCard("کل فروش", bytes(seller.all?.soldBytes || 0)) + '</div></button>',
     ).join("");
-    content.innerHTML = adminHead("ADMIN · SELLERS", "فروشندگان", "محدودیت، دسترسی و تسویه حساب", "home") + '<div class="admin-entity-grid">' + (cards || '<div class="card empty-inline">فروشنده‌ای ثبت نشده است.</div>') + '</div>';
+    content.innerHTML = adminHead("مدیریت فروشندگان", "فروشندگان", "محدودیت، دسترسی و تسویه حساب", "home") + '<div class="admin-entity-grid">' + (cards || '<div class="card empty-inline">فروشنده‌ای ثبت نشده است.</div>') + '</div>';
   }
 
   function settlementCards(rows) {
@@ -138,7 +139,8 @@ const adminClient = String.raw`(() => {
     adminState.seller = detail;
     adminState.settlements = settlements || [];
     const l = detail.limits || {};
-    content.innerHTML = '<section class="admin-detail">' + adminHead("SELLER DETAIL", "فروشنده " + detail.sellerId, "آمار دوره جاری، سابقه و کنترل دسترسی", "sellers") +
+    const sellerName = detail.displayName || detail.sellerId;
+    content.innerHTML = '<section class="admin-detail">' + adminHead("جزئیات فروشنده", sellerName, "شناسه " + detail.sellerId + " · آمار دوره جاری، سابقه و کنترل دسترسی", "sellers") +
       '<div class="seller-period-grid"><section class="card"><div class="eyebrow">دوره جاری</div><div class="admin-card-grid">' + statCard("کانفیگ", count(detail.current?.configCount || 0)) + statCard("فروش", bytes(detail.current?.soldBytes || 0)) + statCard("مصرف واقعی", bytes(detail.current?.usedBytes || 0)) + statCard("فعال", count(detail.current?.liveCount || 0)) + '</div></section><section class="card"><div class="eyebrow">کل سابقه</div><div class="admin-card-grid">' + statCard("کانفیگ", count(detail.all?.configCount || 0)) + statCard("فروش", bytes(detail.all?.soldBytes || 0)) + statCard("مصرف واقعی", bytes(detail.all?.usedBytes || 0)) + statCard("پایان‌یافته", count((detail.all?.expiredCount || 0) + (detail.all?.revokedCount || 0) + (detail.all?.exhaustedCount || 0))) + '</div></section></div>' +
       '<section class="card admin-control-card"><h2>محدودیت فروشنده</h2><div class="inline-form"><label>سقف کانفیگ<input id="admin-seller-limit-count" class="field-input" inputmode="numeric" value="' + (l.maxReservedAccounts === null ? "" : esc(l.maxReservedAccounts)) + '" placeholder="نامحدود"/></label><label>سقف حجم (GB)<input id="admin-seller-limit-gb" class="field-input" inputmode="numeric" value="' + (l.maxCommittedBytes === null ? "" : esc(l.maxCommittedBytes / 1e9)) + '" placeholder="نامحدود"/></label><button class="action-button" type="button" data-admin-action="save-seller-limits">ذخیره محدودیت</button></div><div class="control-note">اکنون ' + count(l.reservedAccounts || 0) + ' کانفیگ و ' + esc(bytes(l.committedBytes || 0)) + ' رزرو فعال دارد.</div></section>' +
       '<section class="card admin-control-card"><div class="control-title-row"><div><h2>دسترسی فروش</h2><p>' + (detail.enabled ? "حساب فعال است." : "حساب غیرفعال است.") + '</p></div>' + statusPill(detail.enabled, "فعال", "غیرفعال") + '</div><button class="mini-button" data-admin-action="toggle-seller-access">' + (detail.enabled ? "غیرفعال کردن فروشنده" : "فعال کردن فروشنده") + '</button></section>' +
@@ -178,7 +180,7 @@ const adminClient = String.raw`(() => {
   }
   function askSellerSettlement(sellerId) {
     adminState.settlementSellerId = String(sellerId);
-    content.innerHTML = '<section class="card settlement-confirm"><div class="empty-icon">!</div><div class="eyebrow">SETTLEMENT CONFIRM</div><h1>تأیید تسویه</h1><p>این کار آمار دوره جاری فروشنده را در تاریخچه ثبت می‌کند و دوره جدید می‌سازد. کانفیگ‌های فعال متوقف نمی‌شوند و ظرفیت سرویس‌ها تغییر نمی‌کند.</p><div class="result-actions"><button class="action-button" data-admin-action="confirm-settlement">تأیید و ثبت تسویه</button><button class="mini-button" data-admin-action="cancel-settlement">انصراف</button></div></section>';
+    content.innerHTML = '<section class="card settlement-confirm"><div class="empty-icon">!</div><div class="eyebrow">تأیید تسویه</div><h1>تأیید تسویه</h1><p>این کار آمار دوره جاری فروشنده را در تاریخچه ثبت می‌کند و دوره جدید می‌سازد. کانفیگ‌های فعال متوقف نمی‌شوند و ظرفیت سرویس‌ها تغییر نمی‌کند.</p><div class="result-actions"><button class="action-button" data-admin-action="confirm-settlement">تأیید و ثبت تسویه</button><button class="mini-button" data-admin-action="cancel-settlement">انصراف</button></div></section>';
   }
   async function confirmSellerSettlement() {
     const sellerId = adminState.settlementSellerId;
@@ -192,16 +194,16 @@ const adminClient = String.raw`(() => {
   async function renderAdminReports() {
     const report = await app.api("/api/app/admin/reports/overview");
     const s = report.summary || {};
-    content.innerHTML = adminHead("ADMIN · REPORTS", "گزارش‌ها", "نمای کل شبکه و فروشندگان", "home") +
+    content.innerHTML = adminHead("گزارش مدیریتی", "گزارش‌ها", "نمای کل شبکه و فروشندگان", "home") +
       '<div class="admin-card-grid report-summary">' + statCard("کانفیگ در سرویس", count(s.configsInService || 0)) + statCard("رزرو فعال", bytes(s.reservedBytes || 0)) + statCard("مصرف نهایی", bytes(s.finalizedUsedBytes || 0)) + statCard("فروشنده فعال", count(s.activeSellers || 0)) + '</div>' +
       '<section class="card admin-control-card"><h2>ظرفیت سرورها</h2><div class="admin-list">' + (report.nodes || []).map((node) => '<div class="admin-list-row"><div><strong>' + esc(node.displayName || node.id) + '</strong><span>' + (node.healthy ? "سالم" : "خارج از دسترس") + '</span></div><b>' + esc(bytes(node.sellableBytes)) + '</b></div>').join("") + '</div></section>' +
-      '<section class="card admin-control-card"><h2>فروشندگان</h2><div class="admin-list">' + (report.sellers || []).map((seller) => '<div class="admin-list-row"><div><strong dir="ltr">' + esc(seller.sellerId) + '</strong><span>' + count(seller.current?.configCount || 0) + ' کانفیگ جاری</span></div><b>' + esc(bytes(seller.current?.soldBytes || 0)) + '</b></div>').join("") + '</div></section>';
+      '<section class="card admin-control-card"><h2>فروشندگان</h2><div class="admin-list">' + (report.sellers || []).map((seller) => '<div class="admin-list-row"><div><strong>' + esc(seller.displayName || seller.sellerId) + '</strong><span>شناسه <b dir="ltr">' + esc(seller.sellerId) + '</b> · ' + count(seller.current?.configCount || 0) + ' کانفیگ جاری</span></div><b>' + esc(bytes(seller.current?.soldBytes || 0)) + '</b></div>').join("") + '</div></section>';
   }
 
   const enrollmentSteps = ["identity", "target", "probe", "fingerprint", "credentials", "progress", "result"];
   function enrollmentHead(step, title, detail) {
     const at = Math.max(0, enrollmentSteps.indexOf(step));
-    return adminHead("ADD VPS · " + count(at + 1) + "/" + count(enrollmentSteps.length), title, detail, "servers") + '<div class="wizard-steps enrollment-steps">' + enrollmentSteps.map((_, i) => '<span class="' + (i <= at ? "is-done" : "") + '"></span>').join("") + '</div>';
+    return adminHead("افزودن سرور · " + count(at + 1) + "/" + count(enrollmentSteps.length), title, detail, "servers") + '<div class="wizard-steps enrollment-steps">' + enrollmentSteps.map((_, i) => '<span class="' + (i <= at ? "is-done" : "") + '"></span>').join("") + '</div>';
   }
   function beginEnrollment() {
     clearTimeout(adminState.pollTimer);
@@ -257,11 +259,11 @@ const adminClient = String.raw`(() => {
       return;
     }
     if (e.step === "probe") {
-      content.innerHTML = '<section data-enrollment-step="probe">' + enrollmentHead("probe", "در حال بررسی اتصال", "Runner فقط هویت SSH و امکان دسترسی را بررسی می‌کند.") + '<div class="card enrollment-progress"><span class="loading-orbit"></span><h2>در حال بررسی اتصال</h2><p>وضعیت: ' + esc(e.jobState || "در صف") + '</p><button class="mini-button" data-admin-action="poll-enrollment">بررسی حالا</button></div></section>';
+      content.innerHTML = '<section data-enrollment-step="probe">' + enrollmentHead("probe", "در حال بررسی اتصال", "نصب‌کننده فقط هویت SSH و امکان دسترسی را بررسی می‌کند.") + '<div class="card enrollment-progress"><span class="loading-orbit"></span><h2>در حال بررسی اتصال</h2><p>وضعیت: ' + esc(e.jobState || "در صف") + '</p><button class="mini-button" data-admin-action="poll-enrollment">بررسی حالا</button></div></section>';
       return;
     }
     if (e.step === "fingerprint") {
-      content.innerHTML = '<section data-enrollment-step="fingerprint">' + enrollmentHead("fingerprint", "تأیید اثر انگشت", "اثر انگشت را با پنل ارائه‌دهنده VPS مقایسه کنید.") + '<div class="card fingerprint-card"><span>SSH HOST FINGERPRINT</span><code dir="ltr">' + esc(e.fingerprint) + '</code><p>فقط اگر مقدار دقیقاً با سرور شما یکسان است ادامه دهید.</p><button class="action-button wide-button" data-admin-action="confirm-fingerprint">اثر انگشت را تأیید می‌کنم</button></div></section>';
+      content.innerHTML = '<section data-enrollment-step="fingerprint">' + enrollmentHead("fingerprint", "تأیید اثر انگشت", "اثر انگشت را با پنل ارائه‌دهنده VPS مقایسه کنید.") + '<div class="card fingerprint-card"><span>اثر انگشت میزبان SSH</span><code dir="ltr">' + esc(e.fingerprint) + '</code><p>فقط اگر مقدار دقیقاً با سرور شما یکسان است ادامه دهید.</p><button class="action-button wide-button" data-admin-action="confirm-fingerprint">اثر انگشت را تأیید می‌کنم</button></div></section>';
       return;
     }
     if (e.step === "credentials") {
@@ -273,12 +275,12 @@ const adminClient = String.raw`(() => {
     }
     if (e.step === "progress") {
       const labels = { pending: "در صف نصب", queued: "در صف نصب", leased: "در حال اتصال", running: "در حال نصب", preflight: "بررسی پیش‌نیازها", installing: "در حال نصب", verifying: "در انتظار سلامت و ACK" };
-      content.innerHTML = '<section data-enrollment-step="progress">' + enrollmentHead("progress", "نصب خودکار", "نصب روی VPS در حال اجراست؛ اطلاعات ورود در UI نگهداری نمی‌شود.") + '<div class="card enrollment-progress"><span class="loading-orbit"></span><h2>' + esc(labels[e.jobState] || "در حال نصب") + '</h2><p>می‌توانید پنل را باز نگه دارید یا بعداً وضعیت را دوباره بررسی کنید.</p><button class="mini-button" data-admin-action="poll-enrollment">بررسی حالا</button></div></section>';
+      content.innerHTML = '<section data-enrollment-step="progress">' + enrollmentHead("progress", "نصب خودکار", "نصب روی VPS در حال اجراست؛ اطلاعات ورود در پنل نگهداری نمی‌شود.") + '<div class="card enrollment-progress"><span class="loading-orbit"></span><h2>' + esc(labels[e.jobState] || "در حال نصب") + '</h2><p>می‌توانید پنل را باز نگه دارید یا بعداً وضعیت را دوباره بررسی کنید.</p><button class="mini-button" data-admin-action="poll-enrollment">بررسی حالا</button></div></section>';
       return;
     }
     if (e.step === "result") {
       const failed = e.jobState === "failed";
-      content.innerHTML = '<section data-enrollment-step="result">' + enrollmentHead("result", failed ? "نصب کامل نشد" : "سرور آماده است", failed ? "اطلاعات ورود از این صفحه پاک شده و فقط کد پیگیری نمایش داده می‌شود." : "سرور سلامت خود را گزارش کرده و تنظیمات را ACK کرده است.") + '<div class="card enrollment-result ' + (failed ? "is-critical" : "") + '"><div class="result-success"><span>' + (failed ? "!" : "✓") + '</span><div><h2>' + (failed ? "نصب کامل نشد" : "سرور آماده است") + '</h2><p>' + (failed ? "کد پیگیری: " + esc(e.safeCode || "UNKNOWN") : "اکنون می‌توانید از صفحه سرورها ظرفیت و کاربرد آن را مدیریت کنید.") + '</p></div></div><button class="action-button wide-button" data-admin-back="servers">بازگشت به سرورها</button></div></section>';
+      content.innerHTML = '<section data-enrollment-step="result">' + enrollmentHead("result", failed ? "نصب کامل نشد" : "سرور آماده است", failed ? "اطلاعات ورود از این صفحه پاک شده و فقط کد پیگیری نمایش داده می‌شود." : "سرور سلامت خود را گزارش کرده و تنظیمات را ACK کرده است.") + '<div class="card enrollment-result ' + (failed ? "is-critical" : "") + '"><div class="result-success"><span>' + (failed ? icon("revoke") : icon("active")) + '</span><div><h2>' + (failed ? "نصب کامل نشد" : "سرور آماده است") + '</h2><p>' + (failed ? "کد پیگیری: " + esc(e.safeCode || "UNKNOWN") : "اکنون می‌توانید از صفحه سرورها ظرفیت و کاربرد آن را مدیریت کنید.") + '</p></div></div><button class="action-button wide-button" data-admin-back="servers">' + icon("back") + '<span>بازگشت به سرورها</span></button></div></section>';
     }
   }
 
