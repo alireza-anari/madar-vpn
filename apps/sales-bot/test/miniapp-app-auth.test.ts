@@ -60,7 +60,7 @@ test("resolves a valid admin Mini App session", async () => {
   });
 });
 
-test("resolves an enabled reseller and keeps a disabled reseller ordinary", async () => {
+test("resolves an enabled reseller and distinguishes a disabled reseller", async () => {
   await env.SALES_DB.exec(
     "INSERT INTO resellers(telegram_id,enabled,created_at) VALUES('200',1,1),('201',0,1);",
   );
@@ -68,10 +68,9 @@ test("resolves an enabled reseller and keeps a disabled reseller ordinary", asyn
     telegramId: "200",
     role: "seller",
   });
-  await expect(authenticateMiniApp(initData(201), appEnv, now)).resolves.toEqual({
-    telegramId: "201",
-    role: "ordinary",
-  });
+  await expect(authenticateMiniApp(initData(201), appEnv, now)).rejects.toThrow(
+    "SELLER_DISABLED",
+  );
 });
 
 test("fails closed on duplicate query keys", () => {
