@@ -16,6 +16,7 @@ export interface NodeCapacity {
   last_seen: number;
   agent_capabilities: string;
   max_accounts: number;
+  max_accounts_unlimited: number;
   max_allocated_bytes: number | null;
   reserved_accounts: number;
   committed_bytes: number;
@@ -39,7 +40,7 @@ export async function nodeCapacities(
         )
         SELECT
           n.id,n.name,n.healthy,n.last_seen,n.agent_capabilities,
-          n.max_accounts,n.max_allocated_bytes,
+          n.max_accounts,n.max_accounts_unlimited,n.max_allocated_bytes,
           COALESCE(SUM(CASE WHEN a.is_live=1 THEN 1 ELSE 0 END),0) reserved_accounts,
           COALESCE(SUM(CASE WHEN a.is_live=1 AND a.quota_bytes IS NOT NULL THEN a.quota_bytes ELSE 0 END),0) committed_bytes,
           COALESCE(SUM(CASE WHEN a.is_live=1 AND a.quota_bytes IS NOT NULL THEN a.quota_bytes ELSE 0 END),0) allocated_bytes,
@@ -69,6 +70,11 @@ export function remainingAllocation(n: NodeCapacity) {
   if (n.max_allocated_bytes === null) return null;
   if (n.uncapped_accounts) return 0;
   return Math.max(0, n.max_allocated_bytes - chargedBytes(n));
+}
+
+export function remainingSlots(n: NodeCapacity) {
+  if (n.max_accounts_unlimited === 1) return null;
+  return Math.max(0, n.max_accounts - n.reserved_accounts);
 }
 
 export function utilizationPercent(n: NodeCapacity) {
