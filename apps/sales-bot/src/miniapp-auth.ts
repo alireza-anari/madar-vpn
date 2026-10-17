@@ -1,11 +1,13 @@
 import { createHmac } from "node:crypto";
 import { equalSecret, resolveActor } from "./auth";
 import { admin, type Actor } from "./contracts";
-export async function verifyMiniApp(
+import { resolveSalesActor, type SalesActor } from "./resellers";
+
+export function verifyMiniAppTelegramId(
   initData: string,
-  env: Env,
+  env: Pick<Env, "BOT_TOKEN">,
   now: number,
-): Promise<Actor> {
+): string {
   if (!env.BOT_TOKEN || initData.length > 8192)
     throw new Error("INVALID_SIGNATURE");
   const p = new URLSearchParams(initData);
@@ -26,7 +28,12 @@ export async function verifyMiniApp(
   const date = Number(p.get("auth_date"));
   if (!Number.isSafeInteger(date) || date > now + 30 || now - date > 300)
     throw new Error("AUTH_EXPIRED");
-  const user: unknown = JSON.parse(p.get("user") || "null");
+  let user: unknown;
+  try {
+    user = JSON.parse(p.get("user") || "null");
+  } catch {
+    throw new Error("INVALID_SIGNATURE");
+  }
   if (
     !user ||
     typeof user !== "object" ||
@@ -35,7 +42,25 @@ export async function verifyMiniApp(
     Number(user.id) <= 0
   )
     throw new Error("INVALID_SIGNATURE");
-  const actor = resolveActor(String(user.id), env);
+  return String(user.id);
+}
+
+export async function authenticateMiniApp(
+  initData: string,
+  env: Env,
+  now: number,
+): Promise<SalesActor> {
+  const telegramId = verifyMiniAppTelegramId(initData, env, now);
+  return resolveSalesActor(env.SALES_DB, telegramId, env);
+}
+
+export async function verifyMiniApp(
+  initData: string,
+  env: Env,
+  now: number,
+): Promise<Actor> {
+  const telegramId = verifyMiniAppTelegramId(initData, env, now);
+  const actor = resolveActor(telegramId, env);
   admin(actor);
   return actor;
 }
