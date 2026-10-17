@@ -26,3 +26,9 @@ jobs:
           path: apps/sales-bot/dist
           if-no-files-found: error
           retention-days: 1
+      - name: Upload undeployed Worker version
+        working-directory: apps/sales-bot
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: 2e4e0d025c81b9134fd2d19f17535e30
+        run: pnpm exec wrangler versions upload --keep-vars --message "feat: Telegram Mini App dashboard production rollout"
