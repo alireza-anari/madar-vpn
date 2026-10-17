@@ -50,6 +50,9 @@ class QuotaStore:
         with self.db:
             self.db.execute('UPDATE accounts SET process_generation=?,counter=?,used=?,sequence=? WHERE id=?',(generation,counter,total,sequence,ident))
             self.db.execute('INSERT OR REPLACE INTO reports VALUES(?,?)',(ident,json.dumps(report)))
+    def checkpoint_restart(self,ident,generation,counter,now):
+        self.observe(ident,generation,counter,now)
+        with self.db:self.db.execute('UPDATE accounts SET process_generation=NULL,counter=NULL WHERE id=?',(ident,))
     def remaining(self,ident):
         r=self.db.execute('SELECT cap,used FROM accounts WHERE id=?',(ident,)).fetchone()
         return None if r['cap'] is None else max(0,r['cap']-r['used'])
