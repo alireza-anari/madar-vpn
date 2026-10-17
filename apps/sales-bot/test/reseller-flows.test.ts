@@ -1,6 +1,7 @@
 import allocation from "../migrations/0009-node-allocation-cap.sql?raw";
 import capacity from "../migrations/0007-node-capacity.sql?raw";
 import accounting from "../migrations/0010-capacity-accounting-resellers.sql?raw";
+import slotMode from "../migrations/0011-node-account-slot-mode.sql?raw";
 import { env } from "cloudflare:workers";
 import { beforeEach, expect, test } from "vitest";
 import { resetDb } from "./db";
@@ -42,7 +43,7 @@ const click = (id: number, data: string, update = seq++) =>
   );
 beforeEach(async () => {
   await resetDb();
-  for (const s of [a, b, c, d, capacity, allocation, accounting])
+  for (const s of [a, b, c, d, capacity, allocation, accounting, slotMode])
     await env.SALES_DB.exec(s);
   await env.SALES_DB.exec(
     "INSERT INTO settings VALUES('app_mode','reseller'); INSERT INTO nodes(id,name,target_ip) VALUES('s','sale','8.8.8.8'),('t','trial','1.1.1.1'); INSERT INTO node_purposes VALUES('sale','s'),('trial','t'); INSERT INTO resellers VALUES('10',1,100);",
