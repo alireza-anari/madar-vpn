@@ -81,10 +81,10 @@ test("seller dashboard nodes configs and stats use seller-safe role-scoped shape
   }
 });
 
-test("disabled or ordinary users fail closed and expired auth has a stable code", async () => {
+test("disabled seller gets a distinct stable code while ordinary users still fail closed", async () => {
   const disabled = await appApi(req("/api/app/me", signed(11)), e, now);
   expect(disabled.status).toBe(403);
-  expect(await disabled.json()).toEqual({ error: "SELLER_REQUIRED" });
+  expect(await disabled.json()).toEqual({ error: "SELLER_DISABLED" });
 
   const ordinary = await appApi(req("/api/app/me", signed(12)), e, now);
   expect(ordinary.status).toBe(403);
