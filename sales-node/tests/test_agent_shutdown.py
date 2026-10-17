@@ -2,7 +2,7 @@ import signal
 
 
 def test_quota_agent_installs_sigterm_handler_before_runtime_runs(monkeypatch):
-    import agent
+    import agent, quota_runtime
 
     handlers = {}
     events = []
@@ -18,11 +18,9 @@ def test_quota_agent_installs_sigterm_handler_before_runtime_runs(monkeypatch):
             events.append("run")
             handlers[signal.SIGTERM](signal.SIGTERM, None)
 
-    monkeypatch.setattr(agent, "QuotaRuntime", Runtime, raising=False)
+    monkeypatch.setattr(quota_runtime, "QuotaRuntime", Runtime)
     monkeypatch.setattr(signal, "signal", lambda sig, fn: handlers.__setitem__(sig, fn))
     monkeypatch.setattr(agent.pathlib.Path, "read_text", lambda self: '{"protocolVersion":2}')
-    monkeypatch.setattr(agent, "request", lambda *args, **kwargs: None)
-    monkeypatch.setattr(agent, "verify_policy", lambda *args, **kwargs: None)
     monkeypatch.setattr("sys.argv", ["agent.py"])
 
     agent.main()
