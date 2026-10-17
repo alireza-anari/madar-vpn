@@ -35,13 +35,16 @@ function page({ role = "admin", dashboard, extra = {} } = {}) {
   const requests = [];
   const listeners = new Map();
   const elements = new Map();
-  for (const id of ["app-shell", "app-content", "app-nav", "app-toast"]) {
+  const clipboardWrites = [];
+  const shares = [];
+  for (const id of ["app-shell", "app-content", "app-nav", "app-toast", "result-qr"]) {
     elements.set(id, {
       id,
       innerHTML: "",
       textContent: "",
       hidden: false,
       className: "",
+      dataset: {},
       addEventListener(type, fn) {
         listeners.set(`${id}:${type}`, fn);
       },
@@ -87,10 +90,22 @@ function page({ role = "admin", dashboard, extra = {} } = {}) {
     expand() {},
     setHeaderColor() {},
     setBackgroundColor() {},
+    close() {},
+  };
+  const navigator = {
+    clipboard: {
+      async writeText(value) {
+        clipboardWrites.push(value);
+      },
+    },
+    async share(value) {
+      shares.push(value);
+    },
   };
   const context = {
     window: { Telegram: { WebApp: tg } },
     document,
+    navigator,
     location: { hash: "" },
     URLSearchParams,
     Intl,
@@ -99,7 +114,8 @@ function page({ role = "admin", dashboard, extra = {} } = {}) {
     clearTimeout,
     fetch: async (path, options = {}) => {
       requests.push({ path, options });
-      const value = payloads[path];
+      let value = payloads[path];
+      if (typeof value === "function") value = await value({ path, options, requests });
       if (value === undefined)
         return { ok: false, status: 404, json: async () => ({ error: "NOT_FOUND" }) };
       if (value && value.__error)
@@ -108,11 +124,11 @@ function page({ role = "admin", dashboard, extra = {} } = {}) {
           status: value.status || 400,
           json: async () => ({ error: value.__error }),
         };
-      return { ok: true, status: 200, json: async () => value };
+      return { ok: true, status: value?.__status || 200, json: async () => value };
     },
   };
   runInNewContext(client, context);
-  return { context, document, elements, requests, listeners };
+  return { context, document, elements, requests, listeners, clipboardWrites, shares };
 }
 
 const adminDashboard = {
@@ -204,4 +220,177 @@ test("stable backend errors become Persian full-screen states", async () => {
   assert.match(content, /نشست تلگرام منقضی شده/);
   assert.match(content, /دوباره/);
   assert.match(content, /state-card/);
+});
+
+const sellerDashboard = {
+  role: "seller",
+  summary: {
+    configsInService: 1,
+    currentSoldBytes: 10e9,
+    allTimeSoldBytes: 20e9,
+    usedBytes: 4e9,
+    maxReservedAccounts: 10,
+    maxCommittedBytes: 100e9,
+    reservedAccounts: 1,
+    committedBytes: 10e9,
+  },
+  nodes: [],
+};
+
+const wizardPreview = {
+  nodes: [
+    {
+      id: "n1",
+      displayName: "Stockholm",
+      healthy: true,
+      sellableBytes: 70e9,
+      remainingSlots: 9,
+      utilizationPercent: 30,
+      eligible: true,
+      recommended: true,
+      alertLevel: 0,
+      maxAllocatedBytes: 100e9,
+      committedBytes: 30e9,
+      finalizedUsedBytes: 0,
+    },
+  ],
+  selectedNode: {
+    id: "n1",
+    eligible: true,
+    beforeSellableBytes: 70e9,
+    afterSellableBytes: 40e9,
+    remainingSlotsBefore: 9,
+    remainingSlotsAfter: 8,
+  },
+};
+
+test("sale wizard reaches server preview and confirmation with exact before/after capacity", async () => {
+  const p = page({
+    role: "seller",
+    dashboard: sellerDashboard,
+    extra: { "/api/app/configs/preview": wizardPreview },
+  });
+  await p.context.window.MadarApp.ready;
+  p.context.window.MadarApp.beginSale();
+  assert.match(p.elements.get("app-content").innerHTML, /data-wizard-step="label"/);
+
+  p.context.window.MadarApp.setWizardField("label", "Nima");
+  await p.context.window.MadarApp.wizardNext();
+  assert.match(p.elements.get("app-content").innerHTML, /data-wizard-step="quota"/);
+
+  p.context.window.MadarApp.setWizardField("quotaBytes", 30e9);
+  await p.context.window.MadarApp.wizardNext();
+  assert.match(p.elements.get("app-content").innerHTML, /data-wizard-step="duration"/);
+
+  p.context.window.MadarApp.setWizardField("durationSeconds", 30 * 86400);
+  await p.context.window.MadarApp.wizardNext();
+  let content = p.elements.get("app-content").innerHTML;
+  assert.match(content, /data-wizard-step="server"/);
+  assert.match(content, /Stockholm/);
+  assert.match(content, /پیشنهادی/);
+
+  await p.context.window.MadarApp.selectWizardNode("n1");
+  content = p.elements.get("app-content").innerHTML;
+  assert.match(content, /data-wizard-step="confirm"/);
+  assert.match(content, /۷۰ گیگ/);
+  assert.match(content, /۴۰ گیگ/);
+  const previews = p.requests.filter((r) => r.path === "/api/app/configs/preview");
+  assert.ok(previews.length >= 2);
+  assert.equal(JSON.parse(previews.at(-1).options.body).nodeId, "n1");
+});
+
+test("confirmed sale creates once, recovers async result, and exposes local QR/copy/share actions", async () => {
+  const config = "vless://11111111-1111-4111-8111-111111111111@8.8.8.8:443?security=reality#Madar";
+  const p = page({
+    role: "seller",
+    dashboard: sellerDashboard,
+    extra: {
+      "/api/app/configs/preview": wizardPreview,
+      "/api/app/configs/create": { accountId: "a1", state: "preparing", __status: 202 },
+      "/api/app/configs/a1/result": {
+        accountId: "a1",
+        state: "active",
+        ready: true,
+        label: "Nima",
+        quotaBytes: 30e9,
+        durationSeconds: 30 * 86400,
+        validUntil: 20_000,
+        serverName: "Stockholm",
+        config,
+      },
+    },
+  });
+  await p.context.window.MadarApp.ready;
+  p.context.window.MadarApp.beginSale();
+  p.context.window.MadarApp.setWizardField("label", "Nima");
+  await p.context.window.MadarApp.wizardNext();
+  p.context.window.MadarApp.setWizardField("quotaBytes", 30e9);
+  await p.context.window.MadarApp.wizardNext();
+  p.context.window.MadarApp.setWizardField("durationSeconds", 30 * 86400);
+  await p.context.window.MadarApp.wizardNext();
+  await p.context.window.MadarApp.selectWizardNode("n1");
+  await p.context.window.MadarApp.createCurrentWizard();
+
+  const content = p.elements.get("app-content").innerHTML;
+  assert.match(content, /data-result-screen="ready"/);
+  assert.match(content, /id="result-qr"/);
+  assert.match(content, /کپی کانفیگ/);
+  assert.match(content, /اشتراک‌گذاری/);
+  assert.match(content, /Stockholm/);
+  assert.match(content, /vless:\/\//);
+  assert.equal(p.requests.filter((r) => r.path === "/api/app/configs/create").length, 1);
+  const createBody = JSON.parse(
+    p.requests.find((r) => r.path === "/api/app/configs/create").options.body,
+  );
+  assert.equal(createBody.label, "Nima");
+  assert.equal(createBody.quotaBytes, 30e9);
+  assert.equal(createBody.nodeId, "n1");
+  assert.ok(createBody.requestKey);
+  assert.ok(p.requests.some((r) => r.path === "/api/app/configs/a1/result"));
+
+  await p.context.window.MadarApp.copyResult();
+  await p.context.window.MadarApp.shareResult();
+  assert.deepEqual(p.clipboardWrites, [config]);
+  assert.equal(p.shares.length, 1);
+  assert.equal(p.shares[0].text, config);
+
+  p.elements.get("app-content").innerHTML = "";
+  await p.context.window.MadarApp.recoverAccount("a1");
+  assert.match(p.elements.get("app-content").innerHTML, /data-result-screen="ready"/);
+});
+
+test("trial flow uses the dedicated guarded endpoint and fixed product contract", async () => {
+  const p = page({
+    role: "seller",
+    dashboard: sellerDashboard,
+    extra: {
+      "/api/app/configs/preview": wizardPreview,
+      "/api/app/configs/test": { accountId: "t1", state: "preparing", __status: 202 },
+      "/api/app/configs/t1/result": {
+        accountId: "t1",
+        state: "active",
+        ready: true,
+        label: "تست نیم‌ساعته",
+        kind: "trial",
+        quotaBytes: 1e9,
+        durationSeconds: 1800,
+        validUntil: 20_000,
+        serverName: "Stockholm",
+        config: "vless://trial",
+      },
+    },
+  });
+  await p.context.window.MadarApp.ready;
+  await p.context.window.MadarApp.beginTrial();
+  assert.match(p.elements.get("app-content").innerHTML, /data-wizard-step="server"/);
+  await p.context.window.MadarApp.selectWizardNode("n1");
+  await p.context.window.MadarApp.createCurrentWizard();
+  const trialRequest = p.requests.find((r) => r.path === "/api/app/configs/test");
+  assert.ok(trialRequest);
+  const body = JSON.parse(trialRequest.options.body);
+  assert.equal(body.nodeId, "n1");
+  assert.ok(body.requestKey);
+  assert.equal(Object.prototype.hasOwnProperty.call(body, "quotaBytes"), false);
+  assert.match(p.elements.get("app-content").innerHTML, /۱ گیگ/);
+  assert.match(p.elements.get("app-content").innerHTML, /۳۰ دقیقه/);
 });
