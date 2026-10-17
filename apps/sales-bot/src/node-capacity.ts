@@ -16,7 +16,7 @@ export interface NodeCapacity {
   last_seen: number;
   agent_capabilities: string;
   max_accounts: number;
-  max_accounts_unlimited: number;
+  max_accounts_unlimited?: number;
   max_allocated_bytes: number | null;
   reserved_accounts: number;
   committed_bytes: number;
