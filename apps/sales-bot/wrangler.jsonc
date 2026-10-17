@@ -33,6 +33,7 @@
       "TELEGRAM_WEBHOOK_SECRET",
       "RUNNER_SERVICE_SECRET",
       "POLICY_SIGNING_SECRET",
+      "USAGE_LINK_SECRET",
     ],
   },
   "rules": [
