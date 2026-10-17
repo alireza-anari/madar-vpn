@@ -1,6 +1,7 @@
 import {
   canAllocate,
   remainingAllocation,
+  remainingSlots,
   utilizationPercent,
   type NodeCapacity,
 } from "./node-capacity";
@@ -21,7 +22,7 @@ export interface AppNode {
   committedBytes?: number;
   finalizedUsedBytes?: number;
   reservedAccounts?: number;
-  maxAccounts?: number;
+  maxAccounts?: number | null;
 }
 
 export interface AppConfig {
@@ -67,16 +68,16 @@ export function presentNode(
     n.last_seen > now - 90 &&
     n.agent_capabilities.split(",").includes("quota-v2");
   const sellableBytes = remainingAllocation(n);
-  const remainingSlots = Math.max(0, n.max_accounts - n.reserved_accounts);
+  const slots = remainingSlots(n);
   const bytesOk = requestedBytes === undefined || canAllocate(n, requestedBytes);
-  const slotsOk = remainingSlots > 0;
+  const slotsOk = slots === null || slots > 0;
   const eligible = healthy && bytesOk && slotsOk;
   const base: AppNode = {
     id: n.id,
     displayName: n.name,
     healthy,
     sellableBytes,
-    remainingSlots,
+    remainingSlots: slots,
     utilizationPercent: utilizationPercent(n),
     eligible,
   };
@@ -89,7 +90,7 @@ export function presentNode(
     base.committedBytes = n.committed_bytes;
     base.finalizedUsedBytes = n.finalized_used_bytes;
     base.reservedAccounts = n.reserved_accounts;
-    base.maxAccounts = n.max_accounts;
+    base.maxAccounts = n.max_accounts_unlimited === 1 ? null : n.max_accounts;
   }
   return base;
 }
