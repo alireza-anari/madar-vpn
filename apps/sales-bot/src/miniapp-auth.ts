@@ -51,7 +51,16 @@ export async function authenticateMiniApp(
   now: number,
 ): Promise<SalesActor> {
   const telegramId = verifyMiniAppTelegramId(initData, env, now);
-  return resolveSalesActor(env.SALES_DB, telegramId, env);
+  const actor = await resolveSalesActor(env.SALES_DB, telegramId, env);
+  if (actor.role === "ordinary") {
+    const reseller = await env.SALES_DB.prepare(
+      "SELECT enabled FROM resellers WHERE telegram_id=?",
+    )
+      .bind(telegramId)
+      .first<{ enabled: number }>();
+    if (reseller?.enabled === 0) throw Error("SELLER_DISABLED");
+  }
+  return actor;
 }
 
 export async function verifyMiniApp(
