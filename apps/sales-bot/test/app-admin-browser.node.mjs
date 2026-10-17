@@ -2,6 +2,7 @@ import { runInNewContext } from "node:vm";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import client from "../public/app.js";
+import adminClient from "../public/app-admin.js";
 
 const adminDashboard = {
   role: "admin",
@@ -74,6 +75,7 @@ function page(extra = {}) {
     },
   };
   runInNewContext(client, context);
+  runInNewContext(adminClient, context);
   return { context, elements, requests };
 }
 
