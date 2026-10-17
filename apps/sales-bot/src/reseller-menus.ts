@@ -148,6 +148,23 @@ async function enhanceAdminReply(env: Env, u: TelegramUpdate, now: number) {
   }
 }
 
+function addMiniAppEntry(payload: Record<string, any>, publicBaseUrl: string) {
+  const keyboard = (payload.reply_markup?.inline_keyboard || []) as Record<
+    string,
+    any
+  >[][];
+  const appUrl = `${publicBaseUrl.replace(/\/$/, "")}/app`;
+  const withoutExistingApp = keyboard.filter(
+    (row) => !row.some((button) => button.web_app?.url === appUrl),
+  );
+  payload.reply_markup = {
+    inline_keyboard: [
+      [{ text: "باز کردن پنل مدار", web_app: { url: appUrl } }],
+      ...withoutExistingApp,
+    ],
+  };
+}
+
 async function enhanceDashboardReply(env: Env, u: TelegramUpdate, now: number) {
   const id = updateIdentity(u);
   if (!id) return;
@@ -165,26 +182,21 @@ async function enhanceDashboardReply(env: Env, u: TelegramUpdate, now: number) {
   if (!reply) return;
   const actor = await resolveSalesActor(env.SALES_DB, id, env);
 
-  if (actor.role === "seller" && typeof reply.payload.text === "string") {
-    const all = await sellerStats(env.SALES_DB, id, "all", now);
-    reply.payload.text = reply.payload.text.replace(
-      /در سرویس: [^\n]+/,
-      `در سرویس: ${(all.liveCount + all.blockedCount).toLocaleString("fa-IR")}`,
-    );
+  if (actor.role === "seller") {
+    if (typeof reply.payload.text === "string") {
+      const all = await sellerStats(env.SALES_DB, id, "all", now);
+      reply.payload.text = reply.payload.text.replace(
+        /در سرویس: [^\n]+/,
+        `در سرویس: ${(all.liveCount + all.blockedCount).toLocaleString("fa-IR")}`,
+      );
+    }
+    if (env.PUBLIC_BASE_URL) addMiniAppEntry(reply.payload, env.PUBLIC_BASE_URL);
     await saveReply(env, reply);
     return;
   }
 
   if (actor.role === "admin") {
-    const keyboard = (reply.payload.reply_markup?.inline_keyboard || []) as Record<
-      string,
-      any
-    >[][];
-    reply.payload.reply_markup = {
-      inline_keyboard: keyboard.filter(
-        (row) => !row.some((button) => button.web_app),
-      ),
-    };
+    if (env.PUBLIC_BASE_URL) addMiniAppEntry(reply.payload, env.PUBLIC_BASE_URL);
     await saveReply(env, reply);
   }
 }
