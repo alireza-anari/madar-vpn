@@ -1,3 +1,4 @@
+import allocation from "../migrations/0009-node-allocation-cap.sql?raw";
 import capacity from "../migrations/0007-node-capacity.sql?raw";
 import { env } from "cloudflare:workers";
 import { beforeEach, expect, test } from "vitest";
@@ -40,7 +41,8 @@ const click = (id: number, data: string, update = seq++) =>
   );
 beforeEach(async () => {
   await resetDb();
-  for (const s of [a, b, c, d, capacity]) await env.SALES_DB.exec(s);
+  for (const s of [a, b, c, d, capacity, allocation])
+    await env.SALES_DB.exec(s);
   await env.SALES_DB.exec(
     "INSERT INTO settings VALUES('app_mode','reseller'); INSERT INTO nodes(id,name,target_ip) VALUES('s','sale','8.8.8.8'),('t','trial','1.1.1.1'); INSERT INTO node_purposes VALUES('sale','s'),('trial','t'); INSERT INTO resellers VALUES('10',1,100);",
   );
@@ -368,7 +370,7 @@ test("server picker shows remaining capacity and persists the selected server", 
   expect(
     p.reply_markup.inline_keyboard
       .flat()
-      .some((b: any) => b.text.includes("۴ ظرفیت باقی‌مانده")),
+      .some((b: any) => b.text.includes("۴ جای خالی")),
   ).toBe(true);
   await click(10, "rs:choose:t");
   const state = JSON.parse(
@@ -397,4 +399,38 @@ test("server picker shows remaining capacity and persists the selected server", 
       "SELECT max_accounts FROM nodes WHERE id='s'",
     ).first("max_accounts"),
   ).toBe(12);
+});
+
+test("only admins edit volume caps and picker displays allocated GB remaining", async () => {
+  await env.SALES_DB.exec(
+    "UPDATE nodes SET max_allocated_bytes=1000000000000,healthy=1,last_seen=100,agent_capabilities='quota-v2';",
+  );
+  await click(10, "rs:allocation:s");
+  await send(10, "1");
+  expect(
+    await env.SALES_DB.prepare(
+      "SELECT max_allocated_bytes FROM nodes WHERE id='s'",
+    ).first("max_allocated_bytes"),
+  ).toBe(1e12);
+  await click(9, "rs:allocation:s");
+  await send(9, "۵۰۰");
+  expect(
+    await env.SALES_DB.prepare(
+      "SELECT max_allocated_bytes FROM nodes WHERE id='s'",
+    ).first("max_allocated_bytes"),
+  ).toBe(500e9);
+  await click(10, "rs:sale");
+  await send(10, "client");
+  await send(10, "30");
+  await click(10, "rs:pick:days:30", 2500);
+  const payload = JSON.parse(
+    (await env.SALES_DB.prepare(
+      "SELECT payload FROM outbox WHERE id='u2500:reply'",
+    ).first<string>("payload"))!,
+  );
+  expect(
+    payload.reply_markup.inline_keyboard
+      .flat()
+      .some((b: any) => b.text.includes("۵۰۰ گیگ باقی‌مانده")),
+  ).toBe(true);
 });

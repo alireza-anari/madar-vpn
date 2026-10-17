@@ -55,7 +55,7 @@
   </p>
   <form id="form">
     <label>نام سرور<input id="name" required maxlength="80" placeholder="مثلاً سرور فروش اروپا" /></label
-    ><label>سقف کانفیگ‌های همزمان<input id="maxAccounts" type="number" min="1" max="10000" value="100" required /><small>کانفیگ‌های فعال و در حال ساخت از ظرفیت استفاده می‌کنند.</small></label><label
+    ><label>سقف حجم کانفیگ‌های فعال (گیگابایت)<input id="maxAllocatedGb" type="number" min="1" max="1000000" value="1000" required /><small>مجموع حجم اختصاص‌یافته به کانفیگ‌های فعال و در حال ساخت؛ مصرف جزئی ظرفیت را آزاد نمی‌کند.</small></label><label>سقف کانفیگ‌های همزمان<input id="maxAccounts" type="number" min="1" max="10000" value="100" required /><small>کانفیگ‌های فعال و در حال ساخت از ظرفیت استفاده می‌کنند.</small></label><label
       >IP عمومی VPS<input
         id="ip"
         dir="ltr"
@@ -126,7 +126,7 @@
         throw Error(
           d.error === "AUTH_EXPIRED"
             ? "فرم منقضی شد؛ از ربات دوباره باز کن."
-            : d.error || "خطای ارتباط",
+            : d.error === "INVALID_ALLOCATION_CAP" ? "سقف حجم سرور را از ۱ تا ۱۰۰۰۰۰۰ گیگابایت وارد کن؛ اگر فرم قدیمی باز است، آن را از ربات دوباره باز کن." : d.error || "خطای ارتباط",
         );
       return d;
     }
@@ -227,6 +227,7 @@
         const result = await api("enroll", {
           name: el("name").value.trim(),
           maxAccounts: Number(el("maxAccounts").value),
+          maxAllocatedGb: Number(el("maxAllocatedGb").value),
           targetIp: el("ip").value.trim(),
           port: Number(el("port").value),
           username: el("username").value.trim(),

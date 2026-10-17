@@ -1,3 +1,4 @@
+import allocation from "../migrations/0009-node-allocation-cap.sql?raw";
 import accountsMigration from "../migrations/0004-reseller-accounts.sql?raw";
 import capacity from "../migrations/0007-node-capacity.sql?raw";
 import { env } from "cloudflare:workers";
@@ -44,6 +45,7 @@ beforeEach(async () => {
   await env.SALES_DB.exec(n);
   await env.SALES_DB.exec(accountsMigration);
   await env.SALES_DB.exec(capacity);
+  await env.SALES_DB.exec(allocation);
 });
 test("Mini App verifies signature freshness and role", async () => {
   expect((await verifyMiniApp(signed(9), e, 100)).role).toBe("admin");
@@ -83,6 +85,7 @@ test("single-use nonce and fingerprint confirmation precede runnable job", async
     port: 22,
     username: "ubuntu",
     name: "new",
+    maxAllocatedGb: 1000,
     hostFingerprint: "SHA256:" + "a".repeat(43),
     encryptedCredentials: '{"v":1,"key":"AA==","iv":"AA==","data":"AA=="}',
     nonce,
@@ -111,6 +114,7 @@ test("confirmed enrollment consumes nonce once and retains only encrypted input"
       username: "ubuntu",
       name: "new",
       maxAccounts: 17,
+      maxAllocatedGb: 1000,
       hostFingerprint: fingerprint,
       encryptedCredentials: '{"v":1,"key":"AA==","iv":"AA==","data":"AA=="}',
       nonce,
@@ -118,6 +122,11 @@ test("confirmed enrollment consumes nonce once and retains only encrypted input"
     };
   const result = await createEnrollment(e, actor, input, 100);
   expect(result.jobId).toBeTruthy();
+  expect(
+    await env.SALES_DB.prepare(
+      "SELECT max_allocated_bytes FROM nodes WHERE name='new'",
+    ).first("max_allocated_bytes"),
+  ).toBe(1e12);
   expect(
     await env.SALES_DB.prepare(
       "SELECT max_accounts FROM nodes WHERE name='new'",
@@ -185,6 +194,7 @@ test("failed installation accepts fresh credentials with the same recovery ident
       port: 22,
       username: "ubuntu",
       name: "retry",
+      maxAllocatedGb: 1000,
       hostFingerprint: fingerprint,
       encryptedCredentials: '{"v":1,"key":"AA==","iv":"AA==","data":"AA=="}',
       nonce: await issueNonce(env.SALES_DB, actor, 100),
@@ -219,6 +229,7 @@ test("a probe is consumed after enrollment, even if installation fails quickly",
     port: 22,
     username: "ubuntu",
     name: "new",
+    maxAllocatedGb: 1000,
     hostFingerprint: fingerprint,
     encryptedCredentials: '{"v":1,"key":"AA==","iv":"AA==","data":"AA=="}',
     nonce: await issueNonce(env.SALES_DB, actor, 100),
@@ -259,4 +270,23 @@ test("installation is not ready until fresh node health and exact policy ACK", a
   expect(
     await enrollmentJobStatus(env.SALES_DB, "check", "10", 100),
   ).toBeNull();
+});
+
+test("new enrollment cannot omit its finite volume cap", async () => {
+  await expect(
+    createEnrollment(
+      e,
+      { telegramId: "9", role: "admin" },
+      {
+        targetIp: "8.8.8.8",
+        port: 22,
+        username: "ubuntu",
+        name: "cap-required",
+        hostFingerprint: "",
+        encryptedCredentials: "",
+        nonce: "",
+      },
+      100,
+    ),
+  ).rejects.toThrow("INVALID_ALLOCATION_CAP");
 });

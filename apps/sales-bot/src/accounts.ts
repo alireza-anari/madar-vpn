@@ -1,3 +1,4 @@
+import { reservationPredicate, nodeCapacities } from "./node-capacity";
 import { requireSeller, requireSalesAdmin, type SalesActor } from "./resellers";
 export type AccountInput = {
   nodeId?: string;
@@ -81,9 +82,11 @@ export async function createAccount(
   await db.batch([
     db
       .prepare(
-        "INSERT OR IGNORE INTO managed_accounts(id,seller_id,request_key,node_id,kind,label,uuid,quota_bytes,duration_seconds,created_at) SELECT ?,?,?,?,?,?,?,?,?,? FROM nodes n WHERE n.id=? AND (SELECT COUNT(*) FROM managed_accounts a WHERE a.node_id=n.id AND (a.state='preparing' OR (a.state='active' AND a.valid_until>? AND (a.quota_bytes IS NULL OR a.used_bytes<a.quota_bytes))))<n.max_accounts",
+        `WITH reserved AS (SELECT COUNT(*) slots,COALESCE(SUM(a.quota_bytes),0) bytes,COUNT(*)-COUNT(a.quota_bytes) uncapped FROM managed_accounts a WHERE a.node_id=? AND ${reservationPredicate}) INSERT OR IGNORE INTO managed_accounts(id,seller_id,request_key,node_id,kind,label,uuid,quota_bytes,duration_seconds,created_at) SELECT ?,?,?,?,?,?,?,?,?,? FROM nodes n CROSS JOIN reserved r WHERE n.id=? AND r.slots<n.max_accounts AND (n.max_allocated_bytes IS NULL OR (r.uncapped=0 AND r.bytes+?<=n.max_allocated_bytes))`,
       )
       .bind(
+        nodeId,
+        now,
         id,
         actor.telegramId,
         input.requestKey,
@@ -95,7 +98,7 @@ export async function createAccount(
         input.durationSeconds,
         now,
         nodeId,
-        now,
+        input.kind === "trial" ? 1e9 : input.quotaBytes,
       ),
     db
       .prepare(
@@ -109,7 +112,18 @@ export async function createAccount(
     )
     .bind(actor.telegramId, input.requestKey)
     .first<{ id: string; state: string }>();
-  if (!result) throw Error("NODE_FULL");
+  if (!result) {
+    const n = (await nodeCapacities(db, now, nodeId)).find(
+      (n) => n.id === nodeId,
+    );
+    throw Error(
+      n &&
+        n.reserved_accounts < n.max_accounts &&
+        n.max_allocated_bytes !== null
+        ? "NODE_ALLOCATION_FULL"
+        : "NODE_FULL",
+    );
+  }
   return result;
 }
 export async function ownedAccount(

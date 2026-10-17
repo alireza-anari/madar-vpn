@@ -1,3 +1,4 @@
+import { nodeCapacities, allocationLabel } from "./node-capacity";
 import {
   createSellerInvite,
   claimSellerInvite,
@@ -133,12 +134,14 @@ export async function handleResellerUpdate(
       throw Error("CONVERSATION_RETRY");
   };
   const chooseServer = async () => {
-    const nodes = await db
-      .prepare(
-        "SELECT n.id,n.name,n.max_accounts,(SELECT COUNT(*) FROM managed_accounts a WHERE a.node_id=n.id AND (a.state='preparing' OR (a.state='active' AND a.valid_until>? AND (a.quota_bytes IS NULL OR a.used_bytes<a.quota_bytes)))) used FROM nodes n WHERE n.healthy=1 AND n.last_seen>? AND instr(n.agent_capabilities,'quota-v2')>0 ORDER BY n.name LIMIT 50",
-      )
-      .bind(now, now - 90)
-      .all<{ id: string; name: string; max_accounts: number; used: number }>();
+    const nodes = {
+      results: (await nodeCapacities(db, now)).filter(
+        (n) =>
+          n.healthy === 1 &&
+          n.last_seen > now - 90 &&
+          n.agent_capabilities.split(",").includes("quota-v2"),
+      ),
+    };
     await reply(
       nodes.results.length
         ? "🌍 انتخاب سرور\nسرور کانفیگ را انتخاب کن. ظرفیت هنگام تأیید نهایی دوباره بررسی می‌شود."
@@ -146,7 +149,7 @@ export async function handleResellerUpdate(
       [
         ...nodes.results.map((n) => [
           btn(
-            `${n.name} · ${Math.max(0, n.max_accounts - n.used).toLocaleString("fa-IR")} ظرفیت باقی‌مانده`,
+            `${n.name} · ${Math.max(0, n.max_accounts - n.reserved_accounts).toLocaleString("fa-IR")} جای خالی · ${allocationLabel(n)}`,
             `rs:choose:${n.id}`,
           ),
         ]),
@@ -439,6 +442,47 @@ export async function handleResellerUpdate(
       await reply("شناسه عددی تلگرام فروشنده را بفرست.", [cancel()]);
       return;
     }
+    if (data?.startsWith("rs:allocation:")) {
+      requireSalesAdmin(actor);
+      const n = (await nodeCapacities(db, now)).find(
+        (n) => n.id === data.slice(14),
+      );
+      if (!n) throw Error("INVALID");
+      await set({ step: "allocation", nodeId: n.id });
+      await reply(
+        `سقف حجم سرور ${n.name}\nحجم رزروشده: ${(n.allocated_bytes / 1e9).toLocaleString("fa-IR")} گیگابایت\n${allocationLabel(n)}\n\nسقف جدید را به گیگابایت از ۱ تا ۱۰۰۰۰۰۰ بفرست. کاهش سقف، کانفیگ‌های قبلی را حذف نمی‌کند؛ فقط صدور جدید محدود می‌شود.`,
+        [home()],
+      );
+      return;
+    }
+    if (text && state.step === "allocation") {
+      requireSalesAdmin(actor);
+      const value = digits(text),
+        gb = Number(value);
+      if (
+        !/^\d+$/.test(value) ||
+        !Number.isSafeInteger(gb) ||
+        gb < 1 ||
+        gb > 1000000
+      )
+        throw Error("INVALID_ALLOCATION_CAP");
+      await db.batch([
+        db
+          .prepare("UPDATE nodes SET max_allocated_bytes=? WHERE id=?")
+          .bind(gb * 1e9, state.nodeId),
+        db
+          .prepare(
+            "INSERT INTO audit_events(actor_id,action,target_id,created_at) VALUES(?,'node_allocation_cap',?,?)",
+          )
+          .bind(String(id), state.nodeId, now),
+      ]);
+      await set({});
+      await reply("✅ سقف حجم اختصاص‌یافتهٔ سرور ثبت شد.", [
+        [btn("سرورها", "rs:nodes")],
+        home(),
+      ]);
+      return;
+    }
     if (data?.startsWith("rs:capacity:")) {
       requireSalesAdmin(actor);
       const nodeId = data.slice(12);
@@ -489,13 +533,21 @@ export async function handleResellerUpdate(
           max_accounts: number;
           purposes: string | null;
         }>();
+      const capacities = await nodeCapacities(db, now);
+      const volumeSummary = capacities
+        .map(
+          (n) =>
+            `${n.name}: ${Math.max(0, n.max_accounts - n.reserved_accounts).toLocaleString("fa-IR")} جای خالی · ${allocationLabel(n)}`,
+        )
+        .join("\n");
       await reply(
-        `کاربرد سرورها\n${nodes.results.map((n) => `${n.name}: ${n.purposes?.includes("sale") ? "فروش " : ""}${n.purposes?.includes("trial") ? "تست " : ""}${!n.purposes ? "بدون کاربرد" : ""} · ${n.healthy ? "آخرین گزارش سالم" : "نیاز به بررسی"}`).join("\n")}\n\nبرای تغییر، دکمهٔ زیر سرور را بزن.`,
+        `ظرفیت سرورها\n${volumeSummary}\n\nکاربرد سرورها\n${nodes.results.map((n) => `${n.name}: ${n.purposes?.includes("sale") ? "فروش " : ""}${n.purposes?.includes("trial") ? "تست " : ""}${!n.purposes ? "بدون کاربرد" : ""} · ${n.healthy ? "آخرین گزارش سالم" : "نیاز به بررسی"}`).join("\n")}\n\nبرای تغییر، دکمهٔ زیر سرور را بزن.`,
         [
           ...nodes.results.map((n) => [
             btn(`${n.name}: فروش`, `rs:node:sale:${n.id}`),
             btn(`${n.name}: تست`, `rs:node:trial:${n.id}`),
-            btn(`ظرفیت ${n.max_accounts}`, `rs:capacity:${n.id}`),
+            btn(`سقف تعداد ${n.max_accounts}`, `rs:capacity:${n.id}`),
+            btn("سقف حجم", `rs:allocation:${n.id}`),
           ]),
           [btn("🏠 منوی اصلی", "rs:home")],
         ],
@@ -573,23 +625,27 @@ export async function handleResellerUpdate(
     await reply(
       error instanceof Error && error.message === "INVITE_UNAVAILABLE"
         ? "ساخت لینک دعوت فعلاً ممکن نشد. کمی بعد دوباره تلاش کن."
-        : error instanceof Error && error.message === "NODE_FULL"
-          ? "ظرفیت این سرور تکمیل شده است. از گزینهٔ تغییر سرور، سرور دیگری انتخاب کن."
-          : error instanceof Error && error.message === "NODE_UNAVAILABLE"
-            ? "این سرور فعلاً آماده نیست. سرور دیگری انتخاب کن."
-            : error instanceof Error && error.message === "INVALID_CAPACITY"
-              ? "ظرفیت باید عددی از ۱ تا ۱۰۰۰۰ باشد. دوباره بفرست."
-              : error instanceof Error &&
-                  error.message === "NODE_NOT_CONFIGURED"
-                ? "سرور این سرویس هنوز انتخاب نشده است. مدیر باید از بخش سرورها، سرور فروش یا تست را مشخص کند."
-                : error instanceof Error &&
-                    error.message === "ACCOUNT_NOT_READY"
-                  ? "پیام این کانفیگ هنوز آماده نیست یا اعتبارش تمام شده است. وضعیت کانفیگ را بررسی کن."
-                  : state?.step === "quota"
-                    ? "حجم باید یک عدد از ۱ تا ۱۰۰۰ گیگابایت باشد. دوباره بفرست یا از منو خارج شو."
-                    : state?.step === "days"
-                      ? "مدت باید یک عدد از ۱ تا ۳۶۵ روز باشد. دوباره بفرست یا از منو خارج شو."
-                      : "این درخواست در دسترس نیست یا اجازهٔ انجام آن را نداری. از منو ادامه بده.",
+        : error instanceof Error && error.message === "NODE_ALLOCATION_FULL"
+          ? "ظرفیت حجمی این سرور برای این کانفیگ کافی نیست. حجم کمتری انتخاب کن یا سرور را تغییر بده."
+          : error instanceof Error && error.message === "INVALID_ALLOCATION_CAP"
+            ? "سقف حجم باید یک عدد صحیح از ۱ تا ۱۰۰۰۰۰۰ گیگابایت باشد. دوباره بفرست."
+            : error instanceof Error && error.message === "NODE_FULL"
+              ? "ظرفیت این سرور تکمیل شده است. از گزینهٔ تغییر سرور، سرور دیگری انتخاب کن."
+              : error instanceof Error && error.message === "NODE_UNAVAILABLE"
+                ? "این سرور فعلاً آماده نیست. سرور دیگری انتخاب کن."
+                : error instanceof Error && error.message === "INVALID_CAPACITY"
+                  ? "ظرفیت باید عددی از ۱ تا ۱۰۰۰۰ باشد. دوباره بفرست."
+                  : error instanceof Error &&
+                      error.message === "NODE_NOT_CONFIGURED"
+                    ? "سرور این سرویس هنوز انتخاب نشده است. مدیر باید از بخش سرورها، سرور فروش یا تست را مشخص کند."
+                    : error instanceof Error &&
+                        error.message === "ACCOUNT_NOT_READY"
+                      ? "پیام این کانفیگ هنوز آماده نیست یا اعتبارش تمام شده است. وضعیت کانفیگ را بررسی کن."
+                      : state?.step === "quota"
+                        ? "حجم باید یک عدد از ۱ تا ۱۰۰۰ گیگابایت باشد. دوباره بفرست یا از منو خارج شو."
+                        : state?.step === "days"
+                          ? "مدت باید یک عدد از ۱ تا ۳۶۵ روز باشد. دوباره بفرست یا از منو خارج شو."
+                          : "این درخواست در دسترس نیست یا اجازهٔ انجام آن را نداری. از منو ادامه بده.",
       state?.step === "confirm"
         ? [[btn("تغییر سرور", "rs:servers")], home()]
         : [home()],

@@ -57,6 +57,7 @@ export async function adminApi(
       "INVALID_PORT",
       "INVALID_INPUT",
       "INVALID_CAPACITY",
+      "INVALID_ALLOCATION_CAP",
       "EXISTING_NODE",
       "FINGERPRINT_UNCONFIRMED",
       "INVALID_CIPHERTEXT",
