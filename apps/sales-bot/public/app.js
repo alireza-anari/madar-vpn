@@ -1,4 +1,4 @@
-(() => {
+const client = String.raw`(() => {
   const tg = window.Telegram?.WebApp;
   tg?.ready();
   tg?.expand?.();
@@ -6,3 +6,6 @@
     initData: tg?.initData || "",
   };
 })();
+`;
+
+export default client;
