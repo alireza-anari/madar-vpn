@@ -25,11 +25,35 @@ export async function setNodeMaxAccounts(
   await requireNode(db, nodeId);
   await db.batch([
     db
-      .prepare("UPDATE nodes SET max_accounts=? WHERE id=?")
+      .prepare(
+        "UPDATE nodes SET max_accounts=?,max_accounts_unlimited=0 WHERE id=?",
+      )
       .bind(maxAccounts, nodeId),
     db
       .prepare(
         "INSERT INTO audit_events(actor_id,action,target_id,created_at) VALUES(?,'node_capacity',?,?)",
+      )
+      .bind(actor.telegramId, nodeId, now),
+  ]);
+}
+
+export async function setNodeUnlimitedAccounts(
+  db: D1Database,
+  actor: SalesActor,
+  nodeId: string,
+  unlimited: boolean,
+  now: number,
+): Promise<void> {
+  requireSalesAdmin(actor);
+  if (typeof unlimited !== "boolean") throw Error("INVALID_CAPACITY");
+  await requireNode(db, nodeId);
+  await db.batch([
+    db
+      .prepare("UPDATE nodes SET max_accounts_unlimited=? WHERE id=?")
+      .bind(unlimited ? 1 : 0, nodeId),
+    db
+      .prepare(
+        "INSERT INTO audit_events(actor_id,action,target_id,created_at) VALUES(?,'node_account_slot_mode',?,?)",
       )
       .bind(actor.telegramId, nodeId, now),
   ]);
