@@ -98,7 +98,7 @@ export async function appApi(
         const account = await ownedAccount(env.SALES_DB, actor, resultMatch[1]!);
         const artifact = await buildAccountDeliveryArtifact(env, account.id, now);
         return artifact
-          ? json({ accountId: account.id, state: account.state, ready: true, ...artifact })
+          ? json({ state: account.state, ready: true, ...artifact })
           : json({ accountId: account.id, state: account.state, ready: false });
       }
       return json({ error: "NOT_FOUND" }, 404);
