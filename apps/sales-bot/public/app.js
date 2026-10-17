@@ -13,6 +13,7 @@ const client = String.raw`(() => {
     wizard: null,
     result: null,
     resultTimer: null,
+    configDetail: null,
   };
 
   const RECOVERY_KEY = "madar.pendingAccountId";
@@ -70,6 +71,12 @@ const client = String.raw`(() => {
     if (seconds % 86400 === 0) return count(seconds / 86400) + " روز";
     if (seconds % 3600 === 0) return count(seconds / 3600) + " ساعت";
     return count(Math.round(seconds / 60)) + " دقیقه";
+  }
+
+  function dateTime(value) {
+    const seconds = Number(value);
+    if (!Number.isFinite(seconds) || seconds <= 0) return "—";
+    return new Date(seconds * 1000).toLocaleString("fa-IR", { timeZone: "Asia/Tehran" });
   }
 
   function buildShareText(result) {
@@ -290,6 +297,10 @@ const client = String.raw`(() => {
       '</div></div>';
   }
 
+  function configRow(item) {
+    return '<div class="list-row"><div><strong>' + esc(item.label || item.id) + '</strong><br><span>' + esc(bytes(item.usedBytes || 0) + " مصرف") + '</span></div><div class="row-actions"><span class="tag">' + esc(item.state || "") + '</span><button class="mini-button" type="button" data-config-id="' + esc(item.id) + '">مشاهده</button></div></div>';
+  }
+
   function wizardHeader(step, title, subtitle) {
     const order = ["label", "quota", "duration", "server", "confirm"];
     const at = Math.max(0, order.indexOf(step));
@@ -395,6 +406,7 @@ const client = String.raw`(() => {
   function beginSale() {
     clearTimeout(state.resultTimer);
     state.result = null;
+    state.configDetail = null;
     state.wizard = {
       kind: "sale",
       step: "label",
@@ -412,6 +424,7 @@ const client = String.raw`(() => {
   async function beginTrial() {
     clearTimeout(state.resultTimer);
     state.result = null;
+    state.configDetail = null;
     state.wizard = {
       kind: "trial",
       step: "server",
@@ -520,6 +533,7 @@ const client = String.raw`(() => {
 
   function renderReadyResult(result) {
     state.result = result;
+    state.configDetail = null;
     if (!content) return;
     if (nav) nav.innerHTML = "";
     const isTrial = result.kind === "trial" || Number(result.durationSeconds) === 1800;
@@ -701,10 +715,110 @@ const client = String.raw`(() => {
     return copyText(text, "جزئیات سرویس کپی شد.");
   }
 
+  function renderConfigDetail(detail, result) {
+    state.configDetail = detail;
+    state.result = result?.ready ? result : null;
+    state.view = "config-detail";
+    if (!content) return;
+    if (nav) nav.innerHTML = "";
+    const seller = state.role === "admin"
+      ? '<div><span>فروشنده</span><b>' + esc(detail.sellerDisplayName || detail.sellerId) + '</b><small dir="ltr">' + esc(detail.sellerId) + '</small></div>'
+      : "";
+    const artifact = result?.ready
+      ? '<section class="card config-detail-artifact"><h2>اطلاعات اتصال</h2><div class="qr-box"><div id="result-qr" aria-label="QR کانفیگ">' + (typeof result.qrSvg === "string" ? result.qrSvg : "") + '</div><small>QR از همان کانفیگ آماده‌شده روی سرور ساخته شده است.</small></div><label class="field-label">کانفیگ</label><pre class="config-box" dir="ltr">' + esc(result.config || "") + '</pre>' + (result.usageUrl ? '<div class="result-actions usage-actions"><a class="action-button usage-link" href="' + esc(result.usageUrl) + '" target="_blank" rel="noopener noreferrer">مصرف و اعتبار</a><button class="action-button secondary-button" type="button" data-action="copy-usage">کپی لینک مصرف</button></div><div class="usage-url" dir="ltr">' + esc(result.usageUrl) + '</div>' : "") + '<div class="result-actions"><button class="mini-button grow" type="button" data-action="copy-result">کپی کانفیگ</button><button class="mini-button grow" type="button" data-action="share-result">اشتراک‌گذاری</button></div></section>'
+      : '<section class="card"><p>اطلاعات اتصال این سرویس در وضعیت فعلی قابل بازیابی نیست.</p></section>';
+    const controls = state.role === "admin"
+      ? '<section class="card danger-zone"><h2>مدیریت سرویس</h2><p>لغو سرویس دسترسی آن را متوقف می‌کند. حذف از فهرست، حذف فیزیکی نیست؛ سابقه و حسابداری سرویس باقی می‌ماند.</p><div class="result-actions"><button class="action-button danger-button" type="button" data-config-action="revoke">لغو سرویس</button><button class="mini-button grow" type="button" data-config-action="archive">حذف از فهرست</button></div></section>'
+      : "";
+    content.innerHTML = '<section class="config-detail"><div class="section-head"><div><div class="eyebrow">CONFIG DETAIL</div><h1>' + esc(detail.label || detail.id) + '</h1><p>جزئیات سرویس و مصرف</p></div><button class="mini-button" type="button" data-action="result-back">بازگشت</button></div><section class="card"><div class="config-detail-grid"><div><span>وضعیت</span><b>' + esc(detail.state || "—") + '</b></div><div><span>سرور</span><b>' + esc(detail.serverName || detail.nodeId || "—") + '</b></div><div><span>حجم</span><b>' + esc(bytes(detail.quotaBytes)) + '</b></div><div><span>مصرف‌شده</span><b>' + esc(bytes(detail.usedBytes || 0)) + '</b></div><div><span>باقی‌مانده</span><b>' + esc(bytes(detail.remainingBytes)) + '</b></div><div><span>ساخته‌شده</span><b>' + esc(dateTime(detail.createdAt)) + '</b></div><div><span>انقضا</span><b>' + esc(dateTime(detail.validUntil)) + '</b></div>' + seller + '</div></section>' + artifact + controls + '</section>';
+  }
+
+  async function loadConfigResult(id) {
+    try {
+      const result = await api("/api/app/configs/" + encodeURIComponent(id) + "/result");
+      return result?.ready ? result : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function openConfigDetail(id) {
+    clearTimeout(state.resultTimer);
+    setBusy(true);
+    try {
+      const detail = await api("/api/app/configs/" + encodeURIComponent(id));
+      const result = await loadConfigResult(id);
+      renderConfigDetail(detail, result);
+      return detail;
+    } catch (error) {
+      showToast(errorCopy[error?.code]?.[0] || "دریافت جزئیات کانفیگ ناموفق بود.");
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function confirmLifecycle(message) {
+    if (typeof tg?.showConfirm === "function") {
+      return new Promise((resolve) => {
+        try {
+          tg.showConfirm(message, (confirmed) => resolve(Boolean(confirmed)));
+        } catch {
+          resolve(false);
+        }
+      });
+    }
+    if (typeof window.confirm === "function") return Promise.resolve(Boolean(window.confirm(message)));
+    return Promise.resolve(false);
+  }
+
+  async function refreshDashboardState() {
+    const dashboard = await api("/api/app/dashboard");
+    state.dashboard = dashboard;
+    state.role = dashboard?.role;
+    return dashboard;
+  }
+
+  async function revokeConfig(id) {
+    if (state.role !== "admin") return false;
+    const confirmed = await confirmLifecycle("این سرویس بلافاصله لغو می‌شود و اتصال کاربر متوقف خواهد شد. ادامه می‌دهید؟");
+    if (!confirmed) return false;
+    try {
+      await api("/api/app/configs/" + encodeURIComponent(id) + "/revoke", { method: "POST", body: "{}" });
+      await refreshDashboardState();
+      await openConfigDetail(id);
+      showToast("سرویس لغو شد.");
+      return true;
+    } catch (error) {
+      showToast(errorCopy[error?.code]?.[0] || "لغو سرویس ناموفق بود.");
+      return false;
+    }
+  }
+
+  async function archiveConfig(id) {
+    if (state.role !== "admin") return false;
+    const confirmed = await confirmLifecycle("این سرویس از فهرست پنهان می‌شود؛ سابقه و حسابداری آن حذف نمی‌شود. ادامه می‌دهید؟");
+    if (!confirmed) return false;
+    try {
+      await api("/api/app/configs/" + encodeURIComponent(id) + "/archive", { method: "POST", body: "{}" });
+      await refreshDashboardState();
+      state.configDetail = null;
+      state.result = null;
+      await renderView("configs");
+      showToast("سرویس از فهرست پنهان شد؛ سابقه حسابداری حفظ شده است.");
+      return true;
+    } catch (error) {
+      showToast(errorCopy[error?.code]?.[0] || "حذف از فهرست ناموفق بود.");
+      return false;
+    }
+  }
+
   async function renderView(view) {
     clearTimeout(state.resultTimer);
     state.view = view;
     state.wizard = null;
+    state.configDetail = null;
+    state.result = null;
     renderNav();
     setBusy(true);
     try {
@@ -722,7 +836,7 @@ const client = String.raw`(() => {
       } else if (view === "configs") {
         const configs = await api("/api/app/configs");
         const list = configs?.items?.length
-          ? configs.items.map((item) => row(item.label || item.id, bytes(item.usedBytes || 0) + " مصرف", item.state || "", item.id)).join("")
+          ? configs.items.map(configRow).join("")
           : stateCard("کانفیگی وجود ندارد", "کانفیگ‌های ساخته‌شده در این بخش نمایش داده می‌شوند.", "▤");
         if (content) content.innerHTML = '<div class="section-head"><div><div class="eyebrow">CONFIGS</div><h1>کانفیگ‌ها</h1><p>وضعیت سرویس‌های ساخته‌شده</p></div></div>' + (configs?.items?.length ? '<section class="card">' + list + '</section>' : list);
       } else if (view === "reports" && state.role === "admin") {
@@ -802,6 +916,17 @@ const client = String.raw`(() => {
       selectWizardNode(node.dataset.nodeId);
       return;
     }
+    const config = closestAction(event.target, "data-config-id");
+    if (config?.dataset?.configId) {
+      openConfigDetail(config.dataset.configId);
+      return;
+    }
+    const configAction = closestAction(event.target, "data-config-action");
+    if (configAction?.dataset?.configAction && state.configDetail?.id) {
+      if (configAction.dataset.configAction === "revoke") revokeConfig(state.configDetail.id);
+      if (configAction.dataset.configAction === "archive") archiveConfig(state.configDetail.id);
+      return;
+    }
     const recover = closestAction(event.target, "data-recover-id");
     if (recover?.dataset?.recoverId) {
       recoverAccount(recover.dataset.recoverId);
@@ -828,7 +953,7 @@ const client = String.raw`(() => {
   });
 
   document.addEventListener?.("visibilitychange", () => {
-    if (!document.hidden && !state.wizard && !state.result) refresh({ keepView: true, force: true });
+    if (!document.hidden && !state.wizard && !state.result && !state.configDetail) refresh({ keepView: true, force: true });
   });
 
   tg?.ready?.();
@@ -850,6 +975,9 @@ const client = String.raw`(() => {
     selectWizardNode,
     createCurrentWizard,
     recoverAccount,
+    openConfigDetail,
+    revokeConfig,
+    archiveConfig,
     buildShareText,
     copyResult,
     copyUsageUrl,
