@@ -1,0 +1,6 @@
+from pathlib import Path
+
+
+def test_one_second_watchdog_timer_is_not_systemd_rate_limited():
+    unit = (Path(__file__).parents[1] / "templates" / "madar-sales-watchdog.service").read_text()
+    assert "StartLimitIntervalSec=0" in unit
