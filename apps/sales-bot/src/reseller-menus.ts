@@ -153,14 +153,16 @@ function addMiniAppEntry(payload: Record<string, any>, publicBaseUrl: string) {
     string,
     any
   >[][];
-  const appUrl = `${publicBaseUrl.replace(/\/$/, "")}/app`;
-  const withoutExistingApp = keyboard.filter(
-    (row) => !row.some((button) => button.web_app?.url === appUrl),
+  const appUrl = `${publicBaseUrl.replace(/\/+$/, "")}/app`;
+  // The home screen gets exactly one Web App action. Callback buttons remain as
+  // rollout fallback, but the standalone /enroll action stays under Servers.
+  const fallbackRows = keyboard.filter(
+    (row) => !row.some((button) => button.web_app),
   );
   payload.reply_markup = {
     inline_keyboard: [
       [{ text: "باز کردن پنل مدار", web_app: { url: appUrl } }],
-      ...withoutExistingApp,
+      ...fallbackRows,
     ],
   };
 }
