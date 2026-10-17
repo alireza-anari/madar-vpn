@@ -12,9 +12,12 @@ import m7 from "../migrations/0007-node-capacity.sql?raw";
 import m8 from "../migrations/0008-reseller-invites.sql?raw";
 import m9 from "../migrations/0009-node-allocation-cap.sql?raw";
 import m10 from "../migrations/0010-capacity-accounting-resellers.sql?raw";
+import m11 from "../migrations/0011-node-account-slot-mode.sql?raw";
+import m12 from "../migrations/0012-telegram-profiles.sql?raw";
 import {
   authenticateMiniApp,
   verifyMiniAppTelegramId,
+  verifyMiniAppTelegramUser,
 } from "../src/miniapp-auth";
 
 const now = 2_000_000;
@@ -38,25 +41,51 @@ function signed(pairs: Array<[string, string]>) {
   return params.toString();
 }
 
-function initData(id: number, authDate = now) {
+function initData(
+  id: number,
+  authDate = now,
+  user: Record<string, unknown> = {},
+) {
   return signed([
     ["auth_date", String(authDate)],
     ["query_id", "AA-test"],
-    ["user", JSON.stringify({ id, first_name: "Test" })],
+    ["user", JSON.stringify({ id, first_name: "Test", ...user })],
   ]);
 }
 
 beforeEach(async () => {
   await resetDb();
-  for (const sql of [m1, m2, m3, m4, m5, m6, m7, m8, m9, m10])
+  for (const sql of [m1, m2, m3, m4, m5, m6, m7, m8, m9, m10, m11, m12])
     await env.SALES_DB.exec(sql);
 });
 
-test("resolves a valid admin Mini App session", async () => {
-  expect(verifyMiniAppTelegramId(initData(100), appEnv, now)).toBe("100");
-  await expect(authenticateMiniApp(initData(100), appEnv, now)).resolves.toEqual({
+test("resolves a valid admin Mini App session and persists verified profile data", async () => {
+  const data = initData(100, now, {
+    username: "admin_user",
+    first_name: "Ali",
+    last_name: "Admin",
+  });
+  expect(verifyMiniAppTelegramId(data, appEnv, now)).toBe("100");
+  expect(verifyMiniAppTelegramUser(data, appEnv, now)).toEqual({
+    telegramId: "100",
+    username: "admin_user",
+    firstName: "Ali",
+    lastName: "Admin",
+  });
+  await expect(authenticateMiniApp(data, appEnv, now)).resolves.toEqual({
     telegramId: "100",
     role: "admin",
+  });
+  await expect(
+    env.SALES_DB.prepare(
+      "SELECT telegram_id,username,first_name,last_name,updated_at FROM telegram_profiles WHERE telegram_id='100'",
+    ).first(),
+  ).resolves.toEqual({
+    telegram_id: "100",
+    username: "admin_user",
+    first_name: "Ali",
+    last_name: "Admin",
+    updated_at: now,
   });
 });
 
@@ -71,6 +100,21 @@ test("resolves an enabled reseller and distinguishes a disabled reseller", async
   await expect(authenticateMiniApp(initData(201), appEnv, now)).rejects.toThrow(
     "SELLER_DISABLED",
   );
+});
+
+test("bounds signed Telegram profile strings and ignores invalid field types", () => {
+  const profile = verifyMiniAppTelegramUser(
+    initData(100, now, {
+      username: "u".repeat(100),
+      first_name: "ف".repeat(200),
+      last_name: 42,
+    }),
+    appEnv,
+    now,
+  );
+  expect(profile.username).toBe("u".repeat(64));
+  expect(profile.firstName).toBe("ف".repeat(128));
+  expect(profile.lastName).toBeNull();
 });
 
 test("fails closed on duplicate query keys", () => {
