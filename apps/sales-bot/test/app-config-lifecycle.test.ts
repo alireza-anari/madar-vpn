@@ -15,8 +15,8 @@ import m10 from "../migrations/0010-capacity-accounting-resellers.sql?raw";
 import m11 from "../migrations/0011-node-account-slot-mode.sql?raw";
 import m12 from "../migrations/0012-telegram-profiles.sql?raw";
 import m13 from "../migrations/0013-managed-account-archive.sql?raw";
-import { appApi } from "../src/app-api";
-import { listAppConfigs } from "../src/app-dashboard";
+import { appLifecycleApi } from "../src/app-lifecycle-api";
+import { listVisibleAppConfigs } from "../src/app-configs";
 import { nodeCapacities } from "../src/node-capacity";
 import { sellerStats } from "../src/seller-accounting";
 
@@ -37,6 +37,12 @@ function request(path: string, id: number, method = "GET") {
   return new Request(`https://example.test${path}`, {method,headers:{"X-Telegram-Init-Data":initData(id),"Content-Type":"application/json"},...(method === "POST" ? {body:"{}"}: {})});
 }
 
+async function lifecycle(requestValue: Request, at = now) {
+  const response = await appLifecycleApi(requestValue, E, at);
+  if (!response) throw Error("UNHANDLED_TEST_ROUTE");
+  return response;
+}
+
 beforeEach(async () => {
   await resetDb();
   for (const sql of [m1,m2,m3,m4,m5,m6,m7,m8,m9,m10,m11,m12,m13]) await env.SALES_DB.exec(sql);
@@ -49,7 +55,7 @@ beforeEach(async () => {
 });
 
 test("admin config detail includes server, remaining quota and seller identity", async () => {
-  const response = await appApi(request("/api/app/configs/a", 1), E, now);
+  const response = await lifecycle(request("/api/app/configs/a", 1));
   expect(response.status).toBe(200);
   expect(await response.json()).toMatchObject({
     id:"a",sellerId:"10",sellerDisplayName:"@seller10",serverName:"Stockholm",quotaBytes:30e9,usedBytes:5e9,remainingBytes:25e9,archivedAt:null
@@ -57,7 +63,7 @@ test("admin config detail includes server, remaining quota and seller identity",
 });
 
 test("seller cannot revoke through admin lifecycle endpoint", async () => {
-  const response = await appApi(request("/api/app/configs/a/revoke", 10, "POST"), E, now);
+  const response = await lifecycle(request("/api/app/configs/a/revoke", 10, "POST"));
   expect(response.status).toBe(403);
   expect(await response.json()).toEqual({error:"ADMIN_REQUIRED"});
   expect(await env.SALES_DB.prepare("SELECT state FROM managed_accounts WHERE id='a'").first("state")).toBe("active");
@@ -65,7 +71,7 @@ test("seller cannot revoke through admin lifecycle endpoint", async () => {
 
 test("revoke is end-to-end and immediately releases live capacity", async () => {
   expect((await nodeCapacities(env.SALES_DB, now, "n"))[0]?.reserved_accounts).toBe(1);
-  const response = await appApi(request("/api/app/configs/a/revoke", 1, "POST"), E, now);
+  const response = await lifecycle(request("/api/app/configs/a/revoke", 1, "POST"));
   expect(response.status).toBe(200);
   expect((await response.json() as any).state).toBe("revoked");
   expect((await nodeCapacities(env.SALES_DB, now, "n"))[0]?.reserved_accounts).toBe(0);
@@ -73,20 +79,20 @@ test("revoke is end-to-end and immediately releases live capacity", async () => 
 });
 
 test("archive revokes live account, preserves history, audits once and hides default list", async () => {
-  let response = await appApi(request("/api/app/configs/a/archive", 1, "POST"), E, now);
+  let response = await lifecycle(request("/api/app/configs/a/archive", 1, "POST"));
   expect(response.status).toBe(200);
   expect(await response.json()).toMatchObject({id:"a",state:"revoked",archivedAt:now,archivedBy:"1"});
 
-  const list = await listAppConfigs(env.SALES_DB, admin, now);
+  const list = await listVisibleAppConfigs(env.SALES_DB, admin, now);
   expect(list.items).toHaveLength(0);
   expect((await sellerStats(env.SALES_DB, "10", "all", now)).configCount).toBe(1);
   expect(await env.SALES_DB.prepare("SELECT COUNT(*) n FROM audit_events WHERE action='archive_account' AND target_id='a'").first("n")).toBe(1);
 
-  response = await appApi(request("/api/app/configs/a/archive", 1, "POST"), E, now + 1);
+  response = await lifecycle(request("/api/app/configs/a/archive", 1, "POST"), now + 1);
   expect(response.status).toBe(200);
   expect(await env.SALES_DB.prepare("SELECT COUNT(*) n FROM audit_events WHERE action='archive_account' AND target_id='a'").first("n")).toBe(1);
 
-  const detail = await appApi(request("/api/app/configs/a", 1), E, now + 1);
+  const detail = await lifecycle(request("/api/app/configs/a", 1), now + 1);
   expect(detail.status).toBe(200);
   expect(await detail.json()).toMatchObject({id:"a",archivedAt:now});
 });
