@@ -1,7 +1,7 @@
 # Madar Telegram Mini App — Production Hardening Design
 
 Date: 2026-10-17
-Status: approved for planning
+Status: awaiting user review
 Target branch: `impl/telegram-miniapp-dashboard-20261017`
 Baseline production commit: `813313ff0326fac7879e3430e1b2b46f9a0fdd3a`
 
@@ -104,7 +104,7 @@ The Telegram ID remains visible as secondary/support metadata in seller detail.
 
 Security constraints:
 
-- Never trust unsiged query/body profile values.
+- Never trust unsigned query/body profile values.
 - Only profile values extracted from verified Telegram init data or Telegram bot updates may be persisted.
 - Bound all strings before storage/display.
 
@@ -410,6 +410,6 @@ The pass is accepted only when all are true:
 - Never physically delete managed-account history for the user-facing delete action.
 - Never fake node health by editing D1 health timestamps/state.
 - Never expose a reusable admin/seller credential in a usage URL.
-- Never trust unsiged Telegram identity fields.
+- Never trust unsigned Telegram identity fields.
 - Keep all destructive UI actions behind explicit confirmation.
 - Prefer additive schema/API changes so rollback remains possible during rollout.
