@@ -6,7 +6,9 @@ import { formatBytes } from "./sales-format";
 import { resolveSalesActor } from "./resellers";
 
 const faDigits = (value: string) =>
-  value.replace(/\d/g, (digit) => "۰۱۲۳۴۵۶۷۸۹"[Number(digit)]!);
+  value
+    .replace(/\d/g, (digit) => "۰۱۲۳۴۵۶۷۸۹"[Number(digit)]!)
+    .replace(/%/g, "٪");
 
 function updateIdentity(u: TelegramUpdate) {
   const id = u.message?.from?.id ?? u.callback_query?.from.id;
