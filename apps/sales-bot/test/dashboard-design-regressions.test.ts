@@ -94,6 +94,10 @@ async function account(
     .run();
 }
 
+function flatButtons(p: any) {
+  return (p.reply_markup?.inline_keyboard || []).flat();
+}
+
 test("seller home counts all still-in-service configs even after settlement", async () => {
   await account("old-live", "n1", "active", 30, 5, 0);
   await env.SALES_DB.exec(
@@ -106,17 +110,55 @@ test("seller home counts all still-in-service configs even after settlement", as
   expect(home.text).toContain("کل فروش: ۱ کانفیگ");
 });
 
-test("add VPS lives under server management, not the admin home", async () => {
+test("admin and enabled seller homes expose the Madar Mini App while legacy actions remain", async () => {
+  await send(9, "/start", 5011);
+  const admin = await payload(5011);
+  const adminButtons = flatButtons(admin);
+  expect(adminButtons).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        text: "باز کردن پنل مدار",
+        web_app: { url: "https://example.test/app" },
+      }),
+    ]),
+  );
+  expect(adminButtons.some((b: any) => b.callback_data === "rs:nodes")).toBe(true);
+  expect(adminButtons.some((b: any) => b.web_app?.url?.endsWith("/enroll"))).toBe(false);
+
+  await send(10, "/start", 5012);
+  const seller = await payload(5012);
+  const sellerButtons = flatButtons(seller);
+  expect(sellerButtons).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        text: "باز کردن پنل مدار",
+        web_app: { url: "https://example.test/app" },
+      }),
+    ]),
+  );
+  expect(sellerButtons.some((b: any) => b.callback_data)).toBe(true);
+});
+
+test("ordinary users never receive the management Mini App entry", async () => {
+  await send(77, "/start", 5013);
+  const ordinary = await payload(5013);
+  expect(flatButtons(ordinary).some((b: any) => b.web_app?.url?.endsWith("/app"))).toBe(false);
+});
+
+test("add VPS fallback lives under server management, not the admin home", async () => {
   await send(9, "/start", 5020);
   const home = await payload(5020);
   expect(
-    home.reply_markup.inline_keyboard.flat().some((b: any) => b.web_app),
+    flatButtons(home).some((b: any) => b.web_app?.url?.endsWith("/enroll")),
   ).toBe(false);
+  expect(
+    flatButtons(home).some((b: any) => b.web_app?.url?.endsWith("/app")),
+  ).toBe(true);
 
   await click(9, "rs:nodes", 5021);
   const nodes = await payload(5021);
   expect(
-    nodes.reply_markup.inline_keyboard.flat().some((b: any) => b.web_app),
+    flatButtons(nodes).some((b: any) => b.web_app?.url?.endsWith("/enroll")),
   ).toBe(true);
 });
 
