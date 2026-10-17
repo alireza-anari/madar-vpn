@@ -9,6 +9,7 @@ import shared from "../migrations/0005-shared-node-purposes.sql?raw";
 import capacity from "../migrations/0007-node-capacity.sql?raw";
 import allocation from "../migrations/0009-node-allocation-cap.sql?raw";
 import accounting from "../migrations/0010-capacity-accounting-resellers.sql?raw";
+import slotMode from "../migrations/0011-node-account-slot-mode.sql?raw";
 import { createAccount, revokeAccount } from "../src/accounts";
 
 const GB = 1e9;
@@ -34,6 +35,7 @@ beforeEach(async () => {
     capacity,
     allocation,
     accounting,
+    slotMode,
   ])
     await env.SALES_DB.exec(sql);
   await env.SALES_DB.exec(
