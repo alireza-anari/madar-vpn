@@ -31,14 +31,46 @@ beforeEach(async () => {
   await env.SALES_DB.exec(
     "INSERT INTO resellers(telegram_id,enabled,created_at) VALUES('10',1,1),('20',1,1);",
   );
-  await env.SALES_DB.exec(
-    `INSERT INTO nodes(id,name,target_ip,vpn_port,state,revision,acked_revision,last_seen,healthy,agent_capabilities,max_accounts,max_allocated_bytes)
-     VALUES('n1','Stockholm','13.51.1.1',443,'ready',7,7,1000,1,'quota-v2,shared-443',10,200000000000),
-           ('n2','Unlimited','13.51.1.2',443,'ready',3,3,1000,1,'quota-v2,shared-443',10,NULL);`,
+  const insertNode = env.SALES_DB.prepare(
+    "INSERT INTO nodes(id,name,target_ip,vpn_port,state,revision,acked_revision,last_seen,healthy,agent_capabilities,max_accounts,max_allocated_bytes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
   );
-  await env.SALES_DB.exec(
-    `INSERT INTO node_capacity_alert_state(node_id,level,updated_at) VALUES('n1',80,1000);`,
-  );
+  await insertNode
+    .bind(
+      "n1",
+      "Stockholm",
+      "13.51.1.1",
+      443,
+      "ready",
+      7,
+      7,
+      1000,
+      1,
+      "quota-v2,shared-443",
+      10,
+      200 * GB,
+    )
+    .run();
+  await insertNode
+    .bind(
+      "n2",
+      "Unlimited",
+      "13.51.1.2",
+      443,
+      "ready",
+      3,
+      3,
+      1000,
+      1,
+      "quota-v2,shared-443",
+      10,
+      null,
+    )
+    .run();
+  await env.SALES_DB.prepare(
+    "INSERT INTO node_capacity_alert_state(node_id,level,updated_at) VALUES(?,?,?)",
+  )
+    .bind("n1", 80, 1000)
+    .run();
 });
 
 async function account(args: {
