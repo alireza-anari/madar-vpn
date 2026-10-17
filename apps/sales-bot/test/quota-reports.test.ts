@@ -70,3 +70,19 @@ test("simultaneous conflicting sequences cannot both be accepted", async () => {
   ]);
   expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
 });
+test("expiry wins over a simultaneous local blocked report", async () => {
+  await env.SALES_DB.prepare(
+    "UPDATE managed_accounts SET valid_until=101 WHERE id='a'",
+  ).run();
+  await acceptQuotaReports(
+    env.SALES_DB,
+    "n",
+    [{ ...report, observedAt: 101, blocked: true }],
+    101,
+  );
+  expect(
+    await env.SALES_DB.prepare(
+      "SELECT state FROM managed_accounts WHERE id='a'",
+    ).first("state"),
+  ).toBe("expired");
+});
