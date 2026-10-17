@@ -7,6 +7,7 @@ import { runnerApi } from "./runner-api";
 import enrollHtml from "../public/enroll.html";
 import appHtml from "../public/app.html";
 import appCss from "../public/app.css";
+import appAdminCss from "../public/app-admin.css";
 import appJs from "../public/app.js";
 import appAdminJs from "../public/app-admin.js";
 import { adminApi } from "./admin-api";
@@ -46,6 +47,8 @@ export default {
       return textResponse(appHtml, "text/html; charset=utf-8", true);
     if (path === "/app.css")
       return textResponse(appCss, "text/css; charset=utf-8");
+    if (path === "/app-admin.css")
+      return textResponse(appAdminCss, "text/css; charset=utf-8");
     if (path === "/app.js")
       return textResponse(appJs, "text/javascript; charset=utf-8");
     if (path === "/app-admin.js")
