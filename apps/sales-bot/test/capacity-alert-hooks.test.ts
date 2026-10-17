@@ -12,6 +12,7 @@ import m10 from "../migrations/0010-capacity-accounting-resellers.sql?raw";
 import { hash } from "../src/crypto";
 import { nodeApi } from "../src/node-api";
 import { refreshAllCapacityAlerts } from "../src/capacity-alerts";
+import { drainInbox } from "../src/inbox";
 
 const token = "A".repeat(40);
 const E = { ...env, ADMIN_TELEGRAM_IDS: "9" };
@@ -63,6 +64,87 @@ test("accepted quota reports remain successful when alert persistence is unavail
       "SELECT used_bytes FROM managed_accounts WHERE id='a'",
     ).first("used_bytes"),
   ).toBe(80_000_000_000);
+});
+
+test("sale confirmation completes even when both alert refreshes fail", async () => {
+  await env.SALES_DB.exec(
+    "DELETE FROM managed_accounts; UPDATE nodes SET healthy=1,last_seen=100,agent_capabilities='quota-v2' WHERE id='n';",
+  );
+  const conversation = JSON.stringify({
+    step: "confirm",
+    requestKey: "alert-sale",
+    kind: "sale",
+    label: "client",
+    quotaBytes: 10_000_000_000,
+    durationSeconds: 86400,
+    nodeId: "n",
+  });
+  await env.SALES_DB.prepare(
+    "INSERT INTO users(id,conversation) VALUES('10',?)",
+  )
+    .bind(conversation)
+    .run();
+  await env.SALES_DB.prepare(
+    "INSERT INTO telegram_updates(id,payload) VALUES(900,?)",
+  )
+    .bind(
+      JSON.stringify({
+        update_id: 900,
+        callback_query: {
+          id: "900",
+          from: { id: 10 },
+          message: { chat: { id: 10, type: "private" } },
+          data: "rs:confirm:alert-sale",
+        },
+      }),
+    )
+    .run();
+  await env.SALES_DB.exec("DROP TABLE node_capacity_alert_state;");
+
+  await drainInbox(E, 100);
+
+  expect(
+    await env.SALES_DB.prepare(
+      "SELECT COUNT(*) n FROM managed_accounts WHERE request_key='alert-sale'",
+    ).first("n"),
+  ).toBe(1);
+  expect(
+    await env.SALES_DB.prepare(
+      "SELECT state FROM telegram_updates WHERE id=900",
+    ).first("state"),
+  ).toBe("done");
+});
+
+test("revoke completes even when its downward alert refresh fails", async () => {
+  await env.SALES_DB.prepare(
+    "INSERT INTO telegram_updates(id,payload) VALUES(901,?)",
+  )
+    .bind(
+      JSON.stringify({
+        update_id: 901,
+        callback_query: {
+          id: "901",
+          from: { id: 9 },
+          message: { chat: { id: 9, type: "private" } },
+          data: "rs:revokeok:a",
+        },
+      }),
+    )
+    .run();
+  await env.SALES_DB.exec("DROP TABLE node_capacity_alert_state;");
+
+  await drainInbox(E, 100);
+
+  expect(
+    await env.SALES_DB.prepare(
+      "SELECT state FROM managed_accounts WHERE id='a'",
+    ).first("state"),
+  ).toBe("revoked");
+  expect(
+    await env.SALES_DB.prepare(
+      "SELECT state FROM telegram_updates WHERE id=901",
+    ).first("state"),
+  ).toBe("done");
 });
 
 test("the scheduled sweep isolates one broken alert store from its caller", async () => {
