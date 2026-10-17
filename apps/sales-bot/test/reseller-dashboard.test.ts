@@ -11,6 +11,7 @@ import m7 from "../migrations/0007-node-capacity.sql?raw";
 import m8 from "../migrations/0008-reseller-invites.sql?raw";
 import m9 from "../migrations/0009-node-allocation-cap.sql?raw";
 import m10 from "../migrations/0010-capacity-accounting-resellers.sql?raw";
+import m11 from "../migrations/0011-node-account-slot-mode.sql?raw";
 import { handleUpdate } from "../src/menus";
 
 const GB = 1e9;
@@ -54,7 +55,7 @@ const payload = async (update: number) =>
 
 beforeEach(async () => {
   await resetDb();
-  for (const sql of [m1, m2, m3, m4, m5, m6, m7, m8, m9, m10])
+  for (const sql of [m1, m2, m3, m4, m5, m6, m7, m8, m9, m10, m11])
     await env.SALES_DB.exec(sql);
   await env.SALES_DB.exec(
     "INSERT INTO settings(key,value) VALUES('app_mode','reseller');" +
