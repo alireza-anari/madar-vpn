@@ -9,6 +9,7 @@ ExecStart=/usr/bin/python3 /opt/madar-sales-node/agent.py
 ExecStopPost=/usr/bin/systemctl stop madar-sales-xray.service
 Restart=always
 RestartSec=5
+KillMode=mixed
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
