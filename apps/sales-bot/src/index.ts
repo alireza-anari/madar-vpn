@@ -8,6 +8,7 @@ import enrollHtml from "../public/enroll.html";
 import appHtml from "../public/app.html";
 import appCss from "../public/app.css";
 import appJs from "../public/app.js";
+import appAdminJs from "../public/app-admin.js";
 import { adminApi } from "./admin-api";
 import { appApi } from "./app-api";
 import { cleanupCredentials } from "./enrollment";
@@ -47,6 +48,8 @@ export default {
       return textResponse(appCss, "text/css; charset=utf-8");
     if (path === "/app.js")
       return textResponse(appJs, "text/javascript; charset=utf-8");
+    if (path === "/app-admin.js")
+      return textResponse(appAdminJs, "text/javascript; charset=utf-8");
     if (path.startsWith("/api/app/")) return appApi(request, env, epoch());
     if (path === "/enroll")
       return textResponse(enrollHtml, "text/html; charset=utf-8", true);
