@@ -4,9 +4,14 @@ from quota import QuotaStore
 from stats import read_counters
 from xray import render_config,atomic_write
 
+STARTUP_GRACE=30
+
 def meter_authorized(path,now):
     try:
-        h=json.loads(pathlib.Path(path).read_text());return h['expiresAt']>now and 0<=now-h['sampledAt']<=4
+        h=json.loads(pathlib.Path(path).read_text())
+        if h['expiresAt']<=now:return False
+        grace=h.get('graceUntil')
+        return (type(grace) is int and now<=grace) or 0<=now-h['sampledAt']<=4
     except Exception:return False
 
 def shared_frontend(settings,binary,base):
@@ -66,13 +71,17 @@ class QuotaRuntime:
         with sqlite3.connect(str(database)) as existing:existing.execute('SELECT revision FROM meta WHERE id=1').fetchone()
         self.store=QuotaStore(database);self.processes={};self.policy=None;self.revision=0
         self.incoming=queue.Queue();self.outgoing=queue.Queue(maxsize=1);self.stopping=threading.Event();self.healthy=False
-        # Arm the fail-closed watchdog before frontend setup can restart Xray.
-        now=int(time.time());atomic_write(self.base/'quota-heartbeat.json',{'expiresAt':now+5,'sampledAt':now})
+        # Startup has bounded grace only while Xray/frontend construction can legitimately block.
+        now=int(time.time());self.write_heartbeat(now+STARTUP_GRACE,startup=True)
         self.frontend=None
         if self.config.get('shared443'):
             try:self.frontend=frontend_factory(self.config,'/opt/madar-sales-node/xray',self.base)
             except Exception:
                 self.store.close();raise
+    def write_heartbeat(self,expires_at,*,startup=False):
+        now=int(time.time());payload={'expiresAt':expires_at,'sampledAt':now}
+        if startup:payload['graceUntil']=min(expires_at,now+STARTUP_GRACE)
+        atomic_write(self.base/'quota-heartbeat.json',payload)
     def frontend_ready(self):
         if not self.config.get('shared443'):return True
         if self.frontend is None:return False
@@ -142,10 +151,13 @@ class QuotaRuntime:
                             # A fresh local generation is allowed only for accounts never observed or cleanly checkpointed.
                             row=self.store.db.execute('SELECT process_generation FROM accounts WHERE id=?',(ident,)).fetchone()
                             if row['process_generation'] is not None:self.store.block(ident);continue
+                            self.write_heartbeat(self.policy['expiresAt'],startup=True)
                             try:process=self.process_factory(self.config,client,self.base)
                             except Exception:
                                 self.store.block(ident)
+                                self.write_heartbeat(self.policy['expiresAt'])
                                 continue
+                            self.write_heartbeat(self.policy['expiresAt'])
                             try:self.store.observe(ident,process.generation,0,now)
                             except Exception:process.stop();raise
                             self.processes[ident]=process
@@ -162,8 +174,8 @@ class QuotaRuntime:
                         for ident in list(self.processes):self.stop_account(ident,True)
                         self.healthy=False
                     else:self.healthy=self.healthy and all(ident in self.processes for ident in desired)
-                    # Existing processes use original config expiry only as metadata; local signed policy controls time.
-                    atomic_write(self.base/'quota-heartbeat.json',{'expiresAt':self.policy['expiresAt'],'sampledAt':int(time.time())})
+                    # Normal operation is strict again; no grace survives the completed iteration.
+                    self.write_heartbeat(self.policy['expiresAt'])
                 message=(self.revision,self.healthy,self.store.pending_reports()[:100])
                 try:self.outgoing.get_nowait()
                 except queue.Empty:pass
