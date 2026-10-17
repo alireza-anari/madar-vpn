@@ -1,0 +1,27 @@
+name: Mini App version upload
+
+on:
+  push:
+    branches:
+      - ops/miniapp-bundle-20261017
+
+jobs:
+  upload:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 813313ff0326fac7879e3430e1b2b46f9a0fdd3a
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: corepack prepare pnpm@12.9.1 --activate
+      - run: pnpm install --frozen-lockfile
+      - name: Upload undeployed Worker version
+        working-directory: apps/sales-bot
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: 2e4e0d025c81b9134fd2d19f17535e30
+        run: pnpm exec wrangler versions upload --keep-vars --message "feat: Telegram Mini App dashboard production rollout" --tag "commit-813313ff"
