@@ -1,4 +1,5 @@
 import { deliverReadyAccounts } from "./account-delivery";
+import { refreshCapacityAlert } from "./capacity-alerts";
 import { buildQuotaPolicy, ackQuotaPolicy } from "./quota-policies";
 import { acceptQuotaReports } from "./quota-reports";
 import { salesMode } from "./resellers";
@@ -26,7 +27,12 @@ export async function nodeApi(request: Request, env: Env, now: number) {
     ].includes(path)
   ) {
     // Explicit rollout gate: legacy nodes never accidentally receive quota policies.
-    if (!(await salesMode(env.SALES_DB)) && await env.SALES_DB.prepare("SELECT value FROM settings WHERE key='quota_protocol_enabled'").first<string>("value")!=="1")
+    if (
+      !(await salesMode(env.SALES_DB)) &&
+      (await env.SALES_DB.prepare(
+        "SELECT value FROM settings WHERE key='quota_protocol_enabled'",
+      ).first<string>("value")) !== "1"
+    )
       return Response.json({ error: "QUOTA_MODE_DISABLED" }, { status: 409 });
     try {
       if (path.endsWith("/policy-v2") && request.method === "GET") {
@@ -46,10 +52,20 @@ export async function nodeApi(request: Request, env: Env, now: number) {
           path.endsWith("/quota-reports") ? 65536 : 2048,
         ),
       );
-      if (path.endsWith("/quota-reports"))
-        return Response.json(
-          await acceptQuotaReports(env.SALES_DB, node.id, body.reports, now),
+      if (path.endsWith("/quota-reports")) {
+        const result = await acceptQuotaReports(
+          env.SALES_DB,
+          node.id,
+          body.reports,
+          now,
         );
+        try {
+          await refreshCapacityAlert(env, node.id, now);
+        } catch {
+          // Alerting is best-effort and never invalidates an accepted report.
+        }
+        return Response.json(result);
+      }
       if (
         !Number.isSafeInteger(body.revision) ||
         typeof body.healthy !== "boolean"
