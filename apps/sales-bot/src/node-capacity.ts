@@ -87,5 +87,5 @@ export function allocationLabel(n: NodeCapacity) {
   const remaining = remainingAllocation(n);
   return remaining === null
     ? "حجم قابل فروش: نامحدود"
-    : `${(remaining / 1e9).toLocaleString("fa-IR")} گیگ قابل فروش`;
+    : `${(remaining / 1e9).toLocaleString("fa-IR")} گیگ باقی‌مانده`;
 }
