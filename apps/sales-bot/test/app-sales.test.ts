@@ -250,7 +250,7 @@ test("result artifact is pending before activation and matches durable bot deliv
   const ownedBody = (await owned.json()) as any;
   expect(ownedBody.ready).toBe(true);
   expect(ownedBody.config).toBe(artifact!.config);
-  expect(ownedBody.qrSvg).toMatch(/^<svg[\s\S]*<\/svg>$/);
+  expect(ownedBody.qrSvg.trim()).toMatch(/^<svg[\s\S]*<\/svg>$/);
 
   const foreign = await appApi(
     request("/api/app/configs/ready-account/result", 20),

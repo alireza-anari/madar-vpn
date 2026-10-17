@@ -15,6 +15,30 @@ const client = String.raw`(() => {
     resultTimer: null,
   };
 
+  const RECOVERY_KEY = "madar.pendingAccountId";
+
+  function rememberPendingAccount(accountId) {
+    if (!accountId) return;
+    try {
+      window.sessionStorage?.setItem(RECOVERY_KEY, String(accountId));
+    } catch {}
+  }
+
+  function readPendingAccount() {
+    try {
+      const value = window.sessionStorage?.getItem(RECOVERY_KEY);
+      return value && value.length <= 120 ? value : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function forgetPendingAccount() {
+    try {
+      window.sessionStorage?.removeItem(RECOVERY_KEY);
+    } catch {}
+  }
+
   const fa = new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 1 });
   const integerFa = new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 0 });
 
@@ -471,18 +495,10 @@ const client = String.raw`(() => {
 
   function drawQr() {
     const r = state.result;
-    if (!r?.config || !window.QRCode) return;
+    if (!r?.qrSvg) return;
     const target = document.getElementById("result-qr");
     if (!target) return;
-    target.innerHTML = "";
-    try {
-      new window.QRCode(target, {
-        text: r.config,
-        width: 210,
-        height: 210,
-        correctLevel: window.QRCode.CorrectLevel?.M,
-      });
-    } catch {}
+    target.innerHTML = String(r.qrSvg);
   }
 
   function renderReadyResult(result) {
@@ -492,7 +508,7 @@ const client = String.raw`(() => {
     const isTrial = result.kind === "trial" || Number(result.durationSeconds) === 1800;
     content.innerHTML = '<section class="result-screen" data-result-screen="ready"><div class="result-success"><span>✓</span><div><div class="eyebrow">READY</div><h1>کانفیگ آماده است</h1></div></div><div class="card result-card"><div class="result-summary"><div><span>مشتری</span><b>' + esc(result.label || "—") + '</b></div><div><span>حجم</span><b>' + esc(bytes(result.quotaBytes)) + '</b></div><div><span>مدت</span><b>' + esc(duration(result.durationSeconds)) + '</b></div><div><span>سرور</span><b>' + esc(result.serverName || "—") + '</b></div></div>' +
       (isTrial ? '<div class="trial-badge">🎁 تست ۱ گیگ · ۳۰ دقیقه</div>' : "") +
-      '<div class="qr-box"><div id="result-qr" aria-label="QR کانفیگ"></div><small>برای واردکردن سریع در برنامه اتصال اسکن کنید.</small></div><label class="field-label">کانفیگ</label><pre class="config-box" dir="ltr">' + esc(result.config || "") + '</pre><div class="result-actions"><button class="action-button" type="button" data-action="copy-result">📋 کپی کانفیگ</button><button class="action-button secondary-button" type="button" data-action="share-result">↗ اشتراک‌گذاری</button></div><div class="result-actions"><button class="mini-button grow" type="button" data-action="result-back">بازگشت به کانفیگ‌ها</button><button class="mini-button grow" type="button" data-action="close-result">بستن پنل</button></div></div></section>';
+      '<div class="qr-box"><div id="result-qr" aria-label="QR کانفیگ">' + (typeof result.qrSvg === "string" ? result.qrSvg : "") + '</div><small>برای واردکردن سریع در برنامه اتصال اسکن کنید.</small></div><label class="field-label">کانفیگ</label><pre class="config-box" dir="ltr">' + esc(result.config || "") + '</pre><div class="result-actions"><button class="action-button" type="button" data-action="copy-result">📋 کپی کانفیگ</button><button class="action-button secondary-button" type="button" data-action="share-result">↗ اشتراک‌گذاری</button></div><div class="result-actions"><button class="mini-button grow" type="button" data-action="result-back">بازگشت به کانفیگ‌ها</button><button class="mini-button grow" type="button" data-action="close-result">بستن پنل</button></div></div></section>';
     setTimeout(drawQr, 0);
   }
 
@@ -501,6 +517,7 @@ const client = String.raw`(() => {
     try {
       const result = await api("/api/app/configs/" + encodeURIComponent(accountId) + "/result");
       if (result?.ready) {
+        forgetPendingAccount();
         renderReadyResult(result);
         return result;
       }
@@ -512,6 +529,7 @@ const client = String.raw`(() => {
       return result;
     } catch (error) {
       if (error?.code === "ACCOUNT_NOT_FOUND") {
+        forgetPendingAccount();
         showToast("این کانفیگ پیدا نشد یا متعلق به این حساب نیست.");
         await renderView("configs");
         return null;
@@ -547,6 +565,7 @@ const client = String.raw`(() => {
           }),
         });
       }
+      rememberPendingAccount(result.accountId);
       renderPendingResult(result.accountId, result.state);
       await recoverAccount(result.accountId, 0);
     } catch (error) {
@@ -647,6 +666,10 @@ const client = String.raw`(() => {
       if (state.role !== "admin" && state.role !== "seller") throw new Error("SELLER_REQUIRED");
       if (!options.keepView) state.view = "home";
       await renderView(state.view);
+      if (!options.keepView) {
+        const pendingId = readPendingAccount();
+        if (pendingId) await recoverAccount(pendingId, 0);
+      }
     } catch (error) {
       renderError(error?.code || error?.message || "REQUEST_FAILED");
     }
