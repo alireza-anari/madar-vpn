@@ -234,7 +234,11 @@ test("result artifact is pending before activation and matches durable bot deliv
     "SELECT payload FROM outbox WHERE id='account:ready-account'",
   ).first<string>("payload");
   expect(payload).toBeTruthy();
-  expect(JSON.parse(payload!).text).toContain(artifact!.config);
+  const parsed = JSON.parse(payload!) as any;
+  const copyButton = parsed.reply_markup.inline_keyboard
+    .flat()
+    .find((button: any) => button.copy_text);
+  expect(copyButton?.copy_text?.text).toBe(artifact!.config);
 
   const foreign = await appApi(
     request("/api/app/configs/ready-account/result", 20),
