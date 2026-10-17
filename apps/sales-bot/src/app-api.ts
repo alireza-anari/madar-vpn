@@ -361,9 +361,13 @@ export async function appApi(
   } catch (error) {
     const code = error instanceof Error ? error.message : "";
     if (
-      ["INVALID_SIGNATURE", "AUTH_EXPIRED", "SELLER_REQUIRED", "ADMIN_REQUIRED"].includes(
-        code,
-      )
+      [
+        "INVALID_SIGNATURE",
+        "AUTH_EXPIRED",
+        "SELLER_DISABLED",
+        "SELLER_REQUIRED",
+        "ADMIN_REQUIRED",
+      ].includes(code)
     )
       return json({ error: code || "SELLER_REQUIRED" }, 403);
     const mapped = mappedError(code);
