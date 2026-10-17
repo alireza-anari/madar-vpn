@@ -241,6 +241,17 @@ test("result artifact is pending before activation and matches durable bot deliv
     .find((button: any) => button.copy_text);
   expect(copyButton?.copy_text?.text).toBe(artifact!.config);
 
+  const owned = await appApi(
+    request("/api/app/configs/ready-account/result", 10),
+    e,
+    now,
+  );
+  expect(owned.status).toBe(200);
+  const ownedBody = (await owned.json()) as any;
+  expect(ownedBody.ready).toBe(true);
+  expect(ownedBody.config).toBe(artifact!.config);
+  expect(ownedBody.qrSvg).toMatch(/^<svg[\s\S]*<\/svg>$/);
+
   const foreign = await appApi(
     request("/api/app/configs/ready-account/result", 20),
     e,
