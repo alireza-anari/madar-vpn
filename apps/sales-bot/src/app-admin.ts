@@ -11,6 +11,7 @@ import {
   sellerStats,
 } from "./seller-accounting";
 import { requireSalesAdmin, type SalesActor } from "./resellers";
+import { loadTelegramProfile, profileDisplayName } from "./telegram-profiles";
 
 export async function loadAdminNodeDetail(
   db: D1Database,
@@ -98,15 +99,18 @@ export async function loadAdminSellerDetail(
     .bind(sellerId)
     .first<{ enabled: number; created_at: number }>();
   if (!seller) throw Error("INVALID_SELLER");
-  const [current, all, limits, currentNodes, allNodes] = await Promise.all([
+  const [current, all, limits, currentNodes, allNodes, profile] = await Promise.all([
     sellerStats(db, sellerId, "current", now),
     sellerStats(db, sellerId, "all", now),
     sellerLimits(db, sellerId, now),
     sellerNodeStats(db, sellerId, "current", now),
     sellerNodeStats(db, sellerId, "all", now),
+    loadTelegramProfile(db, sellerId),
   ]);
   return {
     sellerId,
+    username: profile.username,
+    displayName: profileDisplayName(profile),
     enabled: seller.enabled === 1,
     createdAt: seller.created_at,
     current,
@@ -130,13 +134,16 @@ export async function listAdminSellerCards(
     .all<{ telegram_id: string; enabled: number; created_at: number }>();
   return Promise.all(
     sellers.results.map(async (seller) => {
-      const [current, all, limits] = await Promise.all([
+      const [current, all, limits, profile] = await Promise.all([
         sellerStats(db, seller.telegram_id, "current", now),
         sellerStats(db, seller.telegram_id, "all", now),
         sellerLimits(db, seller.telegram_id, now),
+        loadTelegramProfile(db, seller.telegram_id),
       ]);
       return {
         sellerId: seller.telegram_id,
+        username: profile.username,
+        displayName: profileDisplayName(profile),
         enabled: seller.enabled === 1,
         createdAt: seller.created_at,
         current,
