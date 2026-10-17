@@ -76,14 +76,14 @@ export async function acceptQuotaReports(
         ),
       db
         .prepare(
-          "UPDATE managed_accounts SET used_bytes=MAX(used_bytes,?),last_report_at=MAX(COALESCE(last_report_at,0),?),state=CASE WHEN state IN ('revoked','expired','exhausted','blocked') THEN state WHEN ?=1 THEN 'blocked' WHEN quota_bytes IS NOT NULL AND MAX(used_bytes,?)>=quota_bytes THEN 'exhausted' WHEN valid_until>0 AND valid_until<=? THEN 'expired' ELSE state END WHERE id=? AND node_id=? AND quota_epoch=?",
+          "UPDATE managed_accounts SET used_bytes=MAX(used_bytes,?),last_report_at=MAX(COALESCE(last_report_at,0),?),state=CASE WHEN state IN ('revoked','expired','exhausted','blocked') THEN state WHEN valid_until>0 AND valid_until<=? THEN 'expired' WHEN ?=1 THEN 'blocked' WHEN quota_bytes IS NOT NULL AND MAX(used_bytes,?)>=quota_bytes THEN 'exhausted' ELSE state END WHERE id=? AND node_id=? AND quota_epoch=?",
         )
         .bind(
           r.totalBytes,
           r.observedAt,
+          now,
           r.blocked ? 1 : 0,
           r.totalBytes,
-          now,
           r.accountId,
           nodeId,
           r.quotaEpoch,
