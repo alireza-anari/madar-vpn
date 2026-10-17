@@ -38,7 +38,7 @@
   "rules": [
     {
       "type": "Text",
-      "globs": ["**/*.html"],
+      "globs": ["**/*.html", "**/*.css", "public/*.js"],
       "fallthrough": true,
     },
   ],
