@@ -72,6 +72,23 @@ const client = String.raw`(() => {
     return count(Math.round(seconds / 60)) + " دقیقه";
   }
 
+  function buildShareText(result) {
+    if (!result) return "";
+    const config = String(result.config || "");
+    if (!result.usageUrl) return config;
+    return [
+      "اشتراک مدار",
+      "مشتری: " + String(result.label || "—"),
+      "حجم: " + bytes(result.quotaBytes),
+      "مدت: " + duration(result.durationSeconds),
+      "سرور: " + String(result.serverName || "—"),
+      "مصرف و اعتبار: " + String(result.usageUrl),
+      "",
+      "کانفیگ:",
+      config,
+    ].join("\n");
+  }
+
   function clampPercent(value) {
     const n = Number(value) || 0;
     return Math.max(0, Math.min(100, Math.round(n)));
@@ -506,9 +523,12 @@ const client = String.raw`(() => {
     if (!content) return;
     if (nav) nav.innerHTML = "";
     const isTrial = result.kind === "trial" || Number(result.durationSeconds) === 1800;
+    const usage = result.usageUrl
+      ? '<div class="result-actions usage-actions"><a class="action-button usage-link" href="' + esc(result.usageUrl) + '" target="_blank" rel="noopener noreferrer">مصرف و اعتبار</a><button class="action-button secondary-button" type="button" data-action="copy-usage">کپی لینک مصرف</button></div><div class="usage-url" dir="ltr">' + esc(result.usageUrl) + '</div>'
+      : "";
     content.innerHTML = '<section class="result-screen" data-result-screen="ready"><div class="result-success"><span>✓</span><div><div class="eyebrow">READY</div><h1>کانفیگ آماده است</h1></div></div><div class="card result-card"><div class="result-summary"><div><span>مشتری</span><b>' + esc(result.label || "—") + '</b></div><div><span>حجم</span><b>' + esc(bytes(result.quotaBytes)) + '</b></div><div><span>مدت</span><b>' + esc(duration(result.durationSeconds)) + '</b></div><div><span>سرور</span><b>' + esc(result.serverName || "—") + '</b></div></div>' +
       (isTrial ? '<div class="trial-badge">🎁 تست ۱ گیگ · ۳۰ دقیقه</div>' : "") +
-      '<div class="qr-box"><div id="result-qr" aria-label="QR کانفیگ">' + (typeof result.qrSvg === "string" ? result.qrSvg : "") + '</div><small>برای واردکردن سریع در برنامه اتصال اسکن کنید.</small></div><label class="field-label">کانفیگ</label><pre class="config-box" dir="ltr">' + esc(result.config || "") + '</pre><div class="result-actions"><button class="action-button" type="button" data-action="copy-result">📋 کپی کانفیگ</button><button class="action-button secondary-button" type="button" data-action="share-result">↗ اشتراک‌گذاری</button></div><div class="result-actions"><button class="mini-button grow" type="button" data-action="result-back">بازگشت به کانفیگ‌ها</button><button class="mini-button grow" type="button" data-action="close-result">بستن پنل</button></div></div></section>';
+      '<div class="qr-box"><div id="result-qr" aria-label="QR کانفیگ">' + (typeof result.qrSvg === "string" ? result.qrSvg : "") + '</div><small>برای واردکردن سریع در برنامه اتصال اسکن کنید.</small></div><label class="field-label">کانفیگ</label><pre class="config-box" dir="ltr">' + esc(result.config || "") + '</pre>' + usage + '<div class="result-actions"><button class="action-button" type="button" data-action="copy-result">📋 کپی کانفیگ</button><button class="action-button secondary-button" type="button" data-action="share-result">↗ اشتراک‌گذاری</button></div><div class="result-actions"><button class="mini-button grow" type="button" data-action="result-back">بازگشت به کانفیگ‌ها</button><button class="mini-button grow" type="button" data-action="close-result">بستن پنل</button></div></div></section>';
     setTimeout(drawQr, 0);
   }
 
@@ -586,12 +606,14 @@ const client = String.raw`(() => {
     }
   }
 
-  async function copyResult() {
-    const config = state.result?.config;
-    if (!config) return false;
+  async function copyText(value, successMessage) {
+    if (!value || !navigator.clipboard?.writeText) {
+      showToast("کپی خودکار در این دستگاه ممکن نیست.");
+      return false;
+    }
     try {
-      await navigator.clipboard.writeText(config);
-      showToast("کانفیگ کپی شد.");
+      await navigator.clipboard.writeText(value);
+      showToast(successMessage);
       return true;
     } catch {
       showToast("کپی خودکار در این دستگاه ممکن نیست.");
@@ -599,18 +621,84 @@ const client = String.raw`(() => {
     }
   }
 
+  async function copyResult() {
+    return copyText(state.result?.config, "کانفیگ کپی شد.");
+  }
+
+  async function copyUsageUrl() {
+    return copyText(state.result?.usageUrl, "لینک مصرف کپی شد.");
+  }
+
+  async function qrPngFile(result) {
+    if (
+      !result?.qrSvg ||
+      typeof Blob === "undefined" ||
+      typeof File === "undefined" ||
+      typeof Image === "undefined" ||
+      typeof URL === "undefined" ||
+      typeof URL.createObjectURL !== "function" ||
+      !document.createElement
+    )
+      return null;
+    let objectUrl = "";
+    try {
+      const svg = new Blob([String(result.qrSvg)], { type: "image/svg+xml" });
+      objectUrl = URL.createObjectURL(svg);
+      const image = new Image();
+      await new Promise((resolve, reject) => {
+        image.onload = resolve;
+        image.onerror = reject;
+        image.src = objectUrl;
+      });
+      const canvas = document.createElement("canvas");
+      if (!canvas?.getContext || !canvas?.toBlob) return null;
+      const size = 512;
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return null;
+      if (typeof ctx.fillRect === "function") {
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, size, size);
+      }
+      ctx.drawImage(image, 0, 0, size, size);
+      const png = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+      if (!png) return null;
+      const id = String(result.accountId || "config")
+        .replace(/[^a-zA-Z0-9_-]/g, "")
+        .slice(0, 40) || "config";
+      return new File([png], "madar-" + id + ".png", { type: "image/png" });
+    } catch {
+      return null;
+    } finally {
+      if (objectUrl) URL.revokeObjectURL?.(objectUrl);
+    }
+  }
+
   async function shareResult() {
-    const config = state.result?.config;
-    if (!config) return false;
+    const result = state.result;
+    const text = buildShareText(result);
+    if (!text) return false;
     if (navigator.share) {
+      if (typeof navigator.canShare === "function" && result?.qrSvg) {
+        const file = await qrPngFile(result);
+        if (file && navigator.canShare({ files: [file] })) {
+          try {
+            await navigator.share({ title: "Madar VPN", text, files: [file] });
+            return true;
+          } catch (error) {
+            if (error?.name === "AbortError") return false;
+          }
+        }
+      }
       try {
-        await navigator.share({ title: "Madar VPN", text: config });
+        await navigator.share({ title: "Madar VPN", text });
         return true;
       } catch (error) {
         if (error?.name === "AbortError") return false;
       }
     }
-    return copyResult();
+    return copyText(text, "جزئیات سرویس کپی شد.");
   }
 
   async function renderView(view) {
@@ -733,6 +821,7 @@ const client = String.raw`(() => {
     if (action === "wizard-create") createCurrentWizard();
     if (action === "wizard-cancel") renderView("home");
     if (action === "copy-result") copyResult();
+    if (action === "copy-usage") copyUsageUrl();
     if (action === "share-result") shareResult();
     if (action === "result-back") renderView("configs");
     if (action === "close-result") tg?.close?.();
@@ -761,7 +850,9 @@ const client = String.raw`(() => {
     selectWizardNode,
     createCurrentWizard,
     recoverAccount,
+    buildShareText,
     copyResult,
+    copyUsageUrl,
     shareResult,
   };
 })();
