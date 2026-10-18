@@ -12,11 +12,7 @@
       "migrations_dir": "migrations",
     },
   ],
-  "vars": {
-    "ADMIN_TELEGRAM_IDS": "",
-    "PUBLIC_BASE_URL": "",
-    "RUNNER_PUBLIC_KEY": "",
-  },
+  "keep_vars": true,
   "triggers": {
     "crons": ["* * * * *"],
   },
