@@ -11,7 +11,7 @@ export function resolveActor(
 ): Actor {
   return {
     telegramId: id,
-    role: env.ADMIN_TELEGRAM_IDS.split(",")
+    role: (env.ADMIN_TELEGRAM_IDS || "").split(",")
       .map((x) => x.trim())
       .filter((x) => /^\d+$/.test(x))
       .includes(id)
