@@ -88,6 +88,13 @@ export async function acceptQuotaReports(
           nodeId,
           r.quotaEpoch,
         ),
+      // Complete an explicit refresh only after a sample taken after the
+      // customer's request. Replayed older reports cannot satisfy it.
+      db
+        .prepare(
+          "DELETE FROM usage_refresh_requests WHERE account_id=? AND node_id=? AND requested_at<=?",
+        )
+        .bind(r.accountId, nodeId, r.observedAt),
     ]);
     if (result[0]?.meta.changes) accepted++;
     else duplicates++;

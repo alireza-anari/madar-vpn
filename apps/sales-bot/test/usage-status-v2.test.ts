@@ -5,6 +5,7 @@ import m1 from "../migrations/0001.sql?raw";
 import m2 from "../migrations/0002.sql?raw";
 import m3 from "../migrations/0003.sql?raw";
 import m4 from "../migrations/0004-reseller-accounts.sql?raw";
+import m14 from "../migrations/0014-on-demand-usage.sql?raw";
 import { hash } from "../src/crypto";
 import { buildAccountDeliveryArtifact } from "../src/account-delivery";
 import { statusResponse } from "../src/status-routes";
@@ -20,7 +21,7 @@ const E = {
 
 beforeEach(async () => {
   await resetDb();
-  for (const sql of [m1,m2,m3,m4]) await env.SALES_DB.exec(sql);
+  for (const sql of [m1,m2,m3,m4,m14]) await env.SALES_DB.exec(sql);
   await env.SALES_DB.prepare(
     "INSERT INTO nodes(id,name,target_ip,vpn_port,revision,acked_revision,last_seen,healthy,public_key,short_id,sni,agent_capabilities,policy_payload) VALUES('n','Stockholm','8.8.8.8',443,2,2,100,1,'public','1234','example.com','quota-v2,per-account-process,shared-443',?)",
   ).bind(JSON.stringify({version:2,expiresAt:400,clients:[{accountId:'a',uuid:'uuid-a',validUntil:1000}]})).run();

@@ -36,9 +36,16 @@ export async function nodeApi(request: Request, env: Env, now: number) {
       return Response.json({ error: "QUOTA_MODE_DISABLED" }, { status: 409 });
     try {
       if (path.endsWith("/policy-v2") && request.method === "GET") {
-        const payload = JSON.stringify(
-          await buildQuotaPolicy(env.SALES_DB, node.id, now),
-        );
+        const policy = await buildQuotaPolicy(env.SALES_DB, node.id, now);
+        // Signed per-account refresh hints are transient, not policy revisions.
+        // A customer must explicitly request a fresh meter reading.
+        const pending = await env.SALES_DB.prepare(
+          "SELECT account_id FROM usage_refresh_requests WHERE node_id=? AND requested_at>=? ORDER BY requested_at LIMIT 50",
+        ).bind(node.id, now - 600).all<{ account_id: string }>();
+        const payload = JSON.stringify({
+          ...policy,
+          refreshAccountIds: pending.results.map((row) => row.account_id),
+        });
         return Response.json({
           payload,
           signature: sign(node.policy_key, payload),
