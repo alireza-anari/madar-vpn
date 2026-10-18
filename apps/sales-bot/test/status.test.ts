@@ -5,11 +5,13 @@ import a from "../migrations/0001.sql?raw";
 import b from "../migrations/0002.sql?raw";
 import c from "../migrations/0003.sql?raw";
 import d from "../migrations/0004-reseller-accounts.sql?raw";
+import onDemand from "../migrations/0014-on-demand-usage.sql?raw";
+import { createUsageToken } from "../src/usage-links";
 import { queueAccountDelivery } from "../src/account-delivery";
 import { accountStatus, statusResponse } from "../src/status-routes";
 beforeEach(async () => {
   await resetDb();
-  for (const s of [a, b, c, d]) await env.SALES_DB.exec(s);
+  for (const s of [a, b, c, d, onDemand]) await env.SALES_DB.exec(s);
   await env.SALES_DB.exec(
     "INSERT INTO nodes(id,name,target_ip,revision,acked_revision,last_seen,healthy,public_key,short_id,sni,agent_capabilities) VALUES('n','n','8.8.8.8',2,2,100,1,'public','1234','example.com','quota-v2,per-account-process');INSERT INTO managed_accounts(id,seller_id,request_key,node_id,kind,label,uuid,quota_bytes,duration_seconds,created_at,state,started_at,valid_until,activation_revision,listen_port) VALUES('a','10','r','n','sale','client','private-uuid',30000000000,1800,1,'preparing',100,1900,2,20000);",
   );
@@ -170,4 +172,40 @@ test("long config retains a complete code block without invalid copy_text", asyn
   ).toBe(false);
   expect(payload.text).toContain("a".repeat(240));
   expect(payload.text).toContain("<pre>");
+});
+
+test("refresh requests are capability authorized, throttled, and read-only GET stays free", async () => {
+  await env.SALES_DB.exec("UPDATE managed_accounts SET state='active' WHERE id='a'");
+  const secret = "r".repeat(32);
+  const E = { ...env, USAGE_LINK_SECRET: secret };
+  const token = createUsageToken(secret, "a");
+  const url = "https://example.com/api/usage/v2/" + token;
+  const getBefore = await statusResponse(new Request(url), E, 101);
+  expect(getBefore.status).toBe(200);
+  expect((await getBefore.json()).refreshPending).toBe(false);
+  expect(
+    await env.SALES_DB.prepare("SELECT COUNT(*) n FROM usage_refresh_requests").first("n"),
+  ).toBe(0);
+
+  const request = (at: number, suffix = token) =>
+    statusResponse(
+      new Request("https://example.com/api/usage/v2/" + suffix + "/refresh", { method: "POST" }),
+      E,
+      at,
+    );
+  expect((await request(101)).status).toBe(200);
+  expect((await request(105)).status).toBe(200);
+  expect(
+    await env.SALES_DB.prepare("SELECT requested_at FROM usage_refresh_requests WHERE account_id='a'").first("requested_at"),
+  ).toBe(101);
+  const waiting = await statusResponse(new Request(url), E, 106);
+  expect((await waiting.json()).refreshPending).toBe(true);
+  expect((await request(132)).status).toBe(200);
+  expect(
+    await env.SALES_DB.prepare("SELECT requested_at FROM usage_refresh_requests WHERE account_id='a'").first("requested_at"),
+  ).toBe(132);
+  expect((await request(133, "invalid")).status).toBe(404);
+  expect(
+    await env.SALES_DB.prepare("SELECT COUNT(*) n FROM usage_refresh_requests").first("n"),
+  ).toBe(1);
 });
