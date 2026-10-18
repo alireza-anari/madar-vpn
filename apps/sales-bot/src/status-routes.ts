@@ -62,8 +62,12 @@ export async function accountStatus(
 }
 
 async function requestFreshUsage(db: D1Database, account: StatusRow, now: number) {
+  // A recent completed report is already fresh enough: do not create new
+  // write requests even if the same private link is opened repeatedly.
+  if (account.last_report_at !== null && now - account.last_report_at < 30)
+    return account.last_report_at;
   // Capability-authenticated per-account requests only, capped at one write
-  // per 30 seconds; opening the page does not initiate a write.
+  // per 30 seconds while outstanding.
   await db.prepare(
     `INSERT INTO usage_refresh_requests(account_id,node_id,requested_at)
      VALUES(?,?,?)
