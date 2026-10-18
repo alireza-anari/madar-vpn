@@ -33,6 +33,7 @@
     ],
   },
   "rules": [
+    { "type": "Data", "globs": ["**/*.png"], "fallthrough": true },
     {
       "type": "Text",
       "globs": ["**/*.html", "**/*.css", "public/*.js"],

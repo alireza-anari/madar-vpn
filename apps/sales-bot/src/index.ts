@@ -5,6 +5,7 @@ import { nodeApi } from "./node-api";
 import { subscriptionResponse } from "./subscriptions";
 import { runnerApi } from "./runner-api";
 import enrollHtml from "../public/enroll.html";
+import brandLogo from "../public/madar-logo.png";
 import appHtml from "../public/app.html";
 import appCss from "../public/app.css";
 import appResultCss from "../public/app-result.css";
@@ -45,6 +46,8 @@ export default {
     if (path.startsWith("/api/node/")) return nodeApi(request, env, epoch());
     if (path.startsWith("/subscription/"))
       return subscriptionResponse(env, path.slice(14), epoch());
+    if (path === "/madar-logo.png")
+      return new Response(brandLogo, { headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=3600", "X-Content-Type-Options": "nosniff" } });
     if (path === "/app")
       return textResponse(appHtml, "text/html; charset=utf-8", true);
     if (path === "/app.css")
