@@ -7,6 +7,8 @@ export default defineConfig({
       name: "sales-html-text",
       enforce: "pre",
       load(id) {
+        if (id.endsWith(".png"))
+          return "export default Uint8Array.from(atob(" + JSON.stringify(readFileSync(id).toString("base64")) + "), c => c.charCodeAt(0)).buffer;";
         if (id.endsWith(".html"))
           return (
             "export default " + JSON.stringify(readFileSync(id, "utf8")) + ";"

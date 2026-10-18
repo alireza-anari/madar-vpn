@@ -394,3 +394,10 @@ test("trial flow uses the dedicated guarded endpoint and fixed product contract"
   assert.match(p.elements.get("app-content").innerHTML, /۱ گیگ/);
   assert.match(p.elements.get("app-content").innerHTML, /۳۰ دقیقه/);
 });
+
+test("official local logo keeps a fixed-size fallback when loading fails", () => {
+  assert.match(html, /<img[^>]+class="brand-logo"[^>]+src="\/madar-logo\.png"/);
+  assert.match(html, /class="brand-mark"[^>]+aria-hidden="true"/);
+  assert.match(html, /onerror="this\.hidden=true"/);
+  assert.match(css, /\.brand-logo\{[^}]*width:48px;[^}]*height:48px/);
+});
