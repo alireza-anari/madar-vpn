@@ -182,7 +182,7 @@ test("refresh requests are capability authorized, throttled, and read-only GET s
   const url = "https://example.com/api/usage/v2/" + token;
   const getBefore = await statusResponse(new Request(url), E, 101);
   expect(getBefore.status).toBe(200);
-  expect((await getBefore.json()).refreshPending).toBe(false);
+  expect(await getBefore.json()).toMatchObject({ refreshPending: false });
   expect(
     await env.SALES_DB.prepare("SELECT COUNT(*) n FROM usage_refresh_requests").first("n"),
   ).toBe(0);
@@ -199,7 +199,7 @@ test("refresh requests are capability authorized, throttled, and read-only GET s
     await env.SALES_DB.prepare("SELECT requested_at FROM usage_refresh_requests WHERE account_id='a'").first("requested_at"),
   ).toBe(101);
   const waiting = await statusResponse(new Request(url), E, 106);
-  expect((await waiting.json()).refreshPending).toBe(true);
+  expect(await waiting.json()).toMatchObject({ refreshPending: true });
   expect((await request(132)).status).toBe(200);
   expect(
     await env.SALES_DB.prepare("SELECT requested_at FROM usage_refresh_requests WHERE account_id='a'").first("requested_at"),
