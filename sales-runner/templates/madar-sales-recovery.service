@@ -1,0 +1,12 @@
+[Unit]
+Description=Madar Safe Agent Recovery
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/madar-sales-node/recovery_guard.py recover
+TimeoutStartSec=75
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
