@@ -136,16 +136,16 @@ def install(transport,job,api,check=lambda:None):
     api.post('report',{'id':job['id'],'leaseId':job['leaseId'],'state':'installing','safeCode':'INSTALLING'})
     check();transport.run(root_command(APPLY,job['id']),package(files),timeout=120);check()
     api.post('report',{'id':job['id'],'leaseId':job['leaseId'],'state':'verifying','safeCode':'VERIFYING'})
-    transport.run('sudo -n systemctl is-active --quiet madar-sales-node.service madar-sales-watchdog.timer',timeout=10)
+    transport.run('sudo -n systemctl is-active --quiet madar-sales-node.service madar-sales-watchdog.timer madar-sales-recovery.timer',timeout=10)
     return {'installed':True}
 
 ROLLBACK=r'''
 import json,pathlib,shutil,subprocess,sys
 root=pathlib.Path('/opt/madar-sales-node');owner=json.loads((root/'manifest.json').read_text())
 if owner.get('jobId')!=sys.argv[1]:raise SystemExit(2)
-units=['madar-sales-node.service','madar-sales-xray.service','madar-sales-watchdog.timer','madar-sales-watchdog.service']
+units=['madar-sales-recovery.timer','madar-sales-recovery.service','madar-sales-node.service','madar-sales-xray.service','madar-sales-watchdog.timer','madar-sales-watchdog.service']
 subprocess.run(['systemctl','stop',*units],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-subprocess.run(['systemctl','disable','madar-sales-node.service','madar-sales-watchdog.timer'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+subprocess.run(['systemctl','disable','madar-sales-node.service','madar-sales-watchdog.timer','madar-sales-recovery.timer'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 for unit in units:
  p=pathlib.Path('/etc/systemd/system')/unit
  if p.exists():p.unlink()
