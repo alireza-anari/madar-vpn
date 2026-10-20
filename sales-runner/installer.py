@@ -39,7 +39,7 @@ APPLY=r'''
 import io,json,pathlib,sys,tarfile,os,subprocess
 job_id=sys.argv[1]
 root=pathlib.Path('/opt/madar-sales-node');etc=pathlib.Path('/etc/madar-sales-node')
-allowed={'manifest.json','config.json','xray','geoip.dat','geosite.dat','agent.py','policy.py','xray.py','guard.py','stats.py','quota.py','quota_runtime.py','shared443.py','update_owned.py','madar-sales-node.service','madar-sales-xray.service','madar-sales-watchdog.service','madar-sales-watchdog.timer'}
+allowed={'manifest.json','config.json','xray','geoip.dat','geosite.dat','agent.py','policy.py','xray.py','guard.py','stats.py','quota.py','quota_runtime.py','shared443.py','update_owned.py','recovery_guard.py','madar-sales-recovery.service','madar-sales-recovery.timer','madar-sales-node.service','madar-sales-xray.service','madar-sales-watchdog.service','madar-sales-watchdog.timer'}
 if root.exists():
  try:owner=json.loads((root/'manifest.json').read_text())
  except Exception:raise SystemExit(2)
@@ -72,7 +72,7 @@ if config_path.exists() and json.loads(config_path.read_text()).get('protocolVer
  manifest['quotaInitialized']=True
  temp=root/'manifest.json.installing';temp.write_text(json.dumps(manifest));temp.chmod(0o600);os.replace(temp,root/'manifest.json')
 subprocess.run(['systemctl','daemon-reload'],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-subprocess.run(['systemctl','enable','--now','madar-sales-node.service','madar-sales-watchdog.timer'],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+subprocess.run(['systemctl','enable','--now','madar-sales-node.service','madar-sales-watchdog.timer','madar-sales-recovery.timer'],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 print('INSTALLED')
 '''
 def root_command(script,job_id=None):
@@ -129,23 +129,23 @@ def install(transport,job,api,check=lambda:None):
     config=configure_protocol(config,job)
     if config.get('protocolVersion')==2 and info.get('quotaPortsBusy'):raise ValueError('PORT_CONFLICT')
     files=download(info['arch'],job['artifactVersion']);check()
-    for name in ['agent.py','policy.py','xray.py','guard.py','stats.py','quota.py','quota_runtime.py','shared443.py','update_owned.py']:files[name]=(BASE.parent/'sales-node'/name).read_bytes()
+    for name in ['agent.py','policy.py','xray.py','guard.py','stats.py','quota.py','quota_runtime.py','shared443.py','update_owned.py','recovery_guard.py']:files[name]=(BASE.parent/'sales-node'/name).read_bytes()
     for path in (BASE/'templates').iterdir():files[path.name]=path.read_bytes()
     files['config.json']=json.dumps(config).encode();files['manifest.json']=json.dumps({'jobId':job['id'],'nodeId':job['nodeId'],'version':VERSION}).encode()
     api.post('register',{'id':job['id'],'leaseId':job['leaseId'],'nodeToken':config['nodeToken'],'policyKey':config['policyKey'],'publicKey':config['publicKey'],'shortId':config['shortId'],'sni':config['sni']})
     api.post('report',{'id':job['id'],'leaseId':job['leaseId'],'state':'installing','safeCode':'INSTALLING'})
     check();transport.run(root_command(APPLY,job['id']),package(files),timeout=120);check()
     api.post('report',{'id':job['id'],'leaseId':job['leaseId'],'state':'verifying','safeCode':'VERIFYING'})
-    transport.run('sudo -n systemctl is-active --quiet madar-sales-node.service madar-sales-watchdog.timer',timeout=10)
+    transport.run('sudo -n systemctl is-active --quiet madar-sales-node.service madar-sales-watchdog.timer madar-sales-recovery.timer',timeout=10)
     return {'installed':True}
 
 ROLLBACK=r'''
 import json,pathlib,shutil,subprocess,sys
 root=pathlib.Path('/opt/madar-sales-node');owner=json.loads((root/'manifest.json').read_text())
 if owner.get('jobId')!=sys.argv[1]:raise SystemExit(2)
-units=['madar-sales-node.service','madar-sales-xray.service','madar-sales-watchdog.timer','madar-sales-watchdog.service']
+units=['madar-sales-recovery.timer','madar-sales-recovery.service','madar-sales-node.service','madar-sales-xray.service','madar-sales-watchdog.timer','madar-sales-watchdog.service']
 subprocess.run(['systemctl','stop',*units],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-subprocess.run(['systemctl','disable','madar-sales-node.service','madar-sales-watchdog.timer'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+subprocess.run(['systemctl','disable','madar-sales-node.service','madar-sales-watchdog.timer','madar-sales-recovery.timer'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 for unit in units:
  p=pathlib.Path('/etc/systemd/system')/unit
  if p.exists():p.unlink()

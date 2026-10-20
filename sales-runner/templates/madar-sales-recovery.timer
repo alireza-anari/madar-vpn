@@ -1,0 +1,11 @@
+[Unit]
+Description=Madar Safe Agent Recovery Check
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=30s
+AccuracySec=5s
+Unit=madar-sales-recovery.service
+
+[Install]
+WantedBy=timers.target

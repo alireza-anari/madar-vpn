@@ -3,4 +3,4 @@ Description=Madar Sales Authorization Watchdog
 StartLimitIntervalSec=0
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/python3 /opt/madar-sales-node/agent.py --watchdog
+ExecStart=/usr/bin/python3 /opt/madar-sales-node/recovery_guard.py watchdog
