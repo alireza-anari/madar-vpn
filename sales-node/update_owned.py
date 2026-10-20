@@ -1,6 +1,6 @@
 """Checksum-pinned owned-node upgrade. No SSH credentials, firewall or foreign services."""
 import argparse,hashlib,json,os,pathlib,re,subprocess,sys,tempfile,urllib.request
-FILES={'agent.py','policy.py','xray.py','guard.py','stats.py','quota.py','quota_runtime.py','shared443.py','update_owned.py'}
+FILES={'agent.py','policy.py','xray.py','guard.py','stats.py','quota.py','quota_runtime.py','shared443.py','update_owned.py','recovery_guard.py'}
 UNIT_SOURCES={
     'madar-sales-node.service':(
         'sales-runner/templates/madar-sales-node.service',
@@ -9,8 +9,18 @@ UNIT_SOURCES={
     ),
     'madar-sales-watchdog.service':(
         'sales-runner/templates/madar-sales-watchdog.service',
-        '355fa950ff33b8abdb03281d343885bc5d07b9ac0a3e6530b2797dfdfd0110d5',
-        'ExecStart=/usr/bin/python3 /opt/madar-sales-node/agent.py --watchdog',
+        '22e182d631d8367aab546998cbc36d0efa7ab5c3a3f3e9cc5bb57402fc4c58e4',
+        'ExecStart=/usr/bin/python3 /opt/madar-sales-node/recovery_guard.py watchdog',
+    ),
+    'madar-sales-recovery.service':(
+        'sales-runner/templates/madar-sales-recovery.service',
+        'e990a085a7b152673c5d03f4ceba8ff63825d78d15840b8ba2b284aa41ad5567',
+        'ExecStart=/usr/bin/python3 /opt/madar-sales-node/recovery_guard.py recover',
+    ),
+    'madar-sales-recovery.timer':(
+        'sales-runner/templates/madar-sales-recovery.timer',
+        'f3f13be377a686ab29d0e589ceef02ee48dd880aedc45db1034ec1223dd095c9',
+        'Unit=madar-sales-recovery.service',
     ),
 }
 
@@ -34,7 +44,15 @@ def load_owned_units(source_ref,unit_root=pathlib.Path('/etc/systemd/system')):
     for name,(source,digest,marker) in UNIT_SOURCES.items():
         live=unit_root/name
         try:
-            if live.is_symlink() or not live.is_file() or marker not in live.read_text():raise ValueError()
+            if live.is_symlink():raise ValueError()
+            if not live.exists() and name in ('madar-sales-recovery.service','madar-sales-recovery.timer'):
+                pass  # New owned units, absent on pre-recovery nodes.
+            elif not live.is_file():raise ValueError()
+            else:
+                text=live.read_text()
+                legacy=({'madar-sales-watchdog.service':'ExecStart=/usr/bin/python3 /opt/madar-sales-node/agent.py --watchdog',
+                         'madar-sales-recovery.service':'ExecStart=/usr/bin/python3 /opt/madar-sales-node/madar-recovery.py'}).get(name)
+                if marker not in text and (not legacy or legacy not in text):raise ValueError()
         except Exception:raise ValueError('UNIT_OWNERSHIP_MISMATCH') from None
         data=fetch('https://raw.githubusercontent.com/alireza-anari/madar-vpn/'+source_ref+'/'+source)
         if hashlib.sha256(data).hexdigest()!=digest or marker.encode() not in data:raise ValueError('UNIT_SOURCE_MISMATCH')
@@ -93,6 +111,8 @@ def main():
     if args.enable_quota:preflight_quota_ports(root,config)
     units=load_owned_units(args.source_ref,unit_root)
     # Prevent the one-second watchdog from racing the controlled stop/start window.
+    if (unit_root/'madar-sales-recovery.timer').is_file():
+        subprocess.run(['systemctl','stop','madar-sales-recovery.timer'],check=True,timeout=20)
     subprocess.run(['systemctl','stop','madar-sales-watchdog.timer'],check=True,timeout=20)
     subprocess.run(['systemctl','stop','madar-sales-node.service'],check=True,timeout=20)
     for name,data in files.items():atomic_bytes(root/name,data)
@@ -111,6 +131,7 @@ def main():
     subprocess.run(['systemctl','reset-failed','madar-sales-watchdog.service'],check=True,timeout=20)
     subprocess.run(['systemctl','start','madar-sales-node.service'],check=True,timeout=20)
     subprocess.run(['systemctl','start','madar-sales-watchdog.timer'],check=True,timeout=20)
+    subprocess.run(['systemctl','enable','--now','madar-sales-recovery.timer'],check=True,timeout=20)
     print('OWNED_UPDATE_INSTALLED')
 if __name__=='__main__':
     try:main()
