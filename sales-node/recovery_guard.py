@@ -148,9 +148,16 @@ def recover():
             from quota_runtime import meter_authorized
             deadline = time.monotonic() + STARTUP_SECONDS
             while time.monotonic() < deadline:
-                if (HEARTBEAT.is_file() and
-                        meter_authorized(HEARTBEAT, int(time.time())) and
-                        _active(AGENT) and _active(XRAY)):
+                try:
+                    beat = json.loads(HEARTBEAT.read_text())
+                    # Startup grace authorizes constructing an empty frontend,
+                    # not an assurance that a signed policy was reconciled and
+                    # the account counters were durably sampled.
+                    metered = ('graceUntil' not in beat and
+                               meter_authorized(HEARTBEAT, int(time.time())))
+                except (OSError, ValueError, TypeError):
+                    metered = False
+                if metered and _active(AGENT) and _active(XRAY):
                     print('RECOVERY_READY', flush=True)
                     return
                 if not _active(AGENT):
