@@ -78,7 +78,7 @@ def test_recovery_quarantines_old_heartbeat_then_ready(tmp_path, monkeypatch):
             assert not g.HEARTBEAT.exists()
             assert (g.ROOT / 'quota-heartbeat.recovery-previous.json').read_text() == 'stale'
             status[g.AGENT] = status[g.XRAY] = True
-            g.HEARTBEAT.write_text('fresh')
+            g.HEARTBEAT.write_text(json.dumps({'expiresAt': 9999999999, 'sampledAt': 100}))
 
     monkeypatch.setattr(g, '_command', command)
     monkeypatch.setitem(sys.modules, 'quota_runtime', types.SimpleNamespace(meter_authorized=lambda *args: True))
@@ -148,3 +148,32 @@ def test_orphan_xray_is_stopped_before_attempted_recovery(tmp_path, monkeypatch)
     g.recover()
     assert actions == [('systemctl', 'stop', g.XRAY)]
     assert not g.HISTORY.exists()
+
+
+def test_startup_grace_is_not_proof_of_durable_metering(tmp_path, monkeypatch):
+    g = guard(tmp_path, monkeypatch)
+    status = {g.AGENT: False, g.XRAY: False, g.WATCHDOG_TIMER: True}
+    calls = []
+    monkeypatch.setattr(g, '_active', lambda unit: status[unit])
+    monkeypatch.setitem(sys.modules, 'quota_runtime', types.SimpleNamespace(meter_authorized=lambda *args: True))
+
+    def command(*args, **kwargs):
+        calls.append(args)
+        if args[1] == 'start':
+            status[g.AGENT] = status[g.XRAY] = True
+            g.HEARTBEAT.write_text(json.dumps({'expiresAt': 200, 'sampledAt': 100, 'graceUntil': 130}))
+        if args[1] == 'stop':
+            status[args[2]] = False
+    monkeypatch.setattr(g, '_command', command)
+
+    class Clock:
+        ticks = iter([0, 1, 25])
+        def monotonic(self): return next(self.ticks)
+        def time(self): return 100
+        def sleep(self, seconds): pass
+    monkeypatch.setattr(g, 'time', Clock())
+    g.recover()
+    assert calls == [('systemctl', 'start', g.AGENT),
+                     ('systemctl', 'stop', g.XRAY),
+                     ('systemctl', 'stop', g.AGENT)]
+    assert status[g.AGENT] is False and status[g.XRAY] is False
