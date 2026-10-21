@@ -44,6 +44,35 @@ jobs:
       - run: cd sales-node && python -m pytest
       - run: sudo env PYTHONPATH=sales-node "$(command -v python)" -m pytest sales-node/tests/test_personal_install.py
       - run: python scripts/verify_sales_quota_probe.py
+      - name: Read-only production node and quota telemetry (if permitted)
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import os,json,urllib.request,urllib.error
+          token=os.environ.get("CF_TOKEN")
+          if not token:
+              print("D1: Cloudflare GitHub token not configured");raise SystemExit(0)
+          url="https://api.cloudflare.com/client/v4/accounts/2e4e0d025c81b9134fd2d19f17535e30/d1/database/f59e160f-89ab-4a90-a4dc-f257883d5a61/query"
+          queries={
+              "HEARTBEATS":"""SELECT n.name,n.state,n.healthy,n.revision,n.acked_revision,unixepoch('now')-n.last_seen AS heartbeat_age_seconds,COALESCE(a.status,'uninitialized') AS monitor_status,COALESCE(a.sequence,0) AS alert_transitions FROM nodes n LEFT JOIN node_availability_alert_state a ON a.node_id=n.id ORDER BY n.name""",
+              "ACCOUNTS":"""SELECT n.name,COUNT(m.id) AS total_accounts,SUM(CASE WHEN m.state='active' THEN 1 ELSE 0 END) AS active_accounts,SUM(CASE WHEN m.state='blocked' THEN 1 ELSE 0 END) AS blocked_accounts,SUM(CASE WHEN m.state='exhausted' THEN 1 ELSE 0 END) AS exhausted_accounts,ROUND(COALESCE(SUM(m.used_bytes),0)/1e9,3) AS reported_used_gb,MAX(m.last_report_at) AS last_account_report_epoch FROM nodes n LEFT JOIN managed_accounts m ON m.node_id=n.id GROUP BY n.id ORDER BY n.name""",
+              "QUOTA_REPORTS_24H":"""SELECT n.name,COUNT(r.account_id) AS reports_last_24h,COUNT(DISTINCT r.account_id) AS distinct_accounts_last_24h,COALESCE(SUM(CASE WHEN r.blocked=1 THEN 1 ELSE 0 END),0) AS blocked_reports_last_24h,MAX(r.observed_at) AS newest_report_epoch FROM nodes n LEFT JOIN account_quota_reports r ON r.node_id=n.id AND r.observed_at>=unixepoch('now')-86400 GROUP BY n.id ORDER BY n.name"""
+          }
+          for label,sql in queries.items():
+              req=urllib.request.Request(url,method="POST",data=json.dumps({"sql":sql}).encode(),headers={"Authorization":"Bearer "+token,"Content-Type":"application/json"})
+              try:
+                  with urllib.request.urlopen(req,timeout=12) as resp:
+                      data=json.load(resp)
+              except urllib.error.HTTPError as e:
+                  print("D1_READ_UNAVAILABLE", "http_status",e.code);break
+              except Exception as e:
+                  print("D1_READ_UNAVAILABLE",type(e).__name__);break
+              if not data.get("success"):
+                  print("D1_QUERY_UNAVAILABLE",label,[str(x.get('code')) for x in data.get('errors',[])])
+                  break
+              print("D1_"+label,json.dumps((data.get("result") or [{}])[0].get("results",[]),ensure_ascii=False))
+          PY
       - name: Independent read-only TCP checks for sales nodes
         run: |
           python3 - <<'PY'
