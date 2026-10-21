@@ -1,0 +1,42 @@
+name: Safe Madar Worker bundle (no deploy)
+on:
+  push:
+    branches: ['feat/node-availability-alerts-20261020']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  bundle:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.9.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @madar/sales-bot typecheck
+      - run: pnpm --filter @madar/sales-bot test
+      - run: pnpm --filter @madar/sales-bot build
+      - name: Verify exact bundle files and secret availability
+        env:
+          HAS_CF_DEPLOY_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,os
+          root=Path('apps/sales-bot/dist')
+          for p in sorted(root.rglob('*')):
+              if p.is_file():
+                  print('BUNDLE_FILE',p.relative_to(root),'BYTES',p.stat().st_size,'SHA256',hashlib.sha256(p.read_bytes()).hexdigest())
+          print('CLOUDFLARE_API_TOKEN_PRESENT', os.environ.get('HAS_CF_DEPLOY_TOKEN')=='true')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: madar-alert-worker-build-no-deploy
+          path: apps/sales-bot/dist/
+          retention-days: 2
+          if-no-files-found: error
