@@ -44,3 +44,20 @@ jobs:
       - run: cd sales-node && python -m pytest
       - run: sudo env PYTHONPATH=sales-node "$(command -v python)" -m pytest sales-node/tests/test_personal_install.py
       - run: python scripts/verify_sales_quota_probe.py
+      - name: Independent read-only TCP checks for sales nodes
+        run: |
+          python3 - <<'PY'
+          import socket,time,statistics,json,datetime
+          print('Checked UTC:',datetime.datetime.now(datetime.timezone.utc).isoformat())
+          for name,ip in [('Stockholm Node1','13.51.138.193'),('AWS Stockholm 2','13.62.181.33')]:
+              samples=[]; errors=[]
+              for k in range(8):
+                  start=time.monotonic()
+                  try:
+                      with socket.create_connection((ip,443),timeout=5):
+                          samples.append(round(1000*(time.monotonic()-start),1))
+                  except OSError as e:errors.append(type(e).__name__)
+                  if k<7:time.sleep(.35)
+              print('NODE_TCP443',json.dumps({'node':name,'ip':ip,'ok':len(samples),'attempts':8,'median_ms':round(statistics.median(samples),1) if samples else None,'min_ms':min(samples) if samples else None,'max_ms':max(samples) if samples else None,'samples_ms':samples,'errors':errors}))
+          print('LIMITATION: TCP open only, not VPN throughput/auth, provider path or CPU')
+          PY
