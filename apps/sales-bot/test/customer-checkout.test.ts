@@ -43,8 +43,12 @@ async function call(path:string,user=10,body?:unknown) {
 const key="key_1234567890123456";
 beforeEach(async()=>{
   await resetDb();
-  for(const sql of [m1,m2,m3,m4,m5,m6,m7,m8,m9,m10,m11,m12,m13,customerMigration])
+  for(const sql of [m1,m2,m3,m4,m5,m6,m7,m8,m9,m10,m11,m12,m13])
     await env.SALES_DB.exec(sql);
+  // Cloudflare's test D1 exec splitter mishandles ALTER TABLE followed by multiline CREATE;
+  // execute every migration statement through D1 prepare, as Wrangler migrations do.
+  for (const statement of customerMigration.split(/;\s*(?:\n|$)/).map(s=>s.trim()).filter(Boolean))
+    await env.SALES_DB.prepare(statement).run();
   await env.SALES_DB.prepare(
     "INSERT INTO nodes(id,name,target_ip,vpn_port,state,revision,acked_revision,last_seen,healthy,agent_capabilities,max_accounts,max_allocated_bytes) VALUES('n','Stockholm','8.8.8.8',443,'ready',1,1,?,1,'quota-v2,shared-443',1,30000000000)",
   ).bind(now).run();
