@@ -253,7 +253,7 @@ test("ordinary buyer completes plan selection, payment instructions, and receipt
 
   expect(await send({update_id:803,callback_query:{id:"plan",from:{id:10},message:{message_id:3,chat:{id:10,type:"private"}},data:"customer:plan:monthly"}})).toBe(true);
   const nodes=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u803:reply'").first<string>("payload"))||"{}");
-  expect(nodes.text).toContain("کارت نمونه");
+  expect(nodes.text).toContain("سرور را انتخاب کن");
   expect(nodes.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="customer:node:monthly:0")).toBe(true);
 
   expect(await send({update_id:804,callback_query:{id:"node",from:{id:10},message:{message_id:4,chat:{id:10,type:"private"}},data:"customer:node:monthly:0"}})).toBe(true);
