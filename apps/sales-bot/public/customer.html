@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#081320">
+  <meta name="color-scheme" content="dark">
+  <title>مدار | پنل مشتری</title>
+  <link rel="stylesheet" href="/customer.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand"><img src="/madar-logo.png" width="46" height="46" alt="لوگوی رسمی مدار"><div><strong>مدار</strong><small>پنل مشتری</small></div></div>
+      <button id="refresh" class="icon" type="button" aria-label="به‌روزرسانی">↻</button>
+    </header>
+    <div class="intro"><span class="eyebrow">MADAR VPN</span><h1>اتصال مطمئن، خرید ساده</h1><p>طرح خود را انتخاب کنید و وضعیت سفارش و اشتراک را همین‌جا ببینید.</p></div>
+    <nav id="customer-nav" class="tabs" aria-label="بخش‌های پنل">
+      <button type="button" data-tab="plans" aria-current="page">خرید اشتراک</button>
+      <button type="button" data-tab="orders">سفارش‌های من</button>
+      <button type="button" data-tab="account">راهنما</button>
+    </nav>
+    <main id="customer-content" aria-live="polite"><div class="card loading">در حال بررسی اتصال امن تلگرام…</div></main>
+    <div id="customer-toast" role="status" aria-live="polite" hidden></div>
+    <footer>مدار · فروش فقط پس از تأیید پرداخت و موجودی سرور</footer>
+  </div>
+  <script src="/customer.js" defer></script>
+</body>
+</html>
