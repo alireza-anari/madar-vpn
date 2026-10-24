@@ -236,3 +236,55 @@ test("native Telegram receipt inbox paginates pending orders without a Web App",
     else expect(buttons.some((b:any)=>b.callback_data==="cust:inbox:0")).toBe(true);
   }
 });
+
+test("ordinary buyer completes plan selection, payment instructions, and receipt in bot chat without a Mini App",async()=>{
+  await setup();
+  const send=async(update:any)=>handleCustomerTelegramUpdate(E,update,now);
+  expect(await send({update_id:801,message:{message_id:1,chat:{id:10,type:"private"},from:{id:10},text:"/start"}})).toBe(true);
+  const home=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u801:reply'").first<string>("payload"))||"{}");
+  const homeButtons=home.reply_markup.inline_keyboard.flat();
+  expect(homeButtons.some((b:any)=>b.callback_data==="customer:buy")).toBe(true);
+  expect(homeButtons.some((b:any)=>b.callback_data==="customer:orders:0")).toBe(true);
+  expect(JSON.stringify(home)).not.toContain("web_app");
+
+  expect(await send({update_id:802,callback_query:{id:"buy",from:{id:10},message:{message_id:2,chat:{id:10,type:"private"}},data:"customer:buy"}})).toBe(true);
+  const plans=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u802:reply'").first<string>("payload"))||"{}");
+  expect(plans.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="customer:plan:monthly")).toBe(true);
+
+  expect(await send({update_id:803,callback_query:{id:"plan",from:{id:10},message:{message_id:3,chat:{id:10,type:"private"}},data:"customer:plan:monthly"}})).toBe(true);
+  const nodes=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u803:reply'").first<string>("payload"))||"{}");
+  expect(nodes.text).toContain("کارت نمونه");
+  expect(nodes.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="customer:node:monthly:0")).toBe(true);
+
+  expect(await send({update_id:804,callback_query:{id:"node",from:{id:10},message:{message_id:4,chat:{id:10,type:"private"}},data:"customer:node:monthly:0"}})).toBe(true);
+  const order=await env.SALES_DB.prepare("SELECT id,user_id,state,price,quota_bytes,duration_seconds,node_id FROM customer_orders WHERE user_id='10'").first<any>();
+  expect(order).toMatchObject({user_id:"10",state:"awaiting_receipt",price:250000,quota_bytes:20e9,duration_seconds:30*86400,node_id:"n"});
+  expect(await env.SALES_DB.prepare("SELECT conversation FROM users WHERE id='10'").first("conversation")).toBe("customer-receipt:"+order.id);
+  const checkout=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u804:reply'").first<string>("payload"))||"{}");
+  expect(checkout.text).toContain(order.id);
+  expect(checkout.text).toContain("اطلاعات پرداخت");
+  expect(checkout.text).toContain("کارت نمونه");
+  expect(JSON.stringify(checkout)).not.toContain("web_app");
+
+  expect(await send({update_id:805,message:{message_id:5,chat:{id:10,type:"private"},from:{id:10},photo:[{file_id:"buyer-proof"}]}})).toBe(true);
+  expect(await env.SALES_DB.prepare("SELECT state FROM customer_orders WHERE id=?").bind(order.id).first("state")).toBe("pending_review");
+  expect(await env.SALES_DB.prepare("SELECT file_id FROM customer_receipts WHERE order_id=?").bind(order.id).first("file_id")).toBe("buyer-proof");
+  expect(await env.SALES_DB.prepare("SELECT COUNT(*) n FROM outbox WHERE chat_id='1' AND id=?").bind("customer-review:"+order.id+":1").first("n")).toBe(1);
+  const submitted=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u805:reply'").first<string>("payload"))||"{}");
+  expect(submitted.text).toContain("رسید ثبت شد");
+
+  expect(await send({update_id:806,callback_query:{id:"orders",from:{id:10},message:{message_id:6,chat:{id:10,type:"private"}},data:"customer:orders:0"}})).toBe(true);
+  const orders=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u806:reply'").first<string>("payload"))||"{}");
+  expect(orders.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="customer:order:"+order.id)).toBe(true);
+  expect(orders.text).toContain("سفارش‌های اخیر");
+});
+
+test("customer order and config callbacks never reveal another user's order",async()=>{
+  await setup();
+  const orderRow=await order();
+  const response=await handleCustomerTelegramUpdate(E,{update_id:811,callback_query:{id:"foreign",from:{id:11},message:{message_id:1,chat:{id:11,type:"private"}},data:"customer:order:"+orderRow.id}} as any,now);
+  expect(response).toBe(true);
+  const payload=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u811:reply'").first<string>("payload"))||"{}");
+  expect(payload.text).toContain("پیدا نشد");
+  expect(payload.text).not.toContain(orderRow.id);
+});
