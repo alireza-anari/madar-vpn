@@ -126,7 +126,13 @@ export async function customerConfig(env:Env,actor:SalesActor,id:string,now:numb
   if (!order) throw Error("ORDER_NOT_AVAILABLE");
   if (!order.account_id) return {ready:false};
   const artifact=await buildAccountDeliveryArtifact(env,order.account_id,now);
-  return artifact?{ready:true,...artifact}:{ready:false};
+  if (!artifact) return {ready:false};
+  // Never expose the administrator's Telegram ID or other seller metadata to buyers.
+  return {
+    ready:true, config:artifact.config, usageUrl:artifact.usageUrl,
+    serverName:artifact.serverName, quotaBytes:artifact.quotaBytes,
+    durationSeconds:artifact.durationSeconds, validUntil:artifact.validUntil,
+  };
 }
 export async function saveCustomerPlan(db:D1Database,actor:SalesActor,input:{
   id:string;name:string;price:number;currency:string;durationDays:number;quotaGb:number;enabled:boolean
