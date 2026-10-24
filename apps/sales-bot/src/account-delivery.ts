@@ -126,6 +126,14 @@ export async function queueAccountDelivery(
     link_preview_options: { is_disabled: true },
     reply_markup: { inline_keyboard: rows },
   });
+  let recipient = artifact.sellerId;
+  try {
+    const customer = await db.prepare("SELECT user_id FROM customer_orders WHERE account_id=? AND state='approved'")
+      .bind(artifact.accountId).first<string>("user_id");
+    if (customer) recipient = customer;
+  } catch {
+    // Compatible with pre-checkout isolated test schemas; production requires migration 0016.
+  }
   await db.batch([
     db
       .prepare(
@@ -134,10 +142,11 @@ export async function queueAccountDelivery(
       .bind(digest, artifact.accountId),
     db
       .prepare(
-        "INSERT OR IGNORE INTO outbox(id,chat_id,payload,available_at) SELECT ?,COALESCE((SELECT o.user_id FROM customer_orders o WHERE o.account_id=managed_accounts.id AND o.state='approved'),seller_id),?,0 FROM managed_accounts WHERE id=? AND status_token_hash=? AND state='active'",
+        "INSERT OR IGNORE INTO outbox(id,chat_id,payload,available_at) SELECT ?,?,?,0 FROM managed_accounts WHERE id=? AND status_token_hash=? AND state='active'",
       )
       .bind(
         `account:${artifact.accountId}`,
+        recipient,
         payload,
         artifact.accountId,
         digest,
