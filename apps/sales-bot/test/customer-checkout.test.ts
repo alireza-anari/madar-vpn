@@ -176,3 +176,63 @@ test("customer page accepts only signed Telegram launch data and explains missin
   expect(unsigned.status).toBe(403);
   expect((await unsigned.json() as any).error).toBe("INVALID_SIGNATURE");
 });
+
+test("admin can review receipt image, approve or reject from bot inbox; customers cannot",async()=>{
+  await setup();
+  const o=await order();
+  await sendReceipt();
+  await env.SALES_DB.prepare("INSERT INTO settings(key,value) VALUES('app_mode','reseller')").run();
+
+  await handleUpdate(E,{update_id:701,message:{message_id:1,chat:{id:1,type:"private"},from:{id:1},text:"/start"}},now);
+  const home=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u701:reply'").first<string>("payload"))||"{}");
+  expect(home.reply_markup.inline_keyboard.flat().some((button:any)=>
+    button.text==="💳 رسیدهای مشتریان" && button.callback_data==="cust:inbox:0")).toBe(true);
+
+  const inbox={update_id:702,callback_query:{id:"inbox",from:{id:1},message:{message_id:7,chat:{id:1,type:"private"}},data:"cust:inbox:0"}};
+  expect(await handleCustomerTelegramUpdate(E,inbox as any,now)).toBe(true);
+  const listing=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u702:reply'").first<string>("payload"))||"{}");
+  expect(listing.text).toContain("رسیدهای در انتظار");
+  expect(listing.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="cust:review:"+o.id)).toBe(true);
+
+  const unauthorized={...inbox,update_id:703,callback_query:{...inbox.callback_query,from:{id:10},message:{message_id:7,chat:{id:10,type:"private"}}}};
+  expect(await handleCustomerTelegramUpdate(E,unauthorized as any,now)).toBe(true);
+  const denied=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u703:reply'").first<string>("payload"))||"{}");
+  expect(denied.text).toContain("فقط برای مدیر");
+  expect(denied.text).not.toContain(o.id);
+
+  const review={...inbox,update_id:704,callback_query:{...inbox.callback_query,data:"cust:review:"+o.id}};
+  expect(await handleCustomerTelegramUpdate(E,review as any,now)).toBe(true);
+  const details=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u704:reply'").first<string>("payload"))||"{}");
+  const buttons=details.reply_markup.inline_keyboard.flat();
+  expect(buttons.some((b:any)=>b.callback_data==="cust:approve:"+o.id)).toBe(true);
+  expect(buttons.some((b:any)=>b.callback_data==="cust:reject:"+o.id)).toBe(true);
+  expect(buttons.some((b:any)=>b.callback_data==="cust:inbox:0")).toBe(true);
+  const proof=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u704:customer-proof'").first<string>("payload"))||"{}");
+  expect(proof._method).toBe("sendPhoto");
+  expect(proof.photo).toBe("receipt-telegram-file");
+
+  expect(await handleCustomerTelegramUpdate(E,{update_id:705,message:{message_id:1,chat:{id:1,type:"private"},from:{id:1},text:"/receipts"}} as any,now)).toBe(true);
+  expect((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u705:reply'").first<string>("payload"))).toContain("رسیدهای در انتظار");
+});
+test("native Telegram receipt inbox paginates pending orders without a Web App",async()=>{
+  await setup();
+  for(let i=0;i<8;i++){
+    const response=await call("/api/customer/orders",10,{planId:"monthly",nodeId:"n",requestKey:"receipt_order_123456_"+i});
+    expect(response.status).toBe(201);
+    const {id}=await response.json() as {id:string};
+    await env.SALES_DB.batch([
+      env.SALES_DB.prepare("INSERT INTO customer_receipts(order_id,file_id,kind) VALUES(?,?,'document')").bind(id,"receipt-file-"+i),
+      env.SALES_DB.prepare("UPDATE customer_orders SET state='pending_review' WHERE id=?").bind(id),
+    ]);
+  }
+  for(const [page,count] of [[0,6],[1,2]] as const){
+    const update={update_id:720+page,callback_query:{id:"p",from:{id:1},message:{chat:{id:1,type:"private"},message_id:1},data:"cust:inbox:"+page}};
+    expect(await handleCustomerTelegramUpdate(E,update as any,now)).toBe(true);
+    const raw=await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id=?").bind("u"+(720+page)+":reply").first<string>("payload");
+    const payload=JSON.parse(raw||"{}");
+    const buttons=payload.reply_markup.inline_keyboard.flat();
+    expect(buttons.filter((b:any)=>b.callback_data?.startsWith("cust:review:")).length).toBe(count);
+    if(page===0)expect(buttons.some((b:any)=>b.callback_data==="cust:inbox:1")).toBe(true);
+    else expect(buttons.some((b:any)=>b.callback_data==="cust:inbox:0")).toBe(true);
+  }
+});
