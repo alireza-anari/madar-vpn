@@ -1,7 +1,19 @@
 const client = String.raw`(function () {
   "use strict";
   const tg = window.Telegram?.WebApp;
-  const initData = tg?.initData || "";
+  // Telegram signs tgWebAppData on launch. Some desktop/in-app WebViews expose
+  // the signed launch parameter before the telegram.org bridge script loads.
+  // This is NOT a substitute for server-side HMAC + auth_date verification.
+  function signedLaunchData() {
+    const sdkValue = tg?.initData;
+    if (sdkValue) return sdkValue;
+    for (const raw of [window.location.hash.slice(1),window.location.search.slice(1)]) {
+      const value = new URLSearchParams(raw).get("tgWebAppData");
+      if (value && value.length <= 8192) return value;
+    }
+    return "";
+  }
+  const initData = signedLaunchData();
   const root = document.getElementById("customer-content");
   const nav = document.getElementById("customer-nav");
   const toast = document.getElementById("customer-toast");
@@ -14,7 +26,7 @@ const client = String.raw`(function () {
   const money = (value,currency) => digits(value)+" "+(currency==="IRT"?"تومان":"ریال");
   const stateCopy = {awaiting_receipt:"در انتظار ارسال رسید",pending_review:"در انتظار تأیید پرداخت",
     approving:"در حال ثبت کانفیگ",approved:"تأیید شده",rejected:"رد شده"};
-  const errCopy = {INVALID_SIGNATURE:"این صفحه را از داخل ربات تلگرام باز کنید.",AUTH_EXPIRED:"نشست منقضی شد؛ پنل را دوباره از ربات باز کنید.",
+  const errCopy = {MISSING_TELEGRAM_LAUNCH:"پنل را ببندید؛ در چت ربات /start بفرستید و فقط دکمه «🛍️ پنل خرید مشتریان» را بزنید. لینک معمولی یا صفحه ذخیره‌شده اطلاعات ورود ندارد.",INVALID_SIGNATURE:"اطلاعات ورود تلگرام معتبر نیست؛ پنل را ببندید و از دکمه داخل چت ربات دوباره باز کنید.",AUTH_EXPIRED:"نشست منقضی شد؛ پنل را دوباره از ربات باز کنید.",
     PLAN_UNAVAILABLE:"این طرح دیگر قابل خرید نیست.",NODE_UNAVAILABLE:"سرور انتخاب‌شده ظرفیت کافی ندارد.",
     NODE_FULL:"ظرفیت سرور تکمیل شده است.",NODE_ALLOCATION_FULL:"حجم سرور کافی نیست.",
     SALES_DISABLED:"اطلاعات پرداخت هنوز توسط مدیر ثبت نشده است.",ORDER_NOT_AVAILABLE:"این سفارش در این وضعیت قابل تغییر نیست.",
@@ -98,7 +110,7 @@ const client = String.raw`(function () {
   }
   async function refresh() {
     try {
-      if (!initData) throw Error("INVALID_SIGNATURE");
+      if (!initData) throw Error("MISSING_TELEGRAM_LAUNCH");
       const [me,plans,orders,payment]=await Promise.all([
         api("/api/customer/me"),api("/api/customer/plans"),api("/api/customer/orders"),api("/api/customer/payment")]);
       state.role=me.role;state.plans=plans.plans;state.paymentConfigured=plans.paymentConfigured;
