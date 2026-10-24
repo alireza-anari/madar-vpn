@@ -9,6 +9,8 @@ concurrency:
   cancel-in-progress: false
 jobs:
   guarded-release:
+    # No automatic deploy on incidental branch pushes; require an explicit release marker.
+    if: contains(github.event.head_commit.message, '[approved-customer-release]')
     runs-on: ubuntu-24.04
     env:
       CLOUDFLARE_ACCOUNT_ID: 2e4e0d025c81b9134fd2d19f17535e30
