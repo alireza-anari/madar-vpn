@@ -160,7 +160,7 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
       return true;
     }
     const rows:Record<string,unknown>[][]=plans.map(p=>[
-      callback(`${p.name} · ${money(p.price,p.currency)}`, "customer:plan:"+p.id),
+      callback(`${p.name.slice(0,36)} · ${money(p.price,p.currency)}`, "customer:plan:"+p.id),
     ]);
     rows.push([callback("🏠 منوی اصلی","customer:home")]);
     await reply("🛍️ پلن موردنظرت را انتخاب کن:\n\nهر پلن حجم و مدت مشخص دارد؛ قبل از پرداخت جزئیات را بررسی کن.",rows);
