@@ -107,7 +107,7 @@ export async function approveCustomerOrder(env:Env,actor:SalesActor,id:string,no
     db.prepare("UPDATE customer_orders SET state='approved',account_id=?,decided_at=?,decided_by=? WHERE id=? AND state='approving'")
       .bind(account.id,now,actor.telegramId,id),
     db.prepare("INSERT OR IGNORE INTO outbox(id,chat_id,payload) SELECT ?,user_id,? FROM customer_orders WHERE id=? AND state='approved' AND account_id=?")
-      .bind("customer-approved:"+id,JSON.stringify({text:"✅ پرداخت تأیید شد. کانفیگ پس از تأیید سرور در پنل مشتری آماده می‌شود."}),id,account.id),
+      .bind("customer-approved:"+id,JSON.stringify({text:"✅ پرداخت تأیید شد. کانفیگ پس از تأیید نهایی سرور در همین چت ربات آماده دریافت است.",reply_markup:{inline_keyboard:[[{text:"📦 سفارش‌های من",callback_data:"customer:orders:0"}]]}}),id,account.id),
   ]);
   return {accountId:account.id,state:"approved"};
 }
