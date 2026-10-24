@@ -1,0 +1,109 @@
+name: Madar customer shop guarded production release
+on:
+  push:
+    branches: [release/customer-self-service-20261024]
+permissions:
+  contents: read
+concurrency:
+  group: madar-sales-bot-production-release
+  cancel-in-progress: false
+jobs:
+  guarded-release:
+    runs-on: ubuntu-24.04
+    env:
+      CLOUDFLARE_ACCOUNT_ID: 2e4e0d025c81b9134fd2d19f17535e30
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      SCRIPT: madar-sales-bot
+      DB_ID: f59e160f-89ab-4a90-a4dc-f257883d5a61
+      PREVIOUS_VERSION: 0bfacc78-bf6f-41cf-8770-b4896e14489b
+      BASE_URL: https://madar-sales-bot.alirezaanari117.workers.dev
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pin reviewed exact-green source and configuration
+        run: |
+          git merge-base --is-ancestor e131d6ed3c79784b7a271dd0d40ad27ff5e681a9 HEAD
+          grep -q '"keep_vars": true' apps/sales-bot/wrangler.jsonc
+          grep -q '"crons": \["\* \* \* \* \*"\]' apps/sales-bot/wrangler.jsonc
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.9.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @madar/sales-bot types
+      - run: pnpm --filter @madar/sales-bot typecheck
+      - run: pnpm --filter @madar/sales-bot test
+      - run: pnpm --filter @madar/sales-bot build
+      - name: Preflight exact production deployment, bindings, cron and D1
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${CLOUDFLARE_API_TOKEN:?Cloudflare token must be configured}"
+          api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID"
+          auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+          curl -fsS -H "$auth" "$api/workers/scripts/$SCRIPT/settings" > /tmp/madar-settings.json
+          jq -e --arg db "$DB_ID" '
+            .success == true and
+            ([.result.bindings[] | select(.name == "SALES_DB" and ((.id // .database_id) == $db))] | length == 1) and
+            ([.result.bindings[].name] |
+              (index("BOT_TOKEN") != null) and
+              (index("TELEGRAM_WEBHOOK_SECRET") != null) and
+              (index("POLICY_SIGNING_SECRET") != null) and
+              (index("USAGE_LINK_SECRET") != null) and
+              (index("RUNNER_SERVICE_SECRET") != null) and
+              (index("PUBLIC_BASE_URL") != null))
+          ' /tmp/madar-settings.json >/dev/null
+          curl -fsS -H "$auth" "$api/workers/scripts/$SCRIPT/deployments" > /tmp/madar-deployments.json
+          actual="$(jq -r '.result.deployments[0].versions[0].version_id' /tmp/madar-deployments.json)"
+          test "$actual" = "$PREVIOUS_VERSION" || { echo "::error::Production Worker version changed. Abort."; exit 1; }
+          curl -fsS -H "$auth" "$api/workers/scripts/$SCRIPT/schedules" |
+            jq -e '.success == true and any(.result.schedules[]; .cron == "* * * * *")' >/dev/null
+          curl -fsS -X POST -H "$auth" -H 'Content-Type: application/json' \
+            --data '{"sql":"SELECT name FROM d1_migrations WHERE name='\''0016-customer-checkout.sql'\''"}' \
+            "$api/d1/database/$DB_ID/query" |
+            jq -e '.success == true and .result[0].results[0].name == "0016-customer-checkout.sql"' >/dev/null
+          echo "All guarded production release preflights passed."
+      - name: Deploy exact-green Worker preserving vars
+        id: deploy
+        run: pnpm --filter @madar/sales-bot exec wrangler deploy
+      - name: Verify customer, reseller and unauthorized endpoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          for path in /health /app /customer /customer.css /customer.js /madar-logo.png; do
+            good=0
+            for i in $(seq 1 10); do
+              if curl -fsS --max-time 15 "$BASE_URL$path" >/dev/null; then good=1; break; fi
+              sleep 5
+            done
+            test "$good" -eq 1 || { echo "::error::Production smoke failed: $path"; exit 1; }
+          done
+          curl -fsS "$BASE_URL/customer" | grep -q 'پنل مشتری'
+          status="$(curl -sS -o /dev/null -w '%{http_code}' "$BASE_URL/api/customer/me")"
+          test "$status" = "403"
+          api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID"
+          auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+          curl -fsS -H "$auth" "$api/workers/scripts/$SCRIPT/settings" |
+            jq -e --arg db "$DB_ID" '.success == true and
+            ([.result.bindings[] | select(.name == "SALES_DB" and ((.id // .database_id) == $db))] | length == 1) and
+            ([.result.bindings[].name] |
+              (index("BOT_TOKEN") != null) and
+              (index("TELEGRAM_WEBHOOK_SECRET") != null) and
+              (index("POLICY_SIGNING_SECRET") != null) and
+              (index("USAGE_LINK_SECRET") != null) and
+              (index("RUNNER_SERVICE_SECRET") != null))' >/dev/null
+          curl -fsS -H "$auth" "$api/workers/scripts/$SCRIPT/schedules" |
+            jq -e '.success == true and any(.result.schedules[]; .cron == "* * * * *")' >/dev/null
+          echo "Customer shop release and legacy bot health verified."
+      - name: Roll back Worker version after failed smoke
+        if: ${{ failure() && steps.deploy.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$SCRIPT/deployments"
+          body="$(printf '{"strategy":"percentage","versions":[{"version_id":"%s","percentage":100}]}' "$PREVIOUS_VERSION")"
+          curl -fsS -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H 'Content-Type: application/json' --data "$body" "$api" >/dev/null
+          echo "::warning::Prior Worker version restored; D1 additive migration retained."
