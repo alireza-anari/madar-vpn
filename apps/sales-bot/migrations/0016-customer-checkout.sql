@@ -1,5 +1,3 @@
--- Customer checkout runs on the quota-v2 sales path. Apply before deploying Worker code.
--- Quota is explicit: legacy plans with NULL quota cannot be purchased in the customer shop.
 ALTER TABLE plans ADD COLUMN quota_bytes INTEGER CHECK(quota_bytes IS NULL OR (quota_bytes > 0 AND quota_bytes <= 1000000000000));
 
 CREATE TABLE customer_orders (
