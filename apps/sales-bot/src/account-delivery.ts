@@ -127,12 +127,16 @@ export async function queueAccountDelivery(
     reply_markup: { inline_keyboard: rows },
   });
   let recipient = artifact.sellerId;
-  try {
-    const customer = await db.prepare("SELECT user_id FROM customer_orders WHERE account_id=? AND state='approved'")
-      .bind(artifact.accountId).first<string>("user_id");
-    if (customer) recipient = customer;
-  } catch {
-    // Compatible with pre-checkout isolated test schemas; production requires migration 0016.
+  const requestKey = await db.prepare("SELECT request_key FROM managed_accounts WHERE id=?")
+    .bind(artifact.accountId).first<string>("request_key");
+  if (requestKey?.startsWith("customer-order:")) {
+    // This is a customer account. Never fall back to the seller or silently consume
+    // delivery if the checkout row is missing or the D1 migration is incomplete.
+    const customer = await db.prepare(
+      "SELECT user_id FROM customer_orders WHERE id=? AND state IN ('approving','approved')",
+    ).bind(requestKey.slice("customer-order:".length)).first<string>("user_id");
+    if (!customer) return;
+    recipient = customer;
   }
   await db.batch([
     db
