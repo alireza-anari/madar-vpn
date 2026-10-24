@@ -164,3 +164,15 @@ test("admin sees a distinct customer panel entry without losing seller/admin but
   expect(buttons.some((b:any)=>b.web_app?.url==="https://example.test/customer")).toBe(true);
   expect(buttons.some((b:any)=>b.web_app?.url==="https://example.test/app")).toBe(true);
 });
+
+test("customer page accepts only signed Telegram launch data and explains missing launch context", async () => {
+  const script=await (await worker.fetch(new Request("https://example.test/customer.js"),E)).text();
+  expect(script).toContain('tgWebAppData');
+  expect(script).toContain('new URLSearchParams(raw)');
+  expect(script).toContain('MISSING_TELEGRAM_LAUNCH');
+  // The optional transport fallback never grants access without a server-side
+  // signature check. Normal unsigned requests must still be rejected.
+  const unsigned=await customerApi(new Request("https://example.test/api/customer/me"),E,now);
+  expect(unsigned.status).toBe(403);
+  expect((await unsigned.json() as any).error).toBe("INVALID_SIGNATURE");
+});
