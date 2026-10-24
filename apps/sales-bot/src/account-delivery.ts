@@ -134,7 +134,7 @@ export async function queueAccountDelivery(
       .bind(digest, artifact.accountId),
     db
       .prepare(
-        "INSERT OR IGNORE INTO outbox(id,chat_id,payload,available_at) SELECT ?,seller_id,?,0 FROM managed_accounts WHERE id=? AND status_token_hash=? AND state='active'",
+        "INSERT OR IGNORE INTO outbox(id,chat_id,payload,available_at) SELECT ?,COALESCE((SELECT o.user_id FROM customer_orders o WHERE o.account_id=managed_accounts.id AND o.state='approved'),seller_id),?,0 FROM managed_accounts WHERE id=? AND status_token_hash=? AND state='active'",
       )
       .bind(
         `account:${artifact.accountId}`,
