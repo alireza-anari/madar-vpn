@@ -21,9 +21,34 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
     });
 
   // Admin reviews the actual Telegram photo/document before confirming any payment.
-  if (data.startsWith("cust:") || (actor.role==="admin" && !text.startsWith("/") && !!(await db.prepare("SELECT conversation FROM users WHERE id=? AND conversation LIKE 'customer-reject:%'").bind(userId).first()))) {
+  if (data.startsWith("cust:") || (actor.role==="admin" && (text==="/receipts" || (!text.startsWith("/") && !!(await db.prepare("SELECT conversation FROM users WHERE id=? AND conversation LIKE 'customer-reject:%'").bind(userId).first()))))) {
     if (actor.role!=="admin") {
       await reply("این بخش فقط برای مدیر است.");
+      return true;
+    }
+    // Keep payment review inside this Telegram bot, without a Mini App.
+    // Only the authenticated admin can enumerate pending receipts.
+    const inboxPage=data.match(/^cust:inbox:(0|[1-9][0-9]{0,2})$/);
+    if (data==="/receipts" || data==="cust:inbox" || inboxPage || text==="/receipts") {
+      const page=inboxPage?Number(inboxPage[1]):0;
+      const pageSize=6;
+      const rows=await db.prepare(
+        "SELECT o.id,o.user_id,o.price,o.currency,o.created_at,p.name AS plan_name FROM customer_orders o LEFT JOIN plans p ON p.id=o.plan_id WHERE o.state='pending_review' AND EXISTS (SELECT 1 FROM customer_receipts r WHERE r.order_id=o.id) ORDER BY o.created_at,o.id LIMIT ? OFFSET ?",
+      ).bind(pageSize+1,page*pageSize).all<{id:string;user_id:string;price:number;currency:string;created_at:number;plan_name:string|null}>();
+      const visible=rows.results.slice(0,pageSize);
+      const keyboard:Record<string,unknown>[][]=visible.map((order,i)=>[
+        callback(`💳 ${page*pageSize+i+1}. ${order.price.toLocaleString("fa-IR")} ${order.currency==="IRT"?"تومان":"ریال"} · ${order.id.slice(0,8)}`,
+          "cust:review:"+order.id),
+      ]);
+      const navigation:Record<string,unknown>[]=[];
+      if(page>0) navigation.push(callback("◀️ قبلی","cust:inbox:"+(page-1)));
+      if(rows.results.length>pageSize && page<999) navigation.push(callback("بعدی ▶️","cust:inbox:"+(page+1)));
+      if(navigation.length) keyboard.push(navigation);
+      keyboard.push([callback("🔄 تازه‌سازی","cust:inbox:"+page)]);
+      keyboard.push([callback("🏠 منوی اصلی","rs:home")]);
+      await reply(visible.length?
+        "💳 رسیدهای در انتظار تأیید\nروی هر سفارش بزن تا عکس یا فایل رسید را ببینی و سپس تأیید یا رد کنی.\nقبل از تأیید، واریز واقعی را از حساب بانکی بررسی کن.":
+        page>0?"در این صفحه رسیدی وجود ندارد. به صفحه قبلی برگرد.":"✅ فعلاً هیچ رسیدی در انتظار تأیید نیست.",keyboard);
       return true;
     }
     const match=data.match(/^cust:(review|approve|reject):([a-f0-9-]{36})$/);
@@ -33,12 +58,16 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
         const order=await getCustomerOrderForAdmin(db,actor,orderId!);
         if (!order) throw Error("ORDER_NOT_AVAILABLE");
         if (action==="review") {
+          const canDecide=order.state==="pending_review" && !!order.file_id;
           await reply("سفارش "+order.id+"\nمشتری: "+order.user_id+
-            "\nمبلغ: "+order.price+" "+order.currency+
+            "\nمبلغ: "+order.price.toLocaleString("fa-IR")+" "+(order.currency==="IRT"?"تومان":"ریال")+
             "\nوضعیت: "+order.state+
             "\nرسید را بررسی کنید و فقط بعد از اطمینان از واریز، تأیید کنید.",[
-            [callback("✅ تأیید پرداخت","cust:approve:"+order.id)],
-            [callback("❌ رد پرداخت","cust:reject:"+order.id)],
+            ...(canDecide?[
+              [callback("✅ تأیید پرداخت","cust:approve:"+order.id)],
+              [callback("❌ رد پرداخت","cust:reject:"+order.id)],
+            ]:[]),
+            [callback("💳 رسیدهای در انتظار","cust:inbox:0")],
           ]);
           if (order.file_id && order.kind)
             await enqueue(db,"u"+u.update_id+":customer-proof",userId,{
@@ -50,7 +79,7 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
         }
         if (action==="approve") {
           await approveCustomerOrder(env,actor,orderId!,now);
-          await reply("✅ پرداخت تأیید و صدور کانفیگ درخواست شد. فعال‌شدن پس از ACK سرور خواهد بود.");
+          await reply("✅ پرداخت تأیید و صدور کانفیگ درخواست شد. فعال‌شدن پس از ACK سرور خواهد بود.",[[callback("💳 رسیدهای در انتظار","cust:inbox:0")]]);
           return true;
         }
         await db.prepare("INSERT OR IGNORE INTO users(id) VALUES(?)").bind(userId).run();
@@ -64,7 +93,7 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
       if (state?.startsWith("customer-reject:") && text && !text.startsWith("/")) {
         await rejectCustomerOrder(db,actor,state.slice(16),text,now);
         await db.prepare("UPDATE users SET conversation='' WHERE id=?").bind(userId).run();
-        await reply("❌ سفارش رد شد و مشتری مطلع شد.");
+        await reply("❌ سفارش رد شد و مشتری مطلع شد.",[[callback("💳 رسیدهای در انتظار","cust:inbox:0")]]);
         return true;
       }
     } catch(error) {

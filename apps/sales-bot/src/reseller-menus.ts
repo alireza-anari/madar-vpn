@@ -207,6 +207,13 @@ async function enhanceDashboardReply(env: Env, u: TelegramUpdate, now: number) {
       } }]);
       reply.payload.reply_markup = { inline_keyboard: keyboard };
     }
+    // Native Telegram callback, not a Mini App: admins can review payment
+    // receipts straight from the bot home menu.
+    const adminKeyboard = (reply.payload.reply_markup?.inline_keyboard || []) as Record<string, any>[][];
+    const withoutDuplicate = adminKeyboard.filter(row =>
+      !row.some(button => button.callback_data === "cust:inbox:0"));
+    withoutDuplicate.push([{ text: "💳 رسیدهای مشتریان", callback_data: "cust:inbox:0" }]);
+    reply.payload.reply_markup = { inline_keyboard: withoutDuplicate };
     await saveReply(env, reply);
   }
 }
