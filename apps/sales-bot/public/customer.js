@@ -6,7 +6,7 @@
   const nav = document.getElementById("customer-nav");
   const toast = document.getElementById("customer-toast");
   const state = {tab:"plans",role:"ordinary",plans:[],paymentConfigured:false,orders:[],
-    selectedPlan:null,selectedNode:"",nodes:[],busy:false,pendingKey:"",configs:{}};
+    selectedPlan:null,selectedNode:"",nodes:[],busy:false,pendingKey:"",configs:{},payment:""};
   const esc = v => String(v ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;")
     .replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
   const digits = n => Number(n || 0).toLocaleString("fa-IR");
@@ -67,7 +67,9 @@
       (o.reason?'<p class="warning">'+esc(o.reason)+'</p>':"")+actions+result+'</article>';
   }
   function renderOrders() {
-    return '<h2>سفارش‌های من</h2>'+(state.orders.length?state.orders.map(orderCard).join(""):
+    const pending=state.orders.some(o=>o.state==="awaiting_receipt");
+    const instructions=pending && state.payment?'<section class="card"><h2>مشخصات پرداخت</h2><div class="note">'+esc(state.payment)+'</div><p class="muted">پس از واریز، برای سفارش موردنظر روی «ارسال رسید در چت ربات» بزنید.</p></section>':"";
+    return '<h2>سفارش‌های من</h2>'+instructions+(state.orders.length?state.orders.map(orderCard).join(""):
       block("هنوز سفارشی ندارید","از بخش خرید اشتراک یک طرح انتخاب کنید."));
   }
   function renderAdmin() {
@@ -97,10 +99,10 @@
   async function refresh() {
     try {
       if (!initData) throw Error("INVALID_SIGNATURE");
-      const [me,plans,orders]=await Promise.all([
-        api("/api/customer/me"),api("/api/customer/plans"),api("/api/customer/orders")]);
+      const [me,plans,orders,payment]=await Promise.all([
+        api("/api/customer/me"),api("/api/customer/plans"),api("/api/customer/orders"),api("/api/customer/payment")]);
       state.role=me.role;state.plans=plans.plans;state.paymentConfigured=plans.paymentConfigured;
-      state.orders=orders;render();
+      state.orders=orders;state.payment=payment.payment || "";render();
     } catch(e) {root.innerHTML=block("ورود ناموفق",errCopy[e.message]||"دوباره از چت ربات باز کنید.");}
   }
   function key() {
@@ -134,14 +136,10 @@
       const order=await api("/api/customer/orders",{method:"POST",body:JSON.stringify({
         planId:state.selectedPlan,nodeId:state.selectedNode,requestKey:state.pendingKey,
       })});
-      state.selectedPlan=null;state.pendingKey="";state.tab="orders";
+      state.selectedPlan=null;state.pendingKey="";state.tab="orders";state.payment=order.payment || "";
       state.orders=await api("/api/customer/orders");
       notify("سفارش ثبت شد. مبلغ "+money(order.price,order.currency)+"؛ مشخصات پرداخت: "+order.payment);
-      // Show bank details persistently in the page, not just a short-lived toast.
-      const details=document.createElement("section");details.className="card";
-      const title=document.createElement("h2");title.textContent="مشخصات پرداخت";
-      const p=document.createElement("div");p.className="note";p.textContent=order.payment;
-      details.append(title,p);root.prepend(details);
+
     });
     if (button.dataset.receipt) return action(async()=>{
       await api("/api/customer/orders/"+encodeURIComponent(button.dataset.receipt)+"/receipt-request",
