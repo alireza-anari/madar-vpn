@@ -22,6 +22,7 @@ export async function customerApi(req:Request,env:Env,now:number):Promise<Respon
     if (path.startsWith("/api/customer/admin/")) requireSalesAdmin(actor);
     if (req.method==="GET") {
       if (path==="/api/customer/me") return json({role:actor.role,telegramId:actor.telegramId});
+      if (path==="/api/customer/payment") return json({payment:await paymentInstructions(env.SALES_DB)});
       if (path==="/api/customer/plans")
         return json({plans:await customerPlans(env.SALES_DB),paymentConfigured:!!(await paymentInstructions(env.SALES_DB))});
       if (path==="/api/customer/nodes") {
