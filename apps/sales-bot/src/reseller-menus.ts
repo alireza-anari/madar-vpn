@@ -1,4 +1,5 @@
 import type { TelegramUpdate } from "./contracts";
+import { handleCustomerTelegramUpdate } from "./customer-telegram";
 import { handleResellerAdminUi } from "./reseller-admin-ui";
 import { handleResellerUpdate as handleDashboardResellerUpdate } from "./reseller-menus-dashboard";
 import { sellerNodeStats, sellerStats } from "./seller-accounting";
@@ -220,6 +221,7 @@ export async function handleResellerUpdate(
   u: TelegramUpdate,
   now: number,
 ) {
+  if (await handleCustomerTelegramUpdate(env, u, now)) return;
   if (await handleResellerAdminUi(env, u, now)) {
     await enhanceAdminReply(env, u, now);
     await localizeAdminReply(env, u.update_id);
