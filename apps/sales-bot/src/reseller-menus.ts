@@ -203,7 +203,7 @@ async function enhanceDashboardReply(env: Env, u: TelegramUpdate, now: number) {
       addMiniAppEntry(reply.payload, env.PUBLIC_BASE_URL);
       const keyboard = (reply.payload.reply_markup?.inline_keyboard || []) as Record<string, any>[][];
       keyboard.splice(1, 0, [{ text: "🛍️ پنل خرید مشتریان", web_app: {
-        url: `${env.PUBLIC_BASE_URL.replace(/\\/+$/, "")}/customer`
+        url: new URL("/customer", env.PUBLIC_BASE_URL).toString()
       } }]);
       reply.payload.reply_markup = { inline_keyboard: keyboard };
     }
