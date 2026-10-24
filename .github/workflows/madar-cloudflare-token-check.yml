@@ -60,3 +60,17 @@ jobs:
               echo
             fi
           done
+
+      - name: Inspect published new-version preview without changing traffic
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="https://3f14dd38-madar-sales-bot.alirezaanari117.workers.dev"
+          for path in /health /app /customer /customer.css /customer.js /api/customer/me; do
+            code="$(curl -sSL --max-time 15 -o /tmp/madar-preview-body -w '%{http_code}' "$base$path")"
+            echo "NEW_VERSION_PREVIEW $path HTTP=$code"
+            if [ "$path" = "/customer" ] || [ "$path" = "/health" ]; then
+              head -c 160 /tmp/madar-preview-body | tr '\n' ' ' || true
+              echo
+            fi
+          done
