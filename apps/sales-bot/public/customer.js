@@ -1,4 +1,4 @@
-(function () {
+const client = String.raw`(function () {
   "use strict";
   const tg = window.Telegram?.WebApp;
   const initData = tg?.initData || "";
@@ -179,3 +179,6 @@
   });
   tg?.ready?.();tg?.expand?.();refresh();
 })();
+`;
+
+export default client;
