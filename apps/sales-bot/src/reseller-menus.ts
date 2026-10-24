@@ -199,7 +199,14 @@ async function enhanceDashboardReply(env: Env, u: TelegramUpdate, now: number) {
   }
 
   if (actor.role === "admin") {
-    if (env.PUBLIC_BASE_URL) addMiniAppEntry(reply.payload, env.PUBLIC_BASE_URL);
+    if (env.PUBLIC_BASE_URL) {
+      addMiniAppEntry(reply.payload, env.PUBLIC_BASE_URL);
+      const keyboard = (reply.payload.reply_markup?.inline_keyboard || []) as Record<string, any>[][];
+      keyboard.splice(1, 0, [{ text: "🛍️ پنل خرید مشتریان", web_app: {
+        url: `${env.PUBLIC_BASE_URL.replace(/\\/+$/, "")}/customer`
+      } }]);
+      reply.payload.reply_markup = { inline_keyboard: keyboard };
+    }
     await saveReply(env, reply);
   }
 }

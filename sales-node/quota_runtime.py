@@ -71,6 +71,7 @@ class QuotaRuntime:
         with sqlite3.connect(str(database)) as existing:existing.execute('SELECT revision FROM meta WHERE id=1').fetchone()
         self.store=QuotaStore(database);self.processes={};self.policy=None;self.revision=0
         self.incoming=queue.Queue();self.outgoing=queue.Queue(maxsize=1);self.stopping=threading.Event();self.healthy=False
+        self.requested_refresh_ids=set()
         # Startup has bounded grace only while Xray/frontend construction can legitimately block.
         now=int(time.time());self.write_heartbeat(now+STARTUP_GRACE,startup=True)
         self.frontend=None
@@ -91,7 +92,16 @@ class QuotaRuntime:
         result=['quota-v2','per-account-process']
         if self.config.get('shared443') and self.frontend_ready():result.append('shared-443')
         return result
+    def reports_for_sync(self,now):
+        # Local metering remains continuous and authoritative for hard quotas.
+        # Only explicit customer requests and terminal events reach D1.
+        return [r for r in self.store.pending_reports()
+                if r['accountId'] in self.requested_refresh_ids
+                or r.get('blocked') is True
+                or not self.store.allowed(r['accountId'],now)][:100]
     def network(self):
+        last_ack=None
+        last_ack_at=0
         while not self.stopping.is_set():
             try:
                 try:message=self.outgoing.get(timeout=.1)
@@ -100,7 +110,11 @@ class QuotaRuntime:
                     revision,healthy,reports=message
                     if revision:
                         capabilities=self.capabilities();frontend_ok=not self.config.get('shared443') or 'shared-443' in capabilities
-                        self.request(self.config,'ack-v2',{'revision':revision,'healthy':healthy and frontend_ok,'capabilities':capabilities})
+                        ack=(revision,healthy and frontend_ok,tuple(capabilities))
+                        if ack!=last_ack or time.monotonic()-last_ack_at>=45:
+                            self.request(self.config,'ack-v2',{'revision':revision,'healthy':ack[1],'capabilities':capabilities})
+                            last_ack=ack
+                            last_ack_at=time.monotonic()
                     if reports:
                         self.request(self.config,'quota-reports',{'reports':reports})
                         self.incoming.put(('reports',[(r['accountId'],r['sequence']) for r in reports]))
@@ -138,6 +152,14 @@ class QuotaRuntime:
                             policy=self.verify(value,self.config['policyKey'],self.config['nodeId'],now,self.revision-1)
                             if policy.get('version')!=2:raise ValueError('QUOTA_POLICY_REQUIRED')
                             self.store.reconcile_policy(policy,now);self.policy=policy;self.revision=policy['revision']
+                            requested=policy.get('refreshAccountIds',[])
+                            active={c['accountId'] for c in policy['clients']}
+                            self.requested_refresh_ids=(
+                                set(requested)&active
+                                if isinstance(requested,list) and len(requested)<=50
+                                   and all(isinstance(x,str) for x in requested)
+                                else set()
+                            )
                 except queue.Empty:pass
                 if not self.policy or self.policy['expiresAt']<=now:
                     for ident in list(self.processes):self.stop_account(ident,True)
@@ -176,7 +198,7 @@ class QuotaRuntime:
                     else:self.healthy=self.healthy and all(ident in self.processes for ident in desired)
                     # Normal operation is strict again; no grace survives the completed iteration.
                     self.write_heartbeat(self.policy['expiresAt'])
-                message=(self.revision,self.healthy,self.store.pending_reports()[:100])
+                message=(self.revision,self.healthy,self.reports_for_sync(now))
                 try:self.outgoing.get_nowait()
                 except queue.Empty:pass
                 self.outgoing.put_nowait(message)

@@ -173,3 +173,30 @@ def test_quota_heartbeat_is_armed_before_fresh_frontend_start(tmp_path):
     c=QuotaRuntime({'policyKey':'k','nodeId':'n','shared443':True,'frontendManaged':True},None,lambda p,*args:p,base=base,database=path,frontend_factory=factory)
     assert seen==[True]
     c.store.close()
+
+
+def test_usage_sync_is_demand_driven_while_local_caps_remain_enforced(tmp_path):
+    from quota import QuotaStore
+    from quota_runtime import QuotaRuntime
+    path=tmp_path/'quota.sqlite'
+    store=QuotaStore(path)
+    clients=[
+        {'accountId':ident,'quotaEpoch':1,'quotaBytes':cap,'usedBytes':0,'validUntil':1000,'generation':ident+':1','listenPort':20000+i}
+        for i,(ident,cap) in enumerate([('a',50),('b',1000)])
+    ]
+    store.reconcile_policy({'revision':1,'clients':clients},100)
+    store.observe('a','process-a',0,101)
+    store.observe('b','process-b',0,101)
+    store.observe('a','process-a',20,102)
+    store.observe('b','process-b',30,102)
+    store.close()
+    runtime=QuotaRuntime({'policyKey':'k','nodeId':'n'},None,None,base=tmp_path/'run',database=path)
+    assert runtime.reports_for_sync(102)==[]
+    runtime.requested_refresh_ids={'a'}
+    assert [r['accountId'] for r in runtime.reports_for_sync(102)]==['a']
+    runtime.requested_refresh_ids=set()
+    runtime.store.observe('a','process-a',55,103)
+    assert runtime.store.allowed('a',103) is False
+    assert runtime.store.allowed('b',103) is True
+    assert [r['accountId'] for r in runtime.reports_for_sync(103)]==['a']
+    runtime.store.close()

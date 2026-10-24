@@ -1,5 +1,6 @@
 import { adoptionApi } from "./node-adoption";
 import { refreshAllCapacityAlerts } from "./capacity-alerts";
+import { refreshNodeAvailabilityAlerts } from "./node-availability-alerts";
 import { statusResponse } from "./status-routes";
 import { nodeApi } from "./node-api";
 import { subscriptionResponse } from "./subscriptions";
@@ -111,6 +112,15 @@ export default {
     await cleanupCredentials(env.SALES_DB, now);
     await drainInbox(env, now);
     await refreshAllCapacityAlerts(env, now);
+    // The Worker already has a one-minute cron. Sample fleet health only on
+    // alternate minutes, avoiding extra scheduled invocations and AWS load.
+    if (Math.floor(now / 60) % 2 === 0) {
+      try {
+        await refreshNodeAvailabilityAlerts(env, now);
+      } catch {
+        // Monitoring is best effort and never stalls bot/outbox processing.
+      }
+    }
     await deliverOutbox(env, now);
   },
 };

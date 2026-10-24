@@ -10,6 +10,7 @@ import m7 from "../migrations/0007-node-capacity.sql?raw";
 import m9 from "../migrations/0009-node-allocation-cap.sql?raw";
 import m10 from "../migrations/0010-capacity-accounting-resellers.sql?raw";
 import m11 from "../migrations/0011-node-account-slot-mode.sql?raw";
+import m14 from "../migrations/0014-on-demand-usage.sql?raw";
 import { hash } from "../src/crypto";
 import { nodeApi } from "../src/node-api";
 import { refreshAllCapacityAlerts } from "../src/capacity-alerts";
@@ -20,7 +21,7 @@ const E = { ...env, ADMIN_TELEGRAM_IDS: "9" };
 
 beforeEach(async () => {
   await resetDb();
-  for (const sql of [m1, m2, m3, m4, m5, m7, m9, m10, m11])
+  for (const sql of [m1, m2, m3, m4, m5, m7, m9, m10, m11, m14])
     await env.SALES_DB.exec(sql);
   await env.SALES_DB.prepare(
     "INSERT INTO settings(key,value) VALUES('app_mode','reseller')",

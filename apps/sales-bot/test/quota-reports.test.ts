@@ -5,10 +5,11 @@ import a from "../migrations/0001.sql?raw";
 import b from "../migrations/0002.sql?raw";
 import c from "../migrations/0003.sql?raw";
 import d from "../migrations/0004-reseller-accounts.sql?raw";
+import m14 from "../migrations/0014-on-demand-usage.sql?raw";
 import { acceptQuotaReports } from "../src/quota-reports";
 beforeEach(async () => {
   await resetDb();
-  for (const s of [a, b, c, d]) await env.SALES_DB.exec(s);
+  for (const s of [a, b, c, d, m14]) await env.SALES_DB.exec(s);
   await env.SALES_DB.exec(
     "INSERT INTO nodes(id,name,target_ip) VALUES('n','n','8.8.8.8'); INSERT INTO managed_accounts(id,seller_id,request_key,node_id,kind,label,uuid,quota_bytes,duration_seconds,created_at,state,valid_until) VALUES('a','10','r','n','sale','a','uuid',100,100,1,'active',1000);",
   );
