@@ -17,7 +17,7 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       SCRIPT: madar-sales-bot
       DB_ID: f59e160f-89ab-4a90-a4dc-f257883d5a61
-      PREVIOUS_VERSION: 939a1728-97da-4ce3-8e82-b91bc61bac81
+      PREVIOUS_VERSION: d3dd14e2-116c-484d-ae02-1fcbb8918d8e
       BASE_URL: https://madar-sales-bot.alirezaanari117.workers.dev
     steps:
       - uses: actions/checkout@v4
@@ -25,8 +25,8 @@ jobs:
           fetch-depth: 0
       - name: Pin reviewed exact-green source and configuration
         run: |
-          git merge-base --is-ancestor 88e949ba03582ec7a13cdef3d0e370457978da4f HEAD
-          git diff --exit-code 88e949ba03582ec7a13cdef3d0e370457978da4f HEAD -- apps/sales-bot sales-runner sales-node pnpm-lock.yaml
+          git merge-base --is-ancestor e5afa5f5d334d12e8e9d84eccd962c95c9e6cd47 HEAD
+          git diff --exit-code e5afa5f5d334d12e8e9d84eccd962c95c9e6cd47 HEAD -- apps/sales-bot sales-runner sales-node pnpm-lock.yaml
           grep -q '"keep_vars": true' apps/sales-bot/wrangler.jsonc
           grep -q '"crons": \["\* \* \* \* \*"\]' apps/sales-bot/wrangler.jsonc
       - uses: pnpm/action-setup@v4
