@@ -21,7 +21,7 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
     });
 
   // Admin reviews the actual Telegram photo/document before confirming any payment.
-  if (data.startsWith("cust:") || (actor.role==="admin" && !text.startsWith("/") && !!(await db.prepare("SELECT conversation FROM users WHERE id=? AND conversation LIKE 'customer-reject:%'").bind(userId).first()))) {
+  if (data.startsWith("cust:") || (actor.role==="admin" && (text==="/receipts" || (!text.startsWith("/") && !!(await db.prepare("SELECT conversation FROM users WHERE id=? AND conversation LIKE 'customer-reject:%'").bind(userId).first()))))) {
     if (actor.role!=="admin") {
       await reply("این بخش فقط برای مدیر است.");
       return true;
