@@ -15,6 +15,10 @@ import appJs from "../public/app.js";
 import appAdminJs from "../public/app-admin.js";
 import { adminApi } from "./admin-api";
 import { appApi } from "./app-api";
+import { customerApi } from "./customer-api";
+import customerHtml from "../public/customer.html";
+import customerCss from "../public/customer.css";
+import customerJs from "../public/customer.js";
 import { appLifecycleApi } from "./app-lifecycle-api";
 import { cleanupCredentials } from "./enrollment";
 import { drainInbox } from "./inbox";
@@ -49,6 +53,10 @@ export default {
       return subscriptionResponse(env, path.slice(14), epoch());
     if (path === "/madar-logo.png")
       return new Response(brandLogo, { headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=3600", "X-Content-Type-Options": "nosniff" } });
+    if (path === "/customer") return textResponse(customerHtml, "text/html; charset=utf-8", true);
+    if (path === "/customer.css") return textResponse(customerCss, "text/css; charset=utf-8");
+    if (path === "/customer.js") return textResponse(customerJs, "text/javascript; charset=utf-8");
+    if (path.startsWith("/api/customer/")) return customerApi(request, env, epoch());
     if (path === "/app")
       return textResponse(appHtml, "text/html; charset=utf-8", true);
     if (path === "/app.css")

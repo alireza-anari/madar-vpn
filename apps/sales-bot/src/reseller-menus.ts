@@ -1,4 +1,5 @@
 import type { TelegramUpdate } from "./contracts";
+import { handleCustomerTelegramUpdate } from "./customer-telegram";
 import { handleResellerAdminUi } from "./reseller-admin-ui";
 import { handleResellerUpdate as handleDashboardResellerUpdate } from "./reseller-menus-dashboard";
 import { sellerNodeStats, sellerStats } from "./seller-accounting";
@@ -198,7 +199,14 @@ async function enhanceDashboardReply(env: Env, u: TelegramUpdate, now: number) {
   }
 
   if (actor.role === "admin") {
-    if (env.PUBLIC_BASE_URL) addMiniAppEntry(reply.payload, env.PUBLIC_BASE_URL);
+    if (env.PUBLIC_BASE_URL) {
+      addMiniAppEntry(reply.payload, env.PUBLIC_BASE_URL);
+      const keyboard = (reply.payload.reply_markup?.inline_keyboard || []) as Record<string, any>[][];
+      keyboard.splice(1, 0, [{ text: "🛍️ پنل خرید مشتریان", web_app: {
+        url: new URL("/customer", env.PUBLIC_BASE_URL).toString()
+      } }]);
+      reply.payload.reply_markup = { inline_keyboard: keyboard };
+    }
     await saveReply(env, reply);
   }
 }
@@ -220,6 +228,7 @@ export async function handleResellerUpdate(
   u: TelegramUpdate,
   now: number,
 ) {
+  if (await handleCustomerTelegramUpdate(env, u, now)) return;
   if (await handleResellerAdminUi(env, u, now)) {
     await enhanceAdminReply(env, u, now);
     await localizeAdminReply(env, u.update_id);

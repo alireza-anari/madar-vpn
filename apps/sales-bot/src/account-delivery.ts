@@ -126,6 +126,18 @@ export async function queueAccountDelivery(
     link_preview_options: { is_disabled: true },
     reply_markup: { inline_keyboard: rows },
   });
+  let recipient = artifact.sellerId;
+  const requestKey = await db.prepare("SELECT request_key FROM managed_accounts WHERE id=?")
+    .bind(artifact.accountId).first<string>("request_key");
+  if (requestKey?.startsWith("customer-order:")) {
+    // This is a customer account. Never fall back to the seller or silently consume
+    // delivery if the checkout row is missing or the D1 migration is incomplete.
+    const customer = await db.prepare(
+      "SELECT user_id FROM customer_orders WHERE id=? AND state IN ('approving','approved')",
+    ).bind(requestKey.slice("customer-order:".length)).first<string>("user_id");
+    if (!customer) return;
+    recipient = customer;
+  }
   await db.batch([
     db
       .prepare(
@@ -134,10 +146,11 @@ export async function queueAccountDelivery(
       .bind(digest, artifact.accountId),
     db
       .prepare(
-        "INSERT OR IGNORE INTO outbox(id,chat_id,payload,available_at) SELECT ?,seller_id,?,0 FROM managed_accounts WHERE id=? AND status_token_hash=? AND state='active'",
+        "INSERT OR IGNORE INTO outbox(id,chat_id,payload,available_at) SELECT ?,?,?,0 FROM managed_accounts WHERE id=? AND status_token_hash=? AND state='active'",
       )
       .bind(
         `account:${artifact.accountId}`,
+        recipient,
         payload,
         artifact.accountId,
         digest,
