@@ -17,6 +17,7 @@ import m12 from "../migrations/0012-telegram-profiles.sql?raw";
 import m13 from "../migrations/0013-managed-account-archive.sql?raw";
 import customerMigration from "../migrations/0016-customer-checkout.sql?raw";
 import { customerApi } from "../src/customer-api";
+import { handleUpdate } from "../src/menus";
 import { handleCustomerTelegramUpdate } from "../src/customer-telegram";
 import { queueAccountDelivery } from "../src/account-delivery";
 import worker from "../src/index";
@@ -148,6 +149,18 @@ test("on ready node ACK the private VPN config is addressed to the buying custom
   expect(payload?.payload).toContain("vless://");
   const ready=await (await call("/api/customer/orders/"+o.id+"/config",10)).json() as any;
   expect(ready.ready).toBe(true);
+  expect(ready.sellerId).toBeUndefined();
+  expect(JSON.stringify(ready)).not.toContain("sellerId");
   expect(ready.config).toContain("vless://");
   expect((await call("/api/customer/orders/"+o.id+"/config",11)).status).toBe(404);
+});
+
+test("admin sees a distinct customer panel entry without losing seller/admin buttons",async()=>{
+  await env.SALES_DB.prepare("INSERT INTO settings(key,value) VALUES('app_mode','reseller')").run();
+  await handleUpdate(E,{update_id:601,message:{message_id:1,chat:{id:1,type:"private"},from:{id:1},text:"/start"}},now);
+  const raw=await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u601:reply'").first<string>("payload");
+  const payload=JSON.parse(raw||"{}") as any;
+  const buttons=payload.reply_markup.inline_keyboard.flat();
+  expect(buttons.some((b:any)=>b.web_app?.url==="https://example.test/customer")).toBe(true);
+  expect(buttons.some((b:any)=>b.web_app?.url==="https://example.test/app")).toBe(true);
 });
