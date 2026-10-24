@@ -1,4 +1,4 @@
-ALTER TABLE plans ADD COLUMN quota_bytes INTEGER CHECK(quota_bytes IS NULL OR (quota_bytes > 0 AND quota_bytes <= 1000000000000));
+ALTER TABLE plans ADD COLUMN quota_bytes INTEGER;
 
 CREATE TABLE customer_orders (
   id TEXT PRIMARY KEY,
