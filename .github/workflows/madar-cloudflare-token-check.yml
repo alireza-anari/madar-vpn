@@ -46,3 +46,17 @@ jobs:
           jq -e 'any(.result.schedules[]; .cron=="* * * * *")' /tmp/cron.json >/dev/null
           jq -e '.result[0].results[0].name=="0016-customer-checkout.sql"' /tmp/d1.json >/dev/null
           echo "PASS: GitHub Cloudflare credential has read access and production baseline is unchanged"
+
+      - name: Probe currently active public routes without authentication
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="https://madar-sales-bot.alirezaanari117.workers.dev"
+          for path in /health /app /customer /customer.css /customer.js /madar-logo.png /api/customer/me; do
+            code="$(curl -sSL --max-time 15 -o /tmp/madar-route-body -w '%{http_code}' "$base$path")"
+            echo "PUBLIC_ROUTE $path HTTP=$code"
+            if [ "$path" = "/health" ] || [ "$path" = "/customer" ]; then
+              head -c 180 /tmp/madar-route-body | tr '\n' ' ' || true
+              echo
+            fi
+          done
