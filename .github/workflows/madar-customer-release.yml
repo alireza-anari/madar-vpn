@@ -77,23 +77,48 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for path in /health /app /customer /customer.css /customer.js /madar-logo.png; do
-            good=0
-            for i in $(seq 1 10); do
-              if curl -fsS --max-time 15 "$BASE_URL$path" >/dev/null; then good=1; break; fi
-              sleep 5
+          # Workers route propagation can briefly serve the prior deployment.
+          # Wait for ALL new routes to appear together rather than treating a
+          # short-lived 404 as a fatal code regression.
+          ok=0
+          for attempt in $(seq 1 25); do
+            all_routes=1
+            for path in /health /app /customer /customer.css /customer.js /madar-logo.png; do
+              code="$(curl -sS --max-time 15 -o /tmp/madar-live-response -w '%{http_code}' "$BASE_URL$path")" || code=000
+              if [ "$code" != 200 ]; then
+                echo "Attempt $attempt: $path returned HTTP $code (waiting for route propagation)"
+                all_routes=0
+                break
+              fi
+              if [ "$path" = "/customer" ] && ! grep -q 'پنل مشتری' /tmp/madar-live-response; then
+                echo "Attempt $attempt: customer page content does not match new release"
+                all_routes=0
+                break
+              fi
             done
-            test "$good" -eq 1 || { echo "::error::Production smoke failed: $path"; exit 1; }
+            if [ "$all_routes" -eq 1 ]; then
+              unauth="$(curl -sS --max-time 15 -o /dev/null -w '%{http_code}' "$BASE_URL/api/customer/me")" || unauth=000
+              if [ "$unauth" != 403 ]; then
+                echo "Attempt $attempt: unsigned customer API returned HTTP $unauth, expected 403"
+              else
+                echo "Customer and reseller production routes, assets and customer authorization verified"
+                ok=1
+                break
+              fi
+            fi
+            sleep 5
           done
-          curl -fsS "$BASE_URL/customer" | grep -q 'پنل مشتری'
-          status="$(curl -sS -o /dev/null -w '%{http_code}' "$BASE_URL/api/customer/me")"
-          test "$status" = "403"
+          test "$ok" -eq 1 || { echo "::error::New production routes never became healthy; initiate rollback"; exit 1; }
+
           api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID"
           auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
           curl -fsS -H "$auth" "$api/workers/scripts/$SCRIPT/settings" |
             jq -e --arg db "$DB_ID" '.success == true and
             ([.result.bindings[] | select(.name == "SALES_DB" and ((.id // .database_id) == $db))] | length == 1) and
             ([.result.bindings[].name] |
+              (index("ADMIN_TELEGRAM_IDS") != null) and
+              (index("PUBLIC_BASE_URL") != null) and
+              (index("RUNNER_PUBLIC_KEY") != null) and
               (index("BOT_TOKEN") != null) and
               (index("TELEGRAM_WEBHOOK_SECRET") != null) and
               (index("POLICY_SIGNING_SECRET") != null) and
@@ -101,7 +126,7 @@ jobs:
               (index("RUNNER_SERVICE_SECRET") != null))' >/dev/null
           curl -fsS -H "$auth" "$api/workers/scripts/$SCRIPT/schedules" |
             jq -e '.success == true and any(.result.schedules[]; .cron == "* * * * *")' >/dev/null
-          echo "Customer shop release and legacy bot health verified."
+          echo "Live smoke, bindings and cron verification all passed."
       - name: Roll back Worker version after failed smoke
         if: ${{ failure() && steps.deploy.outcome == 'success' }}
         shell: bash
