@@ -308,7 +308,7 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
   if(configMatch) {
     try {
       const result=await customerConfig(env,actor,configMatch[1]!,now);
-      if(!result.ready) {
+      if(!result.ready || typeof result.validUntil !== "number" || typeof result.quotaBytes !== "number" || typeof result.config !== "string") {
         await reply("پرداخت تأیید شده؛ کانفیگ هنوز از سرور تأیید نهایی نگرفته است. کمی بعد دوباره بررسی کن.",[
           [callback("🔄 بررسی کانفیگ","customer:config:"+configMatch[1])],
           [callback("📦 سفارش‌های من","customer:orders:0")],
