@@ -79,6 +79,8 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
   }
 
   if (actor.role!=="ordinary") return false;
+  // Keep reseller invitation deep links handled by the existing reseller workflow.
+  if (text.startsWith("/start seller_")) return false;
   await db.prepare("INSERT OR IGNORE INTO users(id) VALUES(?)").bind(userId).run();
   const state=await db.prepare("SELECT conversation FROM users WHERE id=?").bind(userId).first<string>("conversation");
   if (text==="/start" || text==="/menu" || data==="customer:home") {
