@@ -112,6 +112,9 @@ test("receipt goes to admin; admin approval uses quota-v2 and is idempotent",asy
   expect((await call("/api/customer/admin/orders/"+o.id+"/approve",10,{})).status).toBe(403);
   expect((await call("/api/customer/admin/orders/"+o.id+"/approve",1,{})).status).toBe(200);
   expect((await call("/api/customer/admin/orders/"+o.id+"/approve",1,{})).status).toBe(200);
+  const notice=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id=?").bind("customer-approved:"+o.id).first<string>("payload"))||"{}");
+  expect(notice.text).toContain("همین چت ربات");
+  expect(notice.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="customer:orders:0")).toBe(true);
   const row=await env.SALES_DB.prepare(
     "SELECT seller_id,quota_bytes,duration_seconds FROM managed_accounts WHERE request_key=?",
   ).bind("customer-order:"+o.id).first();
