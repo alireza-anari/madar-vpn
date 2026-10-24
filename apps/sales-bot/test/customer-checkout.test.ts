@@ -291,3 +291,14 @@ test("customer order and config callbacks never reveal another user's order",asy
   expect(payload.text).toContain("پیدا نشد");
   expect(payload.text).not.toContain(orderRow.id);
 });
+
+test("reseller-mode dispatcher routes ordinary /start to native customer menu, not the Mini App",async()=>{
+  await setup();
+  await env.SALES_DB.prepare("INSERT INTO settings(key,value) VALUES('app_mode','reseller')").run();
+  await handleUpdate(E,{update_id:821,message:{message_id:1,chat:{id:10,type:"private"},from:{id:10},text:"/start"}} as any,now);
+  const payload=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u821:reply'").first<string>("payload"))||"{}");
+  const buttons=payload.reply_markup.inline_keyboard.flat();
+  expect(buttons.some((b:any)=>b.callback_data==="customer:buy")).toBe(true);
+  expect(buttons.some((b:any)=>b.callback_data==="customer:orders:0")).toBe(true);
+  expect(JSON.stringify(payload)).not.toContain("web_app");
+});
