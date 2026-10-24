@@ -1,0 +1,48 @@
+name: Madar Cloudflare credential read-only preflight
+on:
+  push:
+    branches: [release/customer-self-service-20261024]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    env:
+      CF_ACCOUNT_ID: 2e4e0d025c81b9134fd2d19f17535e30
+      CF_D1_ID: f59e160f-89ab-4a90-a4dc-f257883d5a61
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - name: Read-only permission and production invariants check
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${CLOUDFLARE_API_TOKEN:?GitHub secret CLOUDFLARE_API_TOKEN is not configured}"
+          base="https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID"
+          auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+          fetch() {
+            local name="$1" method="$2" url="$3" body="${4-}"
+            local code
+            if [ "$method" = "POST" ]; then
+              code="$(curl --retry 2 -sS -o "/tmp/$name.json" -w '%{http_code}' \
+                -X POST -H "$auth" -H 'Content-Type: application/json' \
+                --data "$body" "$url")"
+            else
+              code="$(curl --retry 2 -sS -o "/tmp/$name.json" -w '%{http_code}' -H "$auth" "$url")"
+            fi
+            echo "$name HTTP=$code"
+            if [ "$code" != 200 ]; then echo "::error::Cloudflare token rejected $name, HTTP $code"; exit 1; fi
+            jq -e '.success == true' "/tmp/$name.json" >/dev/null
+          }
+          fetch worker GET "$base/workers/scripts/madar-sales-bot/settings"
+          fetch deployments GET "$base/workers/scripts/madar-sales-bot/deployments"
+          fetch cron GET "$base/workers/scripts/madar-sales-bot/schedules"
+          fetch d1 POST "$base/d1/database/$CF_D1_ID/query" \
+            '{"sql":"SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1"}'
+          jq -e --arg id "$CF_D1_ID" '
+            [.result.bindings[] | select(.name == "SALES_DB" and (.id == $id))] | length == 1
+          ' /tmp/worker.json >/dev/null
+          jq -e '.result.deployments[0].versions[0].version_id ==
+            "0bfacc78-bf6f-41cf-8770-b4896e14489b"' /tmp/deployments.json >/dev/null
+          jq -e 'any(.result.schedules[]; .cron=="* * * * *")' /tmp/cron.json >/dev/null
+          jq -e '.result[0].results[0].name=="0016-customer-checkout.sql"' /tmp/d1.json >/dev/null
+          echo "PASS: GitHub Cloudflare credential has read access and production baseline is unchanged"
