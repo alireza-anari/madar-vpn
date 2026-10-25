@@ -19,6 +19,7 @@ import customerMigration from "../migrations/0016-customer-checkout.sql?raw";
 import { customerApi } from "../src/customer-api";
 import { handleUpdate } from "../src/menus";
 import { handleCustomerTelegramUpdate } from "../src/customer-telegram";
+import { deliverOutbox } from "../src/outbox";
 import { customerQrResponse } from "../src/customer-qr";
 import { queueAccountDelivery } from "../src/account-delivery";
 import worker from "../src/index";
@@ -383,4 +384,72 @@ test("connection help offers platform-specific guides and official client source
   const guide=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u906:reply'").first<string>("payload"))||"{}");
   expect(guide.text).toContain("Import from clipboard");
   expect(guide.reply_markup.inline_keyboard.flat().some((b:any)=>b.url==="https://github.com/2dust/v2rayNG/releases")).toBe(true);
+});
+
+
+test("customer can safely cancel an unpaid trial purchase and select a different plan",async()=>{
+  await setup();
+  const first=await order();
+  const detail=await handleCustomerTelegramUpdate(E,{
+    update_id:981,callback_query:{id:"detail",from:{id:10},message:{message_id:4,chat:{id:10,type:"private"},text:"سفارش"},data:"customer:order:"+first.id},
+  } as any,now);
+  expect(detail).toBe(true);
+  const detailPayload=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u981:reply'").first<string>("payload"))||"{}");
+  expect(detailPayload._method).toBe("editMessageText");
+  expect(detailPayload.message_id).toBe(4);
+  expect(detailPayload.reply_markup.inline_keyboard.flat().some((button:any)=>button.callback_data==="customer:cancel-confirm:"+first.id)).toBe(true);
+
+  expect(await handleCustomerTelegramUpdate(E,{update_id:982,callback_query:{id:"confirm",from:{id:10},message:{message_id:4,chat:{id:10,type:"private"},text:"جزئیات سفارش"},data:"customer:cancel-confirm:"+first.id}} as any,now)).toBe(true);
+  const confirmation=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u982:reply'").first<string>("payload"))||"{}");
+  expect(confirmation.text).toContain("اگر هنوز وجهی واریز نکرده‌ای");
+  expect(confirmation.reply_markup.inline_keyboard.flat().some((button:any)=>button.callback_data==="customer:cancel:"+first.id)).toBe(true);
+
+  expect(await handleCustomerTelegramUpdate(E,{update_id:983,callback_query:{id:"cancel",from:{id:10},message:{message_id:4,chat:{id:10,type:"private"},text:"انصراف"},data:"customer:cancel:"+first.id}} as any,now)).toBe(true);
+  const cancelled=await env.SALES_DB.prepare("SELECT state,reason,account_id FROM customer_orders WHERE id=?").bind(first.id).first<any>();
+  expect(cancelled).toMatchObject({state:"rejected",reason:"لغو توسط مشتری",account_id:null});
+  expect(await env.SALES_DB.prepare("SELECT COUNT(*) n FROM audit_events WHERE action='customer_cancel_order' AND target_id=?").bind(first.id).first<number>("n")).toBe(1);
+  const second=await call("/api/customer/orders",10,{planId:"monthly",nodeId:"n",requestKey:"key_second_pending_123"});
+  expect(second.status).toBe(201);
+});
+
+test("customer cannot withdraw someone else's order or an already submitted receipt",async()=>{
+  await setup();
+  const first=await order();
+  expect(await handleCustomerTelegramUpdate(E,{update_id:984,callback_query:{id:"bad",from:{id:11},message:{message_id:4,chat:{id:11,type:"private"}},data:"customer:cancel:"+first.id}} as any,now)).toBe(true);
+  expect(await env.SALES_DB.prepare("SELECT state FROM customer_orders WHERE id=?").bind(first.id).first<string>("state")).toBe("awaiting_receipt");
+  await sendReceipt();
+  expect(await handleCustomerTelegramUpdate(E,{update_id:985,callback_query:{id:"late",from:{id:10},message:{message_id:4,chat:{id:10,type:"private"}},data:"customer:cancel:"+first.id}} as any,now)).toBe(true);
+  expect(await env.SALES_DB.prepare("SELECT state FROM customer_orders WHERE id=?").bind(first.id).first<string>("state")).toBe("pending_review");
+});
+
+test("Telegram callback edits fail over to a normal new message without dropping the action",async()=>{
+  await env.SALES_DB.prepare("INSERT INTO outbox(id,chat_id,payload) VALUES('edit-test','10',?)")
+    .bind(JSON.stringify({_method:"editMessageText",message_id:5,text:"فروشگاه",reply_markup:{inline_keyboard:[]}})).run();
+  const calls:{action:string;body:any}[]=[];
+  const fetcher=async (url:RequestInfo|URL,options?:RequestInit) => {
+    const action=String(url).split("/").pop()||"";
+    const body=JSON.parse(String(options?.body));
+    calls.push({action,body});
+    return Response.json(calls.length===1?{ok:false,error_code:400,description:"Bad Request: message can't be edited"}:{ok:true,result:{message_id:6}},{
+      status:calls.length===1?400:200,
+    });
+  };
+  await deliverOutbox(E,now,fetcher as typeof fetch);
+  expect(calls.map(c=>c.action)).toEqual(["editMessageText","sendMessage"]);
+  expect(calls[0]!.body.message_id).toBe(5);
+  expect(calls[1]!.body.message_id).toBeUndefined();
+  expect(await env.SALES_DB.prepare("SELECT state FROM outbox WHERE id='edit-test'").first<string>("state")).toBe("sent");
+});
+
+test("editing the same Telegram message is a successful no-op, not another chat message",async()=>{
+  await env.SALES_DB.prepare("INSERT INTO outbox(id,chat_id,payload) VALUES('no-change','10',?)")
+    .bind(JSON.stringify({_method:"editMessageText",message_id:5,text:"همان پیام"})).run();
+  const calls:string[]=[];
+  const fetcher=async (url:RequestInfo|URL) => {
+    calls.push(String(url).split("/").pop()||"");
+    return Response.json({ok:false,error_code:400,description:"Bad Request: message is not modified"},{status:400});
+  };
+  await deliverOutbox(E,now,fetcher as typeof fetch);
+  expect(calls).toEqual(["editMessageText"]);
+  expect(await env.SALES_DB.prepare("SELECT state FROM outbox WHERE id='no-change'").first<string>("state")).toBe("sent");
 });
