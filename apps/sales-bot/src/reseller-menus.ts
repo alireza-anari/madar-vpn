@@ -65,6 +65,9 @@ function nodeBreakdown(
 async function enhanceAdminReply(env: Env, u: TelegramUpdate, now: number) {
   const data = u.callback_query?.data;
   if (!data) return;
+  // Do not augment denied admin callbacks with privileged navigation links.
+  const id = updateIdentity(u);
+  if (!id || (await resolveSalesActor(env.SALES_DB, id, env)).role !== "admin") return;
   const reply = await loadReply(env, u.update_id);
   if (!reply) return;
 
