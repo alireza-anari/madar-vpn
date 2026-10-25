@@ -9,7 +9,7 @@ function base64url(bytes: Uint8Array) {
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
 }
-function decodeBase64url(value: string): Uint8Array {
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {\n  const copy = new Uint8Array(bytes.length);\n  copy.set(bytes);\n  return copy.buffer as ArrayBuffer;\n}\nfunction decodeBase64url(value: string): Uint8Array {
   if (!/^[A-Za-z0-9_-]+$/.test(value) || value.length > 2048) throw Error("INVALID_TOKEN");
   const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
   const binary = atob(base64 + "=".repeat((4 - base64.length % 4) % 4));
@@ -40,7 +40,7 @@ export async function customerQrResponse(request: Request, env: Env, token: stri
       typeof payload.e !== "number" || !Number.isSafeInteger(payload.e) ||
       payload.e <= now || payload.e > now + 600) return notFound();
     const key = await crypto.subtle.importKey("raw", encoder.encode(env.USAGE_LINK_SECRET), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
-    const valid = await crypto.subtle.verify("HMAC", key, decodeBase64url(signature), encoder.encode("madar-customer-qr-v1:" + encoded));
+    const valid = await crypto.subtle.verify("HMAC", key, toArrayBuffer(decodeBase64url(signature)), encoder.encode("madar-customer-qr-v1:" + encoded));
     if (!valid) return notFound();
     const actor = await resolveSalesActor(env.SALES_DB, payload.u, env);
     if (actor.role !== "ordinary") return notFound();
