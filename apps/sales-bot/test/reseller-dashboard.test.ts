@@ -46,6 +46,30 @@ const send = (id: number, text: string, update = seq++) =>
     },
     100,
   );
+const clickFromMessage = (
+  id: number,
+  data: string,
+  messageId: number,
+  sourceText: string,
+  update = seq++,
+) =>
+  handleUpdate(
+    E,
+    {
+      update_id: update,
+      callback_query: {
+        id: String(update),
+        from: { id },
+        message: {
+          message_id: messageId,
+          chat: { id, type: "private" },
+          text: sourceText,
+        },
+        data,
+      },
+    },
+    100,
+  );
 const payload = async (update: number) =>
   JSON.parse(
     (await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id=?")
@@ -206,4 +230,39 @@ test("seller count and byte caps have distinct Persian errors", async () => {
   await send(10, "10", 3172);
   await send(10, "30", 3173);
   expect((await payload(3173)).text).toContain("سقف حجم فروشنده");
+});
+
+test("seller and admin callback menus edit the current text message instead of adding duplicates", async () => {
+  const sellerUpdate = 3190;
+  await clickFromMessage(10, "rs:home", 701, "💼 پنل فروش قدیمی", sellerUpdate);
+  const sellerReply = await payload(sellerUpdate);
+  expect(sellerReply._method).toBe("editMessageText");
+  expect(sellerReply.message_id).toBe(701);
+  expect(sellerReply.text).toContain("💼 پنل فروش");
+  expect(sellerReply.reply_markup.inline_keyboard.flat().some((b: any) => b.callback_data === "rs:sale")).toBe(true);
+
+  const adminUpdate = 3191;
+  await clickFromMessage(9, "rs:nodes", 702, "📊 وضعیت کلی مدار", adminUpdate);
+  const adminReply = await payload(adminUpdate);
+  expect(adminReply._method).toBe("editMessageText");
+  expect(adminReply.message_id).toBe(702);
+  expect(adminReply.text).toContain("انتخاب سرور");
+  expect(adminReply.reply_markup.inline_keyboard.flat().some((b: any) => b.callback_data === "rs:home")).toBe(true);
+});
+
+test("admin/seller callback from a photo or unknown message stays on safe send-message path", async () => {
+  const update = 3192;
+  await handleUpdate(E, {
+    update_id: update,
+    callback_query: {
+      id: String(update),
+      from: { id: 10 },
+      message: { message_id: 703, chat: { id: 10, type: "private" }, caption: "پنل فروش", photo: [{ file_id: "photo" }] },
+      data: "rs:home",
+    },
+  } as any, 100);
+  const reply = await payload(update);
+  expect(reply._method).toBeUndefined();
+  expect(reply.message_id).toBeUndefined();
+  expect(reply.text).toContain("💼 پنل فروش");
 });
