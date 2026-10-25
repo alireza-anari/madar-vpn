@@ -51,6 +51,7 @@ async function replaceReply(
   original: Record<string, any>,
   text: string,
   rows: Record<string, unknown>[][],
+  html = false,
 ) {
   await db
     .prepare("UPDATE outbox SET payload=? WHERE id=?")
@@ -58,11 +59,29 @@ async function replaceReply(
       JSON.stringify({
         ...original,
         text,
+        ...(html ? { parse_mode: "HTML" } : { parse_mode: undefined }),
         reply_markup: { inline_keyboard: rows },
       }),
       id,
     )
     .run();
+}
+
+const fa = (value: number) => value.toLocaleString("fa-IR");
+const meter = (used: number, max: number | null) => {
+  if (max === null) return "♾️ بدون سقف";
+  const filled = max > 0 ? Math.max(0, Math.min(8, Math.round(8 * used / max))) : 8;
+  return "🟩".repeat(filled) + "⬜".repeat(8 - filled);
+};
+const divider = "━━━━━━━━━━━━━━━━";
+async function pendingCustomerReceipts(db: D1Database): Promise<number | null> {
+  try {
+    return (await db.prepare("SELECT COUNT(*) n FROM customer_orders WHERE state='pending_review'")
+      .first<number>("n")) ?? 0;
+  } catch {
+    // Legacy migration test databases can predate customer checkout.
+    return null;
+  }
 }
 
 function inService(stats: Awaited<ReturnType<typeof sellerStats>>) {
@@ -77,28 +96,49 @@ async function rewriteHome(
 ) {
   const db = env.SALES_DB;
   if (actor.role === "seller") {
-    const [current, all] = await Promise.all([
+    const [current, all, limits] = await Promise.all([
       sellerStats(db, actor.telegramId, "current", now),
       sellerStats(db, actor.telegramId, "all", now),
+      sellerLimits(db, actor.telegramId, now),
     ]);
+    const cappedCount = limits.maxReservedAccounts !== null;
+    const cappedBytes = limits.maxCommittedBytes !== null;
+    const countLeft = cappedCount ? Math.max(0, limits.maxReservedAccounts! - limits.reservedAccounts) : null;
+    const bytesLeft = cappedBytes ? Math.max(0, limits.maxCommittedBytes! - limits.committedBytes) : null;
+    const atLimit = countLeft === 0 || bytesLeft === 0 ||
+      (cappedBytes && limits.uncappedAccounts > 0);
     const text = [
-      "💼 پنل فروش",
-      `در سرویس: ${inService(current).toLocaleString("fa-IR")}`,
-      `این تسویه: ${current.configCount.toLocaleString("fa-IR")} کانفیگ · ${formatBytes(current.soldBytes)}`,
-      `کل فروش: ${all.configCount.toLocaleString("fa-IR")} کانفیگ · ${formatBytes(all.soldBytes)}`,
+      "💼 پنل فروش مدار",
+      divider,
+      "<b>📊 وضعیت فروش</b>",
+      `در سرویس: ${fa(inService(current))}`,
+      `این تسویه: ${fa(current.configCount)} کانفیگ · ${formatBytes(current.soldBytes)}`,
+      `کل فروش: ${fa(all.configCount)} کانفیگ · ${formatBytes(all.soldBytes)}`,
       "",
-      "فروش، تست، کانفیگ‌ها و آمار خودت را از اینجا مدیریت کن.",
+      "<b>🎯 سهمیه فعلی فروشنده</b>",
+      `🔢 کانفیگ: ${fa(limits.reservedAccounts)} / ${cappedCount ? fa(limits.maxReservedAccounts!) : "نامحدود"}`,
+      meter(limits.reservedAccounts, limits.maxReservedAccounts),
+      `📦 حجم تعهدشده: ${formatBytes(limits.committedBytes)} / ${cappedBytes ? formatBytes(limits.maxCommittedBytes!) : "نامحدود"}`,
+      meter(limits.committedBytes, limits.maxCommittedBytes),
+      ...(cappedBytes && limits.uncappedAccounts > 0
+        ? ["⚠️ کانفیگ بدون سقف حجمی در تعهد فعال وجود دارد؛ تخصیص جدید باید بررسی شود."] : []),
+      ...(atLimit ? ["⛔ یکی از سقف‌های فروش پر شده؛ صدور جدید مشروط به ظرفیت واقعی است."] : []),
+      "",
+      "👇 <b>عملیات موردنظر را انتخاب کن.</b>",
     ].join("\n");
     await replaceReply(db, reply.id, reply.payload, text, [
       [btn("➕ صدور کانفیگ", "rs:sale"), btn("🎁 تست", "rs:trial")],
       [btn("📋 کانفیگ‌ها", "rs:list"), btn("📊 آمار من", "rs:stats")],
       [btn("📖 راهنما", "rs:help")],
-    ]);
+    ], true);
     return;
   }
   if (actor.role !== "admin") return;
 
-  const capacities = await nodeCapacities(db, now);
+  const [capacities, pendingReceipts] = await Promise.all([
+    nodeCapacities(db, now),
+    pendingCustomerReceipts(db),
+  ]);
   const activeNodes = capacities.filter(
     (n) =>
       n.healthy === 1 &&
@@ -106,40 +146,37 @@ async function rewriteHome(
       n.agent_capabilities.split(",").includes("quota-v2"),
   );
   const committed = capacities.reduce((sum, n) => sum + n.committed_bytes, 0);
-  const finalized = capacities.reduce(
-    (sum, n) => sum + n.finalized_used_bytes,
-    0,
-  );
-  const serviceCount = capacities.reduce(
-    (sum, n) => sum + n.reserved_accounts,
-    0,
-  );
-  const sellers =
-    (await db
-      .prepare("SELECT COUNT(*) n FROM resellers WHERE enabled=1")
-      .first<number>("n")) || 0;
+  const finalized = capacities.reduce((sum, n) => sum + n.finalized_used_bytes, 0);
+  const serviceCount = capacities.reduce((sum, n) => sum + n.reserved_accounts, 0);
+  const sellers = (await db.prepare("SELECT COUNT(*) n FROM resellers WHERE enabled=1").first<number>("n")) || 0;
   const text = [
     "📊 وضعیت کلی مدار",
-    `سرورهای فعال: ${activeNodes.length.toLocaleString("fa-IR")}`,
-    `کانفیگ‌های در سرویس: ${serviceCount.toLocaleString("fa-IR")}`,
+    divider,
+    "<b>🛰️ سرورها و ظرفیت</b>",
+    `سرورهای فعال: ${fa(activeNodes.length)} از ${fa(capacities.length)}`,
+    `کانفیگ‌های در سرویس: ${fa(serviceCount)}`,
     `رزرو فعال: ${formatBytes(committed)}`,
     `مصرف قطعی: ${formatBytes(finalized)}`,
-    `فروشنده‌های فعال: ${sellers.toLocaleString("fa-IR")}`,
+    "",
+    "<b>👥 فروش و سفارش‌ها</b>",
+    `فروشنده‌های فعال: ${fa(sellers)}`,
+    ...(pendingReceipts !== null ? [
+      `📨 رسیدهای منتظر بررسی: ${fa(pendingReceipts)}`,
+      ...(pendingReceipts > 0 ? ["⚠️ رسیدهای مشتریان نیاز به بررسی مدیر دارند."] : []),
+    ] : []),
+    "",
+    "👇 <b>بخش مدیریتی موردنظر را انتخاب کن.</b>",
   ].join("\n");
   const rows: Record<string, unknown>[][] = [
-    [btn("➕ صدور کانفیگ", "rs:sale"), btn("🎁 تست", "rs:trial")],
     [btn("🌐 سرورها", "rs:nodes"), btn("👥 فروشندگان", "rs:sellers")],
+    [btn("➕ صدور کانفیگ", "rs:sale"), btn("🎁 تست", "rs:trial")],
     [btn("📋 کانفیگ‌ها", "rs:list"), btn("📈 گزارش", "rs:reports")],
     [btn("📖 راهنما", "rs:help")],
   ];
+  // The existing dashboard enhancer keeps the customer-receipt inbox entry.
   if (env.PUBLIC_BASE_URL)
-    rows.push([
-      {
-        text: "➕ افزودن VPS",
-        web_app: { url: `${env.PUBLIC_BASE_URL}/enroll` },
-      },
-    ]);
-  await replaceReply(db, reply.id, reply.payload, text, rows);
+    rows.push([{ text: "➕ افزودن VPS", web_app: { url: `${env.PUBLIC_BASE_URL}/enroll` } }]);
+  await replaceReply(db, reply.id, reply.payload, text, rows, true);
 }
 
 async function rewriteSellerStats(
