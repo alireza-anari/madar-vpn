@@ -8,7 +8,7 @@ CREATE TABLE customer_upgrades (
   base_order_id TEXT NOT NULL REFERENCES customer_orders(id),
   account_id TEXT NOT NULL REFERENCES managed_accounts(id),
   plan_id TEXT NOT NULL,
-  kind TEXT NOT NULL CHECK(kind IN ('renew','traffic')),
+  kind TEXT NOT NULL CHECK(kind IN ('renew','traffic','bundle')),
   price INTEGER NOT NULL CHECK(price > 0),
   currency TEXT NOT NULL CHECK(currency IN ('IRT','IRR')),
   delta_bytes INTEGER NOT NULL DEFAULT 0 CHECK(delta_bytes BETWEEN 0 AND 1000000000000),
@@ -23,7 +23,8 @@ CREATE TABLE customer_upgrades (
   decided_by TEXT,
   notified_at INTEGER,
   CHECK ((kind='renew' AND delta_seconds>0 AND delta_bytes=0)
-    OR (kind='traffic' AND delta_bytes>0 AND delta_seconds=0)),
+    OR (kind='traffic' AND delta_bytes>0 AND delta_seconds=0)
+    OR (kind='bundle' AND delta_bytes>0 AND delta_seconds>0)),
   UNIQUE(user_id,request_key)
 );
 CREATE UNIQUE INDEX customer_upgrades_open_user
