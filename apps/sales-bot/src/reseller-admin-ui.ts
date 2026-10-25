@@ -147,10 +147,16 @@ async function showNodeList(
   const page = Math.min(requestedPage, Math.max(0, Math.ceil(nodes.length / perPage) - 1));
   const visible = nodes.slice(page * perPage, (page + 1) * perPage);
   const healthy = nodes.filter(n => n.healthy === 1 && n.last_seen > now - 90 &&
-    n.agent_capabilities.split(",").includes("quota-v2")).length;
+    n.agent_capabilities.split(",").includes("quota-v2") &&
+    n.reserved_accounts < n.max_accounts &&
+    (remainingAllocation(n) === null || remainingAllocation(n)! > 0)).length;
   const rows: Record<string, unknown>[][] = visible.map((n) => {
     const remaining = remainingAllocation(n);
-    const status = n.healthy === 1 && n.last_seen > now - 90 ? "🟢" : "🔴";
+    const available = n.healthy === 1 && n.last_seen > now - 90 &&
+      n.agent_capabilities.split(",").includes("quota-v2") &&
+      n.reserved_accounts < n.max_accounts &&
+      (remaining === null || remaining > 0);
+    const status = available ? "🟢" : "🔴";
     const freeSlots = Math.max(0, n.max_accounts - n.reserved_accounts);
     return [btn(
       `${status} ${n.name.slice(0,22)} · ${freeSlots.toLocaleString("fa-IR")} جای خالی · ${remaining === null ? "♾" : formatBytes(remaining)}`,
