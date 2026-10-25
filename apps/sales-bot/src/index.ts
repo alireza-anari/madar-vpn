@@ -17,6 +17,7 @@ import { adminApi } from "./admin-api";
 import { appApi } from "./app-api";
 import { customerApi } from "./customer-api";
 import { customerQrResponse } from "./customer-qr";
+import { notifyReadyUpgrades } from "./customer-upgrades";
 import customerHtml from "../public/customer.html";
 import customerCss from "../public/customer.css";
 import customerJs from "../public/customer.js";
@@ -115,6 +116,7 @@ export default {
     await cleanupCredentials(env.SALES_DB, now);
     await drainInbox(env, now);
     await refreshAllCapacityAlerts(env, now);
+    await notifyReadyUpgrades(env, now);
     // The Worker already has a one-minute cron. Sample fleet health only on
     // alternate minutes, avoiding extra scheduled invocations and AWS load.
     if (Math.floor(now / 60) % 2 === 0) {
