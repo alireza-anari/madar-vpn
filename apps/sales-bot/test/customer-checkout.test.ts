@@ -23,6 +23,7 @@ import { handleCustomerTelegramUpdate } from "../src/customer-telegram";
 import { deliverOutbox } from "../src/outbox";
 import { customerQrResponse } from "../src/customer-qr";
 import { queueAccountDelivery } from "../src/account-delivery";
+import { buildQuotaPolicy, ackQuotaPolicy } from "../src/quota-policies";
 import {
   approveUpgrade, createCustomerUpgrade, listCustomerUpgrades, notifyReadyUpgrades,
   requestUpgradeReceipt, submitUpgradeReceipt,
@@ -599,4 +600,64 @@ test("new Telegram menu displays renewal and extra data without changing origina
   expect(p.reply_markup.inline_keyboard.flat().some((x:any)=>x.callback_data?.startsWith("customer:up:offer:r:"))).toBe(true);
   expect(p.reply_markup.inline_keyboard.flat().some((x:any)=>x.callback_data?.startsWith("customer:up:offer:t:"))).toBe(true);
   expect((await env.SALES_DB.prepare("SELECT price FROM customer_orders WHERE id=?").bind(s.orderId).first("price"))).toBe(250000);
+});
+
+
+test("renewal gets an actual quota-v2 ACK before reporting service as active",async()=>{
+  const service=await readyPurchasedService();
+  const upgrade=await createCustomerUpgrade(env.SALES_DB,{telegramId:"10",role:"ordinary"},{
+    orderId:service.orderId,planId:"monthly",kind:"renew",requestKey:"acked-renew-123456",
+  },now);
+  await payUpgrade(upgrade.id);
+  await approveUpgrade(E,{telegramId:"1",role:"admin"},upgrade.id,now);
+  const waiting=await env.SALES_DB.prepare("SELECT state,activation_revision FROM managed_accounts WHERE id=?").bind(service.accountId).first<any>();
+  expect(waiting.state).toBe("preparing");
+  expect(waiting.activation_revision).toBeNull();
+  const policy=await buildQuotaPolicy(env.SALES_DB,"n",now);
+  expect(policy.version).toBe(2);
+  const c=policy.clients.find(x=>x.accountId===service.accountId);
+  expect(c).toMatchObject({uuid:service.uuid,quotaBytes:20e9,validUntil:now+86400*45});
+  await ackQuotaPolicy(env.SALES_DB,"n",policy.revision,{healthy:true,capabilities:["quota-v2","per-account-process","shared-443"]},now);
+  const active=await env.SALES_DB.prepare("SELECT state,uuid,valid_until FROM managed_accounts WHERE id=?").bind(service.accountId).first<any>();
+  expect(active.state).toBe("active");
+  expect(active.uuid).toBe(service.uuid);
+  expect(active.valid_until).toBe(now+86400*45);
+  await notifyReadyUpgrades(E,now);
+  expect(await env.SALES_DB.prepare("SELECT chat_id FROM outbox WHERE id=?").bind("customer-upgrade-ready:"+upgrade.id).first("chat_id")).toBe("10");
+});
+
+test("atomic upgrade guard enforces configured seller GB caps as well as node GB caps",async()=>{
+  const s=await readyPurchasedService();
+  await env.SALES_DB.prepare("INSERT INTO resellers(telegram_id,enabled,created_at) VALUES('20',1,?)").bind(now).run();
+  await env.SALES_DB.prepare("INSERT INTO reseller_controls(seller_id,max_reserved_accounts,max_committed_bytes,updated_at) VALUES('20',1,30000000000,?)").bind(now).run();
+  await env.SALES_DB.prepare("UPDATE managed_accounts SET seller_id='20' WHERE id=?").bind(s.accountId).run();
+  const order=await createCustomerUpgrade(env.SALES_DB,{telegramId:"10",role:"ordinary"},{
+    orderId:s.orderId,planId:"monthly",kind:"traffic",requestKey:"seller-cap-123456",
+  },now);
+  await payUpgrade(order.id);
+  await expect(approveUpgrade(E,{telegramId:"1",role:"admin"},order.id,now)).rejects.toThrow("UPGRADE_CAPACITY_CHANGED");
+  expect(await env.SALES_DB.prepare("SELECT state FROM customer_upgrades WHERE id=?").bind(order.id).first("state")).toBe("pending_review");
+  expect(await env.SALES_DB.prepare("SELECT quota_bytes FROM managed_accounts WHERE id=?").bind(s.accountId).first("quota_bytes")).toBe(20e9);
+});
+
+test("renewal receipt in the native bot appears in the correct admin review inbox",async()=>{
+  const s=await readyPurchasedService();
+  const u=await createCustomerUpgrade(env.SALES_DB,{telegramId:"10",role:"ordinary"},{
+    orderId:s.orderId,planId:"monthly",kind:"renew",requestKey:"telegram-approval-12",
+  },now);
+  await requestUpgradeReceipt(env.SALES_DB,{telegramId:"10",role:"ordinary"},u.id);
+  const submitted=await handleCustomerTelegramUpdate(E,{
+    update_id:991,message:{message_id:4,chat:{id:10,type:"private"},from:{id:10},photo:[{file_id:"tg-upgrade-receipt"}]},
+  } as any,now);
+  expect(submitted).toBe(true);
+  expect(await env.SALES_DB.prepare("SELECT state FROM customer_upgrades WHERE id=?").bind(u.id).first("state")).toBe("pending_review");
+  const notice=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id=?")
+    .bind("customer-upgrade-review:"+u.id+":1").first<string>("payload"))||"{}");
+  expect(notice.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="cust:up:review:"+u.id)).toBe(true);
+  expect(await handleCustomerTelegramUpdate(E,{
+    update_id:992,callback_query:{id:"manager",from:{id:1},message:{message_id:5,chat:{id:1,type:"private"}},data:"cust:up:list:0"},
+  } as any,now)).toBe(true);
+  const inbox=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u992:reply'").first<string>("payload"))||"{}");
+  expect(inbox.text).toContain("رسیدهای تمدید و حجم");
+  expect(inbox.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="cust:up:review:"+u.id)).toBe(true);
 });
