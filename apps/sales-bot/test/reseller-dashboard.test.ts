@@ -266,3 +266,41 @@ test("admin/seller callback from a photo or unknown message stays on safe send-m
   expect(reply.message_id).toBeUndefined();
   expect(reply.text).toContain("💼 پنل فروش");
 });
+
+test("seller home presents transparent slot and traffic caps without admin information", async () => {
+  await account("live-limit", "active", 30, 5);
+  await env.SALES_DB.exec(
+    "INSERT INTO reseller_controls(seller_id,current_settlement_epoch,settlement_started_at,max_reserved_accounts,max_committed_bytes,updated_at) VALUES('10',0,50,2,50000000000,100)",
+  );
+  await click(10, "rs:home", 3201);
+  const p = await payload(3201);
+  expect(p.parse_mode).toBe("HTML");
+  expect(p.text).toContain("سهمیه فعلی فروشنده");
+  expect(p.text).toContain("کانفیگ: ۱ / ۲");
+  expect(p.text).toContain("حجم تعهدشده: 30 GB / 50 GB");
+  expect(p.text).not.toContain("رسیدهای منتظر بررسی");
+  expect(p.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="rs:sellers")).toBe(false);
+});
+
+test("seller period in-service count must not be overwritten by lifetime totals", async () => {
+  await account("earlier-service", "active", 10, 0);
+  await env.SALES_DB.exec("INSERT INTO reseller_controls(seller_id,current_settlement_epoch,settlement_started_at,updated_at) VALUES('10',1,90,100)");
+  await send(10, "/start", 3202);
+  const p=await payload(3202);
+  expect(p.text).toContain("در سرویس: ۰");
+  expect(p.text).toContain("کل فروش: ۱ کانفیگ");
+  expect(p.parse_mode).toBe("HTML");
+});
+
+test("admin report and seller stats use clean HTML and preserve existing actions", async () => {
+  await click(9, "rs:reports", 3203);
+  const admin = await payload(3203);
+  expect(admin.parse_mode).toBe("HTML");
+  expect(admin.text).toContain("گزارش فروش و ظرفیت");
+  expect(admin.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="cust:inbox:0")).toBe(true);
+  await click(10, "rs:stats", 3204);
+  const seller=await payload(3204);
+  expect(seller.parse_mode).toBe("HTML");
+  expect(seller.text).toContain("این تسویه");
+  expect(seller.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="rs:sale")).toBe(true);
+});
