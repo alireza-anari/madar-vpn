@@ -97,7 +97,7 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
         "ORDER BY created_at,id LIMIT ? OFFSET ?"
       ).bind(limit+1,page*limit).all<{id:string;user_id:string;kind:string;price:number;currency:string;created_at:number}>();
       const keyboard:Record<string,unknown>[][]=rows.results.slice(0,limit).map(item=>[
-        callback("💳 "+(item.kind==="renew"?"تمدید":"حجم اضافه")+" · "+money(item.price,item.currency)+" · #"+item.id.slice(0,8),
+        callback("💳 "+(item.kind==="renew"?"تمدید":item.kind==="bundle"?"تمدید کامل":"حجم اضافه")+" · "+money(item.price,item.currency)+" · #"+item.id.slice(0,8),
           "cust:up:review:"+item.id),
       ]);
       const nav:Record<string,unknown>[]=[];
@@ -119,10 +119,12 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
         if(!upgrade) throw Error("ORDER_NOT_AVAILABLE");
         if(action==="review") {
           const canDecide=upgrade.state==="pending_review" && !!upgrade.file_id;
-          await reply("🧾 <b>بررسی پرداخت "+(upgrade.kind==="renew"?"تمدید":"حجم اضافه")+"</b>\n"+
+          await reply("🧾 <b>بررسی پرداخت "+(upgrade.kind==="renew"?"تمدید":upgrade.kind==="bundle"?"تمدید کامل":"حجم اضافه")+"</b>\n"+
             "شماره: <code>"+upgrade.id+"</code>\nمشتری: "+upgrade.user_id+
             "\nمبلغ: <b>"+money(upgrade.price,upgrade.currency)+"</b>"+
-            "\n"+(upgrade.kind==="traffic"?"حجم: "+gb(upgrade.delta_bytes):"مدت: "+days(upgrade.delta_seconds))+
+            "\n"+(upgrade.kind==="traffic"?"حجم: "+gb(upgrade.delta_bytes):
+              upgrade.kind==="bundle"?"مدت: "+days(upgrade.delta_seconds)+" · حجم: "+gb(upgrade.delta_bytes):
+              "مدت: "+days(upgrade.delta_seconds))+
             "\nوضعیت: "+upgrade.state+"\n\nفقط پس از تأیید واریز واقعی بانک، اقدام کنید.",[
               ...(canDecide?[
                 [callback("✅ تأیید و اعمال روی کانفیگ","cust:up:approve:"+upgrade.id)],
@@ -536,6 +538,11 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
           rows.push([callback("🔁 تمدید "+days(p.durationSeconds)+" · "+money(p.price,p.currency),"customer:up:offer:r:"+orderId+":"+i)]);
         if(service.valid_until>now && service.quota_bytes!==null && service.quota_bytes+p.quotaBytes<=1e12)
           rows.push([callback("📦 +"+gb(p.quotaBytes)+" · "+money(p.price,p.currency),"customer:up:offer:t:"+orderId+":"+i)]);
+        if(service.valid_until<=now && service.quota_bytes!==null && service.quota_bytes<=service.used_bytes
+          && service.quota_bytes+p.quotaBytes<=1e12 && service.duration_seconds+p.durationSeconds<=315360000
+          && service.quota_bytes+p.quotaBytes>service.used_bytes)
+          rows.push([callback("🔄 تمدید کامل: +"+days(p.durationSeconds)+" و "+gb(p.quotaBytes)+" · "+money(p.price,p.currency),
+            "customer:up:offer:b:"+orderId+":"+i)]);
       }
       rows.push([callback("🌐 سرویس‌های من","customer:services")],[callback("🏠 منوی اصلی","customer:home")]);
       await reply("🔁 <b>مدیریت اشتراک مدار</b>\n\n"+
@@ -551,9 +558,9 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
       return true;
     }
   }
-  const upgradeOffer=data.match(/^customer:up:offer:([rt]):([a-f0-9-]{36}):([0-9]{1,2})$/);
+  const upgradeOffer=data.match(/^customer:up:offer:([rtb]):([a-f0-9-]{36}):([0-9]{1,2})$/);
   if(upgradeOffer) {
-    const kind=upgradeOffer[1]==="r"?"renew":"traffic";
+    const kind=upgradeOffer[1]==="r"?"renew":upgradeOffer[1]==="b"?"bundle":"traffic";
     const orderId=upgradeOffer[2]!,idx=Number(upgradeOffer[3]);
     const plans=await customerPlans(db);
     const plan=plans[idx];
@@ -575,11 +582,13 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
         [callback("🌐 سرویس‌های من","customer:services")],
       ];
       if(payment.length<=256) rows.unshift([{text:"📋 کپی اطلاعات پرداخت",copy_text:{text:payment}}]);
-      await reply("🧾 <b>درخواست "+(kind==="renew"?"تمدید":"حجم اضافه")+" ثبت شد</b>\n"+
+      await reply("🧾 <b>درخواست "+(kind==="renew"?"تمدید":kind==="bundle"?"تمدید کامل":"حجم اضافه")+" ثبت شد</b>\n"+
         "━━━━━━━━━━━━━━━━\n"+
         "🔖 کد: <code>"+upgraded.id+"</code>\n"+
         "📦 بسته: "+escapeHtml(plan.name)+"\n"+
-        (kind==="renew"?"⏳ مدت اضافه: "+days(upgraded.delta_seconds):"📦 حجم اضافه: "+gb(upgraded.delta_bytes))+
+        (kind==="renew"?"⏳ مدت اضافه: "+days(upgraded.delta_seconds):
+          kind==="bundle"?"⏳ مدت اضافه: "+days(upgraded.delta_seconds)+" · 📦 حجم اضافه: "+gb(upgraded.delta_bytes):
+          "📦 حجم اضافه: "+gb(upgraded.delta_bytes))+
         "\n💳 <b>مبلغ پرداخت:</b> "+money(upgraded.price,upgraded.currency)+
         "\n\n🏦 <b>اطلاعات پرداخت</b>\n"+escapeHtml(payment)+
         "\n\nپس از واریز، عکس یا فایل رسید را همین‌جا بفرست. تنها بعد از تأیید مدیر و ACK سرور، اشتراک قبلی با همان UUID به‌روزرسانی می‌شود.",rows,
@@ -612,9 +621,11 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
       rows.push([callback("🗑️ لغو درخواست پرداخت‌نشده","customer:up:cancel-confirm:"+request.id)]);
     }
     rows.push([callback("🌐 سرویس‌های من","customer:services")],[callback("🏠 منوی اصلی","customer:home")]);
-    await reply("🧾 <b>وضعیت درخواست "+(request.kind==="renew"?"تمدید":"حجم اضافه")+"</b>\n"+
+    await reply("🧾 <b>وضعیت درخواست "+(request.kind==="renew"?"تمدید":request.kind==="bundle"?"تمدید کامل":"حجم اضافه")+"</b>\n"+
       "شماره: <code>"+request.id+"</code>\n"+
-      (request.kind==="renew"?"⏳ زمان اضافه: "+days(request.delta_seconds):"📦 حجم اضافه: "+gb(request.delta_bytes))+
+      (request.kind==="renew"?"⏳ زمان اضافه: "+days(request.delta_seconds):
+        request.kind==="bundle"?"⏳ زمان اضافه: "+days(request.delta_seconds)+" · 📦 حجم اضافه: "+gb(request.delta_bytes):
+        "📦 حجم اضافه: "+gb(request.delta_bytes))+
       "\n💳 مبلغ: "+money(request.price,request.currency)+
       "\n📌 وضعیت: <b>"+labels[request.state]+"</b>"+
       (request.reason?"\n📝 توضیحات: "+escapeHtml(request.reason):"")+
