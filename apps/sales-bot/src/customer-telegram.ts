@@ -856,6 +856,35 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
     return true;
   }
 
+  if(state?.startsWith("customer-upgrade-receipt:") && (u.message?.photo?.length || u.message?.document)) {
+    const upgradeId=state.slice("customer-upgrade-receipt:".length);
+    const fileId=u.message?.document?.file_id ?? u.message?.photo?.at(-1)?.file_id ?? "";
+    try {
+      const accepted=await submitUpgradeReceipt(db,actor,upgradeId,fileId,u.message?.document?"document":"photo");
+      await setConversation("");
+      await reply(accepted
+        ?"✅ رسید تمدید/حجم اضافه ثبت شد. بعد از بررسی مدیر، تغییر روی همان کانفیگ انجام می‌شود."
+        :"رسید قبلاً ثبت شده و منتظر بررسی مدیر است.",[
+        [callback("🧾 پیگیری درخواست","customer:up:details:"+upgradeId)],
+        [callback("🌐 سرویس‌های من","customer:services")],
+      ]);
+      if(accepted) for(const adminId of (env.ADMIN_TELEGRAM_IDS||"").split(",").map(s=>s.trim()).filter(s=>/^\d+$/.test(s)))
+        await enqueue(db,"customer-upgrade-review:"+upgradeId+":"+adminId,adminId,{
+          text:"💳 رسید جدید تمدید/حجم مشتری "+userId+"؛ درخواست "+upgradeId,
+          reply_markup:{inline_keyboard:[[callback("🔎 بررسی رسید","cust:up:review:"+upgradeId)]]},
+        });
+    } catch(error) {
+      if(!(error instanceof Error)||error.message!=="ORDER_NOT_AVAILABLE") throw error;
+      await setConversation("");
+      await reply("این درخواست دیگر منتظر رسید نیست.",[[callback("🌐 سرویس‌های من","customer:services")]]);
+    }
+    return true;
+  }
+  if(state?.startsWith("customer-upgrade-receipt:")) {
+    await reply("برای این درخواست، عکس یا فایل رسید را همین‌جا ارسال کن. برای لغو حالت ارسال رسید دستور /start را بفرست.");
+    return true;
+  }
+
   if(state?.startsWith("customer-receipt:") && (u.message?.photo?.length || u.message?.document)) {
     const orderId=state.slice("customer-receipt:".length);
     const fileId=u.message?.document?.file_id ?? u.message?.photo?.at(-1)?.file_id ?? "";
