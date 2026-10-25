@@ -67,14 +67,14 @@ export async function customerApi(req:Request,env:Env,now:number):Promise<Respon
           deltaBytes:upgrade.delta_bytes,deltaSeconds:upgrade.delta_seconds,
           payment:await paymentInstructions(env.SALES_DB)},201);
       }
-      const upgradeReceipt=path.match(/^\\/api\\/customer\\/upgrades\\/([^/]+)\\/receipt-request$/);
+      const upgradeReceipt=path.match(/^\/api\/customer\/upgrades\/([^/]+)\/receipt-request$/);
       if(upgradeReceipt) {
         await requestUpgradeReceipt(env.SALES_DB,actor,decodeURIComponent(upgradeReceipt[1]!));
         return json({ok:true});
       }
-      const upgradeApproval=path.match(/^\\/api\\/customer\\/admin\\/upgrades\\/([^/]+)\\/approve$/);
+      const upgradeApproval=path.match(/^\/api\/customer\/admin\/upgrades\/([^/]+)\/approve$/);
       if(upgradeApproval) return json(await approveUpgrade(env,actor,decodeURIComponent(upgradeApproval[1]!),now));
-      const upgradeRejection=path.match(/^\\/api\\/customer\\/admin\\/upgrades\\/([^/]+)\\/reject$/);
+      const upgradeRejection=path.match(/^\/api\/customer\/admin\/upgrades\/([^/]+)\/reject$/);
       if(upgradeRejection) {
         const input=await parse(req);
         if(typeof input.reason!=="string") throw Error("INVALID_REASON");
