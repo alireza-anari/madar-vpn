@@ -279,8 +279,18 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
       return true;
     } catch(error) {
       const code=error instanceof Error?error.message:"";
-      const known=["SALES_DISABLED","PLAN_UNAVAILABLE","NODE_UNAVAILABLE","NODE_FULL","NODE_ALLOCATION_FULL","NODE_SLOT_LIMIT","SELLER_ACCOUNT_LIMIT","SELLER_ALLOCATION_FULL","KEY_REUSED"];
+      const known=["SALES_DISABLED","PLAN_UNAVAILABLE","NODE_UNAVAILABLE","NODE_FULL","NODE_ALLOCATION_FULL","NODE_SLOT_LIMIT","SELLER_ACCOUNT_LIMIT","SELLER_ALLOCATION_FULL","KEY_REUSED","PENDING_ORDER_EXISTS"];
       if(!known.includes(code)) throw error;
+      if(code==="PENDING_ORDER_EXISTS") {
+        const pending=await db.prepare("SELECT id,price,currency FROM customer_orders WHERE user_id=? AND state='awaiting_receipt' ORDER BY created_at DESC LIMIT 1")
+          .bind(userId).first<{id:string;price:number;currency:string}>();
+        await reply("یک سفارش هنوز منتظر رسید است. ابتدا همان سفارش را ادامه بده تا رسید به سفارش اشتباه وصل نشود.",[
+          ...(pending?[[callback("📸 ادامه سفارش · "+money(pending.price,pending.currency),"customer:receipt:"+pending.id)]]:[]),
+          [callback("📦 سفارش‌های من","customer:orders:0")],
+          [callback("🏠 منوی اصلی","customer:home")],
+        ]);
+        return true;
+      }
       await reply(code==="SALES_DISABLED"?"خرید موقتاً غیرفعال است؛ مدیر باید اطلاعات پرداخت را تنظیم کند.":
         code==="PLAN_UNAVAILABLE"?"این پلن دیگر فعال نیست.":
         "ظرفیت این سرور تغییر کرده است؛ سرور دیگری انتخاب کن.",[
