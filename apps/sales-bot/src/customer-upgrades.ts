@@ -61,6 +61,8 @@ export async function createCustomerUpgrade(db:D1Database,actor:SalesActor,input
       service.quota_bytes===null || service.quota_bytes<=0) throw Error("SERVICE_UNAVAILABLE");
   if(input.kind==="traffic" && service.valid_until<=now) throw Error("RENEW_FIRST");
   if(input.kind==="renew" && service.quota_bytes<=service.used_bytes) throw Error("TRAFFIC_FIRST");
+  if(input.kind==="bundle" && (service.valid_until>now || service.quota_bytes>service.used_bytes))
+    throw Error("BUNDLE_NOT_AVAILABLE");
   const plan=(await customerPlans(db)).find(p=>p.id===input.planId);
   if(!plan) throw Error("PLAN_UNAVAILABLE");
   const bytes=input.kind==="renew"?0:plan.quotaBytes;
