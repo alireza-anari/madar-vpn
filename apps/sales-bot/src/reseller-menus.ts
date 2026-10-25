@@ -218,6 +218,28 @@ async function enhanceDashboardReply(env: Env, u: TelegramUpdate, now: number) {
   }
 }
 
+// Turn callback-driven admin/seller navigation into an in-place text edit.
+// Media captions and messages without a known message_id are intentionally left alone.
+async function editAdminSellerCallbackReply(env: Env, u: TelegramUpdate) {
+  const source = u.callback_query?.message;
+  const id = updateIdentity(u);
+  if (
+    !source ||
+    !id ||
+    !Number.isSafeInteger(source.message_id) ||
+    !source.message_id ||
+    typeof source.text !== "string"
+  ) return;
+  const actor = await resolveSalesActor(env.SALES_DB, id, env);
+  if (actor.role !== "admin" && actor.role !== "seller") return;
+  const reply = await loadReply(env, u.update_id);
+  if (!reply) return;
+  if (reply.payload._method === "sendPhoto" || reply.payload._method === "sendDocument") return;
+  reply.payload._method = "editMessageText";
+  reply.payload.message_id = source.message_id;
+  await saveReply(env, reply);
+}
+
 async function localizeAdminReply(env: Env, updateId: number) {
   const reply = await loadReply(env, updateId);
   if (!reply) return;
@@ -235,12 +257,17 @@ export async function handleResellerUpdate(
   u: TelegramUpdate,
   now: number,
 ) {
-  if (await handleCustomerTelegramUpdate(env, u, now)) return;
+  if (await handleCustomerTelegramUpdate(env, u, now)) {
+    await editAdminSellerCallbackReply(env, u);
+    return;
+  }
   if (await handleResellerAdminUi(env, u, now)) {
     await enhanceAdminReply(env, u, now);
     await localizeAdminReply(env, u.update_id);
+    await editAdminSellerCallbackReply(env, u);
     return;
   }
   await handleDashboardResellerUpdate(env, u, now);
   await enhanceDashboardReply(env, u, now);
+  await editAdminSellerCallbackReply(env, u);
 }
