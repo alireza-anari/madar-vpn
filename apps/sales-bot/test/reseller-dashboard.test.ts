@@ -277,7 +277,7 @@ test("seller home presents transparent slot and traffic caps without admin infor
   expect(p.parse_mode).toBe("HTML");
   expect(p.text).toContain("سهمیه فعلی فروشنده");
   expect(p.text).toContain("کانفیگ: ۱ / ۲");
-  expect(p.text).toContain("حجم تعهدشده: 30 GB / 50 GB");
+  expect(p.text).toContain("حجم تعهدشده: ۳۰ GB / ۵۰ GB");
   expect(p.text).not.toContain("رسیدهای منتظر بررسی");
   expect(p.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="rs:sellers")).toBe(false);
 });
@@ -287,7 +287,8 @@ test("seller period in-service count must not be overwritten by lifetime totals"
   await env.SALES_DB.exec("INSERT INTO reseller_controls(seller_id,current_settlement_epoch,settlement_started_at,updated_at) VALUES('10',1,90,100)");
   await send(10, "/start", 3202);
   const p=await payload(3202);
-  expect(p.text).toContain("در سرویس: ۰");
+  expect(p.text).toContain("در سرویس: ۱");
+  expect(p.text).toContain("در سرویس این تسویه: ۰");
   expect(p.text).toContain("کل فروش: ۱ کانفیگ");
   expect(p.parse_mode).toBe("HTML");
 });
