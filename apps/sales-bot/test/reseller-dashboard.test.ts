@@ -246,7 +246,7 @@ test("seller and admin callback menus edit the current text message instead of a
   const adminReply = await payload(adminUpdate);
   expect(adminReply._method).toBe("editMessageText");
   expect(adminReply.message_id).toBe(702);
-  expect(adminReply.text).toContain("انتخاب سرور");
+  expect(adminReply.text).toContain("🌐 سرورها");
   expect(adminReply.reply_markup.inline_keyboard.flat().some((b: any) => b.callback_data === "rs:home")).toBe(true);
 });
 
