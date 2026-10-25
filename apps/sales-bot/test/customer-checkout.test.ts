@@ -473,7 +473,8 @@ async function readyPurchasedService() {
   await env.SALES_DB.prepare(
     "UPDATE managed_accounts SET state='active',started_at=?,valid_until=?,activation_revision=2,listen_port=20000 WHERE id=?"
   ).bind(now-500,now+86400*15,a.id).run();
-  await env.SALES_DB.prepare("UPDATE nodes SET revision=2,acked_revision=2 WHERE id='n'").run();
+  // These upgrade tests need spare volume to buy the whole additional 20-GB plan.
+  await env.SALES_DB.prepare("UPDATE nodes SET revision=2,acked_revision=2,max_allocated_bytes=100000000000 WHERE id='n'").run();
   return {orderId:o.id,accountId:a.id,uuid:a.uuid};
 }
 async function payUpgrade(upgradeId:string) {
