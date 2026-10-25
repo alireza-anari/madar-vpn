@@ -44,7 +44,8 @@ function parseState(raw: string) {
 
 function isAdminCallback(data: string | undefined) {
   if (!data) return false;
-  if (data === "rs:nodes" || data === "rs:sellers") return true;
+  if (data === "rs:nodes" || data === "rs:sellers" ||
+    /^rs:(?:nodes|sellers):(0|[1-9][0-9]{0,2})$/.test(data)) return true;
   return /^rs:(?:nodedetail|unlimit|capacity|allocation|seller|settle|settleok|settlements|limits|limitcount|limitbytes):/.test(
     data,
   );
@@ -139,23 +140,44 @@ async function showNodeList(
   env: Env,
   reply: (text: string, rows?: Record<string, unknown>[][]) => Promise<void>,
   now: number,
+  requestedPage = 0,
 ) {
   const nodes = await nodeCapacities(env.SALES_DB, now);
-  const rows: Record<string, unknown>[][] = nodes.map((n) => {
+  const perPage = 8;
+  const page = Math.min(requestedPage, Math.max(0, Math.ceil(nodes.length / perPage) - 1));
+  const visible = nodes.slice(page * perPage, (page + 1) * perPage);
+  const healthy = nodes.filter(n => n.healthy === 1 && n.last_seen > now - 90 &&
+    n.agent_capabilities.split(",").includes("quota-v2") &&
+    n.reserved_accounts < n.max_accounts &&
+    (remainingAllocation(n) === null || remainingAllocation(n)! > 0)).length;
+  const rows: Record<string, unknown>[][] = visible.map((n) => {
     const remaining = remainingAllocation(n);
-    const status = n.healthy === 1 && n.last_seen > now - 90 ? "🟢" : "🔴";
-    return [
-      btn(
-        `${status} ${n.name} · ${remaining === null ? "نامحدود" : formatBytes(remaining)}`,
-        `rs:nodedetail:${n.id}`,
-      ),
-    ];
+    const available = n.healthy === 1 && n.last_seen > now - 90 &&
+      n.agent_capabilities.split(",").includes("quota-v2") &&
+      n.reserved_accounts < n.max_accounts &&
+      (remaining === null || remaining > 0);
+    const status = available ? "🟢" : "🔴";
+    const freeSlots = Math.max(0, n.max_accounts - n.reserved_accounts);
+    return [btn(
+      `${status} ${n.name.slice(0,22)} · ${freeSlots.toLocaleString("fa-IR")} جای خالی · ${remaining === null ? "♾" : formatBytes(remaining)}`,
+      `rs:nodedetail:${n.id}`,
+    )];
   });
+  const navigation: Record<string, unknown>[] = [];
+  if (page > 0) navigation.push(btn("◀️ قبلی", `rs:nodes:${page - 1}`));
+  if ((page + 1) * perPage < nodes.length) navigation.push(btn("بعدی ▶️", `rs:nodes:${page + 1}`));
+  if (navigation.length) rows.push(navigation);
   rows.push(home());
   await reply(
-    nodes.length
-      ? "🌐 سرورها\nهر سرور را برای مشاهدهٔ ظرفیت واقعی و تنظیمات انتخاب کن."
-      : "هنوز سروری ثبت نشده است.",
+    [
+      "🌐 سرورها | مدیریت ظرفیت",
+      "━━━━━━━━━━━━━━━━",
+      `🟢 آماده فروش: ${healthy.toLocaleString("fa-IR")} از ${nodes.length.toLocaleString("fa-IR")}`,
+      `🔴 نیازمند بررسی: ${(nodes.length - healthy).toLocaleString("fa-IR")}`,
+      "",
+      nodes.length ? "برای مشاهده سقف کانفیگ، حجم و تنظیمات یک سرور را انتخاب کن." : "هنوز سروری ثبت نشده است.",
+      nodes.length ? `صفحه ${(page + 1).toLocaleString("fa-IR")} از ${Math.max(1, Math.ceil(nodes.length / perPage)).toLocaleString("fa-IR")}` : "",
+    ].filter(Boolean).join("\n"),
     rows,
   );
 }
@@ -196,29 +218,43 @@ async function showSellerList(
   env: Env,
   reply: (text: string, rows?: Record<string, unknown>[][]) => Promise<void>,
   now: number,
+  requestedPage = 0,
 ) {
-  const sellers = await env.SALES_DB.prepare(
-    "SELECT telegram_id,enabled FROM resellers ORDER BY enabled DESC,created_at DESC LIMIT 30",
-  ).all<{ telegram_id: string; enabled: number }>();
+  const db = env.SALES_DB;
+  const perPage = 8;
+  const total = (await db.prepare("SELECT COUNT(*) AS n FROM resellers").first<number>("n")) || 0;
+  const active = (await db.prepare("SELECT COUNT(*) AS n FROM resellers WHERE enabled=1").first<number>("n")) || 0;
+  const page = Math.min(requestedPage, Math.max(0, Math.ceil(total / perPage) - 1));
+  const sellers = await db.prepare(
+    "SELECT telegram_id,enabled FROM resellers ORDER BY enabled DESC,created_at DESC,telegram_id ASC LIMIT ? OFFSET ?"
+  ).bind(perPage, page * perPage).all<{ telegram_id: string; enabled: number }>();
   const rows: Record<string, unknown>[][] = [];
   for (const seller of sellers.results) {
-    const stats = await sellerStats(env.SALES_DB, seller.telegram_id, "current", now);
-    rows.push([
-      btn(
-        `${seller.enabled ? "🟢" : "⚪"} ${seller.telegram_id} · ${stats.configCount.toLocaleString("fa-IR")} · ${formatBytes(stats.soldBytes)}`,
-        `rs:seller:${seller.telegram_id}`,
-      ),
-    ]);
+    const stats = await sellerStats(db, seller.telegram_id, "current", now);
+    rows.push([btn(
+      `${seller.enabled ? "🟢" : "⚪"} ${seller.telegram_id} · ${stats.configCount.toLocaleString("fa-IR")} کانفیگ · ${formatBytes(stats.soldBytes)}`,
+      `rs:seller:${seller.telegram_id}`,
+    )]);
   }
+  const navigation: Record<string, unknown>[] = [];
+  if (page > 0) navigation.push(btn("◀️ قبلی", `rs:sellers:${page - 1}`));
+  if ((page + 1) * perPage < total) navigation.push(btn("بعدی ▶️", `rs:sellers:${page + 1}`));
+  if (navigation.length) rows.push(navigation);
   rows.push(
     [btn("🔗 دعوت فروشنده", "rs:invite")],
     [btn("➕ افزودن با شناسه", "rs:seller"), btn("⛔ قطع دسترسی", "rs:disable")],
     home(),
   );
   await reply(
-    sellers.results.length
-      ? "👥 فروشندگان\nبرای آمار، سقف‌ها و تسویه، فروشنده را انتخاب کن."
-      : "👥 فروشندگان\nهنوز فروشنده‌ای ثبت نشده است.",
+    [
+      "👥 فروشندگان | مدیریت فروش",
+      "━━━━━━━━━━━━━━━━",
+      `🟢 فعال: ${active.toLocaleString("fa-IR")} از ${total.toLocaleString("fa-IR")}`,
+      "",
+      total ? "برای مشاهده آمار فروش، سقف حجمی و تسویه یک فروشنده را انتخاب کن." :
+        "هنوز فروشنده‌ای ثبت نشده است.",
+      total ? `صفحه ${(page + 1).toLocaleString("fa-IR")} از ${Math.max(1, Math.ceil(total / perPage)).toLocaleString("fa-IR")}` : "",
+    ].filter(Boolean).join("\n"),
     rows,
   );
 }
@@ -339,9 +375,10 @@ export async function handleResellerAdminUi(
 
   const db = env.SALES_DB;
   try {
-    if (data === "rs:nodes") {
+    if (data === "rs:nodes" || /^rs:nodes:(0|[1-9][0-9]{0,2})$/.test(data || "")) {
       ctx.set({});
-      await showNodeList(env, ctx.reply, now);
+      const page = data === "rs:nodes" ? 0 : Number(data!.slice("rs:nodes:".length));
+      await showNodeList(env, ctx.reply, now, page);
       return true;
     }
     if (data?.startsWith("rs:nodedetail:")) {
@@ -413,9 +450,10 @@ export async function handleResellerAdminUi(
       return true;
     }
 
-    if (data === "rs:sellers") {
+    if (data === "rs:sellers" || /^rs:sellers:(0|[1-9][0-9]{0,2})$/.test(data || "")) {
       ctx.set({});
-      await showSellerList(env, ctx.reply, now);
+      const page = data === "rs:sellers" ? 0 : Number(data!.slice("rs:sellers:".length));
+      await showSellerList(env, ctx.reply, now, page);
       return true;
     }
     if (data?.startsWith("rs:seller:")) {

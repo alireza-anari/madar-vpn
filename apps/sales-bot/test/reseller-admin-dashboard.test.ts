@@ -234,3 +234,49 @@ test("seller cannot invoke admin detail, limit or settlement callbacks", async (
   for (const update of [4150, 4151, 4152])
     expect((await payload(update)).text).not.toContain("تأیید تسویه");
 });
+
+test("admin node list paginates beyond eight servers and keeps add-VPS action", async () => {
+  for (let i=0;i<12;i++) {
+    await env.SALES_DB.prepare("INSERT INTO nodes(id,name,target_ip,healthy,last_seen,agent_capabilities,max_accounts,max_allocated_bytes) VALUES(?,?,?,1,100,'quota-v2,shared-443',20,100000000000)")
+      .bind("extra"+i,"Extra node "+i,"10.0.0."+ (i+1)).run();
+  }
+  await click(9,"rs:nodes",4201);
+  const first=await payload(4201);
+  const firstButtons=first.reply_markup.inline_keyboard.flat();
+  expect(first.text).toContain("صفحه ۱ از ۲");
+  expect(firstButtons.filter((b:any)=>b.callback_data?.startsWith("rs:nodedetail:")).length).toBe(8);
+  expect(firstButtons.some((b:any)=>b.callback_data==="rs:nodes:1")).toBe(true);
+  await click(9,"rs:nodes:1",4202);
+  const second=await payload(4202);
+  const secondButtons=second.reply_markup.inline_keyboard.flat();
+  expect(second.text).toContain("صفحه ۲ از ۲");
+  expect(secondButtons.filter((b:any)=>b.callback_data?.startsWith("rs:nodedetail:")).length).toBe(6);
+  expect(secondButtons.some((b:any)=>b.callback_data==="rs:nodes:0")).toBe(true);
+  expect(secondButtons.some((b:any)=>b.web_app?.url?.endsWith("/enroll"))).toBe(true);
+});
+
+test("admin seller list has eight-per-page navigation with seller management actions", async () => {
+  for(let i=11;i<=22;i++) {
+    await env.SALES_DB.prepare("INSERT INTO resellers(telegram_id,enabled,created_at) VALUES(?,1,?)").bind(String(i),i).run();
+  }
+  await click(9,"rs:sellers",4203);
+  const first=await payload(4203);
+  expect(first.text).toContain("صفحه ۱ از ۲");
+  expect(first.reply_markup.inline_keyboard.flat().filter((b:any)=>b.callback_data?.startsWith("rs:seller:")).length).toBe(8);
+  expect(first.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="rs:sellers:1")).toBe(true);
+  await click(9,"rs:sellers:1",4204);
+  const second=await payload(4204);
+  expect(second.text).toContain("صفحه ۲ از ۲");
+  expect(second.reply_markup.inline_keyboard.flat().filter((b:any)=>b.callback_data?.startsWith("rs:seller:")).length).toBe(5);
+  expect(second.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="rs:invite")).toBe(true);
+});
+
+test("seller cannot open admin inventory pages or receive privileged VPS links", async () => {
+  for(const [i,data] of [["4205","rs:nodes"],["4206","rs:nodes:1"],["4207","rs:sellers:1"]] as const) {
+    await click(10,data,Number(i));
+    const p=await payload(Number(i));
+    expect(p.text).toContain("فقط برای مدیر");
+    expect(p.reply_markup.inline_keyboard.flat().some((b:any)=>b.web_app?.url?.endsWith("/enroll"))).toBe(false);
+    expect(p.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="rs:nodedetail:n1")).toBe(false);
+  }
+});
