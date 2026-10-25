@@ -4,7 +4,7 @@ import { enqueue } from "./telegram";
 import { requireSalesAdmin, type SalesActor } from "./resellers";
 import type { QuotaPolicy } from "./quota-policies";
 
-export type UpgradeKind = "renew" | "traffic";
+export type UpgradeKind = "renew" | "traffic" | "bundle";
 export type CustomerUpgrade = {
   id: string; user_id: string; base_order_id: string; account_id: string;
   plan_id: string; kind: UpgradeKind; price: number; currency: string;
@@ -45,7 +45,7 @@ export async function createCustomerUpgrade(db:D1Database,actor:SalesActor,input
   integerNow(now);
   if (actor.role!=="ordinary" || !input || !uuid.test(input.orderId) ||
       !/^[a-zA-Z0-9_-]{1,40}$/.test(input.planId) ||
-      !["renew","traffic"].includes(input.kind) || !keyPattern.test(input.requestKey))
+      !["renew","traffic","bundle"].includes(input.kind) || !keyPattern.test(input.requestKey))
     throw Error("INVALID_INPUT");
   const prior=await db.prepare("SELECT * FROM customer_upgrades WHERE user_id=? AND request_key=?")
     .bind(actor.telegramId,input.requestKey).first<CustomerUpgrade>();
@@ -63,8 +63,8 @@ export async function createCustomerUpgrade(db:D1Database,actor:SalesActor,input
   if(input.kind==="renew" && service.quota_bytes<=service.used_bytes) throw Error("TRAFFIC_FIRST");
   const plan=(await customerPlans(db)).find(p=>p.id===input.planId);
   if(!plan) throw Error("PLAN_UNAVAILABLE");
-  const bytes=input.kind==="traffic"?plan.quotaBytes:0;
-  const seconds=input.kind==="renew"?plan.durationSeconds:0;
+  const bytes=input.kind==="renew"?0:plan.quotaBytes;
+  const seconds=input.kind==="traffic"?0:plan.durationSeconds;
   if(service.quota_bytes+bytes>1e12 || service.duration_seconds+seconds>10*31536000)
     throw Error("UPGRADE_LIMIT");
   const capacities=await nodeCapacities(db,now,service.node_id);
@@ -167,7 +167,7 @@ function capacityGuardedUpdate(now:number) {
     UPDATE managed_accounts AS a SET
       quota_bytes=${newQuota},
       duration_seconds=a.duration_seconds+(SELECT delta_seconds FROM u),
-      valid_until=CASE WHEN (SELECT kind FROM u)='renew'
+      valid_until=CASE WHEN (SELECT kind FROM u) IN ('renew','bundle')
         THEN MAX(a.valid_until,${time})+(SELECT delta_seconds FROM u) ELSE a.valid_until END,
       state='preparing',
       activation_revision=NULL,
@@ -181,6 +181,8 @@ function capacityGuardedUpdate(now:number) {
       AND a.duration_seconds+(SELECT delta_seconds FROM u) <= 315360000
       AND ((SELECT kind FROM u)='renew' AND a.quota_bytes>a.used_bytes
         OR (SELECT kind FROM u)='traffic' AND a.valid_until>${time}
+          AND ${newQuota}>a.used_bytes
+        OR (SELECT kind FROM u)='bundle' AND (SELECT delta_seconds FROM u)>0
           AND ${newQuota}>a.used_bytes)
       AND EXISTS(SELECT 1 FROM nodes n CROSS JOIN node_usage nu CROSS JOIN seller_usage su
         LEFT JOIN reseller_controls sc ON sc.seller_id=a.seller_id
@@ -222,7 +224,7 @@ export async function approveUpgrade(env:Env,actor:SalesActor,id:string,now:numb
     throw Error("UPGRADE_CAPACITY_CHANGED");
   }
   await enqueue(db,"customer-upgrade-queued:"+id,upgrade.user_id,{
-    text:"✅ پرداخت "+(upgrade.kind==="renew"?"تمدید":"خرید حجم اضافه")+" تأیید شد. تغییر روی همان کانفیگ ثبت شده و منتظر تأیید نهایی سرور است.",
+    text:"✅ پرداخت "+(upgrade.kind==="renew"?"تمدید":upgrade.kind==="bundle"?"تمدید همراه حجم":"خرید حجم اضافه")+" تأیید شد. تغییر روی همان کانفیگ ثبت شده و منتظر تأیید نهایی سرور است.",
     reply_markup:{inline_keyboard:[[{text:"🌐 سرویس‌های من",callback_data:"customer:services"}]]},
   });
   return {id,state:"applied",accountId:upgrade.account_id};
@@ -263,7 +265,7 @@ export async function notifyReadyUpgrades(env:Env,now:number) {
         "INSERT OR IGNORE INTO outbox(id,chat_id,payload,available_at) SELECT ?,user_id,?,0 FROM customer_upgrades " +
         "WHERE id=? AND state='applied' AND notified_at=?"
       ).bind("customer-upgrade-ready:"+u.id,JSON.stringify({
-        text:"🟢 "+(u.kind==="renew"?"تمدید اشتراک":"حجم اضافه")+" روی همان کانفیگ تأیید و فعال شد. از «سرویس‌های من» وضعیت و اعتبار جدید را ببینید.",
+        text:"🟢 "+(u.kind==="renew"?"تمدید اشتراک":u.kind==="bundle"?"تمدید همراه حجم":"حجم اضافه")+" روی همان کانفیگ تأیید و فعال شد. از «سرویس‌های من» وضعیت و اعتبار جدید را ببینید.",
         reply_markup:{inline_keyboard:[[{text:"🌐 سرویس‌های من",callback_data:"customer:services"}]]},
       }),u.id,now),
     ]);
