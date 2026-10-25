@@ -12,7 +12,7 @@ export interface TelegramUpdate {
   callback_query?: {
     id: string;
     from: { id: number };
-    message?: { chat: { id: number; type: string } };
+    message?: { message_id?: number; chat: { id: number; type: string }; text?: string; caption?: string; photo?: { file_id: string }[] };
     data?: string;
   };
 }
