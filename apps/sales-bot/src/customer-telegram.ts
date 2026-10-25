@@ -6,6 +6,7 @@ import {
   customerPlans, getCustomerOrderForAdmin, listCustomerOrders, paymentInstructions,
   rejectCustomerOrder, requestCustomerReceipt, submitCustomerReceipt,
 } from "./customer-store";
+import { createCustomerQrUrl } from "./customer-qr";
 
 const callback=(label:string,data:string)=>({text:label,callback_data:data});
 const NODE_STATE_PREFIX="customer-node-list:";
@@ -174,21 +175,25 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
     return true;
   }
 
-  if(data==="customer:buy" || command==="/buy") {
+  const catalogPageMatch=data.match(/^customer:plans:(0|[1-9][0-9]{0,2})$/);
+  if(data==="customer:buy" || command==="/buy" || catalogPageMatch) {
+    const isBuy=data==="customer:buy" || command==="/buy";
     await setConversation("");
-    const pending=await db.prepare("SELECT id,price,currency FROM customer_orders WHERE user_id=? AND state='awaiting_receipt' ORDER BY created_at DESC,id DESC LIMIT 6")
-      .bind(userId).all<{id:string;price:number;currency:string}>();
-    if(pending.results.length) {
-      const rows:Record<string,unknown>[][]=pending.results.map(order=>[
-        callback("📸 ادامه · "+money(order.price,order.currency),"customer:receipt:"+order.id),
-        callback("🔎 جزئیات","customer:order:"+order.id),
-      ]);
-      rows.push([callback("📦 همه سفارش‌ها","customer:orders:0")],[callback("🏠 منوی اصلی","customer:home")]);
-      await reply("🧾 هنوز برای سفارش باز رسید ثبت نشده است. برای جلوگیری از اشتباه، اول سفارش قبلی را ادامه بده و رسید همان سفارش را ارسال کن.",rows);
-      return true;
+    if(isBuy) {
+      const pending=await db.prepare("SELECT id,price,currency FROM customer_orders WHERE user_id=? AND state='awaiting_receipt' ORDER BY created_at DESC,id DESC LIMIT 6")
+        .bind(userId).all<{id:string;price:number;currency:string}>();
+      if(pending.results.length) {
+        const rows:Record<string,unknown>[][]=pending.results.map(order=>[
+          callback("📸 ادامه · "+money(order.price,order.currency),"customer:receipt:"+order.id),
+          callback("🔎 جزئیات","customer:order:"+order.id),
+        ]);
+        rows.push([callback("📦 همه سفارش‌ها","customer:orders:0")],[callback("🏠 منوی اصلی","customer:home")]);
+        await reply("🧾 <b>یک سفارش پرداخت‌نشده داری</b>\n\nبرای اینکه رسید به سفارش اشتباه وصل نشود، ابتدا همان سفارش را ادامه بده.",rows,{parse_mode:"HTML"});
+        return true;
+      }
     }
     if(!(await paymentInstructions(db))) {
-      await reply("خرید در حال حاضر فعال نیست؛ اطلاعات پرداخت باید توسط مدیر تنظیم شود.",[[callback("🏠 منوی اصلی","customer:home")]]);
+      await reply("⚠️ <b>فروش موقتاً غیرفعال است</b>\nاطلاعات پرداخت هنوز توسط مدیر تنظیم نشده است.",[[callback("🏠 منوی اصلی","customer:home")] ],{parse_mode:"HTML"});
       return true;
     }
     const plans=await customerPlans(db);
@@ -196,12 +201,27 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
       await reply("فعلاً پلن فعالی برای خرید وجود ندارد.",[[callback("🏠 منوی اصلی","customer:home")]]);
       return true;
     }
-    const rows:Record<string,unknown>[][]=plans.map(p=>[
-      callback(`📦 ${p.name.slice(0,18)} · ${Math.round(p.quotaBytes/1e9).toLocaleString("fa-IR")}GB · ${Math.round(p.durationSeconds/86400).toLocaleString("fa-IR")}روز · ${money(p.price,p.currency)}`, "customer:plan:"+p.id),
+    const pageSize=4;
+    const page=Math.min(catalogPageMatch?Number(catalogPageMatch[1]):0,Math.max(0,Math.ceil(plans.length/pageSize)-1));
+    const offset=page*pageSize,visible=plans.slice(offset,offset+pageSize);
+    const rows:Record<string,unknown>[][]=visible.map(p=>[
+      callback("🛍️ انتخاب "+p.name.slice(0,12)+" · "+Math.round(p.quotaBytes/1e9).toLocaleString("fa-IR")+"GB · "+Math.round(p.durationSeconds/86400).toLocaleString("fa-IR")+"روز","customer:plan:"+p.id),
     ]);
+    const nav:Record<string,unknown>[]=[];
+    if(page>0) nav.push(callback("◀️ قبلی","customer:plans:"+(page-1)));
+    if(offset+pageSize<plans.length) nav.push(callback("بعدی ▶️","customer:plans:"+(page+1)));
+    if(nav.length) rows.push(nav);
     rows.push([callback("🏠 منوی اصلی","customer:home")]);
-    const details=plans.map(p=>"<b>"+escapeHtml(p.name)+"</b>\n📦 حجم: "+gb(p.quotaBytes)+" · ⏳ مدت: "+days(p.durationSeconds)+"\n💳 قیمت: "+money(p.price,p.currency)+" · هر گیگ: "+money(Math.round(p.price/(p.quotaBytes/1e9)),p.currency)).join("\n\n");
-    await reply("🛍️ <b>فروشگاه مدار</b>\nپلنی را انتخاب کن که با مصرفت هماهنگ است.\n\n"+details+"\n\nقیمت نهایی قبل از ثبت سفارش نمایش داده می‌شود.",rows,{parse_mode:"HTML"});
+    const details=visible.map((p,i)=>
+      "<b>"+(offset+i+1).toLocaleString("fa-IR")+". "+escapeHtml(p.name)+"</b>\n"+
+      "📦 حجم: <b>"+gb(p.quotaBytes)+"</b>\n"+
+      "⏳ مدت: <b>"+days(p.durationSeconds)+"</b>\n"+
+      "💳 قیمت: <b>"+money(p.price,p.currency)+"</b>\n"+
+      "📊 هزینه هر گیگ: "+money(Math.round(p.price/(p.quotaBytes/1e9)),p.currency)
+    ).join("\n\n────────────\n\n");
+    await reply("🛍️ <b>فروشگاه مدار</b>\nپلن مناسب مصرفت را انتخاب کن. قیمت و حجم پیش از ثبت سفارش کاملاً مشخص است.\n\n"+details+
+      "\n\n<code>صفحه "+(page+1).toLocaleString("fa-IR")+" از "+Math.max(1,Math.ceil(plans.length/pageSize)).toLocaleString("fa-IR")+"</code>",rows,
+      {parse_mode:"HTML",link_preview_options:{is_disabled:true}});
     return true;
   }
 
@@ -216,18 +236,24 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
     const nodes=(await availableCustomerNodes(db,now,plan.quotaBytes)).slice(0,100);
     if(!nodes.length) {
       await setConversation("");
-      await reply("در حال حاضر سروری با ظرفیت کافی برای این پلن موجود نیست. لطفاً بعداً دوباره بررسی کن.",[[callback("🔄 بررسی دوباره","customer:plan:"+planId)],[callback("🛍️ پلن‌ها","customer:buy")],[callback("🏠 منوی اصلی","customer:home")]]);
+      await reply("⚠️ <b>فعلاً سرور آماده‌ای با ظرفیت کافی نداریم</b>\nموجودی سرورها را دوباره بررسی کن یا پلن دیگری انتخاب کن.",[
+        [callback("🔄 بررسی دوباره","customer:plan:"+planId)],
+        [callback("🛍️ سایر پلن‌ها","customer:buy")],
+        [callback("🏠 منوی اصلی","customer:home")],
+      ],{parse_mode:"HTML"});
       return true;
     }
     const nodeState:NodeState={flow:"customer-node-list",planId,nodes,nonce:crypto.randomUUID().replaceAll("-","")};
     await setConversation(NODE_STATE_PREFIX+JSON.stringify(nodeState));
     const pageSize=8;
     const rows:Record<string,unknown>[][]=nodes.slice(0,pageSize).map((node,index)=>[
-      callback(node.name.slice(0,45),"customer:node:"+planId+":"+index),
+      callback("🟢 "+node.name.slice(0,38),"customer:node:"+planId+":"+index),
     ]);
-    if(nodes.length>pageSize) rows.push([callback("سرورهای بعدی ▶️","customer:nodes:"+planId+":1")]);
+    if(nodes.length>pageSize) rows.push([callback("سرورهای بیشتر ▶️","customer:nodes:"+planId+":1")]);
     rows.push([callback("◀️ بازگشت به پلن‌ها","customer:buy")],[callback("🏠 منوی اصلی","customer:home")]);
-    await reply("پلن انتخاب‌شده: "+plan.name+"\nحجم: "+gb(plan.quotaBytes)+" · مدت: "+days(plan.durationSeconds)+"\nمبلغ: "+money(plan.price,plan.currency)+"\n\nحالا سرور را انتخاب کن:",rows);
+    await reply("<b>🌐 انتخاب سرور</b>\n\n<b>پلن:</b> "+escapeHtml(plan.name)+
+      "\n📦 حجم: "+gb(plan.quotaBytes)+" · ⏳ مدت: "+days(plan.durationSeconds)+
+      "\n💳 مبلغ: <b>"+money(plan.price,plan.currency)+"</b>\n\nفقط سرورهای سالم و دارای ظرفیت کافی نمایش داده می‌شوند. سرور دلخواهت را انتخاب کن.",rows,{parse_mode:"HTML"});
     return true;
   }
 
@@ -269,13 +295,27 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
     try {
       const order=await createCustomerOrder(db,actor,{planId:nodeState.planId,nodeId:node.id,requestKey:"tg_"+userId+"_"+nodeState.nonce},now);
       await requestCustomerReceipt(db,actor,order.id);
-      const payment=await paymentInstructions(db);
-      await reply("🧾 سفارش ثبت شد\nشماره سفارش: "+order.id+"\nپلن: "+((await customerPlans(db)).find(p=>p.id===order.plan_id)?.name || order.plan_id)+
-        "\nحجم: "+gb(order.quota_bytes)+" · مدت: "+days(order.duration_seconds)+
-        "\nمبلغ قابل پرداخت: "+money(order.price,order.currency)+
-        "\n\nاطلاعات پرداخت:\n"+(payment||"اطلاعات پرداخت ثبت نشده است.")+
-        "\n\nپس از واریز، عکس یا فایل رسید را همین‌جا در چت بفرست. تا تأیید مدیر و آماده‌شدن سرور، کانفیگی صادر نمی‌شود.",
-        [[callback("📦 سفارش‌های من","customer:orders:0")],[callback("🏠 منوی اصلی","customer:home")]]);
+      const payment=(await paymentInstructions(db))||"اطلاعات پرداخت ثبت نشده است.";
+      const plan=(await customerPlans(db)).find(p=>p.id===order.plan_id);
+      const rows:Record<string,unknown>[][]=[
+        [callback("📸 ارسال رسید پرداخت","customer:receipt:"+order.id)],
+        [callback("📦 سفارش‌های من","customer:orders:0"),callback("🏠 منوی اصلی","customer:home")],
+      ];
+      if(payment.length<=256) rows.unshift([{text:"📋 کپی اطلاعات پرداخت",copy_text:{text:payment}}]);
+      const output="<b>🧾 سفارش مدار ثبت شد</b>\n"+
+        "━━━━━━━━━━━━━━━━\n"+
+        "🔖 <b>شماره سفارش:</b> #"+order.id.slice(0,8).toUpperCase()+"\n"+
+        "🆔 <code>"+order.id+"</code>\n"+
+        "📦 <b>پلن:</b> "+escapeHtml(plan?.name||order.plan_id)+"\n"+
+        "🌐 <b>سرور:</b> "+escapeHtml(node.name)+"\n"+
+        "📊 <b>حجم:</b> "+gb(order.quota_bytes)+" · ⏳ <b>مدت:</b> "+days(order.duration_seconds)+"\n"+
+        "💳 <b>مبلغ نهایی:</b> "+money(order.price,order.currency)+"\n"+
+        "━━━━━━━━━━━━━━━━\n"+
+        "🏦 <b>اطلاعات پرداخت</b>\n"+escapeHtml(payment)+"\n\n"+
+        "۱. مبلغ دقیق را واریز کن.\n۲. دکمه «ارسال رسید پرداخت» را بزن یا عکس رسید را همین‌جا بفرست.\n"+
+        "۳. پس از بررسی مدیر و تأیید سرور، کانفیگ از همین ربات تحویل داده می‌شود.\n\n"+
+        "🔒 تا تأیید پرداخت و آماده‌شدن سرور، کانفیگی صادر نمی‌شود.";
+      await reply(output,rows,{parse_mode:"HTML",link_preview_options:{is_disabled:true}});
       return true;
     } catch(error) {
       const code=error instanceof Error?error.message:"";
@@ -309,17 +349,28 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
     const page=servicesPage?Number(servicesPage[1]):0;
     const pageSize=6,offset=page*pageSize,visible=all.slice(offset,offset+pageSize);
     const rows:Record<string,unknown>[][]=visible.map(order=>[
-      callback(statusLabel(order,now)+" · "+order.planName.slice(0,24),"customer:order:"+order.id),
+      callback("🔎 جزئیات · "+order.planName.slice(0,22),"customer:order:"+order.id),
     ]);
     const nav:Record<string,unknown>[]=[];
     if(page>0) nav.push(callback("◀️ قبلی","customer:services:"+(page-1)));
     if(offset+pageSize<all.length) nav.push(callback("بعدی ▶️","customer:services:"+(page+1)));
     if(nav.length) rows.push(nav);
     rows.push([callback("🛍️ خرید اشتراک","customer:buy")],[callback("🏠 منوی اصلی","customer:home")]);
+    const cards=visible.map((order,i)=>{
+      const used=Math.min(order.quotaBytes,Math.max(0,order.usedBytes||0));
+      const remaining=Math.max(0,order.quotaBytes-used);
+      let card="<b>"+(offset+i+1).toLocaleString("fa-IR")+". "+escapeHtml(order.planName)+"</b>\n"+
+        "📌 وضعیت: <b>"+statusLabel(order,now)+"</b>\n"+
+        "📦 حجم کل: "+gb(order.quotaBytes);
+      if(order.usedBytes!==null) card+="\n"+usageBar(used,order.quotaBytes)+"\n📈 مصرف: "+traffic(used)+" · 🟢 باقی‌مانده: "+traffic(remaining);
+      if(order.validUntil!==null) card+="\n⏰ اعتبار تا: "+dateTime(order.validUntil);
+      if(order.serverName) card+="\n🌐 سرور: "+escapeHtml(order.serverName);
+      return card;
+    }).join("\n\n────────────\n\n");
     await reply(visible.length?
-      "🌐 اشتراک‌های من\nسرویس را انتخاب کن تا وضعیت، مصرف، حجم باقی‌مانده و تاریخ اعتبار را ببینی.":
-      "هنوز اشتراک تأییدشده‌ای در حسابت نیست. بعد از تأیید پرداخت، سرویس اینجا نمایش داده می‌شود.",
-      rows);
+      "🌐 <b>سرویس‌های من</b>\nوضعیت، حجم باقی‌مانده و اعتبار هر اشتراک را از اینجا ببین. برای جزئیات یا دریافت کانفیگ، سرویس را انتخاب کن.\n\n"+cards:
+      "🌐 <b>هنوز اشتراک فعالی در حساب تو نیست</b>\nپس از تأیید پرداخت و آماده‌شدن سرور، سرویس اینجا نمایش داده می‌شود.",
+      rows,{parse_mode:"HTML"});
     return true;
   }
 
@@ -330,15 +381,22 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
     const all=await listCustomerOrders(db,actor);
     const pageSize=6,offset=page*pageSize,visible=all.slice(offset,offset+pageSize);
     const rows:Record<string,unknown>[][]=visible.map((order,i)=>[
-      callback(`${(offset+i+1).toLocaleString("fa-IR")}. ${order.planName.slice(0,22)} · ${statusLabel(order,now)}`,
-        "customer:order:"+order.id),
+      callback("🔎 #"+order.id.slice(0,8).toUpperCase()+" · "+statusLabel(order,now),"customer:order:"+order.id),
     ]);
     const nav:Record<string,unknown>[]=[];
     if(page>0) nav.push(callback("◀️ قبلی","customer:orders:"+(page-1)));
     if(offset+pageSize<all.length) nav.push(callback("بعدی ▶️","customer:orders:"+(page+1)));
     if(nav.length) rows.push(nav);
     rows.push([callback("🌐 سرویس‌های من","customer:services")],[callback("🛍️ خرید اشتراک","customer:buy")],[callback("🏠 منوی اصلی","customer:home")]);
-    await reply(visible.length?"📦 سفارش‌های اخیر تو:\nبرای جزئیات، ادامه پرداخت یا دریافت کانفیگ یک سفارش را انتخاب کن.":"هنوز سفارشی ثبت نکرده‌ای.",rows);
+    const cards=visible.map((order,i)=>"<b>"+(offset+i+1).toLocaleString("fa-IR")+". "+escapeHtml(order.planName)+"</b>\n"+
+      "🔖 سفارش: #"+order.id.slice(0,8).toUpperCase()+"\n"+
+      "💳 مبلغ: "+money(order.price,order.currency)+"\n"+
+      "📌 وضعیت: <b>"+statusLabel(order,now)+"</b>\n"+
+      "🕒 ثبت: "+dateTime(order.createdAt)).join("\n\n────────────\n\n");
+    await reply(visible.length?
+      "📦 <b>سفارش‌های من</b>\nبرای دیدن جزئیات، ادامه پرداخت یا دریافت کانفیگ یک سفارش را انتخاب کن.\n\n"+cards:
+      "📦 <b>هنوز سفارشی ثبت نکرده‌ای</b>\nاز فروشگاه مدار شروع کن؛ بعد از ثبت سفارش، تمام مراحل همین‌جا قابل پیگیری است.",
+      rows,{parse_mode:"HTML"});
     return true;
   }
 
