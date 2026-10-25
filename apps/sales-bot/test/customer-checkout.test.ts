@@ -155,6 +155,12 @@ test("on ready node ACK the private VPN config is addressed to the buying custom
   expect(ready.sellerId).toBeUndefined();
   expect(JSON.stringify(ready)).not.toContain("sellerId");
   expect(ready.config).toContain("vless://");
+  expect(await handleCustomerTelegramUpdate(E,{update_id:907,callback_query:{id:"get-config",from:{id:10},message:{message_id:7,chat:{id:10,type:"private"}},data:"customer:config:"+o.id}} as any,now)).toBe(true);
+  const configMessage=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u907:reply'").first<string>("payload"))||"{}");
+  expect(configMessage.parse_mode).toBe("HTML");
+  const configButtons=configMessage.reply_markup.inline_keyboard.flat();
+  expect(configButtons.some((b:any)=>b.copy_text?.text===ready.config)).toBe(true);
+  expect(configButtons.some((b:any)=>b.url===ready.usageUrl)).toBe(true);
   expect((await call("/api/customer/orders/"+o.id+"/config",11)).status).toBe(404);
 });
 
