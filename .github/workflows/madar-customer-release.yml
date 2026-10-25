@@ -17,7 +17,7 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       SCRIPT: madar-sales-bot
       DB_ID: f59e160f-89ab-4a90-a4dc-f257883d5a61
-      PREVIOUS_VERSION: ec12031f-e499-4e55-b21b-9cc9fd2b6faf
+      PREVIOUS_VERSION: 72fc5608-29a7-49a9-97b7-a934714654c5
       BASE_URL: https://madar-sales-bot.alirezaanari117.workers.dev
     steps:
       - uses: actions/checkout@v4
