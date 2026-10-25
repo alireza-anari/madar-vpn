@@ -595,10 +595,11 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
         {parse_mode:"HTML",link_preview_options:{is_disabled:true}});
     } catch(error) {
       const code=error instanceof Error?error.message:"";
-      if(!["RENEW_FIRST","TRAFFIC_FIRST","UPGRADE_LIMIT","UPGRADE_CAPACITY_CHANGED","NODE_FULL","NODE_UNAVAILABLE","NODE_ALLOCATION_FULL","SERVICE_UNAVAILABLE","PENDING_UPGRADE_EXISTS"].includes(code)) throw error;
+      if(!["RENEW_FIRST","TRAFFIC_FIRST","BUNDLE_NOT_AVAILABLE","UPGRADE_LIMIT","UPGRADE_CAPACITY_CHANGED","NODE_FULL","NODE_UNAVAILABLE","NODE_ALLOCATION_FULL","SERVICE_UNAVAILABLE","PENDING_UPGRADE_EXISTS"].includes(code)) throw error;
       const pending=(await listCustomerUpgrades(db,actor)).find(x=>["awaiting_receipt","pending_review","approving"].includes(x.state));
       await reply(code==="RENEW_FIRST"?"این اشتراک منقضی شده؛ ابتدا تمدیدش کن.":
         code==="TRAFFIC_FIRST"?"حجم اشتراک تمام شده؛ ابتدا حجم اضافه بخر.":
+        code==="BUNDLE_NOT_AVAILABLE"?"بسته تمدید کامل فقط وقتی قابل خرید است که هم زمان و هم حجم اشتراک تمام شده باشد.":
         code==="PENDING_UPGRADE_EXISTS"?"یک درخواست قبلی هنوز باز است. آن را پیگیری کن.":
         "این بسته اکنون قابل اعمال نیست؛ ظرفیت یا وضعیت اشتراک را بررسی کن.",[
         ...(pending?[[callback("🧾 درخواست باز","customer:up:details:"+pending.id)]]:[]),
