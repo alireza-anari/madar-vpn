@@ -159,12 +159,34 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
 
   if(["/start","/menu","/cancel"].includes(command) || data==="customer:home") {
     await setConversation("");
-    await reply("✨ به مدار خوش آمدید.\nخرید، پیگیری سفارش و دریافت کانفیگ را مستقیماً در همین چت انجام دهید.",homeRows);
+    const welcome="✨ <b>مدار | فروشگاه VPN</b>\n\nاشتراک با حجم و مدت مشخص؛ از انتخاب پلن تا دریافت کانفیگ، همه‌چیز در همین چت.\n\n👇 از منوی زیر شروع کن.";
+    if(command==="/start" && env.PUBLIC_BASE_URL) {
+      await enqueue(db,"u"+u.update_id+":reply",userId,{
+        _method:"sendPhoto",
+        photo:new URL("/madar-logo.png",env.PUBLIC_BASE_URL).toString(),
+        caption:welcome,
+        parse_mode:"HTML",
+        reply_markup:{inline_keyboard:homeRows},
+      });
+    } else {
+      await reply(welcome,homeRows,{parse_mode:"HTML"});
+    }
     return true;
   }
 
   if(data==="customer:buy" || command==="/buy") {
     await setConversation("");
+    const pending=await db.prepare("SELECT id,price,currency FROM customer_orders WHERE user_id=? AND state='awaiting_receipt' ORDER BY created_at DESC,id DESC LIMIT 6")
+      .bind(userId).all<{id:string;price:number;currency:string}>();
+    if(pending.results.length) {
+      const rows:Record<string,unknown>[][]=pending.results.map(order=>[
+        callback("📸 ادامه · "+money(order.price,order.currency),"customer:receipt:"+order.id),
+        callback("🔎 جزئیات","customer:order:"+order.id),
+      ]);
+      rows.push([callback("📦 همه سفارش‌ها","customer:orders:0")],[callback("🏠 منوی اصلی","customer:home")]);
+      await reply("🧾 هنوز برای سفارش باز رسید ثبت نشده است. برای جلوگیری از اشتباه، اول سفارش قبلی را ادامه بده و رسید همان سفارش را ارسال کن.",rows);
+      return true;
+    }
     if(!(await paymentInstructions(db))) {
       await reply("خرید در حال حاضر فعال نیست؛ اطلاعات پرداخت باید توسط مدیر تنظیم شود.",[[callback("🏠 منوی اصلی","customer:home")]]);
       return true;
@@ -175,10 +197,11 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
       return true;
     }
     const rows:Record<string,unknown>[][]=plans.map(p=>[
-      callback(`${p.name.slice(0,36)} · ${money(p.price,p.currency)}`, "customer:plan:"+p.id),
+      callback(`📦 ${p.name.slice(0,18)} · ${Math.round(p.quotaBytes/1e9).toLocaleString("fa-IR")}GB · ${Math.round(p.durationSeconds/86400).toLocaleString("fa-IR")}روز · ${money(p.price,p.currency)}`, "customer:plan:"+p.id),
     ]);
     rows.push([callback("🏠 منوی اصلی","customer:home")]);
-    await reply("🛍️ پلن موردنظرت را انتخاب کن:\n\nهر پلن حجم و مدت مشخص دارد؛ قبل از پرداخت جزئیات را بررسی کن.",rows);
+    const details=plans.map(p=>"<b>"+escapeHtml(p.name)+"</b>\n📦 حجم: "+gb(p.quotaBytes)+" · ⏳ مدت: "+days(p.durationSeconds)+"\n💳 قیمت: "+money(p.price,p.currency)+" · هر گیگ: "+money(Math.round(p.price/(p.quotaBytes/1e9)),p.currency)).join("\n\n");
+    await reply("🛍️ <b>فروشگاه مدار</b>\nپلنی را انتخاب کن که با مصرفت هماهنگ است.\n\n"+details+"\n\nقیمت نهایی قبل از ثبت سفارش نمایش داده می‌شود.",rows,{parse_mode:"HTML"});
     return true;
   }
 
