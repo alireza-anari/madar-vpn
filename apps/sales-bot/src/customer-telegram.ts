@@ -160,7 +160,11 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
 
   if(["/start","/menu","/cancel"].includes(command) || data==="customer:home") {
     await setConversation("");
-    const welcome="✨ <b>مدار | فروشگاه VPN</b>\n\nاشتراک با حجم و مدت مشخص؛ از انتخاب پلن تا دریافت کانفیگ، همه‌چیز در همین چت.\n\n👇 از منوی زیر شروع کن.";
+    const welcome="✨ <b>مدار | فروشگاه VPN</b>\n"+
+      "━━━━━━━━━━━━━━━━\n"+
+      "🛡️ اتصال مطمئن، خرید ساده و پشتیبانی مستقیم\n\n"+
+      "از انتخاب پلن تا دریافت کانفیگ، همه‌چیز در همین ربات انجام می‌شود؛ نیازی به بازکردن مینی‌اپ نیست.\n\n"+
+      "👇 <b>برای شروع یکی از گزینه‌ها را انتخاب کن.</b>";
     if(command==="/start" && env.PUBLIC_BASE_URL) {
       await enqueue(db,"u"+u.update_id+":reply",userId,{
         _method:"sendPhoto",
@@ -433,10 +437,52 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
   if(receiptMatch) {
     try {
       await requestCustomerReceipt(db,actor,receiptMatch[1]!);
-      await reply("📸 حالا عکس یا فایل رسید پرداخت سفارش "+receiptMatch[1]+" را همین‌جا در چت بفرست. پس از بررسی و تأیید مدیر، کانفیگ آماده می‌شود.");
+      const order=(await listCustomerOrders(db,actor)).find(item=>item.id===receiptMatch[1]);
+      const rows:Record<string,unknown>[][]=[
+        [callback("📦 سفارش‌های من","customer:orders:0"),callback("🏠 منوی اصلی","customer:home")],
+      ];
+      const output="<b>📸 ارسال رسید پرداخت</b>\n━━━━━━━━━━━━━━━━\n"+
+        "🔖 سفارش: #"+receiptMatch[1]!.slice(0,8).toUpperCase()+"\n"+
+        (order?"📦 پلن: "+escapeHtml(order.planName)+"\n💳 مبلغ: "+money(order.price,order.currency)+"\n":"")+
+        "\nحالا عکس واضح یا فایل رسید بانکی را به‌صورت پیام در همین چت بفرست.\n\n"+
+        "🔎 رسید در بخش مدیریت ربات بررسی می‌شود. تا تأیید و آماده‌شدن سرور، کانفیگی صادر نمی‌شود.";
+      await reply(output,rows,{parse_mode:"HTML"});
     } catch(error) {
       if(!(error instanceof Error) || error.message!=="ORDER_NOT_AVAILABLE") throw error;
       await reply("این سفارش دیگر منتظر رسید نیست. وضعیت آن را در «سفارش‌های من» بررسی کن.",[[callback("📦 سفارش‌های من","customer:orders:0")]]);
+    }
+    return true;
+  }
+
+  const qrMatch=data.match(/^customer:qr:([a-f0-9-]{36})$/);
+  if(qrMatch) {
+    try {
+      const result=await customerConfig(env,actor,qrMatch[1]!,now);
+      if(!result.ready || typeof result.validUntil!=="number" || typeof result.quotaBytes!=="number" || typeof result.config!=="string") {
+        await reply("کانفیگ هنوز تأیید نهایی سرور را نگرفته است. کمی بعد دوباره تلاش کن.",[
+          [callback("🔄 بررسی کانفیگ","customer:config:"+qrMatch[1])],
+          [callback("📦 سفارش‌های من","customer:orders:0")],
+        ]);
+        return true;
+      }
+      const qrUrl=await createCustomerQrUrl(env,userId,qrMatch[1]!,now);
+      const rows:Record<string,unknown>[][]=[];
+      if(result.config.length<=256) rows.push([{text:"📋 کپی کانفیگ",copy_text:{text:result.config}}]);
+      if(result.usageUrl) rows.push([{text:"📊 مصرف و اعتبار",url:result.usageUrl}]);
+      rows.push([callback("📖 راهنمای اتصال","customer:help")],[callback("🌐 سرویس‌های من","customer:services")],[callback("🏠 منوی اصلی","customer:home")]);
+      const caption="<b>📷 QR اختصاصی اشتراک مدار</b>\n\n"+
+        "🛰️ سرور: <b>"+escapeHtml(result.serverName)+"</b>\n"+
+        "📦 حجم کل: "+gb(result.quotaBytes)+"\n"+
+        "⏰ اعتبار تا: "+dateTime(result.validUntil)+"\n\n"+
+        "در برنامه VPN گزینه افزودن با QR را انتخاب و این تصویر را اسکن کن.\n"+
+        "🔒 این تصویر مخصوص اشتراک توست؛ آن را برای دیگران نفرست.";
+      await enqueue(db,"u"+u.update_id+":reply",userId,{
+        _method:"sendPhoto",photo:qrUrl,caption,parse_mode:"HTML",
+        reply_markup:{inline_keyboard:rows},
+      });
+    } catch(error) {
+      if(!(error instanceof Error) || error.message!=="ORDER_NOT_AVAILABLE") throw error;
+      await reply("این سفارش یا کانفیگ برای حساب تو در دسترس نیست.",[[callback("📦 سفارش‌های من","customer:orders:0")]]);
     }
     return true;
   }
@@ -452,10 +498,17 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
         ]);
         return true;
       }
-      const output="<b>✅ اشتراک مدار آماده است</b>\n\n🛰️ <b>سرور:</b> "+escapeHtml(result.serverName)+"\n📦 <b>حجم کل:</b> "+gb(result.quotaBytes)+
-        "\n⏰ <b>اعتبار تا:</b> "+dateTime(result.validUntil)+"\n\n<pre>"+escapeHtml(result.config)+"</pre>\n\n🔒 این کانفیگ مخصوص حساب توست؛ آن را برای دیگران ارسال نکن.";
+      const output="<b>✅ اشتراک مدار آماده است</b>\n"+
+        "━━━━━━━━━━━━━━━━\n"+
+        "🛰️ <b>سرور:</b> "+escapeHtml(result.serverName)+"\n"+
+        "📦 <b>حجم کل:</b> "+gb(result.quotaBytes)+"\n"+
+        "⏰ <b>اعتبار تا:</b> "+dateTime(result.validUntil)+"\n\n"+
+        "<b>🔑 کانفیگ اختصاصی تو</b>\n<pre>"+escapeHtml(result.config)+"</pre>\n"+
+        "از دکمه کپی استفاده کن یا QR را در برنامه VPN اسکن کن.\n\n"+
+        "🔒 این کانفیگ مخصوص حساب توست؛ آن را برای دیگران ارسال نکن.";
       const rows:Record<string,unknown>[][]=[];
       if(result.config.length<=256) rows.push([{text:"📋 کپی کانفیگ",copy_text:{text:result.config}}]);
+      rows.push([callback("📷 نمایش QR","customer:qr:"+configMatch[1]),callback("📖 راهنمای اتصال","customer:help")]);
       if(result.usageUrl) rows.push([{text:"📊 مصرف و اعتبار",url:result.usageUrl}]);
       rows.push([callback("🌐 سرویس‌های من","customer:services")],[callback("📦 سفارش‌های من","customer:orders:0")],[callback("🏠 منوی اصلی","customer:home")]);
       await reply(output,rows,{parse_mode:"HTML",link_preview_options:{is_disabled:true}});
