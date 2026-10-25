@@ -69,6 +69,15 @@ jobs:
             --data '{"sql":"SELECT name FROM d1_migrations WHERE name='\''0016-customer-checkout.sql'\''"}' \
             "$api/d1/database/$DB_ID/query" |
             jq -e '.success == true and .result[0].results[0].name == "0016-customer-checkout.sql"' >/dev/null
+          # Paid renewals use additive migration 0017. Never deploy code before this schema is verified.
+          curl -fsS -X POST -H "$auth" -H 'Content-Type: application/json' \
+            --data '{"sql":"SELECT name FROM d1_migrations WHERE name='\''0017-customer-upgrades.sql'\''"}' \
+            "$api/d1/database/$DB_ID/query" |
+            jq -e '.success == true and .result[0].results[0].name == "0017-customer-upgrades.sql"' >/dev/null
+          curl -fsS -X POST -H "$auth" -H 'Content-Type: application/json' \
+            --data '{"sql":"SELECT name FROM pragma_table_info('\''managed_accounts'\'') WHERE name='\''last_customer_upgrade_id'\''"}' \
+            "$api/d1/database/$DB_ID/query" |
+            jq -e '.success == true and .result[0].results[0].name == "last_customer_upgrade_id"' >/dev/null
           echo "All guarded production release preflights passed."
       - name: Deploy exact-green Worker preserving vars
         id: deploy
@@ -109,6 +118,9 @@ jobs:
             sleep 5
           done
           test "$ok" -eq 1 || { echo "::error::New production routes never became healthy; initiate rollback"; exit 1; }
+          upgrade_api="$(curl -sS --max-time 15 -o /dev/null -w '%{http_code}' "$BASE_URL/api/customer/upgrades")" || upgrade_api=000
+          test "$upgrade_api" = 403 || { echo "::error::Unsigned upgrade API must be denied (got $upgrade_api)"; exit 1; }
+
 
           api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID"
           auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
