@@ -16,12 +16,18 @@ import m11 from "../migrations/0011-node-account-slot-mode.sql?raw";
 import m12 from "../migrations/0012-telegram-profiles.sql?raw";
 import m13 from "../migrations/0013-managed-account-archive.sql?raw";
 import customerMigration from "../migrations/0016-customer-checkout.sql?raw";
+import upgradeMigration from "../migrations/0017-customer-upgrades.sql?raw";
 import { customerApi } from "../src/customer-api";
 import { handleUpdate } from "../src/menus";
 import { handleCustomerTelegramUpdate } from "../src/customer-telegram";
 import { deliverOutbox } from "../src/outbox";
 import { customerQrResponse } from "../src/customer-qr";
 import { queueAccountDelivery } from "../src/account-delivery";
+import { buildQuotaPolicy, ackQuotaPolicy } from "../src/quota-policies";
+import {
+  approveUpgrade, createCustomerUpgrade, listCustomerUpgrades, notifyReadyUpgrades,
+  requestUpgradeReceipt, submitUpgradeReceipt,
+} from "../src/customer-upgrades";
 import worker from "../src/index";
 
 const now=10_000,token="123456:CUSTOMER_TEST";
@@ -51,6 +57,8 @@ beforeEach(async()=>{
   // Cloudflare's test D1 exec splitter mishandles ALTER TABLE followed by multiline CREATE;
   // execute every migration statement through D1 prepare, as Wrangler migrations do.
   for (const statement of customerMigration.split(/;\s*(?:\n|$)/).map(s=>s.trim()).filter(Boolean))
+    await env.SALES_DB.prepare(statement).run();
+  for (const statement of upgradeMigration.split(/;\s*(?:\n|$)/).map(s=>s.trim()).filter(Boolean))
     await env.SALES_DB.prepare(statement).run();
   await env.SALES_DB.prepare(
     "INSERT INTO nodes(id,name,target_ip,vpn_port,state,revision,acked_revision,last_seen,healthy,agent_capabilities,max_accounts,max_allocated_bytes) VALUES('n','Stockholm','8.8.8.8',443,'ready',1,1,?,1,'quota-v2,shared-443',1,30000000000)",
@@ -452,4 +460,229 @@ test("editing the same Telegram message is a successful no-op, not another chat 
   await deliverOutbox(E,now,fetcher as typeof fetch);
   expect(calls).toEqual(["editMessageText"]);
   expect(await env.SALES_DB.prepare("SELECT state FROM outbox WHERE id='no-change'").first<string>("state")).toBe("sent");
+});
+
+
+async function readyPurchasedService() {
+  await setup();
+  const o=await order();
+  await sendReceipt();
+  expect((await call("/api/customer/admin/orders/"+o.id+"/approve",1,{})).status).toBe(200);
+  const a=await env.SALES_DB.prepare("SELECT * FROM managed_accounts WHERE request_key=?")
+    .bind("customer-order:"+o.id).first<any>();
+  expect(a?.id).toBeTruthy();
+  await env.SALES_DB.prepare(
+    "UPDATE managed_accounts SET state='active',started_at=?,valid_until=?,activation_revision=2,listen_port=20000 WHERE id=?"
+  ).bind(now-500,now+86400*15,a.id).run();
+  // These upgrade tests need spare volume to buy the whole additional 20-GB plan.
+  await env.SALES_DB.prepare("UPDATE nodes SET revision=2,acked_revision=2,max_allocated_bytes=100000000000 WHERE id='n'").run();
+  return {orderId:o.id,accountId:a.id,uuid:a.uuid};
+}
+async function payUpgrade(upgradeId:string) {
+  await requestUpgradeReceipt(env.SALES_DB,{telegramId:"10",role:"ordinary"},upgradeId);
+  expect(await submitUpgradeReceipt(env.SALES_DB,{telegramId:"10",role:"ordinary"},upgradeId,"receipt-topup","photo")).toBe(true);
+}
+test("customer renews the same UUID and account after bank receipt and admin approval",async()=>{
+  const s=await readyPurchasedService();
+  const r=await call("/api/customer/upgrades",10,{
+    orderId:s.orderId,planId:"monthly",kind:"renew",requestKey:"renew-key_12345678",price:1,
+  });
+  expect(r.status).toBe(201);
+  const order=await r.json() as any;
+  expect(order.price).toBe(250000);
+  expect(order.deltaSeconds).toBe(86400*30);
+  expect(order.deltaBytes).toBe(0);
+  expect(await env.SALES_DB.prepare("SELECT COUNT(*) n FROM managed_accounts").first("n")).toBe(1);
+  expect((await call("/api/customer/admin/upgrades/"+order.id+"/approve",1,{})).status).toBe(404);
+  await payUpgrade(order.id);
+  expect((await call("/api/customer/admin/upgrades/"+order.id+"/approve",10,{})).status).toBe(403);
+  const approved=await call("/api/customer/admin/upgrades/"+order.id+"/approve",1,{});
+  expect(approved.status).toBe(200);
+  const replay=await call("/api/customer/admin/upgrades/"+order.id+"/approve",1,{});
+  expect(replay.status).toBe(200);
+  const a=await env.SALES_DB.prepare("SELECT id,uuid,quota_bytes,valid_until,state,last_customer_upgrade_id FROM managed_accounts WHERE id=?")
+    .bind(s.accountId).first<any>();
+  expect(a).toMatchObject({id:s.accountId,uuid:s.uuid,quota_bytes:20e9,valid_until:now+86400*45,state:"preparing",last_customer_upgrade_id:order.id});
+  expect(await env.SALES_DB.prepare("SELECT COUNT(*) n FROM managed_accounts").first("n")).toBe(1);
+  expect(await env.SALES_DB.prepare("SELECT COUNT(*) n FROM audit_events WHERE action='customer_upgrade_applied'").first("n")).toBe(1);
+  const own=await call("/api/customer/upgrades",10);
+  expect((await own.json() as any[])[0]).toMatchObject({id:order.id,state:"applied"});
+  expect((await call("/api/customer/upgrades",11).then(r=>r.json()))).toEqual([]);
+});
+
+test("traffic topup does not reset cumulative use or extend expiry",async()=>{
+  const s=await readyPurchasedService();
+  await env.SALES_DB.prepare("UPDATE managed_accounts SET used_bytes=18000000000 WHERE id=?").bind(s.accountId).run();
+  const order=await createCustomerUpgrade(env.SALES_DB,{telegramId:"10",role:"ordinary"},{
+    orderId:s.orderId,planId:"monthly",kind:"traffic",requestKey:"topup-key_12345678",
+  },now);
+  await payUpgrade(order.id);
+  await approveUpgrade(E,{telegramId:"1",role:"admin"},order.id,now);
+  const a=await env.SALES_DB.prepare("SELECT quota_bytes,used_bytes,valid_until,uuid,state FROM managed_accounts WHERE id=?").bind(s.accountId).first<any>();
+  expect(a).toMatchObject({quota_bytes:40e9,used_bytes:18e9,valid_until:now+86400*15,uuid:s.uuid,state:"preparing"});
+  expect((await call("/api/customer/orders",10).then(r=>r.json()) as any[])[0]).toMatchObject({quotaBytes:40e9});
+});
+
+test("topup fails closed when available server bytes are no longer sufficient",async()=>{
+  const s=await readyPurchasedService();
+  const order=await createCustomerUpgrade(env.SALES_DB,{telegramId:"10",role:"ordinary"},{
+    orderId:s.orderId,planId:"monthly",kind:"traffic",requestKey:"no-space_12345678",
+  },now);
+  await payUpgrade(order.id);
+  await env.SALES_DB.prepare("UPDATE nodes SET max_allocated_bytes=25000000000 WHERE id='n'").run();
+  await expect(approveUpgrade(E,{telegramId:"1",role:"admin"},order.id,now)).rejects.toThrow("UPGRADE_CAPACITY_CHANGED");
+  expect(await env.SALES_DB.prepare("SELECT state FROM customer_upgrades WHERE id=?").bind(order.id).first("state")).toBe("pending_review");
+  expect(await env.SALES_DB.prepare("SELECT quota_bytes FROM managed_accounts WHERE id=?").bind(s.accountId).first("quota_bytes")).toBe(20e9);
+});
+
+test("buyer cannot upgrade another customer's config or submit forged receipt",async()=>{
+  const s=await readyPurchasedService();
+  const r=await call("/api/customer/upgrades",11,{orderId:s.orderId,planId:"monthly",kind:"traffic",requestKey:"not-yours_123456"});
+  expect(r.status).toBe(404);
+  const order=await createCustomerUpgrade(env.SALES_DB,{telegramId:"10",role:"ordinary"},{
+    orderId:s.orderId,planId:"monthly",kind:"renew",requestKey:"owned-upgrade-1234",
+  },now);
+  expect((await call("/api/customer/upgrades/"+order.id+"/receipt-request",11,{})).status).toBe(404);
+  expect((await call("/api/customer/admin/upgrades/"+order.id+"/approve",10,{})).status).toBe(403);
+  expect(await env.SALES_DB.prepare("SELECT state FROM customer_upgrades WHERE id=?").bind(order.id).first("state")).toBe("awaiting_receipt");
+});
+
+test("a second outstanding upgrade cannot collect payment for the same customer",async()=>{
+  const s=await readyPurchasedService();
+  const first=await createCustomerUpgrade(env.SALES_DB,{telegramId:"10",role:"ordinary"},{
+    orderId:s.orderId,planId:"monthly",kind:"renew",requestKey:"first-upgrade_1234",
+  },now);
+  await expect(createCustomerUpgrade(env.SALES_DB,{telegramId:"10",role:"ordinary"},{
+    orderId:s.orderId,planId:"monthly",kind:"traffic",requestKey:"second-upgrade_1234",
+  },now)).rejects.toThrow("PENDING_UPGRADE_EXISTS");
+  const replay=await createCustomerUpgrade(env.SALES_DB,{telegramId:"10",role:"ordinary"},{
+    orderId:s.orderId,planId:"monthly",kind:"renew",requestKey:"first-upgrade_1234",
+  },now);
+  expect(replay.id).toBe(first.id);
+});
+
+test("post-ACK server policy notifies the buyer only after the new quota is active",async()=>{
+  const s=await readyPurchasedService();
+  const order=await createCustomerUpgrade(env.SALES_DB,{telegramId:"10",role:"ordinary"},{
+    orderId:s.orderId,planId:"monthly",kind:"traffic",requestKey:"acked-upgrade_1234",
+  },now);
+  await payUpgrade(order.id);
+  await approveUpgrade(E,{telegramId:"1",role:"admin"},order.id,now);
+  await notifyReadyUpgrades(E,now);
+  expect(await env.SALES_DB.prepare("SELECT COUNT(*) n FROM outbox WHERE id=?").bind("customer-upgrade-ready:"+order.id).first("n")).toBe(0);
+  const policy=JSON.stringify({version:2,nodeId:"n",revision:3,expiresAt:now+300,
+    clients:[{accountId:s.accountId,uuid:s.uuid,quotaEpoch:1,quotaBytes:40e9,usedBytes:0,validUntil:now+86400*15,
+      generation:s.accountId+":1",listenPort:20000}]});
+  await env.SALES_DB.prepare("UPDATE managed_accounts SET state='active',activation_revision=3 WHERE id=?").bind(s.accountId).run();
+  await env.SALES_DB.prepare("UPDATE nodes SET policy_payload=?,revision=3,acked_revision=3 WHERE id='n'").bind(policy).run();
+  await notifyReadyUpgrades(E,now);
+  await notifyReadyUpgrades(E,now);
+  const msg=await env.SALES_DB.prepare("SELECT chat_id,payload FROM outbox WHERE id=?").bind("customer-upgrade-ready:"+order.id).first<any>();
+  expect(msg.chat_id).toBe("10");
+  expect(msg.payload).toContain("همان کانفیگ");
+  expect(await env.SALES_DB.prepare("SELECT COUNT(*) n FROM outbox WHERE id=?").bind("customer-upgrade-ready:"+order.id).first("n")).toBe(1);
+});
+
+test("renew expired with quota remaining, but require renewal before topup after expiry",async()=>{
+  const s=await readyPurchasedService();
+  await env.SALES_DB.prepare("UPDATE managed_accounts SET state='expired',valid_until=? WHERE id=?").bind(now-10,s.accountId).run();
+  const t=await call("/api/customer/upgrades",10,{orderId:s.orderId,planId:"monthly",kind:"traffic",requestKey:"expired-traffic-12"});
+  expect(t.status).toBe(409);
+  const renew=await call("/api/customer/upgrades",10,{orderId:s.orderId,planId:"monthly",kind:"renew",requestKey:"expired-renew-123"});
+  expect(renew.status).toBe(201);
+});
+
+test("new Telegram menu displays renewal and extra data without changing original purchase price",async()=>{
+  const s=await readyPurchasedService();
+  expect(await handleCustomerTelegramUpdate(E,{update_id:251,callback_query:{id:"menu",from:{id:10},message:{message_id:2,chat:{id:10,type:"private"},text:"test"},data:"customer:up:menu:"+s.orderId}} as any,now)).toBe(true);
+  const p=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u251:reply'").first<string>("payload"))||"{}");
+  expect(p.text).toContain("مدیریت اشتراک");
+  expect(p.reply_markup.inline_keyboard.flat().some((x:any)=>x.callback_data?.startsWith("customer:up:offer:r:"))).toBe(true);
+  expect(p.reply_markup.inline_keyboard.flat().some((x:any)=>x.callback_data?.startsWith("customer:up:offer:t:"))).toBe(true);
+  expect((await env.SALES_DB.prepare("SELECT price FROM customer_orders WHERE id=?").bind(s.orderId).first("price"))).toBe(250000);
+});
+
+
+test("renewal gets an actual quota-v2 ACK before reporting service as active",async()=>{
+  const service=await readyPurchasedService();
+  const upgrade=await createCustomerUpgrade(env.SALES_DB,{telegramId:"10",role:"ordinary"},{
+    orderId:service.orderId,planId:"monthly",kind:"renew",requestKey:"acked-renew-123456",
+  },now);
+  await payUpgrade(upgrade.id);
+  await approveUpgrade(E,{telegramId:"1",role:"admin"},upgrade.id,now);
+  const waiting=await env.SALES_DB.prepare("SELECT state,activation_revision FROM managed_accounts WHERE id=?").bind(service.accountId).first<any>();
+  expect(waiting.state).toBe("preparing");
+  expect(waiting.activation_revision).toBeNull();
+  const policy=await buildQuotaPolicy(env.SALES_DB,"n",now);
+  expect(policy.version).toBe(2);
+  const c=policy.clients.find(x=>x.accountId===service.accountId);
+  expect(c).toMatchObject({uuid:service.uuid,quotaBytes:20e9,validUntil:now+86400*45});
+  await ackQuotaPolicy(env.SALES_DB,"n",policy.revision,{healthy:true,capabilities:["quota-v2","per-account-process","shared-443"]},now);
+  const active=await env.SALES_DB.prepare("SELECT state,uuid,valid_until FROM managed_accounts WHERE id=?").bind(service.accountId).first<any>();
+  expect(active.state).toBe("active");
+  expect(active.uuid).toBe(service.uuid);
+  expect(active.valid_until).toBe(now+86400*45);
+  await notifyReadyUpgrades(E,now);
+  expect(await env.SALES_DB.prepare("SELECT chat_id FROM outbox WHERE id=?").bind("customer-upgrade-ready:"+upgrade.id).first("chat_id")).toBe("10");
+});
+
+test("atomic upgrade guard enforces configured seller GB caps as well as node GB caps",async()=>{
+  const s=await readyPurchasedService();
+  await env.SALES_DB.prepare("INSERT INTO resellers(telegram_id,enabled,created_at) VALUES('20',1,?)").bind(now).run();
+  await env.SALES_DB.prepare("INSERT INTO reseller_controls(seller_id,max_reserved_accounts,max_committed_bytes,updated_at) VALUES('20',1,30000000000,?)").bind(now).run();
+  await env.SALES_DB.prepare("UPDATE managed_accounts SET seller_id='20' WHERE id=?").bind(s.accountId).run();
+  const order=await createCustomerUpgrade(env.SALES_DB,{telegramId:"10",role:"ordinary"},{
+    orderId:s.orderId,planId:"monthly",kind:"traffic",requestKey:"seller-cap-123456",
+  },now);
+  await payUpgrade(order.id);
+  await expect(approveUpgrade(E,{telegramId:"1",role:"admin"},order.id,now)).rejects.toThrow("UPGRADE_CAPACITY_CHANGED");
+  expect(await env.SALES_DB.prepare("SELECT state FROM customer_upgrades WHERE id=?").bind(order.id).first("state")).toBe("pending_review");
+  expect(await env.SALES_DB.prepare("SELECT quota_bytes FROM managed_accounts WHERE id=?").bind(s.accountId).first("quota_bytes")).toBe(20e9);
+});
+
+test("renewal receipt in the native bot appears in the correct admin review inbox",async()=>{
+  const s=await readyPurchasedService();
+  const u=await createCustomerUpgrade(env.SALES_DB,{telegramId:"10",role:"ordinary"},{
+    orderId:s.orderId,planId:"monthly",kind:"renew",requestKey:"telegram-approval-12",
+  },now);
+  await requestUpgradeReceipt(env.SALES_DB,{telegramId:"10",role:"ordinary"},u.id);
+  const submitted=await handleCustomerTelegramUpdate(E,{
+    update_id:991,message:{message_id:4,chat:{id:10,type:"private"},from:{id:10},photo:[{file_id:"tg-upgrade-receipt"}]},
+  } as any,now);
+  expect(submitted).toBe(true);
+  expect(await env.SALES_DB.prepare("SELECT state FROM customer_upgrades WHERE id=?").bind(u.id).first("state")).toBe("pending_review");
+  const notice=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id=?")
+    .bind("customer-upgrade-review:"+u.id+":1").first<string>("payload"))||"{}");
+  expect(notice.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="cust:up:review:"+u.id)).toBe(true);
+  expect(await handleCustomerTelegramUpdate(E,{
+    update_id:992,callback_query:{id:"manager",from:{id:1},message:{message_id:5,chat:{id:1,type:"private"}},data:"cust:up:list:0"},
+  } as any,now)).toBe(true);
+  const inbox=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u992:reply'").first<string>("payload"))||"{}");
+  expect(inbox.text).toContain("رسیدهای تمدید و حجم");
+  expect(inbox.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="cust:up:review:"+u.id)).toBe(true);
+});
+
+
+test("a fully expired and traffic-exhausted service can buy one complete paid renewal bundle",async()=>{
+  const s=await readyPurchasedService();
+  await env.SALES_DB.prepare("UPDATE managed_accounts SET state='expired',used_bytes=20000000000,valid_until=? WHERE id=?")
+    .bind(now-10,s.accountId).run();
+  expect(await handleCustomerTelegramUpdate(E,{
+    update_id:993,callback_query:{id:"choose-bundle",from:{id:10},message:{message_id:9,chat:{id:10,type:"private"},text:"مدیریت"},data:"customer:up:menu:"+s.orderId},
+  } as any,now)).toBe(true);
+  const menu=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u993:reply'").first<string>("payload"))||"{}");
+  expect(menu.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data?.startsWith("customer:up:offer:b:"))).toBe(true);
+  const o=await createCustomerUpgrade(env.SALES_DB,{telegramId:"10",role:"ordinary"},{
+    orderId:s.orderId,planId:"monthly",kind:"bundle",requestKey:"full-renew-bundle123",
+  },now);
+  expect(o.delta_bytes).toBe(20e9);
+  expect(o.delta_seconds).toBe(30*86400);
+  expect(o.price).toBe(250000);
+  await payUpgrade(o.id);
+  await approveUpgrade(E,{telegramId:"1",role:"admin"},o.id,now);
+  const a=await env.SALES_DB.prepare("SELECT id,uuid,quota_bytes,used_bytes,valid_until,state FROM managed_accounts WHERE id=?")
+    .bind(s.accountId).first<any>();
+  expect(a).toMatchObject({id:s.accountId,uuid:s.uuid,quota_bytes:40e9,used_bytes:20e9,
+    valid_until:now+30*86400,state:"preparing"});
+  expect(await env.SALES_DB.prepare("SELECT COUNT(*) n FROM managed_accounts").first("n")).toBe(1);
 });

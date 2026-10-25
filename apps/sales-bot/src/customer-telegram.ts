@@ -7,6 +7,11 @@ import {
   rejectCustomerOrder, requestCustomerReceipt, submitCustomerReceipt,
 } from "./customer-store";
 import { createCustomerQrUrl } from "./customer-qr";
+import {
+  adminUpgrade, approveUpgrade, cancelUpgrade, createCustomerUpgrade,
+  listCustomerUpgrades, ownedCustomerService, rejectUpgrade, requestUpgradeReceipt,
+  submitUpgradeReceipt,
+} from "./customer-upgrades";
 
 const callback=(label:string,data:string)=>({text:label,callback_data:data});
 const NODE_STATE_PREFIX="customer-node-list:";
@@ -74,6 +79,99 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
     [callback("📦 سفارش‌های من","customer:orders:0"),callback("📖 راهنمای اتصال","customer:help")],
   ];
 
+  // Customer upgrade receipts use a distinct inbox; never approve by trusting a Telegram image alone.
+  const rejectState=actor.role==="admin" && !data && !!text && !text.startsWith("/")
+    ? await db.prepare("SELECT conversation FROM users WHERE id=?").bind(userId).first<string>("conversation")
+    : null;
+  if(data.startsWith("cust:up:") || rejectState?.startsWith("customer-upgrade-reject:")) {
+    if(actor.role!=="admin") {
+      await reply("این بخش فقط برای مدیر است.");
+      return true;
+    }
+    const pageMatch=data.match(/^cust:up:list:(0|[1-9][0-9]{0,2})$/);
+    if(data==="cust:up:list" || pageMatch) {
+      const page=pageMatch?Number(pageMatch[1]):0,limit=6;
+      const rows=await db.prepare(
+        "SELECT id,user_id,kind,price,currency,created_at FROM customer_upgrades " +
+        "WHERE state='pending_review' AND EXISTS(SELECT 1 FROM customer_upgrade_receipts r WHERE r.upgrade_id=customer_upgrades.id) " +
+        "ORDER BY created_at,id LIMIT ? OFFSET ?"
+      ).bind(limit+1,page*limit).all<{id:string;user_id:string;kind:string;price:number;currency:string;created_at:number}>();
+      const keyboard:Record<string,unknown>[][]=rows.results.slice(0,limit).map(item=>[
+        callback("💳 "+(item.kind==="renew"?"تمدید":item.kind==="bundle"?"تمدید کامل":"حجم اضافه")+" · "+money(item.price,item.currency)+" · #"+item.id.slice(0,8),
+          "cust:up:review:"+item.id),
+      ]);
+      const nav:Record<string,unknown>[]=[];
+      if(page>0) nav.push(callback("◀️ قبلی","cust:up:list:"+(page-1)));
+      if(rows.results.length>limit && page<999) nav.push(callback("بعدی ▶️","cust:up:list:"+(page+1)));
+      if(nav.length) keyboard.push(nav);
+      keyboard.push([callback("🔄 تازه‌سازی","cust:up:list:"+page)]);
+      keyboard.push([callback("💳 خریدهای اولیه","cust:inbox:0")],[callback("🏠 منوی اصلی","rs:home")]);
+      await reply(rows.results.length
+        ?"💳 <b>رسیدهای تمدید و حجم اضافه</b>\nقبل از تأیید، انتقال وجه را مستقلاً از حساب بانکی بررسی کنید."
+        :"✅ فعلاً رسید تمدید یا حجم اضافه‌ای در این صفحه منتظر بررسی نیست.",keyboard,{parse_mode:"HTML"});
+      return true;
+    }
+    const review=data.match(/^cust:up:(review|approve|reject):([a-f0-9-]{36})$/);
+    try {
+      if(review) {
+        const [,action,upgradeId]=review;
+        const upgrade=await adminUpgrade(db,actor,upgradeId!);
+        if(!upgrade) throw Error("ORDER_NOT_AVAILABLE");
+        if(action==="review") {
+          const canDecide=upgrade.state==="pending_review" && !!upgrade.file_id;
+          await reply("🧾 <b>بررسی پرداخت "+(upgrade.kind==="renew"?"تمدید":upgrade.kind==="bundle"?"تمدید کامل":"حجم اضافه")+"</b>\n"+
+            "شماره: <code>"+upgrade.id+"</code>\nمشتری: "+upgrade.user_id+
+            "\nمبلغ: <b>"+money(upgrade.price,upgrade.currency)+"</b>"+
+            "\n"+(upgrade.kind==="traffic"?"حجم: "+gb(upgrade.delta_bytes):
+              upgrade.kind==="bundle"?"مدت: "+days(upgrade.delta_seconds)+" · حجم: "+gb(upgrade.delta_bytes):
+              "مدت: "+days(upgrade.delta_seconds))+
+            "\nوضعیت: "+upgrade.state+"\n\nفقط پس از تأیید واریز واقعی بانک، اقدام کنید.",[
+              ...(canDecide?[
+                [callback("✅ تأیید و اعمال روی کانفیگ","cust:up:approve:"+upgrade.id)],
+                [callback("❌ رد پرداخت","cust:up:reject:"+upgrade.id)],
+              ]:[]),
+              [callback("💳 صندوق تمدید و حجم","cust:up:list:0")],
+            ],{parse_mode:"HTML"});
+          if(upgrade.file_id && upgrade.receipt_kind)
+            await enqueue(db,"u"+u.update_id+":upgrade-proof",userId,{
+              _method:upgrade.receipt_kind==="photo"?"sendPhoto":"sendDocument",
+              [upgrade.receipt_kind==="photo"?"photo":"document"]:upgrade.file_id,
+              caption:"رسید تمدید/حجم "+upgrade.id,
+            });
+          return true;
+        }
+        if(action==="approve") {
+          await approveUpgrade(env,actor,upgradeId!,now);
+          await reply("✅ پرداخت تأیید شد؛ همان کانفیگ در حال به‌روزرسانی است. پس از ACK سرور مشتری مطلع می‌شود.",[
+            [callback("💳 صندوق تمدید و حجم","cust:up:list:0")],
+          ]);
+          return true;
+        }
+        if(upgrade.state!=="pending_review") throw Error("ORDER_NOT_AVAILABLE");
+        await setConversation("customer-upgrade-reject:"+upgradeId);
+        await reply("دلیل رد این پرداخت را ارسال کنید. مشتری از رد و لزوم پیگیری استرداد وجه مطلع می‌شود.");
+        return true;
+      }
+      if(rejectState?.startsWith("customer-upgrade-reject:")) {
+        await rejectUpgrade(db,actor,rejectState.slice("customer-upgrade-reject:".length),text,now);
+        await setConversation("");
+        await reply("❌ درخواست رد شد و مشتری از نتیجه مطلع شد.",[
+          [callback("💳 صندوق تمدید و حجم","cust:up:list:0")],
+        ]);
+        return true;
+      }
+    } catch(error) {
+      const code=error instanceof Error?error.message:"";
+      if(!["ORDER_NOT_AVAILABLE","UPGRADE_CAPACITY_CHANGED","NODE_UNAVAILABLE"].includes(code)) throw error;
+      await reply(code==="UPGRADE_CAPACITY_CHANGED"?
+        "⚠️ ظرفیت یا وضعیت اشتراک تغییر کرده است. پرداخت را دوباره تأیید نکنید؛ از صندوق سفارش‌ها بررسی و درباره جایگزین یا استرداد وجه تصمیم بگیرید.":
+        "درخواست قابل تأیید نیست: "+code,[[callback("💳 صندوق تمدید و حجم","cust:up:list:0")]]);
+      return true;
+    }
+    await reply("درخواست نامعتبر است.");
+    return true;
+  }
+
   // Admin reviews the actual Telegram photo/document before confirming any payment.
   if (data.startsWith("cust:") || (actor.role==="admin" && (text==="/receipts" || (!text.startsWith("/") && !!(await db.prepare("SELECT conversation FROM users WHERE id=? AND conversation LIKE 'customer-reject:%'").bind(userId).first()))))) {
     if (actor.role!=="admin") {
@@ -97,6 +195,7 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
       if(rows.results.length>pageSize && page<999) navigation.push(callback("بعدی ▶️","cust:inbox:"+(page+1)));
       if(navigation.length) keyboard.push(navigation);
       keyboard.push([callback("🔄 تازه‌سازی","cust:inbox:"+page)]);
+      keyboard.push([callback("🔁 صندوق تمدید و حجم اضافه","cust:up:list:0")]);
       keyboard.push([callback("🏠 منوی اصلی","rs:home")]);
       await reply(visible.length?
         "💳 رسیدهای در انتظار تأیید\nروی هر سفارش بزن تا عکس یا فایل رسید را ببینی و سپس تأیید یا رد کنی.\nقبل از تأیید، واریز واقعی را از حساب بانکی بررسی کن.":
@@ -408,6 +507,178 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
     return true;
   }
 
+  // Renewal and extra traffic are separate paid orders, but always update the original service.
+  const upgradeMenu=data.match(/^customer:up:menu:([a-f0-9-]{36})$/);
+  if(upgradeMenu) {
+    try {
+      const orderId=upgradeMenu[1]!;
+      const service=await ownedCustomerService(db,actor,orderId);
+      if(service.archived_at!==null || service.started_at===null ||
+        !["active","expired","exhausted"].includes(service.state))
+        throw Error("SERVICE_UNAVAILABLE");
+      const plans=await customerPlans(db);
+      const open=(await listCustomerUpgrades(db,actor)).find(a=>["awaiting_receipt","pending_review","approving"].includes(a.state));
+      if(open) {
+        await reply("🧾 یک سفارش تمدید یا حجم اضافه باز داری؛ ابتدا رسید همان را ثبت یا پیگیری کن.",[
+          [callback("📦 پیگیری درخواست باز","customer:up:details:"+open.id)],
+          [callback("🌐 سرویس‌های من","customer:services")],
+        ]);
+        return true;
+      }
+      if(!(await paymentInstructions(db)) || !plans.length) {
+        await reply("فعلاً فروش تمدید و حجم اضافه غیرفعال است؛ پلن فعال یا اطلاعات پرداخت باید توسط مدیر تنظیم شود.",[
+          [callback("🌐 سرویس‌های من","customer:services")],
+        ]);
+        return true;
+      }
+      const rows:Record<string,unknown>[][]=[];
+      for(let i=0;i<Math.min(20,plans.length);i++) {
+        const p=plans[i]!;
+        if(service.quota_bytes!==null && service.quota_bytes>service.used_bytes && service.duration_seconds+p.durationSeconds<=315360000)
+          rows.push([callback("🔁 تمدید "+days(p.durationSeconds)+" · "+money(p.price,p.currency),"customer:up:offer:r:"+orderId+":"+i)]);
+        if(service.valid_until>now && service.quota_bytes!==null && service.quota_bytes+p.quotaBytes<=1e12)
+          rows.push([callback("📦 +"+gb(p.quotaBytes)+" · "+money(p.price,p.currency),"customer:up:offer:t:"+orderId+":"+i)]);
+        if(service.valid_until<=now && service.quota_bytes!==null && service.quota_bytes<=service.used_bytes
+          && service.quota_bytes+p.quotaBytes<=1e12 && service.duration_seconds+p.durationSeconds<=315360000
+          && service.quota_bytes+p.quotaBytes>service.used_bytes)
+          rows.push([callback("🔄 تمدید کامل: +"+days(p.durationSeconds)+" و "+gb(p.quotaBytes)+" · "+money(p.price,p.currency),
+            "customer:up:offer:b:"+orderId+":"+i)]);
+      }
+      rows.push([callback("🌐 سرویس‌های من","customer:services")],[callback("🏠 منوی اصلی","customer:home")]);
+      await reply("🔁 <b>مدیریت اشتراک مدار</b>\n\n"+
+        "کانفیگ موجود حفظ می‌شود؛ تمدید فقط زمان و خرید حجم اضافه فقط حجم آن را افزایش می‌دهد.\n"+
+        "هزینه هر بسته برابر قیمت پلن نمایش‌داده‌شده است و قبل از ارسال رسید مشخص می‌شود.\n\n"+
+        "⚠️ اگر زمان اشتراک تمام شده ابتدا تمدید کن؛ اگر حجم تمام شده ابتدا حجم اضافه بخر.\n"+
+        "تأیید مدیر و ظرفیت واقعی سرور الزامی است.\n\n"+
+        "👇 یکی از بسته‌های زیر را انتخاب کن.",rows,{parse_mode:"HTML"});
+      return true;
+    } catch(error) {
+      if(!(error instanceof Error)||!["ORDER_NOT_AVAILABLE","SERVICE_UNAVAILABLE"].includes(error.message)) throw error;
+      await reply("این اشتراک برای تمدید یا خرید حجم در دسترس نیست.",[[callback("🌐 سرویس‌های من","customer:services")]]);
+      return true;
+    }
+  }
+  const upgradeOffer=data.match(/^customer:up:offer:([rtb]):([a-f0-9-]{36}):([0-9]{1,2})$/);
+  if(upgradeOffer) {
+    const kind=upgradeOffer[1]==="r"?"renew":upgradeOffer[1]==="b"?"bundle":"traffic";
+    const orderId=upgradeOffer[2]!,idx=Number(upgradeOffer[3]);
+    const plans=await customerPlans(db);
+    const plan=plans[idx];
+    if(!plan) {
+      await reply("این بسته دیگر فعال نیست؛ دوباره از فهرست انتخاب کن.",[
+        [callback("🔁 انتخاب بسته","customer:up:menu:"+orderId)],
+      ]);
+      return true;
+    }
+    try {
+      const upgraded=await createCustomerUpgrade(db,actor,{
+        kind,orderId,planId:plan.id,requestKey:"tg_up_"+u.update_id+"_"+userId,
+      },now);
+      await requestUpgradeReceipt(db,actor,upgraded.id);
+      const payment=(await paymentInstructions(db))||"اطلاعات پرداخت موجود نیست";
+      const rows:Record<string,unknown>[][]=[
+        [callback("📸 ارسال رسید تمدید/حجم","customer:up:receipt:"+upgraded.id)],
+        [callback("📦 پیگیری درخواست","customer:up:details:"+upgraded.id)],
+        [callback("🌐 سرویس‌های من","customer:services")],
+      ];
+      if(payment.length<=256) rows.unshift([{text:"📋 کپی اطلاعات پرداخت",copy_text:{text:payment}}]);
+      await reply("🧾 <b>درخواست "+(kind==="renew"?"تمدید":kind==="bundle"?"تمدید کامل":"حجم اضافه")+" ثبت شد</b>\n"+
+        "━━━━━━━━━━━━━━━━\n"+
+        "🔖 کد: <code>"+upgraded.id+"</code>\n"+
+        "📦 بسته: "+escapeHtml(plan.name)+"\n"+
+        (kind==="renew"?"⏳ مدت اضافه: "+days(upgraded.delta_seconds):
+          kind==="bundle"?"⏳ مدت اضافه: "+days(upgraded.delta_seconds)+" · 📦 حجم اضافه: "+gb(upgraded.delta_bytes):
+          "📦 حجم اضافه: "+gb(upgraded.delta_bytes))+
+        "\n💳 <b>مبلغ پرداخت:</b> "+money(upgraded.price,upgraded.currency)+
+        "\n\n🏦 <b>اطلاعات پرداخت</b>\n"+escapeHtml(payment)+
+        "\n\nپس از واریز، عکس یا فایل رسید را همین‌جا بفرست. تنها بعد از تأیید مدیر و ACK سرور، اشتراک قبلی با همان UUID به‌روزرسانی می‌شود.",rows,
+        {parse_mode:"HTML",link_preview_options:{is_disabled:true}});
+    } catch(error) {
+      const code=error instanceof Error?error.message:"";
+      if(!["RENEW_FIRST","TRAFFIC_FIRST","UPGRADE_LIMIT","UPGRADE_CAPACITY_CHANGED","NODE_FULL","NODE_UNAVAILABLE","NODE_ALLOCATION_FULL","SERVICE_UNAVAILABLE","PENDING_UPGRADE_EXISTS"].includes(code)) throw error;
+      const pending=(await listCustomerUpgrades(db,actor)).find(x=>["awaiting_receipt","pending_review","approving"].includes(x.state));
+      await reply(code==="RENEW_FIRST"?"این اشتراک منقضی شده؛ ابتدا تمدیدش کن.":
+        code==="TRAFFIC_FIRST"?"حجم اشتراک تمام شده؛ ابتدا حجم اضافه بخر.":
+        code==="PENDING_UPGRADE_EXISTS"?"یک درخواست قبلی هنوز باز است. آن را پیگیری کن.":
+        "این بسته اکنون قابل اعمال نیست؛ ظرفیت یا وضعیت اشتراک را بررسی کن.",[
+        ...(pending?[[callback("🧾 درخواست باز","customer:up:details:"+pending.id)]]:[]),
+        [callback("🔁 بازگشت به بسته‌ها","customer:up:menu:"+orderId)],
+      ]);
+    }
+    return true;
+  }
+  const upgradeDetails=data.match(/^customer:up:details:([a-f0-9-]{36})$/);
+  if(upgradeDetails) {
+    const request=(await listCustomerUpgrades(db,actor)).find(a=>a.id===upgradeDetails[1]);
+    if(!request) {
+      await reply("این درخواست در حساب تو موجود نیست.",[[callback("🌐 سرویس‌های من","customer:services")]]);
+      return true;
+    }
+    const labels:Record<string,string>={awaiting_receipt:"در انتظار رسید",pending_review:"رسید در حال بررسی",approving:"در حال تأیید",applied:request.notified_at!==null?"روی همان کانفیگ فعال شد":"در انتظار تأیید سرور",rejected:"رد یا لغو شده"};
+    const rows:Record<string,unknown>[][]=[];
+    if(request.state==="awaiting_receipt") {
+      rows.push([callback("📸 ارسال رسید","customer:up:receipt:"+request.id)]);
+      rows.push([callback("🗑️ لغو درخواست پرداخت‌نشده","customer:up:cancel-confirm:"+request.id)]);
+    }
+    rows.push([callback("🌐 سرویس‌های من","customer:services")],[callback("🏠 منوی اصلی","customer:home")]);
+    await reply("🧾 <b>وضعیت درخواست "+(request.kind==="renew"?"تمدید":request.kind==="bundle"?"تمدید کامل":"حجم اضافه")+"</b>\n"+
+      "شماره: <code>"+request.id+"</code>\n"+
+      (request.kind==="renew"?"⏳ زمان اضافه: "+days(request.delta_seconds):
+        request.kind==="bundle"?"⏳ زمان اضافه: "+days(request.delta_seconds)+" · 📦 حجم اضافه: "+gb(request.delta_bytes):
+        "📦 حجم اضافه: "+gb(request.delta_bytes))+
+      "\n💳 مبلغ: "+money(request.price,request.currency)+
+      "\n📌 وضعیت: <b>"+labels[request.state]+"</b>"+
+      (request.reason?"\n📝 توضیحات: "+escapeHtml(request.reason):"")+
+      "\n\nاعمال این درخواست کانفیگ تازه یا شماره حساب جدید نمی‌سازد.",rows,{parse_mode:"HTML"});
+    return true;
+  }
+  const upgradeCancelConfirm=data.match(/^customer:up:cancel-confirm:([a-f0-9-]{36})$/);
+  if(upgradeCancelConfirm) {
+    const request=(await listCustomerUpgrades(db,actor)).find(a=>a.id===upgradeCancelConfirm[1] && a.state==="awaiting_receipt");
+    if(!request) {
+      await reply("این درخواست دیگر قابل لغو نیست.",[[callback("🌐 سرویس‌های من","customer:services")]]);
+      return true;
+    }
+    await reply("⚠️ <b>انصراف از درخواست</b>\nفقط اگر هنوز وجهی واریز نکرده‌ای لغو کن. اگر پرداخت کرده‌ای، رسید را بفرست؛ انصراف وجه را برنمی‌گرداند.",[
+      [callback("✅ پرداخت نکرده‌ام؛ لغو درخواست","customer:up:cancel:"+request.id)],
+      [callback("📸 ارسال رسید","customer:up:receipt:"+request.id)],
+    ],{parse_mode:"HTML"});
+    return true;
+  }
+  const upgradeCancel=data.match(/^customer:up:cancel:([a-f0-9-]{36})$/);
+  if(upgradeCancel) {
+    try {
+      await cancelUpgrade(db,actor,upgradeCancel[1]!,now);
+      await setConversation("");
+      await reply("✅ درخواست پرداخت‌نشده لغو شد.",[
+        [callback("🌐 سرویس‌های من","customer:services")],
+      ]);
+    } catch(error) {
+      if(!(error instanceof Error)||error.message!=="ORDER_NOT_AVAILABLE") throw error;
+      await reply("این درخواست قابل لغو نیست؛ وضعیت و رسید را بررسی کن.",[
+        [callback("🌐 سرویس‌های من","customer:services")],
+      ]);
+    }
+    return true;
+  }
+  const upgradeReceipt=data.match(/^customer:up:receipt:([a-f0-9-]{36})$/);
+  if(upgradeReceipt) {
+    try {
+      await requestUpgradeReceipt(db,actor,upgradeReceipt[1]!);
+      await reply("📸 <b>ارسال رسید تمدید یا حجم اضافه</b>\n"+
+        "کد: <code>"+upgradeReceipt[1]+"</code>\n\n"+
+        "عکس واضح یا فایل رسید بانکی را همین‌جا بفرست. تأیید پرداخت توسط مدیر انجام می‌شود.",[
+        [callback("📦 پیگیری درخواست","customer:up:details:"+upgradeReceipt[1])],
+      ],{parse_mode:"HTML"});
+    } catch(error) {
+      if(!(error instanceof Error)||error.message!=="ORDER_NOT_AVAILABLE") throw error;
+      await reply("این درخواست دیگر منتظر رسید نیست.",[
+        [callback("🌐 سرویس‌های من","customer:services")],
+      ]);
+    }
+    return true;
+  }
+
   const orderMatch=data.match(/^customer:order:([a-f0-9-]{36})$/);
   if(orderMatch) {
     const order=(await listCustomerOrders(db,actor)).find(o=>o.id===orderMatch[1]);
@@ -420,7 +691,14 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
       rows.push([callback("📸 ادامه پرداخت و ارسال رسید","customer:receipt:"+order.id)]);
       rows.push([callback("🗑️ انصراف از سفارش پرداخت‌نشده","customer:cancel-confirm:"+order.id)]);
     }
-    if(order.state==="approved") rows.push([callback("📥 دریافت کانفیگ","customer:config:"+order.id)]);
+    if(order.state==="approved") {
+      rows.push([callback("📥 دریافت کانفیگ","customer:config:"+order.id)]);
+      rows.push([callback("🔁 تمدید / خرید حجم اضافه","customer:up:menu:"+order.id)]);
+      const upgrades=(await listCustomerUpgrades(db,actor)).filter(a=>a.base_order_id===order.id);
+      for(const upgrade of upgrades.slice(0,3)) rows.push([
+        callback("🧾 "+(upgrade.kind==="renew"?"تمدید":"حجم")+" · "+upgrade.state,"customer:up:details:"+upgrade.id),
+      ]);
+    }
     rows.push([callback("🌐 سرویس‌های من","customer:services")],[callback("📦 سفارش‌های من","customer:orders:0")],[callback("🏠 منوی اصلی","customer:home")]);
     let details="<b>📦 جزئیات سفارش مدار</b>\n\n🔖 شماره: <code>"+order.id+"</code>\n📦 پلن: "+escapeHtml(order.planName)+
       "\n💳 مبلغ: "+money(order.price,order.currency)+"\n📊 حجم کل: "+gb(order.quotaBytes)+
@@ -586,6 +864,35 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
       [callback("↩️ انتخاب دستگاه دیگر","customer:help")],
       [callback("🌐 سرویس‌های من","customer:services")],[callback("🏠 منوی اصلی","customer:home")],
     ],{parse_mode:"HTML",link_preview_options:{is_disabled:true}});
+    return true;
+  }
+
+  if(state?.startsWith("customer-upgrade-receipt:") && (u.message?.photo?.length || u.message?.document)) {
+    const upgradeId=state.slice("customer-upgrade-receipt:".length);
+    const fileId=u.message?.document?.file_id ?? u.message?.photo?.at(-1)?.file_id ?? "";
+    try {
+      const accepted=await submitUpgradeReceipt(db,actor,upgradeId,fileId,u.message?.document?"document":"photo");
+      await setConversation("");
+      await reply(accepted
+        ?"✅ رسید تمدید/حجم اضافه ثبت شد. بعد از بررسی مدیر، تغییر روی همان کانفیگ انجام می‌شود."
+        :"رسید قبلاً ثبت شده و منتظر بررسی مدیر است.",[
+        [callback("🧾 پیگیری درخواست","customer:up:details:"+upgradeId)],
+        [callback("🌐 سرویس‌های من","customer:services")],
+      ]);
+      if(accepted) for(const adminId of (env.ADMIN_TELEGRAM_IDS||"").split(",").map(s=>s.trim()).filter(s=>/^\d+$/.test(s)))
+        await enqueue(db,"customer-upgrade-review:"+upgradeId+":"+adminId,adminId,{
+          text:"💳 رسید جدید تمدید/حجم مشتری "+userId+"؛ درخواست "+upgradeId,
+          reply_markup:{inline_keyboard:[[callback("🔎 بررسی رسید","cust:up:review:"+upgradeId)]]},
+        });
+    } catch(error) {
+      if(!(error instanceof Error)||error.message!=="ORDER_NOT_AVAILABLE") throw error;
+      await setConversation("");
+      await reply("این درخواست دیگر منتظر رسید نیست.",[[callback("🌐 سرویس‌های من","customer:services")]]);
+    }
+    return true;
+  }
+  if(state?.startsWith("customer-upgrade-receipt:")) {
+    await reply("برای این درخواست، عکس یا فایل رسید را همین‌جا ارسال کن. برای لغو حالت ارسال رسید دستور /start را بفرست.");
     return true;
   }
 

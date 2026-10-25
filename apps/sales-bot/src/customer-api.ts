@@ -9,6 +9,11 @@ import {
   rejectCustomerOrder, requestCustomerReceipt, saveCustomerPlan,
 } from "./customer-store";
 
+import {
+  approveUpgrade, createCustomerUpgrade, listCustomerUpgrades, requestUpgradeReceipt,
+  rejectUpgrade,
+} from "./customer-upgrades";
+
 const json = (value: unknown, status = 200) =>
   Response.json(value, {status,headers:{"Cache-Control":"no-store","Referrer-Policy":"no-referrer","X-Content-Type-Options":"nosniff"}});
 const parse = async (req:Request) => JSON.parse(await boundedText(req,12000)) as Record<string,unknown>;
@@ -32,10 +37,17 @@ export async function customerApi(req:Request,env:Env,now:number):Promise<Respon
         return json(await availableCustomerNodes(env.SALES_DB,now,plan.quotaBytes));
       }
       if (path==="/api/customer/orders") return json(await listCustomerOrders(env.SALES_DB,actor));
+      if (path==="/api/customer/upgrades") return json(await listCustomerUpgrades(env.SALES_DB,actor));
       const config=path.match(/^\/api\/customer\/orders\/([^/]+)\/config$/);
       if (config) return json(await customerConfig(env,actor,decodeURIComponent(config[1]!),now));
       if (path==="/api/customer/admin/plans") {
         const rows=await env.SALES_DB.prepare("SELECT id,name,price,currency,duration,enabled,quota_bytes FROM plans ORDER BY id LIMIT 100").all();
+        return json(rows.results);
+      }
+      if (path==="/api/customer/admin/upgrades") {
+        const rows=await env.SALES_DB.prepare(
+          "SELECT id,user_id,base_order_id,account_id,kind,price,currency,delta_bytes,delta_seconds,state,created_at FROM customer_upgrades WHERE state IN ('pending_review','approving') ORDER BY created_at LIMIT 50"
+        ).all();
         return json(rows.results);
       }
       if (path==="/api/customer/admin/orders") {
@@ -45,6 +57,30 @@ export async function customerApi(req:Request,env:Env,now:number):Promise<Respon
       return json({error:"NOT_FOUND"},404);
     }
     if (req.method==="POST") {
+      if (path==="/api/customer/upgrades") {
+        const input=await parse(req);
+        const upgrade=await createCustomerUpgrade(env.SALES_DB,actor,{
+          orderId:input.orderId as string,planId:input.planId as string,
+          kind:input.kind as "renew"|"traffic"|"bundle",requestKey:input.requestKey as string,
+        },now);
+        return json({id:upgrade.id,state:upgrade.state,kind:upgrade.kind,price:upgrade.price,currency:upgrade.currency,
+          deltaBytes:upgrade.delta_bytes,deltaSeconds:upgrade.delta_seconds,
+          payment:await paymentInstructions(env.SALES_DB)},201);
+      }
+      const upgradeReceipt=path.match(/^\/api\/customer\/upgrades\/([^/]+)\/receipt-request$/);
+      if(upgradeReceipt) {
+        await requestUpgradeReceipt(env.SALES_DB,actor,decodeURIComponent(upgradeReceipt[1]!));
+        return json({ok:true});
+      }
+      const upgradeApproval=path.match(/^\/api\/customer\/admin\/upgrades\/([^/]+)\/approve$/);
+      if(upgradeApproval) return json(await approveUpgrade(env,actor,decodeURIComponent(upgradeApproval[1]!),now));
+      const upgradeRejection=path.match(/^\/api\/customer\/admin\/upgrades\/([^/]+)\/reject$/);
+      if(upgradeRejection) {
+        const input=await parse(req);
+        if(typeof input.reason!=="string") throw Error("INVALID_REASON");
+        await rejectUpgrade(env.SALES_DB,actor,decodeURIComponent(upgradeRejection[1]!),input.reason,now);
+        return json({ok:true});
+      }
       if (path==="/api/customer/orders") {
         const input=await parse(req);
         const order=await createCustomerOrder(env.SALES_DB,actor,{
@@ -89,8 +125,8 @@ export async function customerApi(req:Request,env:Env,now:number):Promise<Respon
     const code=error instanceof Error?error.message:"REQUEST_FAILED";
     if (["INVALID_SIGNATURE","AUTH_EXPIRED","SELLER_DISABLED","ADMIN_REQUIRED"].includes(code))
       return json({error:code},403);
-    if (["ORDER_NOT_AVAILABLE","PLAN_UNAVAILABLE"].includes(code)) return json({error:code},404);
-    if (["KEY_REUSED","NODE_UNAVAILABLE","NODE_FULL","NODE_ALLOCATION_FULL","NODE_SLOT_LIMIT","SELLER_ACCOUNT_LIMIT","SELLER_ALLOCATION_FULL","SALES_DISABLED","PENDING_ORDER_EXISTS"].includes(code))
+    if (["ORDER_NOT_AVAILABLE","PLAN_UNAVAILABLE","SERVICE_UNAVAILABLE"].includes(code)) return json({error:code},404);
+    if (["KEY_REUSED","NODE_UNAVAILABLE","NODE_FULL","NODE_ALLOCATION_FULL","NODE_SLOT_LIMIT","SELLER_ACCOUNT_LIMIT","SELLER_ALLOCATION_FULL","SALES_DISABLED","PENDING_ORDER_EXISTS","PENDING_UPGRADE_EXISTS","RENEW_FIRST","TRAFFIC_FIRST","UPGRADE_LIMIT","UPGRADE_CAPACITY_CHANGED"].includes(code))
       return json({error:code},409);
     if (["INVALID_INPUT","INVALID_PLAN","INVALID_PAYMENT","INVALID_REASON","INVALID_RECEIPT"].includes(code) || error instanceof SyntaxError)
       return json({error:code==="REQUEST_FAILED"?"INVALID_INPUT":code},400);
