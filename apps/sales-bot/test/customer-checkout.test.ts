@@ -23,7 +23,7 @@ import { queueAccountDelivery } from "../src/account-delivery";
 import worker from "../src/index";
 
 const now=10_000,token="123456:CUSTOMER_TEST";
-const E={...env,BOT_TOKEN:token,ADMIN_TELEGRAM_IDS:"1",PUBLIC_BASE_URL:"https://example.test"} as Env;
+const E={...env,BOT_TOKEN:token,ADMIN_TELEGRAM_IDS:"1",PUBLIC_BASE_URL:"https://example.test",USAGE_LINK_SECRET:"test-usage-link-secret"} as Env;
 function signed(id:number) {
   const p=new URLSearchParams({auth_date:String(now),query_id:"q"+id,user:JSON.stringify({id})});
   const secret=createHmac("sha256","WebAppData").update(token).digest();
@@ -330,7 +330,7 @@ test("a buyer with an unpaid order is guided back to that order instead of creat
   const result=await call("/api/customer/orders",10,{planId:"monthly",nodeId:"n",requestKey:"key_abcdefghijklmn"});
   expect(result.status).toBe(409);
   expect(await result.json()).toEqual({error:"PENDING_ORDER_EXISTS"});
-  expect(await env.SALES_DB.prepare("SELECT COUNT(*) n FROM customer_orders WHERE user_id='10'").first("n")).toEqual({n:1});
+  expect(await env.SALES_DB.prepare("SELECT COUNT(*) n FROM customer_orders WHERE user_id='10'").first<number>("n")).toBe(1);
 
   expect(await handleCustomerTelegramUpdate(E,{update_id:902,callback_query:{id:"buy",from:{id:10},message:{message_id:2,chat:{id:10,type:"private"}},data:"customer:buy"}} as any,now)).toBe(true);
   const payload=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u902:reply'").first<string>("payload"))||"{}");
