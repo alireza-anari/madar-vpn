@@ -61,7 +61,7 @@ export async function customerApi(req:Request,env:Env,now:number):Promise<Respon
         const input=await parse(req);
         const upgrade=await createCustomerUpgrade(env.SALES_DB,actor,{
           orderId:input.orderId as string,planId:input.planId as string,
-          kind:input.kind as "renew"|"traffic",requestKey:input.requestKey as string,
+          kind:input.kind as "renew"|"traffic"|"bundle",requestKey:input.requestKey as string,
         },now);
         return json({id:upgrade.id,state:upgrade.state,kind:upgrade.kind,price:upgrade.price,currency:upgrade.currency,
           deltaBytes:upgrade.delta_bytes,deltaSeconds:upgrade.delta_seconds,
