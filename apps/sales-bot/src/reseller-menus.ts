@@ -73,7 +73,7 @@ async function enhanceAdminReply(env: Env, u: TelegramUpdate, now: number) {
     any
   >[][];
 
-  if (data === "rs:nodes" && env.PUBLIC_BASE_URL) {
+  if ((data === "rs:nodes" || /^rs:nodes:(0|[1-9][0-9]{0,2})$/.test(data)) && env.PUBLIC_BASE_URL) {
     const withoutExistingWebApp = keyboard.filter(
       (row) => !row.some((button) => button.web_app),
     );
