@@ -408,8 +408,28 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
     return true;
   }
 
+  const helpMatch=data.match(/^customer:help:(android|ios|windows|mac)$/);
   if(data==="customer:help" || command==="/help") {
-    await reply("📖 راهنمای خرید مدار\n۱) خرید اشتراک را بزن و پلن و سرور را انتخاب کن.\n۲) مبلغ را به اطلاعات پرداخت نمایش‌داده‌شده واریز کن.\n۳) عکس یا فایل رسید را همین‌جا بفرست.\n۴) پس از بررسی و تأیید مدیر و تأیید سرور، از «سفارش‌های من» کانفیگ را دریافت کن.\n\nتا وقتی پرداخت تأیید نشده، کانفیگی صادر نمی‌شود.",[[callback("🛍️ خرید اشتراک","customer:buy")],[callback("📦 سفارش‌های من","customer:orders:0")],[callback("🏠 منوی اصلی","customer:home")]]);
+    await reply("📖 راهنمای مدار\n\n<b>خرید:</b> پلن و سرور را انتخاب کن، مبلغ را واریز کن و رسید را در همین چت بفرست. پس از تأیید پرداخت و آماده‌شدن سرور، کانفیگ در دسترس است.\n\n<b>اتصال:</b> سیستم‌عاملت را انتخاب کن تا برنامه سازگار و روش واردکردن کانفیگ را ببینی.",[
+      [callback("🤖 اندروید","customer:help:android"),callback("🍎 آیفون و آیپد","customer:help:ios")],
+      [callback("💻 ویندوز","customer:help:windows"),callback("🖥️ مک","customer:help:mac")],
+      [callback("🛍️ خرید اشتراک","customer:buy")],[callback("🏠 منوی اصلی","customer:home")],
+    ],{parse_mode:"HTML"});
+    return true;
+  }
+  if(helpMatch) {
+    const guides={
+      android:{title:"🤖 اندروید · v2rayNG",url:"https://github.com/2dust/v2rayNG/releases",source:"دانلود v2rayNG از GitHub رسمی",steps:"۱) برنامه را از صفحه رسمی دانلود و نصب کن.\n۲) در مدار، کانفیگ را کپی کن.\n۳) در v2rayNG گزینه Import from clipboard را بزن.\n۴) سرور را انتخاب کن و اتصال را روشن کن."},
+      ios:{title:"🍎 آیفون و آیپد · V2Box",url:"https://apps.apple.com/app/v2box-v2ray-client/id6446814690",source:"مشاهده V2Box در App Store",steps:"۱) V2Box را از App Store نصب کن.\n۲) کانفیگ را از مدار کپی کن.\n۳) در برنامه گزینه افزودن یا واردکردن از Clipboard را انتخاب کن.\n۴) پروفایل را فعال کن."},
+      windows:{title:"💻 ویندوز · v2rayN",url:"https://github.com/2dust/v2rayN/releases",source:"دانلود v2rayN از GitHub رسمی",steps:"۱) نسخه مناسب ویندوز را از صفحه رسمی بگیر و استخراج کن.\n۲) کانفیگ را در مدار کپی کن.\n۳) در v2rayN گزینه Import share link from clipboard را انتخاب کن.\n۴) پروفایل را فعال کن و اتصال را روشن کن."},
+      mac:{title:"🖥️ مک · V2Box",url:"https://apps.apple.com/app/v2box-v2ray-client/id6446814690",source:"مشاهده V2Box در App Store",steps:"۱) V2Box را از App Store نصب کن.\n۲) کانفیگ را از مدار کپی کن.\n۳) در برنامه آن را از Clipboard وارد کن.\n۴) پروفایل را فعال کن."},
+    } as const;
+    const guide=guides[helpMatch[1] as keyof typeof guides];
+    await reply("<b>"+guide.title+"</b>\n\n"+guide.steps+"\n\nاگر اتصال برقرار نشد، اول مطمئن شو اشتراک منقضی یا تمام‌حجم نشده باشد.",[
+      [{text:"⬇️ "+guide.source,url:guide.url}],
+      [callback("↩️ انتخاب دستگاه دیگر","customer:help")],
+      [callback("🌐 سرویس‌های من","customer:services")],[callback("🏠 منوی اصلی","customer:home")],
+    ],{parse_mode:"HTML",link_preview_options:{is_disabled:true}});
     return true;
   }
 
