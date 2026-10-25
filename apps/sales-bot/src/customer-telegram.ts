@@ -394,9 +394,13 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
         ]);
         return true;
       }
-      const output="✅ کانفیگ آماده است\nسرور: "+result.serverName+"\nحجم: "+gb(result.quotaBytes)+"\nاعتبار تا: "+new Date(result.validUntil*1000).toLocaleString("fa-IR")+
-        "\n\nکانفیگ:\n"+result.config+(result.usageUrl?"\n\nلینک مصرف و اشتراک:\n"+result.usageUrl:"");
-      await reply(output,[[callback("📦 سفارش‌های من","customer:orders:0")],[callback("🏠 منوی اصلی","customer:home")]]);
+      const output="<b>✅ اشتراک مدار آماده است</b>\n\n🛰️ <b>سرور:</b> "+escapeHtml(result.serverName)+"\n📦 <b>حجم کل:</b> "+gb(result.quotaBytes)+
+        "\n⏰ <b>اعتبار تا:</b> "+dateTime(result.validUntil)+"\n\n<pre>"+escapeHtml(result.config)+"</pre>\n\n🔒 این کانفیگ مخصوص حساب توست؛ آن را برای دیگران ارسال نکن.";
+      const rows:Record<string,unknown>[][]=[];
+      if(result.config.length<=256) rows.push([{text:"📋 کپی کانفیگ",copy_text:{text:result.config}}]);
+      if(result.usageUrl) rows.push([{text:"📊 مصرف و اعتبار",url:result.usageUrl}]);
+      rows.push([callback("🌐 سرویس‌های من","customer:services")],[callback("📦 سفارش‌های من","customer:orders:0")],[callback("🏠 منوی اصلی","customer:home")]);
+      await reply(output,rows,{parse_mode:"HTML",link_preview_options:{is_disabled:true}});
     } catch(error) {
       if(!(error instanceof Error) || error.message!=="ORDER_NOT_AVAILABLE") throw error;
       await reply("این سفارش یا کانفیگ برای حساب تو در دسترس نیست.",[[callback("📦 سفارش‌های من","customer:orders:0")]]);
