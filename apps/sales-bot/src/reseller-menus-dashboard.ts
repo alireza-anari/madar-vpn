@@ -186,23 +186,32 @@ async function rewriteSellerStats(
   now: number,
 ) {
   if (actor.role !== "seller") return;
-  const [current, all] = await Promise.all([
+  const [current, all, limits] = await Promise.all([
     sellerStats(env.SALES_DB, actor.telegramId, "current", now),
     sellerStats(env.SALES_DB, actor.telegramId, "all", now),
+    sellerLimits(env.SALES_DB, actor.telegramId, now),
   ]);
   const text = [
-    "📊 آمار من",
-    "",
-    "این تسویه",
-    `فروش: ${formatBytes(current.soldBytes)} · ${current.configCount.toLocaleString("fa-IR")} کانفیگ`,
+    "📊 آمار من | مدار",
+    divider,
+    "<b>📅 این تسویه</b>",
+    `فروش: ${formatBytes(current.soldBytes)} · ${fa(current.configCount)} کانفیگ`,
     `مصرف واقعی: ${formatBytes(current.usedBytes)}`,
-    `در سرویس: ${inService(current).toLocaleString("fa-IR")}`,
+    `در سرویس: ${fa(inService(current))}`,
+    `پایان حجم: ${fa(current.exhaustedCount)} · منقضی: ${fa(current.expiredCount)}`,
     "",
-    "کل دوره",
-    `فروش: ${formatBytes(all.soldBytes)} · ${all.configCount.toLocaleString("fa-IR")} کانفیگ`,
+    "<b>📈 کل دوره</b>",
+    `فروش: ${formatBytes(all.soldBytes)} · ${fa(all.configCount)} کانفیگ`,
     `مصرف واقعی: ${formatBytes(all.usedBytes)}`,
+    "",
+    "<b>🎯 سهمیه فعلی</b>",
+    `تعداد: ${fa(limits.reservedAccounts)} از ${limits.maxReservedAccounts === null ? "نامحدود" : fa(limits.maxReservedAccounts)}`,
+    `حجم تعهدشده: ${formatBytes(limits.committedBytes)} از ${limits.maxCommittedBytes === null ? "نامحدود" : formatBytes(limits.maxCommittedBytes)}`,
   ].join("\n");
-  await replaceReply(env.SALES_DB, reply.id, reply.payload, text, [home()]);
+  await replaceReply(env.SALES_DB, reply.id, reply.payload, text, [
+    [btn("➕ صدور کانفیگ", "rs:sale"), btn("📋 کانفیگ‌ها", "rs:list")],
+    home(),
+  ], true);
 }
 
 async function sellerLimitError(
@@ -327,12 +336,12 @@ async function rewriteAdminReport(
   now: number,
 ) {
   if (actor.role !== "admin") return;
-  const capacities = await nodeCapacities(env.SALES_DB, now);
+  const [capacities, pendingReceipts] = await Promise.all([
+    nodeCapacities(env.SALES_DB, now),
+    pendingCustomerReceipts(env.SALES_DB),
+  ]);
   const committed = capacities.reduce((sum, n) => sum + n.committed_bytes, 0);
-  const finalized = capacities.reduce(
-    (sum, n) => sum + n.finalized_used_bytes,
-    0,
-  );
+  const finalized = capacities.reduce((sum, n) => sum + n.finalized_used_bytes, 0);
   const sellable = capacities.reduce((sum, n) => {
     const remaining = remainingAllocation(n);
     return remaining === null ? sum : sum + remaining;
@@ -340,14 +349,30 @@ async function rewriteAdminReport(
   const total = await env.SALES_DB.prepare(
     "SELECT COUNT(*) n FROM managed_accounts",
   ).first<number>("n");
+  const healthy = capacities.filter(n => n.healthy === 1 &&
+    n.last_seen > now - 90 && n.agent_capabilities.split(",").includes("quota-v2")).length;
   const text = [
     "📈 گزارش فروش و ظرفیت",
-    `کل کانفیگ‌ها: ${(total || 0).toLocaleString("fa-IR")}`,
+    divider,
+    "<b>🛰️ وضعیت زیرساخت</b>",
+    `سرور آماده: ${fa(healthy)} از ${fa(capacities.length)}`,
+    `کل کانفیگ‌ها: ${fa(total || 0)}`,
     `رزرو فعال: ${formatBytes(committed)}`,
     `مصرف قطعی: ${formatBytes(finalized)}`,
     `قابل فروش روی سرورهای محدود: ${formatBytes(sellable)}`,
+    "",
+    "<b>💳 سفارش مشتریان</b>",
+    ...(pendingReceipts === null
+      ? ["برای مشاهده رسیدها از صندوق رسیدها استفاده کن."]
+      : [`رسیدهای منتظر بررسی: ${fa(pendingReceipts)}`]),
+    "",
+    "👇 <b>برای جزئیات، بخش موردنظر را باز کن.</b>",
   ].join("\n");
-  await replaceReply(env.SALES_DB, reply.id, reply.payload, text, [home()]);
+  await replaceReply(env.SALES_DB, reply.id, reply.payload, text, [
+    [btn("🌐 سرورها", "rs:nodes"), btn("👥 فروشندگان", "rs:sellers")],
+    [btn("💳 رسیدهای مشتریان", "cust:inbox:0")],
+    home(),
+  ], true);
 }
 
 async function rewriteSellerConfirmError(
