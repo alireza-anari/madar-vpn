@@ -25,8 +25,8 @@ jobs:
           fetch-depth: 0
       - name: Pin reviewed exact-green source and configuration
         run: |
-          git merge-base --is-ancestor 87c54a6ccf6a0845fd4fc720a879024051d7a6d1 HEAD
-          git diff --exit-code 87c54a6ccf6a0845fd4fc720a879024051d7a6d1 HEAD -- apps/sales-bot sales-runner sales-node pnpm-lock.yaml
+          git merge-base --is-ancestor 1f5dd4257a2288cac0cabad814db009aac9ff930 HEAD
+          git diff --exit-code 1f5dd4257a2288cac0cabad814db009aac9ff930 HEAD -- apps/sales-bot sales-runner sales-node pnpm-lock.yaml
           grep -q '"keep_vars": true' apps/sales-bot/wrangler.jsonc
           grep -q '"crons": \["\* \* \* \* \*"\]' apps/sales-bot/wrangler.jsonc
       - uses: pnpm/action-setup@v4
