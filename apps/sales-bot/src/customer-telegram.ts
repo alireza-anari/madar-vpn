@@ -257,7 +257,7 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
     rows.push([callback("◀️ بازگشت به پلن‌ها","customer:buy")],[callback("🏠 منوی اصلی","customer:home")]);
     await reply("<b>🌐 انتخاب سرور</b>\n\n<b>پلن:</b> "+escapeHtml(plan.name)+
       "\n📦 حجم: "+gb(plan.quotaBytes)+" · ⏳ مدت: "+days(plan.durationSeconds)+
-      "\n💳 مبلغ: <b>"+money(plan.price,plan.currency)+"</b>\n\nفقط سرورهای سالم و دارای ظرفیت کافی نمایش داده می‌شوند. سرور دلخواهت را انتخاب کن.",rows,{parse_mode:"HTML"});
+      "\n💳 مبلغ: <b>"+money(plan.price,plan.currency)+"</b>\n\nفقط سرورهای سالم و دارای ظرفیت کافی نمایش داده می‌شوند. حالا سرور را انتخاب کن.",rows,{parse_mode:"HTML"});
     return true;
   }
 
