@@ -90,7 +90,7 @@ export async function customerApi(req:Request,env:Env,now:number):Promise<Respon
     if (["INVALID_SIGNATURE","AUTH_EXPIRED","SELLER_DISABLED","ADMIN_REQUIRED"].includes(code))
       return json({error:code},403);
     if (["ORDER_NOT_AVAILABLE","PLAN_UNAVAILABLE"].includes(code)) return json({error:code},404);
-    if (["KEY_REUSED","NODE_UNAVAILABLE","NODE_FULL","NODE_ALLOCATION_FULL","NODE_SLOT_LIMIT","SELLER_ACCOUNT_LIMIT","SELLER_ALLOCATION_FULL","SALES_DISABLED"].includes(code))
+    if (["KEY_REUSED","NODE_UNAVAILABLE","NODE_FULL","NODE_ALLOCATION_FULL","NODE_SLOT_LIMIT","SELLER_ACCOUNT_LIMIT","SELLER_ALLOCATION_FULL","SALES_DISABLED","PENDING_ORDER_EXISTS"].includes(code))
       return json({error:code},409);
     if (["INVALID_INPUT","INVALID_PLAN","INVALID_PAYMENT","INVALID_REASON","INVALID_RECEIPT"].includes(code) || error instanceof SyntaxError)
       return json({error:code==="REQUEST_FAILED"?"INVALID_INPUT":code},400);
