@@ -302,6 +302,27 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
     }
   }
 
+  const servicesPage=data.match(/^customer:services:(0|[1-9][0-9]{0,2})$/);
+  if(data==="customer:services" || servicesPage || command==="/services") {
+    await setConversation("");
+    const all=(await listCustomerOrders(db,actor)).filter(order=>order.state==="approved");
+    const page=servicesPage?Number(servicesPage[1]):0;
+    const pageSize=6,offset=page*pageSize,visible=all.slice(offset,offset+pageSize);
+    const rows:Record<string,unknown>[][]=visible.map(order=>[
+      callback(statusLabel(order,now)+" · "+order.planName.slice(0,24),"customer:order:"+order.id),
+    ]);
+    const nav:Record<string,unknown>[]=[];
+    if(page>0) nav.push(callback("◀️ قبلی","customer:services:"+(page-1)));
+    if(offset+pageSize<all.length) nav.push(callback("بعدی ▶️","customer:services:"+(page+1)));
+    if(nav.length) rows.push(nav);
+    rows.push([callback("🛍️ خرید اشتراک","customer:buy")],[callback("🏠 منوی اصلی","customer:home")]);
+    await reply(visible.length?
+      "🌐 اشتراک‌های من\nسرویس را انتخاب کن تا وضعیت، مصرف، حجم باقی‌مانده و تاریخ اعتبار را ببینی.":
+      "هنوز اشتراک تأییدشده‌ای در حسابت نیست. بعد از تأیید پرداخت، سرویس اینجا نمایش داده می‌شود.",
+      rows);
+    return true;
+  }
+
   const ordersPage=data.match(/^customer:orders:(0|[1-9][0-9]{0,2})$/);
   if(data==="customer:orders" || ordersPage || command==="/orders") {
     await setConversation("");
@@ -309,15 +330,15 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
     const all=await listCustomerOrders(db,actor);
     const pageSize=6,offset=page*pageSize,visible=all.slice(offset,offset+pageSize);
     const rows:Record<string,unknown>[][]=visible.map((order,i)=>[
-      callback(`${(offset+i+1).toLocaleString("fa-IR")}. ${statusLabel(order.state,order.accountState)} · ${money(order.price,order.currency)}`,
+      callback(`${(offset+i+1).toLocaleString("fa-IR")}. ${order.planName.slice(0,22)} · ${statusLabel(order,now)}`,
         "customer:order:"+order.id),
     ]);
     const nav:Record<string,unknown>[]=[];
     if(page>0) nav.push(callback("◀️ قبلی","customer:orders:"+(page-1)));
     if(offset+pageSize<all.length) nav.push(callback("بعدی ▶️","customer:orders:"+(page+1)));
     if(nav.length) rows.push(nav);
-    rows.push([callback("🛍️ خرید اشتراک","customer:buy")],[callback("🏠 منوی اصلی","customer:home")]);
-    await reply(visible.length?"📦 سفارش‌های اخیر تو:\nبرای جزئیات یا ادامه پرداخت یک سفارش را انتخاب کن.":"هنوز سفارشی ثبت نکرده‌ای.",rows);
+    rows.push([callback("🌐 سرویس‌های من","customer:services")],[callback("🛍️ خرید اشتراک","customer:buy")],[callback("🏠 منوی اصلی","customer:home")]);
+    await reply(visible.length?"📦 سفارش‌های اخیر تو:\nبرای جزئیات، ادامه پرداخت یا دریافت کانفیگ یک سفارش را انتخاب کن.":"هنوز سفارشی ثبت نکرده‌ای.",rows);
     return true;
   }
 
@@ -328,15 +349,25 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
       await reply("این سفارش در حساب تو پیدا نشد.",[[callback("📦 سفارش‌های من","customer:orders:0")],[callback("🏠 منوی اصلی","customer:home")]]);
       return true;
     }
-    const plan=(await customerPlans(db)).find(p=>p.id===order.planId);
     const rows:Record<string,unknown>[][]=[];
-    if(order.state==="awaiting_receipt") rows.push([callback("📸 ارسال رسید پرداخت","customer:receipt:"+order.id)]);
+    if(order.state==="awaiting_receipt") rows.push([callback("📸 ادامه پرداخت و ارسال رسید","customer:receipt:"+order.id)]);
     if(order.state==="approved") rows.push([callback("📥 دریافت کانفیگ","customer:config:"+order.id)]);
-    rows.push([callback("📦 سفارش‌های من","customer:orders:0")],[callback("🏠 منوی اصلی","customer:home")]);
-    await reply("جزئیات سفارش\nشماره: "+order.id+"\nپلن: "+(plan?.name||order.planId)+
-      "\nمبلغ: "+money(order.price,order.currency)+"\nحجم: "+gb(order.quotaBytes)+
-      " · مدت: "+days(order.durationSeconds)+"\nوضعیت: "+statusLabel(order.state,order.accountState)+
-      (order.reason?"\nتوضیح مدیر: "+order.reason:""),rows);
+    rows.push([callback("🌐 سرویس‌های من","customer:services")],[callback("📦 سفارش‌های من","customer:orders:0")],[callback("🏠 منوی اصلی","customer:home")]);
+    let details="<b>📦 جزئیات سفارش مدار</b>\n\n🔖 شماره: <code>"+order.id+"</code>\n📦 پلن: "+escapeHtml(order.planName)+
+      "\n💳 مبلغ: "+money(order.price,order.currency)+"\n📊 حجم کل: "+gb(order.quotaBytes)+
+      " · ⏳ مدت: "+days(order.durationSeconds)+"\n📌 وضعیت: <b>"+statusLabel(order,now)+"</b>";
+    if(order.serverName) details+="\n🛰️ سرور: "+escapeHtml(order.serverName);
+    if(order.state==="approved" && order.accountId) {
+      if(order.usedBytes!==null) {
+        const used=Math.min(order.quotaBytes,Math.max(0,order.usedBytes));
+        const remaining=Math.max(0,order.quotaBytes-used);
+        details+="\n\n"+usageBar(used,order.quotaBytes)+"\n📈 مصرف: "+traffic(used)+" از "+gb(order.quotaBytes)+
+          "\n🟢 حجم باقی‌مانده: "+traffic(remaining);
+      }
+      if(order.validUntil!==null) details+="\n⏰ تاریخ انقضا: "+dateTime(order.validUntil);
+    }
+    if(order.reason) details+="\n\n📝 توضیح مدیر: "+escapeHtml(order.reason);
+    await reply(details,rows,{parse_mode:"HTML"});
     return true;
   }
 
