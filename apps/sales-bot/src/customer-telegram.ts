@@ -13,14 +13,29 @@ type NodeChoice={id:string;name:string};
 type NodeState={flow:"customer-node-list";planId:string;nodes:NodeChoice[];nonce:string};
 const money=(price:number,currency:string)=>price.toLocaleString("fa-IR")+" "+(currency==="IRT"?"تومان":"ریال");
 const gb=(bytes:number)=>Math.max(1,Math.round(bytes/1e9)).toLocaleString("fa-IR")+" گیگابایت";
+const traffic=(bytes:number|null)=>((Math.max(0,bytes||0)/1e9).toLocaleString("fa-IR",{maximumFractionDigits:1}))+" گیگابایت";
 const days=(seconds:number)=>Math.max(1,Math.round(seconds/86400)).toLocaleString("fa-IR")+" روز";
-function statusLabel(state:string,accountState:string|null) {
-  if(state==="awaiting_receipt") return "در انتظار رسید پرداخت";
-  if(state==="pending_review") return "رسید ارسال شده؛ در انتظار بررسی مدیر";
-  if(state==="approving") return "پرداخت در حال تأیید و آماده‌سازی";
-  if(state==="approved") return accountState==="active"?"پرداخت تأیید شد؛ کانفیگ آماده بررسی است":"پرداخت تأیید شد؛ منتظر آماده‌شدن کانفیگ";
-  if(state==="rejected") return "رد شده";
-  return state;
+const dateTime=(seconds:number)=>new Date(seconds*1000).toLocaleString("fa-IR",{timeZone:"Asia/Tehran"});
+const escapeHtml=(value:string)=>value.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+const usageBar=(used:number,total:number)=>{
+  const ratio=total>0?Math.min(1,Math.max(0,used/total)):0;
+  const filled=Math.round(ratio*10);
+  return "🟩".repeat(filled)+"⬜".repeat(10-filled);
+};
+type CustomerOrderView={state:string;accountState:string|null;usedBytes:number|null;quotaBytes:number;validUntil:number|null};
+function statusLabel(order:CustomerOrderView,now:number) {
+  if(order.state==="awaiting_receipt") return "در انتظار رسید پرداخت";
+  if(order.state==="pending_review") return "رسید در حال بررسی";
+  if(order.state==="approving") return "در حال آماده‌سازی";
+  if(order.state==="approved") {
+    if(order.accountState==="revoked") return "دسترسی لغو شده";
+    if(order.accountState==="exhausted" || (order.usedBytes!==null && order.quotaBytes>0 && order.usedBytes>=order.quotaBytes)) return "حجم تمام شده";
+    if(order.validUntil!==null && order.validUntil<=now) return "اشتراک منقضی";
+    if(order.accountState==="active" && order.validUntil!==null && order.validUntil>now) return "اشتراک فعال";
+    return "در حال آماده‌سازی کانفیگ";
+  }
+  if(order.state==="rejected") return "پرداخت رد شده";
+  return order.state;
 }
 function parseNodeState(raw:string):NodeState|null {
   if(!raw.startsWith(NODE_STATE_PREFIX)) return null;
@@ -41,17 +56,17 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
   const text=u.message?.text?.trim() || "";
   const command=text.split(/\s+/,1)[0]?.split("@",1)[0] || "";
   const db=env.SALES_DB;
-  const reply=(value:string,rows?:Record<string,unknown>[][])=>
+  const reply=(value:string,rows?:Record<string,unknown>[][],extra:Record<string,unknown>={})=>
     enqueue(db,"u"+u.update_id+":reply",userId,{
-      text:value,...(rows?{reply_markup:{inline_keyboard:rows}}:{}),
+      text:value,...extra,...(rows?{reply_markup:{inline_keyboard:rows}}:{}),
     });
   const setConversation=async(value:string)=> {
     await db.prepare("INSERT OR IGNORE INTO users(id) VALUES(?)").bind(userId).run();
     await db.prepare("UPDATE users SET conversation=? WHERE id=?").bind(value,userId).run();
   };
   const homeRows:Record<string,unknown>[][]=[
-    [callback("🛍️ خرید اشتراک","customer:buy")],
-    [callback("📦 سفارش‌های من","customer:orders:0"),callback("📖 راهنما","customer:help")],
+    [callback("🛍️ خرید اشتراک","customer:buy"),callback("🌐 سرویس‌های من","customer:services")],
+    [callback("📦 سفارش‌های من","customer:orders:0"),callback("📖 راهنمای اتصال","customer:help")],
   ];
 
   // Admin reviews the actual Telegram photo/document before confirming any payment.
