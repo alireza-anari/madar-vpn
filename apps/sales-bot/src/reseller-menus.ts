@@ -162,8 +162,8 @@ function addMiniAppEntry(payload: Record<string, any>, publicBaseUrl: string) {
   );
   payload.reply_markup = {
     inline_keyboard: [
-      [{ text: "باز کردن پنل مدار", web_app: { url: appUrl } }],
       ...fallbackRows,
+      [{ text: "باز کردن پنل مدار", web_app: { url: appUrl } }],
     ],
   };
 }
@@ -186,33 +186,26 @@ async function enhanceDashboardReply(env: Env, u: TelegramUpdate, now: number) {
   const actor = await resolveSalesActor(env.SALES_DB, id, env);
 
   if (actor.role === "seller") {
-    if (typeof reply.payload.text === "string") {
-      const all = await sellerStats(env.SALES_DB, id, "all", now);
-      reply.payload.text = reply.payload.text.replace(
-        /در سرویس: [^\n]+/,
-        `در سرویس: ${(all.liveCount + all.blockedCount).toLocaleString("fa-IR")}`,
-      );
-    }
+    // The sales home explicitly distinguishes current-settlement and all-time totals.
+    // Do not overwrite the current live count with the all-time figure.
     if (env.PUBLIC_BASE_URL) addMiniAppEntry(reply.payload, env.PUBLIC_BASE_URL);
     await saveReply(env, reply);
     return;
   }
 
   if (actor.role === "admin") {
-    if (env.PUBLIC_BASE_URL) {
-      addMiniAppEntry(reply.payload, env.PUBLIC_BASE_URL);
-      const keyboard = (reply.payload.reply_markup?.inline_keyboard || []) as Record<string, any>[][];
-      keyboard.splice(1, 0, [{ text: "🛍️ پنل خرید مشتریان", web_app: {
-        url: new URL("/customer", env.PUBLIC_BASE_URL).toString()
-      } }]);
-      reply.payload.reply_markup = { inline_keyboard: keyboard };
-    }
-    // Native Telegram callback, not a Mini App: admins can review payment
-    // receipts straight from the bot home menu.
+    if (env.PUBLIC_BASE_URL) addMiniAppEntry(reply.payload, env.PUBLIC_BASE_URL);
+    // Keep native receipt review ahead of the optional Mini App shortcuts.
     const adminKeyboard = (reply.payload.reply_markup?.inline_keyboard || []) as Record<string, any>[][];
     const withoutDuplicate = adminKeyboard.filter(row =>
       !row.some(button => button.callback_data === "cust:inbox:0"));
-    withoutDuplicate.push([{ text: "💳 رسیدهای مشتریان", callback_data: "cust:inbox:0" }]);
+    const advancedIndex = withoutDuplicate.findIndex(row => row.some(button => button.web_app));
+    const insertAt = advancedIndex >= 0 ? advancedIndex : withoutDuplicate.length;
+    withoutDuplicate.splice(insertAt, 0, [{ text: "💳 رسیدهای مشتریان", callback_data: "cust:inbox:0" }]);
+    if (env.PUBLIC_BASE_URL)
+      withoutDuplicate.push([{ text: "🛍️ پیش‌نمایش فروشگاه مشتریان", web_app: {
+        url: new URL("/customer", env.PUBLIC_BASE_URL).toString()
+      } }]);
     reply.payload.reply_markup = { inline_keyboard: withoutDuplicate };
     await saveReply(env, reply);
   }
