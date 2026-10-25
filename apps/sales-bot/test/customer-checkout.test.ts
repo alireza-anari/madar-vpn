@@ -23,7 +23,7 @@ import { queueAccountDelivery } from "../src/account-delivery";
 import worker from "../src/index";
 
 const now=10_000,token="123456:CUSTOMER_TEST";
-const E={...env,BOT_TOKEN:token,ADMIN_TELEGRAM_IDS:"1",PUBLIC_BASE_URL:"https://example.test"} as Env;
+const E={...env,BOT_TOKEN:token,ADMIN_TELEGRAM_IDS:"1",PUBLIC_BASE_URL:"https://example.test",USAGE_LINK_SECRET:"test-usage-link-secret"} as Env;
 function signed(id:number) {
   const p=new URLSearchParams({auth_date:String(now),query_id:"q"+id,user:JSON.stringify({id})});
   const secret=createHmac("sha256","WebAppData").update(token).digest();
@@ -155,6 +155,12 @@ test("on ready node ACK the private VPN config is addressed to the buying custom
   expect(ready.sellerId).toBeUndefined();
   expect(JSON.stringify(ready)).not.toContain("sellerId");
   expect(ready.config).toContain("vless://");
+  expect(await handleCustomerTelegramUpdate(E,{update_id:907,callback_query:{id:"get-config",from:{id:10},message:{message_id:7,chat:{id:10,type:"private"}},data:"customer:config:"+o.id}} as any,now)).toBe(true);
+  const configMessage=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u907:reply'").first<string>("payload"))||"{}");
+  expect(configMessage.parse_mode).toBe("HTML");
+  const configButtons=configMessage.reply_markup.inline_keyboard.flat();
+  expect(configButtons.some((b:any)=>b.copy_text?.text===ready.config)).toBe(true);
+  expect(configButtons.some((b:any)=>b.url===ready.usageUrl)).toBe(true);
   expect((await call("/api/customer/orders/"+o.id+"/config",11)).status).toBe(404);
 });
 
@@ -301,4 +307,67 @@ test("reseller-mode dispatcher routes ordinary /start to native customer menu, n
   expect(buttons.some((b:any)=>b.callback_data==="customer:buy")).toBe(true);
   expect(buttons.some((b:any)=>b.callback_data==="customer:orders:0")).toBe(true);
   expect(JSON.stringify(payload)).not.toContain("web_app");
+});
+
+
+test("branded customer start sends the official Madar logo and a clean native menu",async()=>{
+  await setup();
+  expect(await handleCustomerTelegramUpdate(E,{update_id:901,message:{message_id:1,chat:{id:10,type:"private"},from:{id:10},text:"/start"}} as any,now)).toBe(true);
+  const payload=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u901:reply'").first<string>("payload"))||"{}");
+  expect(payload._method).toBe("sendPhoto");
+  expect(payload.photo).toBe("https://example.test/madar-logo.png");
+  expect(payload.caption).toContain("مدار | فروشگاه VPN");
+  const buttons=payload.reply_markup.inline_keyboard.flat();
+  expect(buttons.some((b:any)=>b.callback_data==="customer:buy")).toBe(true);
+  expect(buttons.some((b:any)=>b.callback_data==="customer:services")).toBe(true);
+  expect(buttons.some((b:any)=>b.callback_data==="customer:orders:0")).toBe(true);
+  expect(JSON.stringify(payload)).not.toContain("web_app");
+});
+
+test("a buyer with an unpaid order is guided back to that order instead of creating a second receipt target",async()=>{
+  await setup();
+  const first=await order();
+  const result=await call("/api/customer/orders",10,{planId:"monthly",nodeId:"n",requestKey:"key_abcdefghijklmn"});
+  expect(result.status).toBe(409);
+  expect(await result.json()).toEqual({error:"PENDING_ORDER_EXISTS"});
+  expect(await env.SALES_DB.prepare("SELECT COUNT(*) n FROM customer_orders WHERE user_id='10'").first<number>("n")).toBe(1);
+
+  expect(await handleCustomerTelegramUpdate(E,{update_id:902,callback_query:{id:"buy",from:{id:10},message:{message_id:2,chat:{id:10,type:"private"}},data:"customer:buy"}} as any,now)).toBe(true);
+  const payload=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u902:reply'").first<string>("payload"))||"{}");
+  expect(payload.text).toContain("رسید");
+  expect(payload.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="customer:receipt:"+first.id)).toBe(true);
+});
+
+test("customer services show remaining quota, usage progress, expiry and config action",async()=>{
+  await setup();
+  const o=await order();
+  await sendReceipt();
+  await call("/api/customer/admin/orders/"+o.id+"/approve",1,{});
+  const account=await env.SALES_DB.prepare("SELECT id FROM managed_accounts WHERE request_key=?")
+    .bind("customer-order:"+o.id).first<{id:string}>();
+  await env.SALES_DB.prepare("UPDATE managed_accounts SET state='active',used_bytes=?,valid_until=? WHERE id=?")
+    .bind(7e9,now+86400*5,account!.id).run();
+
+  expect(await handleCustomerTelegramUpdate(E,{update_id:903,callback_query:{id:"services",from:{id:10},message:{message_id:3,chat:{id:10,type:"private"}},data:"customer:services"}} as any,now)).toBe(true);
+  const services=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u903:reply'").first<string>("payload"))||"{}");
+  expect(services.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="customer:order:"+o.id)).toBe(true);
+
+  expect(await handleCustomerTelegramUpdate(E,{update_id:904,callback_query:{id:"detail",from:{id:10},message:{message_id:4,chat:{id:10,type:"private"}},data:"customer:order:"+o.id}} as any,now)).toBe(true);
+  const detail=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u904:reply'").first<string>("payload"))||"{}");
+  expect(detail.parse_mode).toBe("HTML");
+  expect(detail.text).toContain("حجم باقی‌مانده");
+  expect(detail.text).toContain("مصرف");
+  expect(detail.text).toContain("تاریخ انقضا");
+  expect(detail.text).toContain("اشتراک فعال");
+  expect(detail.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="customer:config:"+o.id)).toBe(true);
+});
+
+test("connection help offers platform-specific guides and official client sources",async()=>{
+  expect(await handleCustomerTelegramUpdate(E,{update_id:905,callback_query:{id:"help",from:{id:10},message:{message_id:5,chat:{id:10,type:"private"}},data:"customer:help"}} as any,now)).toBe(true);
+  const menu=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u905:reply'").first<string>("payload"))||"{}");
+  expect(menu.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="customer:help:android")).toBe(true);
+  expect(await handleCustomerTelegramUpdate(E,{update_id:906,callback_query:{id:"android",from:{id:10},message:{message_id:6,chat:{id:10,type:"private"}},data:"customer:help:android"}} as any,now)).toBe(true);
+  const guide=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u906:reply'").first<string>("payload"))||"{}");
+  expect(guide.text).toContain("Import from clipboard");
+  expect(guide.reply_markup.inline_keyboard.flat().some((b:any)=>b.url==="https://github.com/2dust/v2rayNG/releases")).toBe(true);
 });

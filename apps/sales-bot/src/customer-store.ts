@@ -43,21 +43,27 @@ export async function createCustomerOrder(db:D1Database,actor:SalesActor,input:{
   const id=crypto.randomUUID();
   await db.batch([
     db.prepare("INSERT OR IGNORE INTO users(id) VALUES(?)").bind(actor.telegramId),
-    db.prepare("INSERT OR IGNORE INTO customer_orders(id,user_id,plan_id,node_id,price,currency,quota_bytes,duration_seconds,request_key,created_at) SELECT ?,?,id,?,price,currency,quota_bytes,duration,?,? FROM plans WHERE id=? AND enabled=1 AND quota_bytes BETWEEN 1 AND 1000000000000 AND EXISTS(SELECT 1 FROM settings WHERE key='payment' AND length(trim(value))>0)")
-      .bind(id,actor.telegramId,input.nodeId,input.requestKey,now,input.planId),
+    db.prepare("INSERT OR IGNORE INTO customer_orders(id,user_id,plan_id,node_id,price,currency,quota_bytes,duration_seconds,request_key,created_at) SELECT ?,?,id,?,price,currency,quota_bytes,duration,?,? FROM plans WHERE id=? AND enabled=1 AND quota_bytes BETWEEN 1 AND 1000000000000 AND EXISTS(SELECT 1 FROM settings WHERE key='payment' AND length(trim(value))>0) AND NOT EXISTS(SELECT 1 FROM customer_orders WHERE user_id=? AND state='awaiting_receipt')")
+      .bind(id,actor.telegramId,input.nodeId,input.requestKey,now,input.planId,actor.telegramId),
   ]);
   const result=await db.prepare("SELECT * FROM customer_orders WHERE user_id=? AND request_key=?")
     .bind(actor.telegramId,input.requestKey).first<OrderRow>();
-  if (!result) throw Error("SALES_DISABLED");
+  if (!result) {
+    const pending=await db.prepare("SELECT id FROM customer_orders WHERE user_id=? AND state='awaiting_receipt' ORDER BY created_at DESC LIMIT 1")
+      .bind(actor.telegramId).first<{id:string}>();
+    if (pending) throw Error("PENDING_ORDER_EXISTS");
+    throw Error("SALES_DISABLED");
+  }
   if (result.plan_id!==input.planId || result.node_id!==input.nodeId) throw Error("KEY_REUSED");
   return result;
 }
 export async function listCustomerOrders(db:D1Database,actor:SalesActor) {
-  const rows=await db.prepare("SELECT o.*,a.state account_state,a.used_bytes,a.valid_until FROM customer_orders o LEFT JOIN managed_accounts a ON a.id=o.account_id WHERE o.user_id=? ORDER BY o.created_at DESC,o.id DESC LIMIT 40")
-    .bind(actor.telegramId).all<OrderRow & {account_state:string|null;used_bytes:number|null;valid_until:number|null}>();
-  return rows.results.map(r=>({id:r.id,planId:r.plan_id,state:r.state,price:r.price,currency:r.currency,
-    quotaBytes:r.quota_bytes,durationSeconds:r.duration_seconds,createdAt:r.created_at,reason:r.reason,
-    accountId:r.account_id,accountState:r.account_state,usedBytes:r.used_bytes,validUntil:r.valid_until}));
+  const rows=await db.prepare("SELECT o.*,a.state account_state,a.used_bytes,a.valid_until,p.name AS plan_name,n.name AS server_name FROM customer_orders o LEFT JOIN managed_accounts a ON a.id=o.account_id LEFT JOIN plans p ON p.id=o.plan_id LEFT JOIN nodes n ON n.id=a.node_id WHERE o.user_id=? ORDER BY o.created_at DESC,o.id DESC LIMIT 40")
+    .bind(actor.telegramId).all<OrderRow & {account_state:string|null;used_bytes:number|null;valid_until:number|null;plan_name:string|null;server_name:string|null}>();
+  return rows.results.map(r=>({id:r.id,planId:r.plan_id,planName:r.plan_name||r.plan_id,serverName:r.server_name,
+    state:r.state,price:r.price,currency:r.currency,quotaBytes:r.quota_bytes,durationSeconds:r.duration_seconds,
+    createdAt:r.created_at,reason:r.reason,accountId:r.account_id,accountState:r.account_state,
+    usedBytes:r.used_bytes,validUntil:r.valid_until}));
 }
 export async function requestCustomerReceipt(db:D1Database,actor:SalesActor,id:string) {
   if (!(await db.prepare("SELECT id FROM customer_orders WHERE id=? AND user_id=? AND state='awaiting_receipt'")
