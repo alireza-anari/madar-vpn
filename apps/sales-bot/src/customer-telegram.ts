@@ -7,6 +7,11 @@ import {
   rejectCustomerOrder, requestCustomerReceipt, submitCustomerReceipt,
 } from "./customer-store";
 import { createCustomerQrUrl } from "./customer-qr";
+import {
+  adminUpgrade, approveUpgrade, cancelUpgrade, createCustomerUpgrade,
+  listCustomerUpgrades, ownedCustomerService, rejectUpgrade, requestUpgradeReceipt,
+  submitUpgradeReceipt,
+} from "./customer-upgrades";
 
 const callback=(label:string,data:string)=>({text:label,callback_data:data});
 const NODE_STATE_PREFIX="customer-node-list:";
@@ -74,6 +79,97 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
     [callback("📦 سفارش‌های من","customer:orders:0"),callback("📖 راهنمای اتصال","customer:help")],
   ];
 
+  // Customer upgrade receipts use a distinct inbox; never approve by trusting a Telegram image alone.
+  const rejectState=actor.role==="admin" && !data && !!text && !text.startsWith("/")
+    ? await db.prepare("SELECT conversation FROM users WHERE id=?").bind(userId).first<string>("conversation")
+    : null;
+  if(data.startsWith("cust:up:") || rejectState?.startsWith("customer-upgrade-reject:")) {
+    if(actor.role!=="admin") {
+      await reply("این بخش فقط برای مدیر است.");
+      return true;
+    }
+    const pageMatch=data.match(/^cust:up:list:(0|[1-9][0-9]{0,2})$/);
+    if(data==="cust:up:list" || pageMatch) {
+      const page=pageMatch?Number(pageMatch[1]):0,limit=6;
+      const rows=await db.prepare(
+        "SELECT id,user_id,kind,price,currency,created_at FROM customer_upgrades " +
+        "WHERE state='pending_review' AND EXISTS(SELECT 1 FROM customer_upgrade_receipts r WHERE r.upgrade_id=customer_upgrades.id) " +
+        "ORDER BY created_at,id LIMIT ? OFFSET ?"
+      ).bind(limit+1,page*limit).all<{id:string;user_id:string;kind:string;price:number;currency:string;created_at:number}>();
+      const keyboard:Record<string,unknown>[][]=rows.results.slice(0,limit).map(item=>[
+        callback("💳 "+(item.kind==="renew"?"تمدید":"حجم اضافه")+" · "+money(item.price,item.currency)+" · #"+item.id.slice(0,8),
+          "cust:up:review:"+item.id),
+      ]);
+      const nav:Record<string,unknown>[]=[];
+      if(page>0) nav.push(callback("◀️ قبلی","cust:up:list:"+(page-1)));
+      if(rows.results.length>limit && page<999) nav.push(callback("بعدی ▶️","cust:up:list:"+(page+1)));
+      if(nav.length) keyboard.push(nav);
+      keyboard.push([callback("🔄 تازه‌سازی","cust:up:list:"+page)]);
+      keyboard.push([callback("💳 خریدهای اولیه","cust:inbox:0")],[callback("🏠 منوی اصلی","rs:home")]);
+      await reply(rows.results.length
+        ?"💳 <b>رسیدهای تمدید و حجم اضافه</b>\nقبل از تأیید، انتقال وجه را مستقلاً از حساب بانکی بررسی کنید."
+        :"✅ فعلاً رسید تمدید یا حجم اضافه‌ای در این صفحه منتظر بررسی نیست.",keyboard,{parse_mode:"HTML"});
+      return true;
+    }
+    const review=data.match(/^cust:up:(review|approve|reject):([a-f0-9-]{36})$/);
+    try {
+      if(review) {
+        const [,action,upgradeId]=review;
+        const upgrade=await adminUpgrade(db,actor,upgradeId!);
+        if(!upgrade) throw Error("ORDER_NOT_AVAILABLE");
+        if(action==="review") {
+          const canDecide=upgrade.state==="pending_review" && !!upgrade.file_id;
+          await reply("🧾 <b>بررسی پرداخت "+(upgrade.kind==="renew"?"تمدید":"حجم اضافه")+"</b>\n"+
+            "شماره: <code>"+upgrade.id+"</code>\nمشتری: "+upgrade.user_id+
+            "\nمبلغ: <b>"+money(upgrade.price,upgrade.currency)+"</b>"+
+            "\n"+(upgrade.kind==="traffic"?"حجم: "+gb(upgrade.delta_bytes):"مدت: "+days(upgrade.delta_seconds))+
+            "\nوضعیت: "+upgrade.state+"\n\nفقط پس از تأیید واریز واقعی بانک، اقدام کنید.",[
+              ...(canDecide?[
+                [callback("✅ تأیید و اعمال روی کانفیگ","cust:up:approve:"+upgrade.id)],
+                [callback("❌ رد پرداخت","cust:up:reject:"+upgrade.id)],
+              ]:[]),
+              [callback("💳 صندوق تمدید و حجم","cust:up:list:0")],
+            ],{parse_mode:"HTML"});
+          if(upgrade.file_id && upgrade.receipt_kind)
+            await enqueue(db,"u"+u.update_id+":upgrade-proof",userId,{
+              _method:upgrade.receipt_kind==="photo"?"sendPhoto":"sendDocument",
+              [upgrade.receipt_kind==="photo"?"photo":"document"]:upgrade.file_id,
+              caption:"رسید تمدید/حجم "+upgrade.id,
+            });
+          return true;
+        }
+        if(action==="approve") {
+          await approveUpgrade(env,actor,upgradeId!,now);
+          await reply("✅ پرداخت تأیید شد؛ همان کانفیگ در حال به‌روزرسانی است. پس از ACK سرور مشتری مطلع می‌شود.",[
+            [callback("💳 صندوق تمدید و حجم","cust:up:list:0")],
+          ]);
+          return true;
+        }
+        if(upgrade.state!=="pending_review") throw Error("ORDER_NOT_AVAILABLE");
+        await setConversation("customer-upgrade-reject:"+upgradeId);
+        await reply("دلیل رد این پرداخت را ارسال کنید. مشتری از رد و لزوم پیگیری استرداد وجه مطلع می‌شود.");
+        return true;
+      }
+      if(rejectState?.startsWith("customer-upgrade-reject:")) {
+        await rejectUpgrade(db,actor,rejectState.slice("customer-upgrade-reject:".length),text,now);
+        await setConversation("");
+        await reply("❌ درخواست رد شد و مشتری از نتیجه مطلع شد.",[
+          [callback("💳 صندوق تمدید و حجم","cust:up:list:0")],
+        ]);
+        return true;
+      }
+    } catch(error) {
+      const code=error instanceof Error?error.message:"";
+      if(!["ORDER_NOT_AVAILABLE","UPGRADE_CAPACITY_CHANGED","NODE_UNAVAILABLE"].includes(code)) throw error;
+      await reply(code==="UPGRADE_CAPACITY_CHANGED"?
+        "⚠️ ظرفیت یا وضعیت اشتراک تغییر کرده است. پرداخت را دوباره تأیید نکنید؛ از صندوق سفارش‌ها بررسی و درباره جایگزین یا استرداد وجه تصمیم بگیرید.":
+        "درخواست قابل تأیید نیست: "+code,[[callback("💳 صندوق تمدید و حجم","cust:up:list:0")]]);
+      return true;
+    }
+    await reply("درخواست نامعتبر است.");
+    return true;
+  }
+
   // Admin reviews the actual Telegram photo/document before confirming any payment.
   if (data.startsWith("cust:") || (actor.role==="admin" && (text==="/receipts" || (!text.startsWith("/") && !!(await db.prepare("SELECT conversation FROM users WHERE id=? AND conversation LIKE 'customer-reject:%'").bind(userId).first()))))) {
     if (actor.role!=="admin") {
@@ -97,6 +193,7 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
       if(rows.results.length>pageSize && page<999) navigation.push(callback("بعدی ▶️","cust:inbox:"+(page+1)));
       if(navigation.length) keyboard.push(navigation);
       keyboard.push([callback("🔄 تازه‌سازی","cust:inbox:"+page)]);
+      keyboard.push([callback("🔁 صندوق تمدید و حجم اضافه","cust:up:list:0")]);
       keyboard.push([callback("🏠 منوی اصلی","rs:home")]);
       await reply(visible.length?
         "💳 رسیدهای در انتظار تأیید\nروی هر سفارش بزن تا عکس یا فایل رسید را ببینی و سپس تأیید یا رد کنی.\nقبل از تأیید، واریز واقعی را از حساب بانکی بررسی کن.":
