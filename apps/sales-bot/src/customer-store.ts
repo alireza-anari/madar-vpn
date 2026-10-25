@@ -65,6 +65,18 @@ export async function listCustomerOrders(db:D1Database,actor:SalesActor) {
     createdAt:r.created_at,reason:r.reason,accountId:r.account_id,accountState:r.account_state,
     usedBytes:r.used_bytes,validUntil:r.valid_until}));
 }
+// Customer can withdraw only an unpaid, unsubmitted order. Never touch reviewed or issued accounts.
+export async function cancelUnpaidCustomerOrder(db:D1Database,actor:SalesActor,id:string,now:number) {
+  const claim=await db.prepare(
+    "UPDATE customer_orders SET state='rejected',reason='لغو توسط مشتری',decided_at=?,decided_by=? WHERE id=? AND user_id=? AND state='awaiting_receipt' AND NOT EXISTS(SELECT 1 FROM customer_receipts WHERE order_id=?)"
+  ).bind(now,actor.telegramId,id,actor.telegramId,id).run();
+  if(claim.meta.changes!==1) throw Error("ORDER_NOT_AVAILABLE");
+  await db.batch([
+    db.prepare("UPDATE users SET conversation='' WHERE id=? AND conversation=?").bind(actor.telegramId,"customer-receipt:"+id),
+    db.prepare("INSERT INTO audit_events(actor_id,action,target_id,created_at) VALUES(?,'customer_cancel_order',?,?)")
+      .bind(actor.telegramId,id,now),
+  ]);
+}
 export async function requestCustomerReceipt(db:D1Database,actor:SalesActor,id:string) {
   if (!(await db.prepare("SELECT id FROM customer_orders WHERE id=? AND user_id=? AND state='awaiting_receipt'")
     .bind(id,actor.telegramId).first())) throw Error("ORDER_NOT_AVAILABLE");
