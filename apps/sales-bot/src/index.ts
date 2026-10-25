@@ -16,6 +16,7 @@ import appAdminJs from "../public/app-admin.js";
 import { adminApi } from "./admin-api";
 import { appApi } from "./app-api";
 import { customerApi } from "./customer-api";
+import { customerQrResponse } from "./customer-qr";
 import customerHtml from "../public/customer.html";
 import customerCss from "../public/customer.css";
 import customerJs from "../public/customer.js";
@@ -54,6 +55,8 @@ export default {
     if (path === "/madar-logo.png")
       return new Response(brandLogo, { headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=3600", "X-Content-Type-Options": "nosniff" } });
     if (path === "/customer") return textResponse(customerHtml, "text/html; charset=utf-8", true);
+    if (path.startsWith("/api/customer/qr/"))
+      return customerQrResponse(request, env, path.slice("/api/customer/qr/".length), epoch());
     if (path === "/customer.css") return textResponse(customerCss, "text/css; charset=utf-8");
     if (path === "/customer.js") return textResponse(customerJs, "text/javascript; charset=utf-8");
     if (path.startsWith("/api/customer/")) return customerApi(request, env, epoch());

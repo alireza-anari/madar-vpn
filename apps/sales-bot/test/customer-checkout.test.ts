@@ -19,6 +19,7 @@ import customerMigration from "../migrations/0016-customer-checkout.sql?raw";
 import { customerApi } from "../src/customer-api";
 import { handleUpdate } from "../src/menus";
 import { handleCustomerTelegramUpdate } from "../src/customer-telegram";
+import { customerQrResponse } from "../src/customer-qr";
 import { queueAccountDelivery } from "../src/account-delivery";
 import worker from "../src/index";
 
@@ -161,6 +162,18 @@ test("on ready node ACK the private VPN config is addressed to the buying custom
   const configButtons=configMessage.reply_markup.inline_keyboard.flat();
   expect(configButtons.some((b:any)=>b.copy_text?.text===ready.config)).toBe(true);
   expect(configButtons.some((b:any)=>b.url===ready.usageUrl)).toBe(true);
+  expect(configButtons.some((b:any)=>b.callback_data==="customer:qr:"+o.id)).toBe(true);
+  expect(await handleCustomerTelegramUpdate(E,{update_id:908,callback_query:{id:"qr",from:{id:10},message:{message_id:8,chat:{id:10,type:"private"}},data:"customer:qr:"+o.id}} as any,now)).toBe(true);
+  const qrPayload=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u908:reply'").first<string>("payload"))||"{}");
+  expect(qrPayload._method).toBe("sendPhoto");
+  expect(qrPayload.photo).toContain("/api/customer/qr/");
+  expect(qrPayload.photo).not.toContain(ready.config);
+  const qrToken=new URL(qrPayload.photo).pathname.slice("/api/customer/qr/".length);
+  const qrResponse=await customerQrResponse(new Request(qrPayload.photo),E,qrToken,now);
+  expect(qrResponse.status).toBe(200);
+  expect(qrResponse.headers.get("Content-Type")).toBe("image/png");
+  expect((await qrResponse.arrayBuffer()).byteLength).toBeGreaterThan(100);
+  expect((await customerQrResponse(new Request(qrPayload.photo),E,qrToken+"x",now)).status).toBe(404);
   expect((await call("/api/customer/orders/"+o.id+"/config",11)).status).toBe(404);
 });
 
@@ -285,7 +298,7 @@ test("ordinary buyer completes plan selection, payment instructions, and receipt
   expect(await send({update_id:806,callback_query:{id:"orders",from:{id:10},message:{message_id:6,chat:{id:10,type:"private"}},data:"customer:orders:0"}})).toBe(true);
   const orders=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u806:reply'").first<string>("payload"))||"{}");
   expect(orders.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="customer:order:"+order.id)).toBe(true);
-  expect(orders.text).toContain("سفارش‌های اخیر");
+  expect(orders.text).toContain("سفارش‌های من");
 });
 
 test("customer order and config callbacks never reveal another user's order",async()=>{

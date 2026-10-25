@@ -58,7 +58,7 @@ export async function createCustomerOrder(db:D1Database,actor:SalesActor,input:{
   return result;
 }
 export async function listCustomerOrders(db:D1Database,actor:SalesActor) {
-  const rows=await db.prepare("SELECT o.*,a.state account_state,a.used_bytes,a.valid_until,p.name AS plan_name,n.name AS server_name FROM customer_orders o LEFT JOIN managed_accounts a ON a.id=o.account_id LEFT JOIN plans p ON p.id=o.plan_id LEFT JOIN nodes n ON n.id=a.node_id WHERE o.user_id=? ORDER BY o.created_at DESC,o.id DESC LIMIT 40")
+  const rows=await db.prepare("SELECT o.*,a.state account_state,a.used_bytes,a.valid_until,p.name AS plan_name,n.name AS server_name FROM customer_orders o LEFT JOIN managed_accounts a ON a.id=o.account_id LEFT JOIN plans p ON p.id=o.plan_id LEFT JOIN nodes n ON n.id=COALESCE(a.node_id,o.node_id) WHERE o.user_id=? ORDER BY o.created_at DESC,o.id DESC LIMIT 40")
     .bind(actor.telegramId).all<OrderRow & {account_state:string|null;used_bytes:number|null;valid_until:number|null;plan_name:string|null;server_name:string|null}>();
   return rows.results.map(r=>({id:r.id,planId:r.plan_id,planName:r.plan_name||r.plan_id,serverName:r.server_name,
     state:r.state,price:r.price,currency:r.currency,quotaBytes:r.quota_bytes,durationSeconds:r.duration_seconds,
