@@ -686,3 +686,23 @@ test("a fully expired and traffic-exhausted service can buy one complete paid re
     valid_until:now+30*86400,state:"preparing"});
   expect(await env.SALES_DB.prepare("SELECT COUNT(*) n FROM managed_accounts").first("n")).toBe(1);
 });
+
+
+test("complete renewal bundle is forbidden unless BOTH time and traffic are exhausted",async()=>{
+  const s=await readyPurchasedService();
+  await env.SALES_DB.prepare("UPDATE managed_accounts SET state='expired',valid_until=?,used_bytes=0 WHERE id=?")
+    .bind(now-10,s.accountId).run();
+  await expect(createCustomerUpgrade(env.SALES_DB,{telegramId:"10",role:"ordinary"},{
+    orderId:s.orderId,planId:"monthly",kind:"bundle",requestKey:"bundle-time-only-123",
+  },now)).rejects.toThrow("BUNDLE_NOT_AVAILABLE");
+  const viaApi=await call("/api/customer/upgrades",10,{
+    orderId:s.orderId,planId:"monthly",kind:"bundle",requestKey:"bundle-api-guard-123",
+  });
+  expect(viaApi.status).toBe(409);
+  await env.SALES_DB.prepare("UPDATE managed_accounts SET state='active',valid_until=?,used_bytes=quota_bytes WHERE id=?")
+    .bind(now+3600,s.accountId).run();
+  await expect(createCustomerUpgrade(env.SALES_DB,{telegramId:"10",role:"ordinary"},{
+    orderId:s.orderId,planId:"monthly",kind:"bundle",requestKey:"bundle-traffic-only-123",
+  },now)).rejects.toThrow("BUNDLE_NOT_AVAILABLE");
+  expect(await env.SALES_DB.prepare("SELECT COUNT(*) n FROM customer_upgrades").first("n")).toBe(0);
+});
