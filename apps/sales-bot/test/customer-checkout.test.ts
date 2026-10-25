@@ -661,3 +661,28 @@ test("renewal receipt in the native bot appears in the correct admin review inbo
   expect(inbox.text).toContain("رسیدهای تمدید و حجم");
   expect(inbox.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="cust:up:review:"+u.id)).toBe(true);
 });
+
+
+test("a fully expired and traffic-exhausted service can buy one complete paid renewal bundle",async()=>{
+  const s=await readyPurchasedService();
+  await env.SALES_DB.prepare("UPDATE managed_accounts SET state='expired',used_bytes=20000000000,valid_until=? WHERE id=?")
+    .bind(now-10,s.accountId).run();
+  expect(await handleCustomerTelegramUpdate(E,{
+    update_id:993,callback_query:{id:"choose-bundle",from:{id:10},message:{message_id:9,chat:{id:10,type:"private"},text:"مدیریت"},data:"customer:up:menu:"+s.orderId},
+  } as any,now)).toBe(true);
+  const menu=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u993:reply'").first<string>("payload"))||"{}");
+  expect(menu.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data?.startsWith("customer:up:offer:b:"))).toBe(true);
+  const o=await createCustomerUpgrade(env.SALES_DB,{telegramId:"10",role:"ordinary"},{
+    orderId:s.orderId,planId:"monthly",kind:"bundle",requestKey:"full-renew-bundle123",
+  },now);
+  expect(o.delta_bytes).toBe(20e9);
+  expect(o.delta_seconds).toBe(30*86400);
+  expect(o.price).toBe(250000);
+  await payUpgrade(o.id);
+  await approveUpgrade(E,{telegramId:"1",role:"admin"},o.id,now);
+  const a=await env.SALES_DB.prepare("SELECT id,uuid,quota_bytes,used_bytes,valid_until,state FROM managed_accounts WHERE id=?")
+    .bind(s.accountId).first<any>();
+  expect(a).toMatchObject({id:s.accountId,uuid:s.uuid,quota_bytes:40e9,used_bytes:20e9,
+    valid_until:now+30*86400,state:"preparing"});
+  expect(await env.SALES_DB.prepare("SELECT COUNT(*) n FROM managed_accounts").first("n")).toBe(1);
+});
