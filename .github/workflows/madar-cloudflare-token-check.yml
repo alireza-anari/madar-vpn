@@ -42,7 +42,7 @@ jobs:
             [.result.bindings[] | select(.name == "SALES_DB" and (.id == $id))] | length == 1
           ' /tmp/worker.json >/dev/null
           jq -e '.result.deployments[0].versions[0].version_id ==
-            "72fc5608-29a7-49a9-97b7-a934714654c5"' /tmp/deployments.json >/dev/null
+            "10de43ee-e655-4746-bb23-2294dba84600"' /tmp/deployments.json >/dev/null
           jq -e 'any(.result.schedules[]; .cron=="* * * * *")' /tmp/cron.json >/dev/null
           jq -e '.result[0].results[0].name=="0017-customer-upgrades.sql"' /tmp/d1.json >/dev/null
           echo "PASS: GitHub Cloudflare credential has read access and production baseline is unchanged"
