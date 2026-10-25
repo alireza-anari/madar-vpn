@@ -26,34 +26,39 @@ export async function deliverOutbox(
           ? "sendDocument"
           : payload._method === "sendPhoto"
             ? "sendPhoto"
-            : "sendMessage";
+            : payload._method === "editMessageText"
+              ? "editMessageText"
+              : "sendMessage";
       delete payload._method;
-      const r = await fetcher(
-        `https://api.telegram.org/bot${env.BOT_TOKEN}/${method}`,
-        {
+      const call = async (action:string,body:Record<string,unknown>) => {
+        const response = await fetcher(`https://api.telegram.org/bot${env.BOT_TOKEN}/${action}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ chat_id: row.chat_id, ...payload }),
+          body: JSON.stringify({ chat_id: row.chat_id, ...body }),
           signal: AbortSignal.timeout(10000),
-        },
-      );
-      const data: unknown = await r.json();
-      ok =
-        r.ok &&
-        typeof data === "object" &&
-        data !== null &&
-        "ok" in data &&
-        data.ok === true;
-      permanent = r.status === 400 || r.status === 403;
-      if (
-        typeof data === "object" &&
-        data !== null &&
-        "parameters" in data &&
-        typeof data.parameters === "object" &&
-        data.parameters !== null &&
-        "retry_after" in data.parameters
-      )
-        retryAfter = Number(data.parameters.retry_after) || 0;
+        });
+        const result: unknown = await response.json();
+        return {response,result};
+      };
+      let {response,result} = await call(method,payload);
+      if(method==="editMessageText" && response.status===400) {
+        const description=typeof result==="object" && result!==null && "description" in result
+          ? String(result.description) : "";
+        if(description.toLowerCase().includes("message is not modified")) {
+          ok=true;
+        } else {
+          // Old/deleted/uneditable callback messages must never discard the customer's action.
+          // Fall back to sending a normal message without message_id.
+          const {message_id:_ignored,...messagePayload}=payload;
+          ({response,result}=await call("sendMessage",messagePayload));
+        }
+      }
+      if(!ok) ok=response.ok && typeof result==="object" && result!==null &&
+        "ok" in result && result.ok===true;
+      permanent=!ok && (response.status===400 || response.status===403);
+      if (typeof result==="object" && result!==null && "parameters" in result &&
+        typeof result.parameters==="object" && result.parameters!==null &&
+        "retry_after" in result.parameters) retryAfter=Number(result.parameters.retry_after)||0;
     } catch {
       /* Do not log fetch errors containing bot token URLs. */
     }

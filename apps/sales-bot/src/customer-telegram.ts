@@ -2,7 +2,7 @@ import type { TelegramUpdate } from "./contracts";
 import { resolveSalesActor } from "./resellers";
 import { enqueue } from "./telegram";
 import {
-  approveCustomerOrder, availableCustomerNodes, createCustomerOrder, customerConfig,
+  approveCustomerOrder, availableCustomerNodes, cancelUnpaidCustomerOrder, createCustomerOrder, customerConfig,
   customerPlans, getCustomerOrderForAdmin, listCustomerOrders, paymentInstructions,
   rejectCustomerOrder, requestCustomerReceipt, submitCustomerReceipt,
 } from "./customer-store";
@@ -23,7 +23,7 @@ const usageBar=(used:number,total:number)=>{
   const filled=Math.round(ratio*10);
   return "🟩".repeat(filled)+"⬜".repeat(10-filled);
 };
-type CustomerOrderView={state:string;accountState:string|null;usedBytes:number|null;quotaBytes:number;validUntil:number|null};
+type CustomerOrderView={state:string;accountState:string|null;usedBytes:number|null;quotaBytes:number;validUntil:number|null;reason?:string|null};
 function statusLabel(order:CustomerOrderView,now:number) {
   if(order.state==="awaiting_receipt") return "در انتظار رسید پرداخت";
   if(order.state==="pending_review") return "رسید در حال بررسی";
@@ -35,7 +35,7 @@ function statusLabel(order:CustomerOrderView,now:number) {
     if(order.accountState==="active" && order.validUntil!==null && order.validUntil>now) return "اشتراک فعال";
     return "در حال آماده‌سازی کانفیگ";
   }
-  if(order.state==="rejected") return "پرداخت رد شده";
+  if(order.state==="rejected") return order.reason==="لغو توسط مشتری"?"لغوشده توسط مشتری":"پرداخت رد شده";
   return order.state;
 }
 function parseNodeState(raw:string):NodeState|null {
@@ -57,8 +57,12 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
   const text=u.message?.text?.trim() || "";
   const command=text.split(/\s+/,1)[0]?.split("@",1)[0] || "";
   const db=env.SALES_DB;
+  const callbackMessage=u.callback_query?.message;
+  const canEdit=actor.role==="ordinary" && !!data && !!callbackMessage?.text &&
+    Number.isSafeInteger(callbackMessage.message_id) && Number(callbackMessage.message_id)>0;
   const reply=(value:string,rows?:Record<string,unknown>[][],extra:Record<string,unknown>={})=>
     enqueue(db,"u"+u.update_id+":reply",userId,{
+      ...(canEdit?{_method:"editMessageText",message_id:callbackMessage!.message_id}:{}),
       text:value,...extra,...(rows?{reply_markup:{inline_keyboard:rows}}:{}),
     });
   const setConversation=async(value:string)=> {
@@ -412,7 +416,10 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
       return true;
     }
     const rows:Record<string,unknown>[][]=[];
-    if(order.state==="awaiting_receipt") rows.push([callback("📸 ادامه پرداخت و ارسال رسید","customer:receipt:"+order.id)]);
+    if(order.state==="awaiting_receipt") {
+      rows.push([callback("📸 ادامه پرداخت و ارسال رسید","customer:receipt:"+order.id)]);
+      rows.push([callback("🗑️ انصراف از سفارش پرداخت‌نشده","customer:cancel-confirm:"+order.id)]);
+    }
     if(order.state==="approved") rows.push([callback("📥 دریافت کانفیگ","customer:config:"+order.id)]);
     rows.push([callback("🌐 سرویس‌های من","customer:services")],[callback("📦 سفارش‌های من","customer:orders:0")],[callback("🏠 منوی اصلی","customer:home")]);
     let details="<b>📦 جزئیات سفارش مدار</b>\n\n🔖 شماره: <code>"+order.id+"</code>\n📦 پلن: "+escapeHtml(order.planName)+
@@ -428,8 +435,46 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
       }
       if(order.validUntil!==null) details+="\n⏰ تاریخ انقضا: "+dateTime(order.validUntil);
     }
-    if(order.reason) details+="\n\n📝 توضیح مدیر: "+escapeHtml(order.reason);
+    if(order.reason) details+="\n\n📝 توضیحات: "+escapeHtml(order.reason);
     await reply(details,rows,{parse_mode:"HTML"});
+    return true;
+  }
+
+  const cancelConfirm=data.match(/^customer:cancel-confirm:([a-f0-9-]{36})$/);
+  if(cancelConfirm) {
+    const order=(await listCustomerOrders(db,actor)).find(item=>item.id===cancelConfirm[1] && item.state==="awaiting_receipt");
+    if(!order) {
+      await reply("این سفارش قابل لغو نیست؛ ممکن است رسید آن ثبت شده باشد.",[
+        [callback("📦 سفارش‌های من","customer:orders:0")],[callback("🏠 منوی اصلی","customer:home")],
+      ]);
+      return true;
+    }
+    await reply("⚠️ <b>انصراف از سفارش</b>\n\nسفارش #"+order.id.slice(0,8).toUpperCase()+
+      "\nپلن: "+escapeHtml(order.planName)+"\nمبلغ: "+money(order.price,order.currency)+
+      "\n\n<b>فقط اگر هنوز وجهی واریز نکرده‌ای لغو کن.</b>"+
+      "\nاگر واریز انجام شده، برگرد و رسید را ارسال کن. لغو سفارش به معنای استرداد وجه نیست.",[
+      [callback("✅ بله، پرداخت نکرده‌ام؛ لغو سفارش","customer:cancel:"+order.id)],
+      [callback("📸 بازگشت به ارسال رسید","customer:receipt:"+order.id)],
+      [callback("📦 سفارش‌های من","customer:orders:0")],
+    ],{parse_mode:"HTML"});
+    return true;
+  }
+  const cancelMatch=data.match(/^customer:cancel:([a-f0-9-]{36})$/);
+  if(cancelMatch) {
+    try {
+      await cancelUnpaidCustomerOrder(db,actor,cancelMatch[1]!,now);
+      await setConversation("");
+      await reply("✅ <b>سفارش پرداخت‌نشده لغو شد.</b>\nحالا می‌توانی بدون ثبت سفارش تکراری، پلن دیگری انتخاب کنی.",[
+        [callback("🛍️ انتخاب پلن جدید","customer:buy")],
+        [callback("📦 سفارش‌های من","customer:orders:0")],
+        [callback("🏠 منوی اصلی","customer:home")],
+      ],{parse_mode:"HTML"});
+    } catch(error) {
+      if(!(error instanceof Error)||error.message!=="ORDER_NOT_AVAILABLE") throw error;
+      await reply("سفارش دیگر قابل لغو نیست؛ اگر رسید فرستاده‌ای وضعیت را از سفارش‌ها بررسی کن.",[
+        [callback("📦 سفارش‌های من","customer:orders:0")],
+      ]);
+    }
     return true;
   }
 
