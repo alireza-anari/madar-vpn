@@ -89,9 +89,9 @@ jobs:
           curl -fsS --retry 2 -H "$auth" "$api/workers/scripts/$SCRIPT/schedules" |
             jq -e '.success == true and any(.result.schedules[]; .cron=="* * * * *")' >/dev/null
           curl -fsS --retry 2 -X POST -H "$auth" -H 'Content-Type: application/json' \
-            --data '{"sql":"SELECT name FROM d1_migrations WHERE name='''0017-customer-upgrades.sql'''"}' \
+            --data '{"sql":"SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 5"}' \
             "$api/d1/database/$DB_ID/query" |
-            jq -e '.success == true and .result[0].results[0].name == "0017-customer-upgrades.sql"' >/dev/null
+            jq -e '.success == true and any(.result[0].results[]; .name == "0017-customer-upgrades.sql")' >/dev/null
           echo "PRODUCTION_GUARDS_PASSED"
       - name: Deploy verified Worker preserving existing vars
         id: deploy
