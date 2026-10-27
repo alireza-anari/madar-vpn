@@ -312,10 +312,11 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
       return true;
     }
     const pageSize=4;
-    const page=Math.min(catalogPageMatch?Number(catalogPageMatch[1]):0,Math.max(0,Math.ceil(plans.length/pageSize)-1));
+    const pageCount=Math.max(1,Math.ceil(plans.length/pageSize));
+    const page=Math.min(catalogPageMatch?Number(catalogPageMatch[1]):0,pageCount-1);
     const offset=page*pageSize,visible=plans.slice(offset,offset+pageSize);
-    const rows:Record<string,unknown>[][]=visible.map(p=>[
-      callback("🛍️ انتخاب "+p.name.slice(0,12)+" · "+Math.round(p.quotaBytes/1e9).toLocaleString("fa-IR")+"GB · "+Math.round(p.durationSeconds/86400).toLocaleString("fa-IR")+"روز","customer:plan:"+p.id),
+    const rows:Record<string,unknown>[][]=visible.map((p,i)=>[
+      callback("🛒 انتخاب "+(offset+i+1).toLocaleString("fa-IR")+" · "+money(p.price,p.currency),"customer:plan:"+p.id),
     ]);
     const nav:Record<string,unknown>[]=[];
     if(page>0) nav.push(callback("◀️ قبلی","customer:plans:"+(page-1)));
@@ -323,14 +324,15 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
     if(nav.length) rows.push(nav);
     rows.push([callback("🏠 منوی اصلی","customer:home")]);
     const details=visible.map((p,i)=>
-      "<b>"+(offset+i+1).toLocaleString("fa-IR")+". "+escapeHtml(p.name)+"</b>\n"+
+      "🔹 <b>"+(offset+i+1).toLocaleString("fa-IR")+". "+escapeHtml(p.name)+"</b>\n"+
       "📦 حجم: <b>"+gb(p.quotaBytes)+"</b>\n"+
-      "⏳ مدت: <b>"+days(p.durationSeconds)+"</b>\n"+
-      "💳 قیمت: <b>"+money(p.price,p.currency)+"</b>\n"+
-      "📊 هزینه هر گیگ: "+money(Math.round(p.price/(p.quotaBytes/1e9)),p.currency)
+      "⏳ اعتبار: <b>"+days(p.durationSeconds)+"</b>\n"+
+      "💳 قیمت کل: <b>"+money(p.price,p.currency)+"</b>\n"+
+      "📊 میانگین قیمت هر گیگ: "+money(Math.round(p.price/(p.quotaBytes/1e9)),p.currency)
     ).join("\n\n────────────\n\n");
-    await reply("🛍️ <b>فروشگاه مدار</b>\nپلن مناسب مصرفت را انتخاب کن. قیمت و حجم پیش از ثبت سفارش کاملاً مشخص است.\n\n"+details+
-      "\n\n<code>صفحه "+(page+1).toLocaleString("fa-IR")+" از "+Math.max(1,Math.ceil(plans.length/pageSize)).toLocaleString("fa-IR")+"</code>",rows,
+    const paging=pageCount>1?"\n\n📄 صفحه "+(page+1).toLocaleString("fa-IR")+" از "+pageCount.toLocaleString("fa-IR"):"";
+    await reply("🛍️ <b>اشتراک‌های مدار</b>\n\nحجم، اعتبار و قیمت هر پلن را ببین و برای ادامه روی دکمه انتخاب بزن.\n\n"+
+      details+paging+"\n\n👇 <b>پلن موردنظرت را انتخاب کن.</b>",rows,
       {parse_mode:"HTML",link_preview_options:{is_disabled:true}});
     return true;
   }
