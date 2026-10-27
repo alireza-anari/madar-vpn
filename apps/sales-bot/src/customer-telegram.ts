@@ -16,7 +16,7 @@ import {
 const callback=(label:string,data:string)=>({text:label,callback_data:data});
 const NODE_STATE_PREFIX="customer-node-list:";
 type NodeChoice={id:string;name:string};
-type NodeState={flow:"customer-node-list";planId:string;nodes:NodeChoice[];nonce:string};
+type NodeState={flow:"customer-node-list";planId:string;nodes:NodeChoice[];nonce:string;selectedIndex?:number};
 const money=(price:number,currency:string)=>price.toLocaleString("fa-IR")+" "+(currency==="IRT"?"تومان":"ریال");
 const gb=(bytes:number)=>Math.max(1,Math.round(bytes/1e9)).toLocaleString("fa-IR")+" گیگابایت";
 const traffic=(bytes:number|null)=>((Math.max(0,bytes||0)/1e9).toLocaleString("fa-IR",{maximumFractionDigits:1}))+" گیگابایت";
@@ -51,7 +51,9 @@ function parseNodeState(raw:string):NodeState|null {
   try {
     const value=JSON.parse(raw.slice(NODE_STATE_PREFIX.length)) as NodeState;
     if(value.flow!=="customer-node-list" || !/^[a-zA-Z0-9_-]{1,40}$/.test(value.planId) ||
-      !Array.isArray(value.nodes) || typeof value.nonce!=="string") return null;
+      !Array.isArray(value.nodes) || typeof value.nonce!=="string" ||
+      (value.selectedIndex!==undefined && (!Number.isSafeInteger(value.selectedIndex) ||
+        value.selectedIndex<0 || value.selectedIndex>=value.nodes.length))) return null;
     return value;
   } catch { return null; }
 }
@@ -365,7 +367,7 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
     rows.push([callback("◀️ بازگشت به پلن‌ها","customer:buy")],[callback("🏠 منوی اصلی","customer:home")]);
     await reply("<b>🌐 انتخاب سرور</b>\n\n<b>پلن:</b> "+escapeHtml(plan.name)+
       "\n📦 حجم: "+gb(plan.quotaBytes)+" · ⏳ مدت: "+days(plan.durationSeconds)+
-      "\n💳 مبلغ: <b>"+money(plan.price,plan.currency)+"</b>\n\nفقط سرورهای سالم و دارای ظرفیت کافی نمایش داده می‌شوند. حالا سرور را انتخاب کن.",rows,{parse_mode:"HTML"});
+      "\n💳 مبلغ: <b>"+money(plan.price,plan.currency)+"</b>\n\n🟢 این سرورها اکنون آماده سفارش هستند.\n👇 برای دیدن پیش‌نمایش سفارش، نام سرور را انتخاب کن.\n<b>هنوز سفارشی ثبت نمی‌شود.</b>",rows,{parse_mode:"HTML"});
     return true;
   }
 
@@ -391,7 +393,7 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
     if(offset+pageSize<nodeState.nodes.length) nav.push(callback("بعدی ▶️","customer:nodes:"+nodeState.planId+":"+(page+1)));
     if(nav.length) rows.push(nav);
     rows.push([callback("◀️ بازگشت به پلن‌ها","customer:buy")],[callback("🏠 منوی اصلی","customer:home")]);
-    await reply("سرور موردنظر را انتخاب کن:",rows);
+    await reply("🌐 <b>انتخاب سرور</b>\n\nسرور موردنظر را انتخاب کن تا قبل از ثبت سفارش، خلاصه خرید را ببینی.",rows,{parse_mode:"HTML"});
     return true;
   }
 
@@ -400,7 +402,43 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
     const nodeState=state?parseNodeState(state):null;
     const index=Number(nodeMatch[2]);
     if(!nodeState || nodeState.planId!==nodeMatch[1] || !nodeState.nodes[index]) {
-      await reply("این انتخاب منقضی شده؛ برای جلوگیری از ثبت سفارش تکراری، خرید را دوباره آغاز کن.",[[callback("🛍️ شروع خرید","customer:buy")],[callback("🏠 منوی اصلی","customer:home")]]);
+      await reply("این انتخاب منقضی شده؛ لطفاً پلن و سرور را دوباره انتخاب کن.",[
+        [callback("🛍️ شروع خرید","customer:buy")],[callback("🏠 منوی اصلی","customer:home")],
+      ]);
+      return true;
+    }
+    const plan=(await customerPlans(db)).find(p=>p.id===nodeState.planId);
+    if(!plan) {
+      await reply("این پلن دیگر برای خرید فعال نیست.",[[callback("🛍️ بازگشت به پلن‌ها","customer:buy")]]);
+      return true;
+    }
+    // Selecting a server must not create an unpaid order or initiate a receipt session.
+    await setConversation(NODE_STATE_PREFIX+JSON.stringify({...nodeState,selectedIndex:index}));
+    const node=nodeState.nodes[index]!;
+    await reply("<b>🧾 پیش‌نمایش سفارش مدار</b>\n\n"+
+      "📦 پلن: <b>"+escapeHtml(plan.name)+"</b>\n"+
+      "🌐 سرور: <b>"+escapeHtml(node.name)+"</b>\n"+
+      "📊 حجم: "+gb(plan.quotaBytes)+"\n"+
+      "⏳ مدت: "+days(plan.durationSeconds)+"\n"+
+      "💳 مبلغ نهایی: <b>"+money(plan.price,plan.currency)+"</b>\n\n"+
+      "تا اینجا هیچ سفارشی ثبت نشده است.\n"+
+      "با دکمه تأیید، سفارش پرداخت‌نشده ثبت و اطلاعات کارت نمایش داده می‌شود.",[
+      [callback("✅ ثبت سفارش و دریافت اطلاعات پرداخت","customer:confirm:"+nodeState.planId+":"+index)],
+      [callback("◀️ تغییر سرور","customer:nodes:"+nodeState.planId+":"+Math.floor(index/8))],
+      [callback("🛍️ تغییر پلن","customer:buy")],
+      [callback("🏠 منوی اصلی","customer:home")],
+    ],{parse_mode:"HTML"});
+    return true;
+  }
+
+  const confirmMatch=data.match(/^customer:confirm:([a-zA-Z0-9_-]{1,40}):(0|[1-9][0-9]{0,2})$/);
+  if(confirmMatch) {
+    const nodeState=state?parseNodeState(state):null;
+    const index=Number(confirmMatch[2]);
+    if(!nodeState || nodeState.planId!==confirmMatch[1] || nodeState.selectedIndex!==index || !nodeState.nodes[index]) {
+      await reply("این تأیید منقضی شده یا سرور تغییر کرده است. برای جلوگیری از سفارش ناخواسته، خرید را دوباره آغاز کن.",[
+        [callback("🛍️ شروع خرید","customer:buy")],[callback("🏠 منوی اصلی","customer:home")],
+      ]);
       return true;
     }
     const node=nodeState.nodes[index]!;
