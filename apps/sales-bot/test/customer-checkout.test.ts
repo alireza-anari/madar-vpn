@@ -280,7 +280,11 @@ test("ordinary buyer completes plan selection, payment instructions, and receipt
 
   expect(await send({update_id:802,callback_query:{id:"buy",from:{id:10},message:{message_id:2,chat:{id:10,type:"private"}},data:"customer:buy"}})).toBe(true);
   const plans=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u802:reply'").first<string>("payload"))||"{}");
-  expect(plans.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="customer:plan:monthly")).toBe(true);
+  expect(plans.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="customer:plan:monthly" && b.text.startsWith("🛒 انتخاب ۱ · "))).toBe(true);
+  expect(plans.text).toContain("میانگین قیمت هر گیگ");
+  expect(plans.text).toContain("قیمت کل");
+  expect(plans.text).toContain("⏳ اعتبار");
+  expect(plans.text).not.toContain("صفحه ۱ از ۱");
 
   expect(await send({update_id:803,callback_query:{id:"plan",from:{id:10},message:{message_id:3,chat:{id:10,type:"private"}},data:"customer:plan:monthly"}})).toBe(true);
   const nodes=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u803:reply'").first<string>("payload"))||"{}");
