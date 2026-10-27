@@ -24,9 +24,12 @@ const days=(seconds:number)=>Math.max(1,Math.round(seconds/86400)).toLocaleStrin
 const dateTime=(seconds:number)=>new Date(seconds*1000).toLocaleString("fa-IR",{timeZone:"Asia/Tehran"});
 const escapeHtml=(value:string)=>value.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 const usageBar=(used:number,total:number)=>{
-  const ratio=total>0?Math.min(1,Math.max(0,used/total)):0;
+  if(total<=0) return "📊 میزان مصرف: نامشخص";
+  const ratio=Math.min(1,Math.max(0,used/total));
+  const percent=Math.round(ratio*100);
   const filled=Math.round(ratio*10);
-  return "🟩".repeat(filled)+"⬜".repeat(10-filled);
+  return "📊 میزان مصرف: <b>"+percent.toLocaleString("fa-IR")+"٪</b>\n"+
+    "🟦".repeat(filled)+"▫️".repeat(10-filled);
 };
 type CustomerOrderView={state:string;accountState:string|null;usedBytes:number|null;quotaBytes:number;validUntil:number|null;reason?:string|null};
 function statusLabel(order:CustomerOrderView,now:number) {
@@ -700,10 +703,13 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
         callback("🧾 "+(upgrade.kind==="renew"?"تمدید":"حجم")+" · "+upgrade.state,"customer:up:details:"+upgrade.id),
       ]);
     }
+    rows.push([{text:"📋 کپی شناسه سفارش",copy_text:{text:order.id}}]);
     rows.push([callback("🌐 سرویس‌های من","customer:services")],[callback("📦 سفارش‌های من","customer:orders:0")],[callback("🏠 منوی اصلی","customer:home")]);
-    let details="<b>📦 جزئیات سفارش مدار</b>\n\n🔖 شماره: <code>"+order.id+"</code>\n📦 پلن: "+escapeHtml(order.planName)+
-      "\n💳 مبلغ: "+money(order.price,order.currency)+"\n📊 حجم کل: "+gb(order.quotaBytes)+
-      " · ⏳ مدت: "+days(order.durationSeconds)+"\n📌 وضعیت: <b>"+statusLabel(order,now)+"</b>";
+    let details="<b>📦 جزئیات سفارش مدار</b>\n\n🔖 شماره: <code>#"+order.id.slice(0,8).toUpperCase()+"</code>\n📦 پلن: "+escapeHtml(order.planName)+
+      "\n💳 مبلغ: "+money(order.price,order.currency)+
+      "\n📊 حجم کل: "+gb(order.quotaBytes)+
+      "\n⏳ مدت: "+days(order.durationSeconds)+
+      "\n📌 وضعیت: <b>"+statusLabel(order,now)+"</b>";
     if(order.serverName) details+="\n🛰️ سرور: "+escapeHtml(order.serverName);
     if(order.state==="approved" && order.accountId) {
       if(order.usedBytes!==null) {
