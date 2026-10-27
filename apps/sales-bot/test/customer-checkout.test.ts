@@ -373,10 +373,15 @@ test("customer services show remaining quota, usage progress, expiry and config 
   expect(await handleCustomerTelegramUpdate(E,{update_id:903,callback_query:{id:"services",from:{id:10},message:{message_id:3,chat:{id:10,type:"private"}},data:"customer:services"}} as any,now)).toBe(true);
   const services=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u903:reply'").first<string>("payload"))||"{}");
   expect(services.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="customer:order:"+o.id)).toBe(true);
+  expect(services.text).toContain("۳۵٪");
 
   expect(await handleCustomerTelegramUpdate(E,{update_id:904,callback_query:{id:"detail",from:{id:10},message:{message_id:4,chat:{id:10,type:"private"}},data:"customer:order:"+o.id}} as any,now)).toBe(true);
   const detail=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u904:reply'").first<string>("payload"))||"{}");
   expect(detail.parse_mode).toBe("HTML");
+  expect(detail.text).toContain("#"+o.id.slice(0,8).toUpperCase());
+  expect(detail.text).not.toContain("<code>"+o.id+"</code>");
+  expect(detail.reply_markup.inline_keyboard.flat().some((b:any)=>b.copy_text?.text===o.id)).toBe(true);
+  expect(detail.text).toContain("۳۵٪");
   expect(detail.text).toContain("حجم باقی‌مانده");
   expect(detail.text).toContain("مصرف");
   expect(detail.text).toContain("تاریخ انقضا");
