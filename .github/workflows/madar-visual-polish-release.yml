@@ -1,0 +1,144 @@
+name: Madar customer chat visual polish guarded release
+on:
+  push:
+    branches: ['feat/customer-chat-visual-polish-safe-20261027']
+    paths: ['.github/workflows/madar-visual-polish-release.yml']
+permissions:
+  contents: read
+concurrency:
+  group: madar-sales-bot-production-release
+  cancel-in-progress: false
+
+jobs:
+  guarded-release:
+    if: contains(github.event.head_commit.message, '[approved-ui-release]')
+    runs-on: ubuntu-24.04
+    env:
+      CLOUDFLARE_ACCOUNT_ID: 2e4e0d025c81b9134fd2d19f17535e30
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      SCRIPT: madar-sales-bot
+      DB_ID: f59e160f-89ab-4a90-a4dc-f257883d5a61
+      PREVIOUS_VERSION: 10de43ee-e655-4746-bb23-2294dba84600
+      BASE_URL: https://madar-sales-bot.alirezaanari117.workers.dev
+      GREEN_COMMIT: b1a68d57fa1621d2810440f21e76b8c5515acc35
+      GREEN_INDEX_SHA256: a3696da882820ec13034da54ef12fc59a7c3d898a3ba512b59e9776301e560a3
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require reviewed exact-green application source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$GREEN_COMMIT" HEAD
+          git diff --exit-code "$GREEN_COMMIT" HEAD -- apps/sales-bot sales-runner sales-node pnpm-lock.yaml
+          grep -q '"keep_vars": true' apps/sales-bot/wrangler.jsonc
+          grep -q '"crons": \["\* \* \* \* \*"\]' apps/sales-bot/wrangler.jsonc
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.9.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install pinned dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Verify types
+        run: pnpm --filter @madar/sales-bot types
+      - name: Typecheck
+        run: pnpm --filter @madar/sales-bot typecheck
+      - name: Test sales bot
+        run: pnpm --filter @madar/sales-bot test
+      - name: Build exact UI release
+        run: pnpm --filter @madar/sales-bot build
+      - name: Match exact verified build artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' "$GREEN_INDEX_SHA256" "apps/sales-bot/dist/index.js" | sha256sum --check --status
+          echo "REPRODUCIBLE_VERIFIED_BUNDLE"
+      - name: Verify Cloudflare production state before deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${CLOUDFLARE_API_TOKEN:?Cloudflare credential required}"
+          api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID"
+          auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+          curl -fsS --retry 2 -H "$auth" "$api/workers/scripts/$SCRIPT/deployments" |
+            jq -e --arg prev "$PREVIOUS_VERSION" '
+              .success == true and
+              .result.deployments[0].versions[0].version_id == $prev and
+              .result.deployments[0].versions[0].percentage == 100
+            ' >/dev/null
+          curl -fsS --retry 2 -H "$auth" "$api/workers/scripts/$SCRIPT/settings" |
+            jq -e --arg db "$DB_ID" '
+              .success == true and
+              ([.result.bindings[] | select(.name=="SALES_DB" and ((.id // .database_id)==$db))]|length)==1 and
+              ([.result.bindings[].name] |
+                (index("BOT_TOKEN")!=null) and
+                (index("TELEGRAM_WEBHOOK_SECRET")!=null) and
+                (index("RUNNER_SERVICE_SECRET")!=null) and
+                (index("POLICY_SIGNING_SECRET")!=null) and
+                (index("USAGE_LINK_SECRET")!=null) and
+                (index("PUBLIC_BASE_URL")!=null) and
+                (index("ADMIN_TELEGRAM_IDS")!=null) and
+                (index("RUNNER_PUBLIC_KEY")!=null))
+            ' >/dev/null
+          curl -fsS --retry 2 -H "$auth" "$api/workers/scripts/$SCRIPT/schedules" |
+            jq -e '.success == true and any(.result.schedules[]; .cron=="* * * * *")' >/dev/null
+          curl -fsS --retry 2 -X POST -H "$auth" -H 'Content-Type: application/json' \
+            --data '{"sql":"SELECT name FROM d1_migrations WHERE name='''0017-customer-upgrades.sql'''"}' \
+            "$api/d1/database/$DB_ID/query" |
+            jq -e '.success == true and .result[0].results[0].name == "0017-customer-upgrades.sql"' >/dev/null
+          echo "PRODUCTION_GUARDS_PASSED"
+      - name: Deploy verified Worker preserving existing vars
+        id: deploy
+        run: pnpm --filter @madar/sales-bot exec wrangler deploy
+      - name: Smoke test live routes, permissions, bindings and cron
+        shell: bash
+        run: |
+          set -euo pipefail
+          ok=0
+          for attempt in $(seq 1 20); do
+            all_routes=1
+            for path in /health /app /customer /customer.css /customer.js /madar-logo.png; do
+              code="$(curl -sS --max-time 15 -o /tmp/madar-route-response -w '%{http_code}' "$BASE_URL$path")" || code=000
+              if [ "$code" != 200 ]; then
+                echo "Attempt $attempt: $path returned $code"
+                all_routes=0
+                break
+              fi
+            done
+            if [ "$all_routes" -eq 1 ]; then
+              unauthorized="$(curl -sS --max-time 15 -o /dev/null -w '%{http_code}' "$BASE_URL/api/customer/me")" || unauthorized=000
+              blocked_webhook="$(curl -sS --max-time 15 -X POST -o /dev/null -w '%{http_code}' "$BASE_URL/webhook")" || blocked_webhook=000
+              if [ "$unauthorized" = 403 ] && [ "$blocked_webhook" = 401 ]; then
+                ok=1
+                break
+              fi
+              echo "Attempt $attempt: auth guard returned $unauthorized; webhook $blocked_webhook"
+            fi
+            sleep 5
+          done
+          test "$ok" -eq 1
+          api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID"
+          auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+          curl -fsS -H "$auth" "$api/workers/scripts/$SCRIPT/settings" |
+            jq -e --arg db "$DB_ID" '.success == true and
+              ([.result.bindings[] | select(.name=="SALES_DB" and ((.id // .database_id)==$db))]|length)==1 and
+              ([.result.bindings[].name] | (index("BOT_TOKEN")!=null) and (index("TELEGRAM_WEBHOOK_SECRET")!=null) and (index("RUNNER_SERVICE_SECRET")!=null) and (index("POLICY_SIGNING_SECRET")!=null) and (index("USAGE_LINK_SECRET")!=null))' >/dev/null
+          curl -fsS -H "$auth" "$api/workers/scripts/$SCRIPT/schedules" |
+            jq -e '.success == true and any(.result.schedules[]; .cron=="* * * * *")' >/dev/null
+          echo "LIVE_SMOKE_AND_BINDINGS_OK"
+      - name: Restore previous Worker if post-deploy checks fail
+        if: ${{ failure() && steps.deploy.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$SCRIPT/deployments"
+          payload="$(printf '{"strategy":"percentage","versions":[{"version_id":"%s","percentage":100}]}' "$PREVIOUS_VERSION")"
+          curl -fsS --retry 2 -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H 'Content-Type: application/json' --data "$payload" "$api" >/dev/null
+          echo "OLD_WORKER_VERSION_RESTORED"
