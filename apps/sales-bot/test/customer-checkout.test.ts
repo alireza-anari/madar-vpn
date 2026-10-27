@@ -292,10 +292,18 @@ test("ordinary buyer completes plan selection, payment instructions, and receipt
   expect(nodes.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="customer:node:monthly:0")).toBe(true);
 
   expect(await send({update_id:804,callback_query:{id:"node",from:{id:10},message:{message_id:4,chat:{id:10,type:"private"}},data:"customer:node:monthly:0"}})).toBe(true);
+  const preview=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u804:reply'").first<string>("payload"))||"{}");
+  expect(preview.text).toContain("پیش‌نمایش سفارش");
+  expect(preview.text).toContain("هیچ سفارشی ثبت نشده");
+  expect(preview.reply_markup.inline_keyboard.flat().some((button:any)=>button.callback_data==="customer:confirm:monthly:0")).toBe(true);
+  expect(await env.SALES_DB.prepare("SELECT COUNT(*) FROM customer_orders WHERE user_id='10'").first<number>("COUNT(*)")).toBe(0);
+  expect(await send({update_id:8041,callback_query:{id:"wrong",from:{id:10},message:{message_id:4,chat:{id:10,type:"private"}},data:"customer:confirm:monthly:1"}})).toBe(true);
+  expect(await env.SALES_DB.prepare("SELECT COUNT(*) FROM customer_orders WHERE user_id='10'").first<number>("COUNT(*)")).toBe(0);
+  expect(await send({update_id:8042,callback_query:{id:"confirm",from:{id:10},message:{message_id:4,chat:{id:10,type:"private"}},data:"customer:confirm:monthly:0"}})).toBe(true);
   const order=await env.SALES_DB.prepare("SELECT id,user_id,state,price,quota_bytes,duration_seconds,node_id FROM customer_orders WHERE user_id='10'").first<any>();
   expect(order).toMatchObject({user_id:"10",state:"awaiting_receipt",price:250000,quota_bytes:20e9,duration_seconds:30*86400,node_id:"n"});
   expect(await env.SALES_DB.prepare("SELECT conversation FROM users WHERE id='10'").first("conversation")).toBe("customer-receipt:"+order.id);
-  const checkout=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u804:reply'").first<string>("payload"))||"{}");
+  const checkout=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u8042:reply'").first<string>("payload"))||"{}");
   expect(checkout.text).toContain(order.id);
   expect(checkout.text).toContain("اطلاعات پرداخت");
   expect(checkout.text).toContain("کارت نمونه");
