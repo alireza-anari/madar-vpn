@@ -2,6 +2,7 @@ import type { TelegramUpdate } from "./contracts";
 import { handleCustomerTelegramUpdate } from "./customer-telegram";
 import { handleTelegramSupport } from "./telegram-support";
 import { handleAdminStoreTelegram } from "./admin-telegram-store";
+import { handleTelegramEnrollment } from "./telegram-enrollment";
 import { handleResellerAdminUi } from "./reseller-admin-ui";
 import { handleResellerUpdate as handleDashboardResellerUpdate } from "./reseller-menus-dashboard";
 import { sellerNodeStats, sellerStats } from "./seller-accounting";
@@ -78,23 +79,15 @@ async function enhanceAdminReply(env: Env, u: TelegramUpdate, now: number) {
     any
   >[][];
 
-  if ((data === "rs:nodes" || /^rs:nodes:(0|[1-9][0-9]{0,2})$/.test(data)) && env.PUBLIC_BASE_URL) {
-    const withoutExistingWebApp = keyboard.filter(
-      (row) => !row.some((button) => button.web_app),
-    );
-    const homeIndex = withoutExistingWebApp.findIndex((row) =>
-      row.some((button) => button.callback_data === "rs:home"),
-    );
-    const addVps = [
-      {
-        text: "➕ افزودن VPS",
-        web_app: { url: `${env.PUBLIC_BASE_URL}/enroll` },
-      },
-    ];
-    if (homeIndex >= 0) withoutExistingWebApp.splice(homeIndex, 0, addVps);
-    else withoutExistingWebApp.push(addVps);
-    reply.payload.reply_markup = { inline_keyboard: withoutExistingWebApp };
-    await saveReply(env, reply);
+  if (data === "rs:nodes" || /^rs:nodes:(0|[1-9][0-9]{0,2})$/.test(data)) {
+    const withoutExisting=keyboard.filter(row=>
+      !row.some(button=>button.web_app || button.callback_data==="enroll:start"));
+    const homeIndex=withoutExisting.findIndex(row=>row.some(button=>button.callback_data==="rs:home"));
+    const native=[{text:"➕ افزودن سرور در ربات",callback_data:"enroll:start"}];
+    if(homeIndex>=0)withoutExisting.splice(homeIndex,0,native);
+    else withoutExisting.push(native);
+    reply.payload.reply_markup={inline_keyboard:withoutExisting};
+    await saveReply(env,reply);
     return;
   }
 
@@ -250,6 +243,10 @@ export async function handleResellerUpdate(
   u: TelegramUpdate,
   now: number,
 ) {
+  if (await handleTelegramEnrollment(env, u, now)) {
+    await editAdminSellerCallbackReply(env, u);
+    return;
+  }
   if (await handleAdminStoreTelegram(env, u, now)) {
     await localizeAdminReply(env, u.update_id);
     await editAdminSellerCallbackReply(env, u);
