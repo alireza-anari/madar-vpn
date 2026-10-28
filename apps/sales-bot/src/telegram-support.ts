@@ -81,7 +81,7 @@ export async function handleTelegramSupport(env:Env,u:TelegramUpdate,now:number)
         if(isAdmin) rows.push([btn("✅ بستن درخواست","support:admin:close:"+t.id)]);
       } else if(!isAdmin) rows.push([btn("🔄 بازگشایی درخواست","support:reopen:"+t.id)]);
       rows.push([isAdmin?btn("📥 صندوق درخواست‌ها","support:admin:inbox:0"):btn("📋 درخواست‌های من","support:mine:0")]);
-      rows.push([isAdmin?adminHome()[0]:home()[0]]);
+      rows.push([isAdmin?adminHome()[0]!:home()[0]!]);
       await reply("💬 <b>درخواست "+ticketRef(t.id)+"</b>\n"+
         "موضوع: "+categoryName(t.category)+"\n"+
         "وضعیت: <b>"+(t.state==="open"?"🟢 باز":"✅ بسته‌شده")+"</b>\n"+
@@ -90,7 +90,7 @@ export async function handleTelegramSupport(env:Env,u:TelegramUpdate,now:number)
     };
 
     if(actor.role==="seller") {
-      await reply("این صندوق مخصوص مشتریان و مدیر مدار است.",[[adminHome()[0]]]);
+      await reply("این صندوق مخصوص مشتریان و مدیر مدار است.",[[adminHome()[0]!]]);
       return true;
     }
     if(command==="/support" || data==="support:home") {
