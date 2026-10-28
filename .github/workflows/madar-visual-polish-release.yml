@@ -93,34 +93,6 @@ jobs:
             "$api/d1/database/$DB_ID/query" |
             jq -e '.success == true and any(.result[0].results[]; .name == "0017-customer-upgrades.sql")' >/dev/null
           echo "PRODUCTION_GUARDS_PASSED"
-      - name: Verify pristine support schema boundary
-        shell: bash
-        run: |
-          set -euo pipefail
-          api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/$DB_ID/query"
-          auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
-          curl -fsS --retry 2 -X POST -H "$auth" -H 'Content-Type: application/json' \
-            --data '{"sql":"SELECT name FROM d1_migrations WHERE name='\''0018-telegram-support.sql'\''"}' "$api" |
-            jq -e '.success == true and (.result[0].results | length) == 0' >/dev/null
-          curl -fsS --retry 2 -X POST -H "$auth" -H 'Content-Type: application/json' \
-            --data '{"sql":"SELECT name FROM sqlite_master WHERE type='\''table'\'' AND name IN ('\''support_tickets'\'','\''support_messages'\'')"}' "$api" |
-            jq -e '.success == true and (.result[0].results | length) == 0' >/dev/null
-          echo "SUPPORT_MIGRATION_BOUNDARY_CLEAN"
-      - name: Capture read-only production schema and order-health snapshot
-        shell: bash
-        run: |
-          set -euo pipefail
-          api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/$DB_ID/query"
-          auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
-          curl -fsS --retry 2 -X POST -H "$auth" -H 'Content-Type: application/json' \
-            --data '{"sql":"SELECT (SELECT COUNT(*) FROM customer_orders) AS orders,(SELECT COUNT(*) FROM managed_accounts) AS accounts,(SELECT COUNT(*) FROM d1_migrations WHERE name='\''0017-customer-upgrades.sql'\'') AS baseline_migration"}' "$api" > /tmp/madar-support-pre-migration-metadata.json
-          jq -e '.success == true and .result[0].results[0].orders >= 0 and .result[0].results[0].accounts >= 0 and .result[0].results[0].baseline_migration == 1' /tmp/madar-support-pre-migration-metadata.json >/dev/null
-          echo "READ_ONLY_PRODUCTION_SCHEMA_AND_ORDER_HEALTH_SNAPSHOT_VERIFIED"
-      - name: Apply additive D1 support migration 0018
-        shell: bash
-        run: |
-          set -euo pipefail
-          pnpm --filter @madar/sales-bot exec wrangler d1 migrations apply madar-sales-bot-db --remote
       - name: Verify applied support schema before Worker activation
         shell: bash
         run: |
