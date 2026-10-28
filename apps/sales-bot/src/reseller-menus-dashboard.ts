@@ -151,7 +151,7 @@ async function rewriteHome(
     optionalCount(db,"SELECT COALESCE(SUM(price),0) n FROM customer_orders WHERE state='approved' AND currency='IRT'"),
     optionalCount(db,"SELECT COUNT(*) n FROM resellers WHERE enabled=1"),
   ]);
-  const activeNodes=capacities.filter(n=>n.healthy===1 && n.last_seen>now-90 &&
+  const activeNodes=capacities.filter(n=>n.operational_status==='active' && n.healthy===1 && n.last_seen>now-90 &&
     n.agent_capabilities.split(",").includes("quota-v2"));
   const committed=capacities.reduce((sum,n)=>sum+n.committed_bytes,0);
   const finalized=capacities.reduce((sum,n)=>sum+n.finalized_used_bytes,0);
@@ -268,7 +268,7 @@ async function rewriteServerPicker(
   }
   const nodes = (await nodeCapacities(env.SALES_DB, now)).filter(
     (n) =>
-      n.healthy === 1 &&
+      n.operational_status==='active' && n.healthy === 1 &&
       n.last_seen > now - 90 &&
       n.agent_capabilities.split(",").includes("quota-v2") &&
       n.reserved_accounts < n.max_accounts &&
@@ -302,7 +302,7 @@ async function rewriteConfirmation(
   const node = (await nodeCapacities(env.SALES_DB, now, nodeId))[0];
   if (
     !node ||
-    node.healthy !== 1 ||
+    node.operational_status!=='active' || node.healthy !== 1 ||
     node.last_seen <= now - 90 ||
     !node.agent_capabilities.split(",").includes("quota-v2") ||
     node.reserved_accounts >= node.max_accounts ||
