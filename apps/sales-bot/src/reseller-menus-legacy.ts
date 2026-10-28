@@ -137,7 +137,7 @@ export async function handleResellerUpdate(
     const nodes = {
       results: (await nodeCapacities(db, now)).filter(
         (n) =>
-          n.healthy === 1 &&
+          n.operational_status==='active' && n.healthy === 1 &&
           n.last_seen > now - 90 &&
           n.agent_capabilities.split(",").includes("quota-v2"),
       ),
@@ -273,7 +273,7 @@ export async function handleResellerUpdate(
       const nodeId = data.slice(10);
       const node = await db
         .prepare(
-          "SELECT id,name FROM nodes WHERE id=? AND healthy=1 AND last_seen>?",
+          "SELECT id,name FROM nodes WHERE id=? AND healthy=1 AND last_seen>? AND NOT EXISTS(SELECT 1 FROM settings WHERE key='node_status:'||id AND value IN ('paused','archived'))",
         )
         .bind(nodeId, now - 90)
         .first<{ id: string; name: string }>();
