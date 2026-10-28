@@ -176,7 +176,7 @@ export async function handleTelegramSupport(env:Env,u:TelegramUpdate,now:number)
       }
       const t=await ticket(replyMatch[2]!);
       if(!t || t.state!=="open") {
-        await reply("درخواست بسته یا نامعتبر است.",[[btn("💬 پشتیبانی","support:home")]]);
+        await reply(t?"این درخواست بسته شده است.":"این درخواست در دسترس نیست.",[[btn("💬 پشتیبانی","support:home")]]);
         return true;
       }
       await setState((isAdmin?"support:adminreply:":"support:reply:")+t.id);
