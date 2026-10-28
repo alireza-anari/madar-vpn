@@ -45,6 +45,11 @@ class QuotaStore:
         # The first observation must be a verified zero baseline before listeners open.
         if row['counter'] is None and counter!=0:
             self.block(ident);raise ValueError('MISSING_ZERO_BASELINE')
+        # Counters are cumulative. Re-sampling an unchanged counter in the
+        # same process needs no new SQLite fsync or D1 quota report.
+        # Keep pending unacknowledged reports intact for network retries.
+        if row['counter'] is not None and row['process_generation']==generation and counter==row['counter']:
+            return
         delta=0 if row['counter'] is None else counter-row['counter'];total=integer(row['used']+delta);sequence=row['sequence']+1
         report={'accountId':ident,'quotaEpoch':row['epoch'],'sequence':sequence,'totalBytes':total,'observedAt':now,'generation':row['policy_generation']}
         with self.db:

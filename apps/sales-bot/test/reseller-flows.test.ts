@@ -356,7 +356,7 @@ test("resending delivery preserves private capability and rejects other owners",
 
 test("server picker shows remaining capacity and persists the selected server", async () => {
   await env.SALES_DB.exec(
-    "UPDATE nodes SET healthy=1,last_seen=100,agent_capabilities='quota-v2',max_accounts=4;",
+    "UPDATE nodes SET state='ready',revision=1,acked_revision=1,healthy=1,last_seen=100,agent_capabilities='quota-v2',max_accounts=4;",
   );
   await click(10, "rs:sale");
   await send(10, "انتخاب سرور");
@@ -403,7 +403,7 @@ test("server picker shows remaining capacity and persists the selected server", 
 
 test("only admins edit volume caps and picker displays allocated GB remaining", async () => {
   await env.SALES_DB.exec(
-    "UPDATE nodes SET max_allocated_bytes=1000000000000,healthy=1,last_seen=100,agent_capabilities='quota-v2';",
+    "UPDATE nodes SET state='ready',revision=1,acked_revision=1,max_allocated_bytes=1000000000000,healthy=1,last_seen=100,agent_capabilities='quota-v2';",
   );
   await click(10, "rs:allocation:s");
   await send(10, "1");

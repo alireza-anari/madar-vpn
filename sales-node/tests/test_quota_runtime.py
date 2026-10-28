@@ -173,3 +173,70 @@ def test_quota_heartbeat_is_armed_before_fresh_frontend_start(tmp_path):
     c=QuotaRuntime({'policyKey':'k','nodeId':'n','shared443':True,'frontendManaged':True},None,lambda p,*args:p,base=base,database=path,frontend_factory=factory)
     assert seen==[True]
     c.store.close()
+
+
+def test_transient_stats_failure_recovers_without_revoking_account(monkeypatch):
+    import quota_runtime as runtime
+    from types import SimpleNamespace
+    p=object.__new__(runtime.AccountProcess)
+    p.client={'accountId':'a'};p.api=21000;p.binary='xray';p.seen=True;p.frontend=None
+    p.process=SimpleNamespace(poll=lambda:None)
+    calls=[]
+    def flaky_stats(*args,**kwargs):
+        calls.append(kwargs)
+        if len(calls)==1:raise ValueError('transient stats response')
+        return {'a':73}
+    monkeypatch.setattr(runtime,'read_counters',flaky_stats)
+    monkeypatch.setattr(runtime.time,'sleep',lambda delay:None)
+    assert p.sample()==73
+    assert len(calls)==2
+    assert p.seen is True
+
+
+def test_persistent_stats_failure_still_fails_closed(monkeypatch):
+    import pytest,quota_runtime as runtime
+    from types import SimpleNamespace
+    p=object.__new__(runtime.AccountProcess)
+    p.client={'accountId':'a'};p.api=21000;p.binary='xray';p.seen=True;p.frontend=None
+    p.process=SimpleNamespace(poll=lambda:None)
+    queries=[]
+    def failed(*args,**kwargs):
+        queries.append(1)
+        raise ValueError('bad counters')
+    monkeypatch.setattr(runtime,'read_counters',failed)
+    monkeypatch.setattr(runtime.time,'sleep',lambda delay:None)
+    with pytest.raises(ValueError,match='STATS_UNAVAILABLE'):p.sample()
+    assert len(queries)==2
+
+
+def test_stats_retry_cannot_hide_process_exit(monkeypatch):
+    import pytest,quota_runtime as runtime
+    p=object.__new__(runtime.AccountProcess)
+    p.client={'accountId':'a'};p.api=21000;p.binary='xray';p.seen=True;p.frontend=None
+    polls=[]
+    class Process:
+        def poll(self):
+            polls.append(1)
+            return None if len(polls)==1 else 1
+    p.process=Process()
+    queries=[]
+    def failed(*args,**kwargs):
+        queries.append(1)
+        raise ValueError('bad counters')
+    monkeypatch.setattr(runtime,'read_counters',failed)
+    monkeypatch.setattr(runtime.time,'sleep',lambda delay:None)
+    with pytest.raises(ValueError,match='XRAY_EXITED'):p.sample()
+    assert len(queries)==1
+
+
+def test_stats_retry_cannot_hide_shared_frontend_restart(monkeypatch):
+    import pytest,quota_runtime as runtime
+    from types import SimpleNamespace
+    p=object.__new__(runtime.AccountProcess)
+    p.client={'accountId':'a'};p.api=21000;p.binary='xray';p.seen=True
+    p.process=SimpleNamespace(poll=lambda:None)
+    class Frontend:
+        def check(self):raise ValueError('FRONTEND_RESTARTED')
+    p.frontend=Frontend()
+    monkeypatch.setattr(runtime,'read_counters',lambda *args,**kwargs:None)
+    with pytest.raises(ValueError,match='FRONTEND_RESTARTED'):p.sample()

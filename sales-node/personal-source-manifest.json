@@ -3,9 +3,9 @@
   "policy.py": "143366e38f49edcfe22bb525053f0ea64e69bf3f6f555f4de324e8bc689475ac",
   "xray.py": "9843f6059c1ba16d39a84d5fc773fe2f93ef13901187083086406ba82eff0084",
   "guard.py": "abbd60fcf6f06838a5a48d29fd1a7c18d721ea1794e10bdcd168c28eddf7edce",
-  "stats.py": "90c3d5ec52f057002441bf1897b51ab3dedad19ecfdee4013a815c646075557f",
-  "quota.py": "4dbc6dbb9cff20a0b341190469cdcf22371256cf79cb904c44e37d1285a2dfaa",
-  "quota_runtime.py": "d21d57112995fbdb046d5d5d3631d2a2fe380b985b06eed48ffc802bfdc24ddd",
+  "stats.py": "7b4af8624521f0c25f1bd89a44c02eaecac282d0d6c4b6cb19b25f4d21b0da4f",
+  "quota.py": "e544835027202f78b5e7a2d01eac25fa16dc70b6ce703935ef44def68dc0ee7f",
+  "quota_runtime.py": "1609185a6c9c39adea697959aa4a459062a13e7b70394fe56c9ca9becca76aec",
   "shared443.py": "e934b7ac0dd51c82b6ed93890075498ea89abfcd5f58710982bb77de5d3b87fb",
   "install_personal.py": "90d006d558877ae517920cb90bda3eec373077c3afe6396fce20ba96f13b9c6f"
 }
