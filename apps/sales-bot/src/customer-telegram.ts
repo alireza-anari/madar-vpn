@@ -82,6 +82,7 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
   const homeRows:Record<string,unknown>[][]=[
     [callback("🛍️ خرید اشتراک","customer:buy"),callback("🌐 سرویس‌های من","customer:services")],
     [callback("📦 سفارش‌های من","customer:orders:0"),callback("📖 راهنمای اتصال","customer:help")],
+    [callback("💬 پشتیبانی مدار","support:home")],
   ];
 
   // Customer upgrade receipts use a distinct inbox; never approve by trusting a Telegram image alone.
