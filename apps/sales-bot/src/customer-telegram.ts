@@ -449,21 +449,23 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
       const plan=(await customerPlans(db)).find(p=>p.id===order.plan_id);
       const rows:Record<string,unknown>[][]=[
         [callback("📸 ارسال رسید پرداخت","customer:receipt:"+order.id)],
+        [{text:"📋 کپی شناسه سفارش",copy_text:{text:order.id}}],
+        [callback("🗑️ لغو سفارش پرداخت‌نشده","customer:cancel-confirm:"+order.id)],
         [callback("📦 سفارش‌های من","customer:orders:0"),callback("🏠 منوی اصلی","customer:home")],
       ];
-      if(payment.length<=256) rows.unshift([{text:"📋 کپی اطلاعات پرداخت",copy_text:{text:payment}}]);
+      if(payment.length<=256) rows.splice(1,0,[{text:"📋 کپی اطلاعات پرداخت",copy_text:{text:payment}}]);
       const output="<b>🧾 سفارش مدار ثبت شد</b>\n"+
-        "━━━━━━━━━━━━━━━━\n"+
-        "🔖 <b>شماره سفارش:</b> #"+order.id.slice(0,8).toUpperCase()+"\n"+
-        "🆔 <code>"+order.id+"</code>\n"+
-        "📦 <b>پلن:</b> "+escapeHtml(plan?.name||order.plan_id)+"\n"+
-        "🌐 <b>سرور:</b> "+escapeHtml(node.name)+"\n"+
-        "📊 <b>حجم:</b> "+gb(order.quota_bytes)+" · ⏳ <b>مدت:</b> "+days(order.duration_seconds)+"\n"+
-        "💳 <b>مبلغ نهایی:</b> "+money(order.price,order.currency)+"\n"+
-        "━━━━━━━━━━━━━━━━\n"+
-        "🏦 <b>اطلاعات پرداخت</b>\n"+escapeHtml(payment)+"\n\n"+
-        "۱. مبلغ دقیق را واریز کن.\n۲. دکمه «ارسال رسید پرداخت» را بزن یا عکس رسید را همین‌جا بفرست.\n"+
-        "۳. پس از بررسی مدیر و تأیید سرور، کانفیگ از همین ربات تحویل داده می‌شود.\n\n"+
+        "📌 وضعیت: <b>در انتظار واریز و ارسال رسید</b>\n\n"+
+        "🔖 <b>شماره پیگیری:</b> <code>#"+order.id.slice(0,8).toUpperCase()+"</code>\n"+
+        "📦 پلن: <b>"+escapeHtml(plan?.name||order.plan_id)+"</b>\n"+
+        "🌐 سرور: "+escapeHtml(node.name)+"\n"+
+        "📊 حجم: "+gb(order.quota_bytes)+"\n"+
+        "⏳ مدت: "+days(order.duration_seconds)+"\n"+
+        "💳 <b>مبلغ قابل پرداخت: "+money(order.price,order.currency)+"</b>\n\n"+
+        "🏦 <b>اطلاعات پرداخت</b>\n<blockquote>"+escapeHtml(payment)+"</blockquote>\n"+
+        "۱️⃣ مبلغ دقیق را به حساب نمایش‌داده‌شده واریز کن.\n"+
+        "۲️⃣ روی «ارسال رسید پرداخت» بزن و عکس یا فایل رسید را بفرست.\n"+
+        "۳️⃣ پس از تأیید مدیر و آماده‌شدن سرور، کانفیگ همین‌جا تحویل می‌شود.\n\n"+
         "🔒 تا تأیید پرداخت و آماده‌شدن سرور، کانفیگی صادر نمی‌شود.";
       await reply(output,rows,{parse_mode:"HTML",link_preview_options:{is_disabled:true}});
       return true;
@@ -808,14 +810,19 @@ export async function handleCustomerTelegramUpdate(env:Env,u:TelegramUpdate,now:
     try {
       await requestCustomerReceipt(db,actor,receiptMatch[1]!);
       const order=(await listCustomerOrders(db,actor)).find(item=>item.id===receiptMatch[1]);
+      const payment=(await paymentInstructions(db))||"اطلاعات پرداخت در دسترس نیست؛ با پشتیبانی هماهنگ کن.";
       const rows:Record<string,unknown>[][]=[
+        [{text:"📋 کپی شناسه سفارش",copy_text:{text:receiptMatch[1]!}}],
+        [callback("🗑️ لغو سفارش پرداخت‌نشده","customer:cancel-confirm:"+receiptMatch[1])],
         [callback("📦 سفارش‌های من","customer:orders:0"),callback("🏠 منوی اصلی","customer:home")],
       ];
-      const output="<b>📸 ارسال رسید پرداخت</b>\n━━━━━━━━━━━━━━━━\n"+
-        "🔖 سفارش: #"+receiptMatch[1]!.slice(0,8).toUpperCase()+"\n"+
-        (order?"📦 پلن: "+escapeHtml(order.planName)+"\n💳 مبلغ: "+money(order.price,order.currency)+"\n":"")+
-        "\nحالا عکس واضح یا فایل رسید بانکی را به‌صورت پیام در همین چت بفرست.\n\n"+
-        "🔎 رسید در بخش مدیریت ربات بررسی می‌شود. تا تأیید و آماده‌شدن سرور، کانفیگی صادر نمی‌شود.";
+      if(payment.length<=256) rows.unshift([{text:"📋 کپی اطلاعات پرداخت",copy_text:{text:payment}}]);
+      const output="<b>📸 ارسال رسید پرداخت</b>\n\n"+
+        "🔖 سفارش: <code>#"+receiptMatch[1]!.slice(0,8).toUpperCase()+"</code>\n"+
+        (order?"📦 پلن: "+escapeHtml(order.planName)+"\n💳 <b>مبلغ قابل پرداخت: "+money(order.price,order.currency)+"</b>\n":"")+
+        "\n🏦 <b>اطلاعات پرداخت</b>\n<blockquote>"+escapeHtml(payment)+"</blockquote>\n"+
+        "عکس واضح یا فایل رسید بانکی را همین‌جا ارسال کن.\n\n"+
+        "🔎 مدیر رسید را بررسی می‌کند؛ کانفیگ فقط پس از تأیید و آماده‌شدن سرور تحویل می‌شود.";
       await reply(output,rows,{parse_mode:"HTML"});
     } catch(error) {
       if(!(error instanceof Error) || error.message!=="ORDER_NOT_AVAILABLE") throw error;
