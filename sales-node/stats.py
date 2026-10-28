@@ -20,7 +20,7 @@ def parse_counters(raw,account_ids):
 def read_counters(server,account_ids,binary='/opt/madar-sales-node/xray',allow_unregistered=False):
     if not re.fullmatch(r'127\.0\.0\.1:[0-9]{1,5}',server):raise ValueError('INVALID_STATS_SERVER')
     with tempfile.TemporaryFile() as output:
-        subprocess.run([binary,'api','statsquery','--server='+server,'-timeout','1','-pattern','user>>>'],stdout=output,stderr=subprocess.DEVNULL,check=True,timeout=2)
+        subprocess.run([binary,'api','statsquery','--server='+server,'-timeout','1','-pattern','user>>>'],stdout=output,stderr=subprocess.DEVNULL,check=True,timeout=1.4)
         output.seek(0);raw=output.read(MAX_OUTPUT+1)
     if allow_unregistered and len(raw)<=MAX_OUTPUT and json.loads(raw) in ({},{"stat":[]}):return None
     return parse_counters(raw,account_ids)
