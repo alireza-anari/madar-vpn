@@ -179,7 +179,7 @@ async function showNodeList(
   rows.push(home());
   await reply(
     [
-      archived?"🗂 بایگانی سرورهای مدار":"🌐 مدیریت سرورهای مدار",
+      archived?"🗂 بایگانی سرورهای مدار":"🌐 سرورها | مدیریت مدار",
       "━━━━━━━━━━━━━━━━",
       `🟢 آماده فروش: ${healthy.toLocaleString("fa-IR")} از ${nodes.length.toLocaleString("fa-IR")}`,
       `🔴 نیازمند بررسی: ${(nodes.length - healthy).toLocaleString("fa-IR")}`,
@@ -433,7 +433,7 @@ export async function handleResellerAdminUi(
       const meaning={
         pause:"⏸ صدور همه کانفیگ‌ها و سفارش‌های جدید روی این سرور متوقف می‌شود؛ سرویس‌های قبلی فعال می‌مانند.",
         resume:"▶️ صدور جدید دوباره مجاز می‌شود، مشروط به سلامت و ظرفیت سرور.",
-        archive:"🗂 سرور از فهرست اصلی مدیریت و انتخاب مشتری حذف می‌شود، اما سوابق، تنظیمات و VPS واقعی حفظ می‌شوند.",
+        archive:"🗂 بایگانی امن: سرور از فهرست اصلی مدیریت و انتخاب مشتری حذف می‌شود، اما سوابق، تنظیمات و VPS واقعی حفظ می‌شوند.",
         restore:"♻️ سرور به حالت فعال برمی‌گردد. قبل از شروع فروش سلامت و ظرفیت را بررسی کن.",
       }[action];
       await ctx.reply("⚠️ <b>تأیید عملیات سرور</b>\n🌐 "+node.name+"\n\n"+meaning+"\n\n"+
