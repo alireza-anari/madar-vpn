@@ -186,8 +186,7 @@ async function rewriteHome(
     [btn("📋 کانفیگ‌ها","rs:list"),btn("📈 گزارش‌ها","rs:reports")],
     [btn("📖 راهنمای مدیریت","adminstore:guide"),btn("🔄 تازه‌سازی","rs:home")],
   ];
-  if(env.PUBLIC_BASE_URL)
-    rows.push([{text:"➕ افزودن VPS (ابزار پیشرفته)",web_app:{url:env.PUBLIC_BASE_URL+"/enroll"}}]);
+  rows.push([btn("➕ افزودن سرور","enroll:start")]);
   await replaceReply(db, reply.id, reply.payload, text, rows, true);
 }
 
