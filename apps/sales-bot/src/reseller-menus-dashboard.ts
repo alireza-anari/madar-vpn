@@ -130,12 +130,15 @@ async function rewriteHome(
         ? ["⚠️ کانفیگ بدون سقف حجمی در تعهد فعال وجود دارد؛ تخصیص جدید باید بررسی شود."] : []),
       ...(atLimit ? ["⛔ یکی از سقف‌های فروش پر شده؛ صدور جدید مشروط به ظرفیت واقعی است."] : []),
       "",
+      "ℹ️ حجم فروش به‌معنای مبلغ درآمد نیست؛ مبالغ دریافتی جداگانه محاسبه می‌شوند.",
       "👇 <b>عملیات موردنظر را انتخاب کن.</b>",
     ].join("\n");
     await replaceReply(db, reply.id, reply.payload, text, [
       [btn("➕ صدور کانفیگ", "rs:sale"), btn("🎁 تست", "rs:trial")],
-      [btn("📋 کانفیگ‌ها", "rs:list"), btn("📊 آمار من", "rs:stats")],
-      [btn("📖 راهنما", "rs:help")],
+      [btn("👥 مشتریان و کانفیگ‌ها", "seller:clients:all:0"), btn("📊 آمار من", "rs:stats")],
+      [btn("🔔 هشدار و تمدید", "seller:alerts"), btn("🧾 تسویه‌ها", "seller:settlements:0")],
+      [btn("🌐 سرورهای فروش", "seller:nodes"),btn("💬 پشتیبانی", "support:home")],
+      [btn("📖 راهنما", "rs:help"),btn("🔄 تازه‌سازی", "rs:home")],
     ], true);
     return;
   }
@@ -220,7 +223,8 @@ async function rewriteSellerStats(
     `حجم تعهدشده: ${formatBytes(limits.committedBytes)} از ${limits.maxCommittedBytes === null ? "نامحدود" : formatBytes(limits.maxCommittedBytes)}`,
   ].join("\n");
   await replaceReply(env.SALES_DB, reply.id, reply.payload, text, [
-    [btn("➕ صدور کانفیگ", "rs:sale"), btn("📋 کانفیگ‌ها", "rs:list")],
+    [btn("➕ صدور کانفیگ", "rs:sale"), btn("👥 مشتریان", "seller:clients:all:0")],
+    [btn("🔔 هشدارها","seller:alerts"),btn("🧾 تسویه‌ها","seller:settlements:0")],
     home(),
   ], true);
 }
