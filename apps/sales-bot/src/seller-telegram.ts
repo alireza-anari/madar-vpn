@@ -193,6 +193,11 @@ export async function handleSellerTelegram(env:Env,u:TelegramUpdate,now:number):
   const accountMatch=data.match(/^seller:account:([a-zA-Z0-9-]{1,100})$/);
   if(accountMatch){
     await set("");
+    const found=await db.prepare("SELECT id FROM managed_accounts WHERE id=? AND seller_id=?").bind(accountMatch[1],user).first<string>("id");
+    if(!found){
+      await reply("این کانفیگ در حساب شما وجود ندارد.",[[btn("👥 مشتریان","seller:clients:all:0")],home()]);
+      return true;
+    }
     const a=await ownedAccount(db,{telegramId:user,role:"seller"},accountMatch[1]!);
     const node=await db.prepare("SELECT name FROM nodes WHERE id=?").bind(a.node_id).first<string>("name")||"نامشخص";
     const rows:Record<string,unknown>[][]=[
@@ -215,6 +220,11 @@ export async function handleSellerTelegram(env:Env,u:TelegramUpdate,now:number):
   if(request){
     await set("");
     const kind=request[1]!,accountId=request[2]!;
+    const found=await db.prepare("SELECT id FROM managed_accounts WHERE id=? AND seller_id=?").bind(accountId,user).first<string>("id");
+    if(!found){
+      await reply("این کانفیگ در حساب شما وجود ندارد.",[[btn("👥 مشتریان","seller:clients:all:0")],home()]);
+      return true;
+    }
     const a=await ownedAccount(db,{telegramId:user,role:"seller"},accountId);
     if(a.kind!=="sale"||a.archived_at!==null||a.state==="revoked"){
       await reply("امکان درخواست برای این کانفیگ وجود ندارد.",[[btn("👥 مشتریان","seller:clients:all:0")],home()]);
