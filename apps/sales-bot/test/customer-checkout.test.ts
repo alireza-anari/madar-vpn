@@ -17,6 +17,7 @@ import m12 from "../migrations/0012-telegram-profiles.sql?raw";
 import m13 from "../migrations/0013-managed-account-archive.sql?raw";
 import customerMigration from "../migrations/0016-customer-checkout.sql?raw";
 import upgradeMigration from "../migrations/0017-customer-upgrades.sql?raw";
+import supportMigration from "../migrations/0018-telegram-support.sql?raw";
 import { customerApi } from "../src/customer-api";
 import { handleUpdate } from "../src/menus";
 import { handleCustomerTelegramUpdate } from "../src/customer-telegram";
@@ -59,6 +60,8 @@ beforeEach(async()=>{
   for (const statement of customerMigration.split(/;\s*(?:\n|$)/).map(s=>s.trim()).filter(Boolean))
     await env.SALES_DB.prepare(statement).run();
   for (const statement of upgradeMigration.split(/;\s*(?:\n|$)/).map(s=>s.trim()).filter(Boolean))
+    await env.SALES_DB.prepare(statement).run();
+  for (const statement of supportMigration.split(/;\s*(?:\n|$)/).map(s=>s.trim()).filter(Boolean))
     await env.SALES_DB.prepare(statement).run();
   await env.SALES_DB.prepare(
     "INSERT INTO nodes(id,name,target_ip,vpn_port,state,revision,acked_revision,last_seen,healthy,agent_capabilities,max_accounts,max_allocated_bytes) VALUES('n','Stockholm','8.8.8.8',443,'ready',1,1,?,1,'quota-v2,shared-443',1,30000000000)",
@@ -734,4 +737,84 @@ test("complete renewal bundle is forbidden unless BOTH time and traffic are exha
     orderId:s.orderId,planId:"monthly",kind:"bundle",requestKey:"bundle-traffic-only-123",
   },now)).rejects.toThrow("BUNDLE_NOT_AVAILABLE");
   expect(await env.SALES_DB.prepare("SELECT COUNT(*) n FROM customer_upgrades").first("n")).toBe(0);
+});
+
+test("native support creates a durable ticket, notifies admin, and delivers a reply to the owner",async()=>{
+  await env.SALES_DB.prepare("INSERT INTO settings(key,value) VALUES('app_mode','reseller')").run();
+  const update=async(id:number,user:number,data?:string,message?:{text?:string;photo?:{file_id:string}[];document?:{file_id:string}})=>
+    handleUpdate(E,data?
+      {update_id:id,callback_query:{id:"cb"+id,from:{id:user},message:{message_id:10,chat:{id:user,type:"private"},text:"صفحه"},data}}:
+      {update_id:id,message:{message_id:id,chat:{id:user,type:"private"},from:{id:user},...message}},now);
+  const payload=async(id:number)=>JSON.parse(await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id=?")
+    .bind("u"+id+":reply").first<string>("payload")||"{}");
+
+  await update(1900,10,undefined,{text:"/start"});
+  const home=await payload(1900);
+  expect(home.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="support:home")).toBe(true);
+  await update(1901,10,"support:home");
+  expect((await payload(1901)).text).toContain("پشتیبانی مدار");
+  await update(1902,10,"support:new");
+  await update(1903,10,"support:category:connection");
+  expect((await payload(1903)).text).toContain("مشکل اتصال");
+  await update(1904,10,undefined,{text:"اتصال من کار نمی‌کند."});
+  const created=await env.SALES_DB.prepare("SELECT * FROM support_tickets WHERE user_id='10'").first<any>();
+  expect(created).toMatchObject({category:"connection",state:"open",created_update_id:1904});
+  expect((await payload(1904)).text).toContain("#"+created.id.slice(0,8).toUpperCase());
+  expect(await env.SALES_DB.prepare("SELECT COUNT(*) n FROM support_messages WHERE ticket_id=?").bind(created.id).first<number>("n")).toBe(1);
+  expect(await env.SALES_DB.prepare("SELECT chat_id FROM outbox WHERE id='support:1904:1'").first<string>("chat_id")).toBe("1");
+
+  await update(1905,1,"support:admin:inbox:0");
+  const inbox=await payload(1905);
+  expect(inbox.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="support:admin:ticket:"+created.id)).toBe(true);
+  await update(1906,1,"support:admin:ticket:"+created.id);
+  expect((await payload(1906)).text).toContain("اتصال من کار نمی‌کند.");
+  await update(1907,1,"support:admin:reply:"+created.id);
+  await update(1908,1,undefined,{text:"لطفاً اتصال را دوباره تست کن."});
+  expect((await payload(1908)).text).toContain("پیام ارسال شد");
+  expect((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='support:1908:10'")
+    .first<string>("payload"))||"").toContain("لطفاً اتصال را دوباره تست کن.");
+  await update(1909,10,"support:ticket:"+created.id);
+  expect((await payload(1909)).text).toContain("لطفاً اتصال را دوباره تست کن.");
+
+  // A repeated Telegram update cannot add the same message twice.
+  await update(1908,1,undefined,{text:"لطفاً اتصال را دوباره تست کن."});
+  expect(await env.SALES_DB.prepare("SELECT COUNT(*) n FROM support_messages WHERE ticket_id=?").bind(created.id).first<number>("n")).toBe(2);
+});
+
+test("support media, authorization, closure and reopening work without affecting payment orders",async()=>{
+  await env.SALES_DB.prepare("INSERT INTO settings(key,value) VALUES('app_mode','reseller')").run();
+  const emit=async(update_id:number,user:number,data?:string,message?:{text?:string;photo?:{file_id:string}[];document?:{file_id:string}})=>
+    handleUpdate(E,data?
+      {update_id,callback_query:{id:"cb"+update_id,from:{id:user},message:{message_id:3,chat:{id:user,type:"private"},text:"پنل"},data}}:
+      {update_id,message:{message_id:update_id,chat:{id:user,type:"private"},from:{id:user},...message}},now);
+  const output=async(id:number)=>JSON.parse(await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id=?").bind("u"+id+":reply").first<string>("payload")||"{}");
+
+  await emit(2001,10,"support:category:payment");
+  await emit(2002,10,undefined,{photo:[{file_id:"ticket-photo-telegram"}]});
+  const t=await env.SALES_DB.prepare("SELECT * FROM support_tickets WHERE created_update_id=2002").first<any>();
+  expect(t.state).toBe("open");
+  const media=JSON.parse(await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='support:2002:1'").first<string>("payload")||"{}");
+  expect(media._method).toBe("sendPhoto");
+  expect(media.photo).toBe("ticket-photo-telegram");
+
+  await emit(2003,11,"support:ticket:"+t.id);
+  expect((await output(2003)).text).toContain("پیدا نشد");
+  await emit(2004,11,"support:reply:"+t.id);
+  expect((await output(2004)).text).toContain("در دسترس نیست");
+  await emit(2005,10,"support:admin:close:"+t.id);
+  expect((await output(2005)).text).toContain("در دسترس نیست");
+  expect(await env.SALES_DB.prepare("SELECT state FROM support_tickets WHERE id=?").bind(t.id).first<string>("state")).toBe("open");
+
+  await emit(2006,1,"support:admin:close:"+t.id);
+  expect(await env.SALES_DB.prepare("SELECT state FROM support_tickets WHERE id=?").bind(t.id).first<string>("state")).toBe("closed");
+  expect(await env.SALES_DB.prepare("SELECT chat_id FROM outbox WHERE id=?").bind("support:closed:"+t.id).first<string>("chat_id")).toBe("10");
+  await emit(2007,10,"support:reopen:"+t.id);
+  expect(await env.SALES_DB.prepare("SELECT state FROM support_tickets WHERE id=?").bind(t.id).first<string>("state")).toBe("open");
+  await emit(2008,10,"support:reply:"+t.id);
+  await emit(2009,10,undefined,{document:{file_id:"diagnostics-file"}});
+  expect(await env.SALES_DB.prepare("SELECT COUNT(*) n FROM support_messages WHERE ticket_id=?").bind(t.id).first<number>("n")).toBe(2);
+  const message=JSON.parse(await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='support:2009:1'").first<string>("payload")||"{}");
+  expect(message._method).toBe("sendDocument");
+  expect(message.document).toBe("diagnostics-file");
+  expect(await env.SALES_DB.prepare("SELECT COUNT(*) n FROM customer_orders").first<number>("n")).toBe(0);
 });

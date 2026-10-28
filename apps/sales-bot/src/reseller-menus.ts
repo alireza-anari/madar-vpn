@@ -1,5 +1,6 @@
 import type { TelegramUpdate } from "./contracts";
 import { handleCustomerTelegramUpdate } from "./customer-telegram";
+import { handleTelegramSupport } from "./telegram-support";
 import { handleResellerAdminUi } from "./reseller-admin-ui";
 import { handleResellerUpdate as handleDashboardResellerUpdate } from "./reseller-menus-dashboard";
 import { sellerNodeStats, sellerStats } from "./seller-accounting";
@@ -206,6 +207,7 @@ async function enhanceDashboardReply(env: Env, u: TelegramUpdate, now: number) {
     const insertAt = advancedIndex >= 0 ? advancedIndex : withoutDuplicate.length;
     withoutDuplicate.splice(insertAt, 0, [{ text: "💳 رسیدهای مشتریان", callback_data: "cust:inbox:0" }]);
     withoutDuplicate.splice(insertAt + 1, 0, [{ text: "🔁 رسیدهای تمدید و حجم", callback_data: "cust:up:list:0" }]);
+    withoutDuplicate.splice(insertAt + 2, 0, [{ text: "💬 پشتیبانی مشتریان", callback_data: "support:admin:inbox:0" }]);
     if (env.PUBLIC_BASE_URL)
       withoutDuplicate.push([{ text: "🛍️ پیش‌نمایش فروشگاه مشتریان", web_app: {
         url: new URL("/customer", env.PUBLIC_BASE_URL).toString()
@@ -254,6 +256,7 @@ export async function handleResellerUpdate(
   u: TelegramUpdate,
   now: number,
 ) {
+  if (await handleTelegramSupport(env, u, now)) return;
   if (await handleCustomerTelegramUpdate(env, u, now)) {
     await editAdminSellerCallbackReply(env, u);
     return;
