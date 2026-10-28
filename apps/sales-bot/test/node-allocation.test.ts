@@ -136,3 +136,25 @@ test("uncapped legacy accounts prevent new finite allocations", async () => {
     createAccount(env.SALES_DB, seller, input("new", 1e9), 100),
   ).rejects.toThrow("NODE_ALLOCATION_FULL");
 });
+
+
+test("node health goes stale despite stored healthy flag", async () => {
+  const { nodeCapacities } = await import("../src/node-capacity");
+  await env.SALES_DB.exec(
+    "UPDATE nodes SET healthy=1,state='ready',revision=3,acked_revision=3,last_seen=95 WHERE id='n'",
+  );
+  expect((await nodeCapacities(env.SALES_DB, 100))[0]?.healthy).toBe(1);
+  expect((await nodeCapacities(env.SALES_DB, 186))[0]?.healthy).toBe(0);
+});
+
+test("node health requires current policy acknowledgement and ready state", async () => {
+  const { nodeCapacities } = await import("../src/node-capacity");
+  await env.SALES_DB.exec(
+    "UPDATE nodes SET healthy=1,state='ready',revision=4,acked_revision=3,last_seen=99 WHERE id='n'",
+  );
+  expect((await nodeCapacities(env.SALES_DB, 100))[0]?.healthy).toBe(0);
+  await env.SALES_DB.exec(
+    "UPDATE nodes SET revision=3,state='verifying' WHERE id='n'",
+  );
+  expect((await nodeCapacities(env.SALES_DB, 100))[0]?.healthy).toBe(0);
+});
