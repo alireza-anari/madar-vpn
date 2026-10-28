@@ -1,6 +1,7 @@
 import type { TelegramUpdate } from "./contracts";
 import { handleCustomerTelegramUpdate } from "./customer-telegram";
 import { handleTelegramSupport } from "./telegram-support";
+import { handleAdminStoreTelegram } from "./admin-telegram-store";
 import { handleResellerAdminUi } from "./reseller-admin-ui";
 import { handleResellerUpdate as handleDashboardResellerUpdate } from "./reseller-menus-dashboard";
 import { sellerNodeStats, sellerStats } from "./seller-accounting";
@@ -199,20 +200,13 @@ async function enhanceDashboardReply(env: Env, u: TelegramUpdate, now: number) {
 
   if (actor.role === "admin") {
     if (env.PUBLIC_BASE_URL) addMiniAppEntry(reply.payload, env.PUBLIC_BASE_URL);
-    // Keep native receipt review ahead of the optional Mini App shortcuts.
+    // Native operations are always primary. Keep optional web shortcuts at the very end.
     const adminKeyboard = (reply.payload.reply_markup?.inline_keyboard || []) as Record<string, any>[][];
-    const withoutDuplicate = adminKeyboard.filter(row =>
-      !row.some(button => button.callback_data === "cust:inbox:0"));
-    const advancedIndex = withoutDuplicate.findIndex(row => row.some(button => button.web_app));
-    const insertAt = advancedIndex >= 0 ? advancedIndex : withoutDuplicate.length;
-    withoutDuplicate.splice(insertAt, 0, [{ text: "💳 رسیدهای مشتریان", callback_data: "cust:inbox:0" }]);
-    withoutDuplicate.splice(insertAt + 1, 0, [{ text: "🔁 رسیدهای تمدید و حجم", callback_data: "cust:up:list:0" }]);
-    withoutDuplicate.splice(insertAt + 2, 0, [{ text: "💬 پشتیبانی مشتریان", callback_data: "support:admin:inbox:0" }]);
     if (env.PUBLIC_BASE_URL)
-      withoutDuplicate.push([{ text: "🛍️ پیش‌نمایش فروشگاه مشتریان", web_app: {
+      adminKeyboard.push([{ text: "🛍️ پیش‌نمایش فروشگاه (اختیاری)", web_app: {
         url: new URL("/customer", env.PUBLIC_BASE_URL).toString()
       } }]);
-    reply.payload.reply_markup = { inline_keyboard: withoutDuplicate };
+    reply.payload.reply_markup = { inline_keyboard: adminKeyboard };
     await saveReply(env, reply);
   }
 }
@@ -256,6 +250,11 @@ export async function handleResellerUpdate(
   u: TelegramUpdate,
   now: number,
 ) {
+  if (await handleAdminStoreTelegram(env, u, now)) {
+    await localizeAdminReply(env, u.update_id);
+    await editAdminSellerCallbackReply(env, u);
+    return;
+  }
   if (await handleTelegramSupport(env, u, now)) return;
   if (await handleCustomerTelegramUpdate(env, u, now)) {
     await editAdminSellerCallbackReply(env, u);
