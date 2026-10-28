@@ -1,7 +1,7 @@
 name: Madar customer chat visual polish guarded release
 on:
   push:
-    branches: ['feat/customer-server-confirmation-20261027']
+    branches: ['feat/customer-payment-ux-20261028']
     paths: ['.github/workflows/madar-visual-polish-release.yml']
 permissions:
   contents: read
@@ -18,10 +18,10 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       SCRIPT: madar-sales-bot
       DB_ID: f59e160f-89ab-4a90-a4dc-f257883d5a61
-      PREVIOUS_VERSION: 31e99584-2d81-42f0-a96b-873868eabecc
+      PREVIOUS_VERSION: eafbb58b-9469-46bd-bd88-a98afe90359e
       BASE_URL: https://madar-sales-bot.alirezaanari117.workers.dev
-      GREEN_COMMIT: f144482c4e99d3d03c8e6dddfae17590b5f1a110
-      GREEN_INDEX_SHA256: e45d66c6c26192ae6077316137893ac041f64b733089f723310031bdf8e21310
+      GREEN_COMMIT: f1afd555c895ef2ea1109f652e87ef5fbc7780ab
+      GREEN_INDEX_SHA256: a6c3162f3ba564d31624d688c3f0fc45ddfa99edf43290fa9f0552b699970dbf
 
     steps:
       - uses: actions/checkout@v4
