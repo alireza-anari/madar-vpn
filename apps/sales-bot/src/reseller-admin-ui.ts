@@ -5,6 +5,7 @@ import {
   utilizationPercent,
 } from "./node-capacity";
 import { refreshCapacityAlert } from "./capacity-alerts";
+import { nodeDependencies,updateNodeMode,renameNode,type NodeMode } from "./node-operations";
 import { setNodeMaxAccounts, setNodeMaxAllocatedBytes } from "./node-settings";
 import {
   sellerLimits,
@@ -44,7 +45,7 @@ function parseState(raw: string) {
 
 function isAdminCallback(data: string | undefined) {
   if (!data) return false;
-  if (data === "rs:nodes" || data === "rs:sellers" ||
+  if (data === "rs:nodes" || data === "rs:sellers" || data.startsWith("rs:nodeops:") ||
     /^rs:(?:nodes|sellers):(0|[1-9][0-9]{0,2})$/.test(data)) return true;
   return /^rs:(?:nodedetail|unlimit|capacity|allocation|seller|settle|settleok|settlements|limits|limitcount|limitbytes):/.test(
     data,
@@ -119,21 +120,25 @@ async function bestEffortAlert(env: Env, nodeId: string, now: number) {
 }
 
 function nodeRows(n: Awaited<ReturnType<typeof nodeCapacities>>[number]) {
-  return [
-    [
-      btn("🎯 سرور فروش", `rs:node:sale:${n.id}`),
-      btn("🧪 سرور تست", `rs:node:trial:${n.id}`),
-    ],
-    [
-      btn("🔢 سقف کانفیگ", `rs:capacity:${n.id}`),
-      btn("📦 سقف حجم", `rs:allocation:${n.id}`),
-    ],
-    ...(n.max_allocated_bytes === null
-      ? []
-      : [[btn("♾ نامحدود کردن حجم", `rs:unlimit:${n.id}`)]]),
-    backNodes(),
-    home(),
-  ];
+  const rows:Record<string,unknown>[][]=[];
+  if(n.operational_status==="archived"){
+    rows.push([btn("♻️ بازگرداندن سرور","rs:nodeops:restore:"+n.id)]);
+    rows.push([btn("🗂 سرورهای بایگانی‌شده","rs:nodeops:archive:list")]);
+  }else{
+    rows.push([btn(n.operational_status==="paused"?"▶️ فعال‌سازی صدور جدید":"⏸ توقف فروش و صدور جدید",
+      "rs:nodeops:"+(n.operational_status==="paused"?"resume":"pause")+":"+n.id)]);
+    rows.push([btn("✏️ تغییر نام","rs:nodeops:rename:"+n.id)]);
+    if(n.operational_status==="active")rows.push([
+      btn("🎯 سرور فروش","rs:node:sale:"+n.id),
+      btn("🧪 سرور تست","rs:node:trial:"+n.id),
+    ]);
+    rows.push([btn("🔢 سقف کانفیگ","rs:capacity:"+n.id),btn("📦 سقف حجم","rs:allocation:"+n.id)]);
+    if(n.max_allocated_bytes!==null)rows.push([btn("♾ نامحدود کردن حجم","rs:unlimit:"+n.id)]);
+    rows.push([btn("🗑 حذف از فهرست (بایگانی امن)","rs:nodeops:archive:"+n.id)]);
+  }
+  rows.push([btn("🔄 تازه‌سازی وضعیت","rs:nodedetail:"+n.id)]);
+  rows.push(backNodes(),home());
+  return rows;
 }
 
 async function showNodeList(
@@ -141,22 +146,23 @@ async function showNodeList(
   reply: (text: string, rows?: Record<string, unknown>[][]) => Promise<void>,
   now: number,
   requestedPage = 0,
+  archived = false,
 ) {
-  const nodes = await nodeCapacities(env.SALES_DB, now);
+  const nodes = (await nodeCapacities(env.SALES_DB, now)).filter(n=>archived?n.operational_status==="archived":n.operational_status!=="archived");
   const perPage = 8;
   const page = Math.min(requestedPage, Math.max(0, Math.ceil(nodes.length / perPage) - 1));
   const visible = nodes.slice(page * perPage, (page + 1) * perPage);
-  const healthy = nodes.filter(n => n.healthy === 1 && n.last_seen > now - 90 &&
+  const healthy = nodes.filter(n => n.operational_status==="active" && n.healthy === 1 && n.last_seen > now - 90 &&
     n.agent_capabilities.split(",").includes("quota-v2") &&
     n.reserved_accounts < n.max_accounts &&
     (remainingAllocation(n) === null || remainingAllocation(n)! > 0)).length;
   const rows: Record<string, unknown>[][] = visible.map((n) => {
     const remaining = remainingAllocation(n);
-    const available = n.healthy === 1 && n.last_seen > now - 90 &&
+    const available = n.operational_status==="active" && n.healthy === 1 && n.last_seen > now - 90 &&
       n.agent_capabilities.split(",").includes("quota-v2") &&
       n.reserved_accounts < n.max_accounts &&
       (remaining === null || remaining > 0);
-    const status = available ? "🟢" : "🔴";
+    const status = n.operational_status==="archived"?"🗂":n.operational_status==="paused"?"⏸":available?"🟢":"🔴";
     const freeSlots = Math.max(0, n.max_accounts - n.reserved_accounts);
     return [btn(
       `${status} ${n.name.slice(0,20)} · ${freeSlots.toLocaleString("fa-IR")} جای خالی · ${remaining === null ? "♾" : formatBytes(remaining)}`,
@@ -164,20 +170,22 @@ async function showNodeList(
     )];
   });
   const navigation: Record<string, unknown>[] = [];
-  if (page > 0) navigation.push(btn("◀️ قبلی", `rs:nodes:${page - 1}`));
-  if ((page + 1) * perPage < nodes.length) navigation.push(btn("بعدی ▶️", `rs:nodes:${page + 1}`));
+  if (page > 0) navigation.push(btn("◀️ قبلی", archived?"rs:nodeops:archive:page:"+(page - 1):`rs:nodes:${page - 1}`));
+  if ((page + 1) * perPage < nodes.length) navigation.push(btn("بعدی ▶️", archived?"rs:nodeops:archive:page:"+(page + 1):`rs:nodes:${page + 1}`));
   if (navigation.length) rows.push(navigation);
-  rows.push([btn("➕ افزودن سرور در ربات","enroll:start")]);
+  if(!archived)rows.push([btn("➕ افزودن سرور در ربات","enroll:start")]);
+  rows.push([btn(archived?"🌐 سرورهای اصلی":"🗂 بایگانی سرورها",archived?"rs:nodes":"rs:nodeops:archive:list")]);
   rows.push([btn("🔄 تازه‌سازی فهرست","rs:nodes")]);
   rows.push(home());
   await reply(
     [
-      "🌐 سرورها | مدیریت ظرفیت",
+      archived?"🗂 بایگانی سرورهای مدار":"🌐 سرورها | مدیریت مدار",
       "━━━━━━━━━━━━━━━━",
       `🟢 آماده فروش: ${healthy.toLocaleString("fa-IR")} از ${nodes.length.toLocaleString("fa-IR")}`,
       `🔴 نیازمند بررسی: ${(nodes.length - healthy).toLocaleString("fa-IR")}`,
       "",
-      "📊 وضعیت بر اساس سلامت، ظرفیت تعداد و حجم واقعی محاسبه می‌شود.",
+      "⏸ توقف صدور فقط کانفیگ‌های جدید را مسدود می‌کند؛ سرویس‌های موجود قطع نمی‌شوند.",
+      archived?"🗂 سرورهای بایگانی‌شده از فهرست فروش حذف‌اند و قابل بازگردانی هستند.":"📊 وضعیت بر اساس سلامت، ظرفیت تعداد و حجم واقعی محاسبه می‌شود.",
       nodes.length ? "👇 یک سرور را برای مشاهده جزئیات و تغییر سقف انتخاب کن." : "هنوز سروری ثبت نشده است.",
       nodes.length ? `صفحه ${(page + 1).toLocaleString("fa-IR")} از ${Math.max(1, Math.ceil(nodes.length / perPage)).toLocaleString("fa-IR")}` : "",
     ].filter(Boolean).join("\n"),
@@ -204,17 +212,22 @@ async function showNodeDetail(
         .join("، ")
     : "بدون کاربرد";
   const summary = nodeCapacitySummary(n).split("\n");
+  const deps=await nodeDependencies(env.SALES_DB,nodeId);
   summary[0] = `🌐 ${n.name}`;
   const health = n.healthy === 1 && n.last_seen > now - 90 ? "🟢 آماده" : "🔴 نیاز به بررسی";
   await reply(
     [
       summary[0],
       "━━━━━━━━━━━━━━━━",
-      `وضعیت: ${health}`,
+      `سلامت: ${health}`,
+      `وضعیت مدیریت: ${n.operational_status==="active"?"🟢 فعال":n.operational_status==="paused"?"⏸ متوقف":"🗂 بایگانی"}`,
       ...summary.slice(1),
-      `کاربرد: ${purposeText}`,
+      `کاربرد ثبت‌شده: ${purposeText}`,
+      `سرویس‌های مرتبط: ${deps.accounts.toLocaleString("fa-IR")} · فعال/قابل بازگشت: ${deps.blocking_accounts.toLocaleString("fa-IR")}`,
+      `سفارش‌های مرتبط: ${deps.orders.toLocaleString("fa-IR")} · در انتظار: ${deps.pending_orders.toLocaleString("fa-IR")}`,
+      `نصب‌های در جریان: ${deps.pending_jobs.toLocaleString("fa-IR")}`,
       "",
-      "👇 تغییر سقف‌ها فقط روی ظرفیت صدورهای جدید اثر می‌گذارد.",
+      "🔒 توقف یا بایگانی، سرور را در شرکت میزبان خاموش یا حذف نمی‌کند.",
     ].join("\n"),
     nodeRows(n),
   );
@@ -386,6 +399,85 @@ export async function handleResellerAdminUi(
 
   const db = env.SALES_DB;
   try {
+    if(data==="rs:nodeops:archive:list" || /^rs:nodeops:archive:page:(0|[1-9][0-9]{0,2})$/.test(data||"")){
+      ctx.set({});
+      const page=data==="rs:nodeops:archive:list"?0:Number(data!.slice("rs:nodeops:archive:page:".length));
+      await showNodeList(env,ctx.reply,now,page,true);
+      return true;
+    }
+    const operation=data?.match(/^rs:nodeops:(pause|resume|archive|restore):([a-zA-Z0-9-]{1,80})$/);
+    if(operation){
+      const action=operation[1] as "pause"|"resume"|"archive"|"restore";
+      const nodeId=operation[2]!;
+      const node=(await nodeCapacities(db,now,nodeId))[0];
+      if(!node)throw Error("INVALID_NODE");
+      const expected:NodeMode={pause:"active",resume:"paused",archive:"paused",restore:"archived"}[action] as NodeMode;
+      if(node.operational_status!==expected){
+        ctx.set({});
+        const msg=action==="archive"&&node.operational_status==="active"?
+          "⏸ برای حذف امن از فهرست، ابتدا صدور جدید را متوقف کن.":"وضعیت سرور تغییر کرده؛ صفحه را تازه‌سازی کن.";
+        await ctx.reply("⚠️ "+msg,[[btn("🔎 جزئیات سرور","rs:nodedetail:"+nodeId)],backNodes(),home()]);
+        return true;
+      }
+      const dependencies=await nodeDependencies(db,nodeId);
+      if(action==="archive"&&(dependencies.blocking_accounts||dependencies.pending_orders||dependencies.pending_jobs)){
+        ctx.set({});
+        await ctx.reply("⛔ <b>بایگانی امن مجاز نیست.</b>\n"+
+          "این سرور هنوز سرویس فعال/قابل‌بازگشت ("+dependencies.blocking_accounts+")، "+
+          "سفارش در انتظار ("+dependencies.pending_orders+") یا نصب باز ("+dependencies.pending_jobs+") دارد.\n"+
+          "ابتدا تعهدات مشتریان را با فرآیند مجاز خاتمه بده؛ هیچ کانفیگی خودکار حذف نمی‌شود.",
+          [[btn("🔎 جزئیات","rs:nodedetail:"+nodeId)],backNodes(),home()]);
+        return true;
+      }
+      ctx.set({step:"admin_node_mode_confirm",nodeId,action,expected});
+      const meaning={
+        pause:"⏸ صدور همه کانفیگ‌ها و سفارش‌های جدید روی این سرور متوقف می‌شود؛ سرویس‌های قبلی فعال می‌مانند.",
+        resume:"▶️ صدور جدید دوباره مجاز می‌شود، مشروط به سلامت و ظرفیت سرور.",
+        archive:"🗂 بایگانی امن: سرور از فهرست اصلی مدیریت و انتخاب مشتری حذف می‌شود، اما سوابق، تنظیمات و VPS واقعی حفظ می‌شوند.",
+        restore:"♻️ سرور به حالت فعال برمی‌گردد. قبل از شروع فروش سلامت و ظرفیت را بررسی کن.",
+      }[action];
+      await ctx.reply("⚠️ <b>تأیید عملیات سرور</b>\n🌐 "+node.name+"\n\n"+meaning+"\n\n"+
+        "این تغییر صرفاً روی مدیریت مدار است، نه حذف یا خاموش‌کردن VPS در شرکت میزبان.",[
+          [btn("✅ تأیید نهایی","rs:nodeops:apply")],
+          [btn("❌ انصراف","rs:nodedetail:"+nodeId)],
+        ]);
+      return true;
+    }
+    if(data==="rs:nodeops:apply"){
+      const state=ctx.state as {step?:string;nodeId?:string;action?:string;expected?:NodeMode};
+      if(state.step!=="admin_node_mode_confirm"||!state.nodeId||!state.action||!state.expected){
+        await ctx.reply("این تأیید منقضی شده است.",[backNodes(),home()]);
+        return true;
+      }
+      const map:{[key:string]:NodeMode}={pause:"paused",resume:"active",archive:"archived",restore:"active"};
+      const target=map[state.action];
+      if(!target){ctx.set({});throw Error("INVALID_MODE");}
+      await updateNodeMode(db,actor,state.nodeId,state.expected,target,now);
+      ctx.set({});
+      await ctx.reply("✅ وضعیت سرور تغییر کرد.\nکانفیگ‌های قبلی دست‌نخورده‌اند.",[
+        [btn("🔎 جزئیات سرور","rs:nodedetail:"+state.nodeId)],backNodes(),home(),
+      ]);
+      return true;
+    }
+    if(data?.startsWith("rs:nodeops:rename:")){
+      const nodeId=data.slice("rs:nodeops:rename:".length);
+      const node=(await nodeCapacities(db,now,nodeId))[0];
+      if(!node||node.operational_status==="archived")throw Error("INVALID_NODE");
+      ctx.set({step:"admin_node_rename",nodeId,expectedName:node.name});
+      await ctx.reply("✏️ <b>تغییر نام سرور</b>\n"+
+        "نام فعلی: "+node.name+"\n\nنام جدید را ارسال کن (۱ تا ۸۰ کاراکتر)."+
+        "\nIP، ظرفیت و کانفیگ‌های موجود تغییر نمی‌کنند.",[
+          [btn("❌ انصراف","rs:nodedetail:"+nodeId)],backNodes(),home(),
+        ]);
+      return true;
+    }
+    if(text && ctx.state?.step==="admin_node_rename"){
+      const state=ctx.state as {nodeId:string;expectedName:string};
+      await renameNode(db,actor,state.nodeId,state.expectedName,text,now);
+      ctx.set({});
+      await ctx.reply("✅ نام سرور تغییر کرد.",[[btn("🔎 جزئیات","rs:nodedetail:"+state.nodeId)],backNodes(),home()]);
+      return true;
+    }
     if (data === "rs:nodes" || /^rs:nodes:(0|[1-9][0-9]{0,2})$/.test(data || "")) {
       ctx.set({});
       const page = data === "rs:nodes" ? 0 : Number(data!.slice("rs:nodes:".length));

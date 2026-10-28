@@ -897,3 +897,26 @@ test("admin payment changes are staged until confirmed; non-admin cannot view ba
   await click(8306,1,"adminstore:guide");
   expect((await output(8306)).text).toContain("راهنمای مدیریت");
 });
+
+test("paused server cannot create a fresh paid customer order, while historical order remains readable",async()=>{
+  await setup();
+  const first=await order();
+  await env.SALES_DB.prepare("INSERT INTO settings(key,value) VALUES('node_status:n','paused')").run();
+  const {availableCustomerNodes,createCustomerOrder,listCustomerOrders}=await import("../src/customer-store");
+  expect(await availableCustomerNodes(env.SALES_DB,now,1e9)).toEqual([]);
+  await expect(createCustomerOrder(env.SALES_DB,{telegramId:"11",role:"ordinary"},{
+    planId:"monthly",nodeId:"n",requestKey:"other-buyer-claim-key-999",
+  },now)).rejects.toThrow("NODE_UNAVAILABLE");
+  const existing=await listCustomerOrders(env.SALES_DB,{telegramId:"10",role:"ordinary"});
+  expect(existing.some(x=>x.id===first.id)).toBe(true);
+  expect(await env.SALES_DB.prepare("SELECT state FROM customer_orders WHERE id=?").bind(first.id).first<string>("state")).toBe("awaiting_receipt");
+});
+test("archive refuses a node with an unfulfilled customer order",async()=>{
+  await setup();
+  await order();
+  const {updateNodeMode}=await import("../src/node-operations");
+  await updateNodeMode(env.SALES_DB,{telegramId:"1",role:"admin"},"n","active","paused",now);
+  await expect(updateNodeMode(env.SALES_DB,{telegramId:"1",role:"admin"},"n","paused","archived",now))
+    .rejects.toThrow("NODE_HAS_DEPENDENCIES");
+  expect(await env.SALES_DB.prepare("SELECT value FROM settings WHERE key='node_status:n'").first("value")).toBe("paused");
+});

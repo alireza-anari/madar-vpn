@@ -84,7 +84,7 @@ export async function createAccount(
     input.nodeId &&
     !(await db
       .prepare(
-        "SELECT id FROM nodes WHERE id=? AND healthy=1 AND last_seen>? AND instr(agent_capabilities,'quota-v2')>0",
+        "SELECT id FROM nodes WHERE id=? AND healthy=1 AND last_seen>? AND instr(agent_capabilities,'quota-v2')>0 AND NOT EXISTS(SELECT 1 FROM settings WHERE key='node_status:'||id AND value IN ('paused','archived'))",
       )
       .bind(nodeId, now - 90)
       .first())
@@ -136,6 +136,7 @@ export async function createAccount(
         CROSS JOIN seller_usage su
         LEFT JOIN reseller_controls sc ON sc.seller_id=?
         WHERE n.id=?
+          AND NOT EXISTS(SELECT 1 FROM settings WHERE key='node_status:'||n.id AND value IN ('paused','archived'))
           AND (n.max_accounts_unlimited=1 OR nu.slots<n.max_accounts)
           AND (
             n.max_allocated_bytes IS NULL OR

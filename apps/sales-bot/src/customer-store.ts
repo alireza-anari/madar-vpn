@@ -20,7 +20,7 @@ export async function customerPlans(db: D1Database) {
 export async function availableCustomerNodes(db: D1Database, now: number, quotaBytes: number) {
   if (!Number.isSafeInteger(quotaBytes) || quotaBytes<1 || quotaBytes>1e12) throw Error("INVALID_INPUT");
   return (await nodeCapacities(db, now)).filter(n =>
-    n.healthy===1 && n.last_seen>now-90 && n.agent_capabilities.split(",").includes("quota-v2") &&
+    n.operational_status==='active' && n.healthy===1 && n.last_seen>now-90 && n.agent_capabilities.split(",").includes("quota-v2") &&
     (remainingSlots(n)===null || remainingSlots(n)!>0) && canAllocate(n,quotaBytes))
     .map(n=>({id:n.id,name:n.name}));
 }
@@ -43,8 +43,8 @@ export async function createCustomerOrder(db:D1Database,actor:SalesActor,input:{
   const id=crypto.randomUUID();
   await db.batch([
     db.prepare("INSERT OR IGNORE INTO users(id) VALUES(?)").bind(actor.telegramId),
-    db.prepare("INSERT OR IGNORE INTO customer_orders(id,user_id,plan_id,node_id,price,currency,quota_bytes,duration_seconds,request_key,created_at) SELECT ?,?,id,?,price,currency,quota_bytes,duration,?,? FROM plans WHERE id=? AND enabled=1 AND quota_bytes BETWEEN 1 AND 1000000000000 AND EXISTS(SELECT 1 FROM settings WHERE key='payment' AND length(trim(value))>0) AND NOT EXISTS(SELECT 1 FROM customer_orders WHERE user_id=? AND state='awaiting_receipt')")
-      .bind(id,actor.telegramId,input.nodeId,input.requestKey,now,input.planId,actor.telegramId),
+    db.prepare("INSERT OR IGNORE INTO customer_orders(id,user_id,plan_id,node_id,price,currency,quota_bytes,duration_seconds,request_key,created_at) SELECT ?,?,id,?,price,currency,quota_bytes,duration,?,? FROM plans WHERE id=? AND enabled=1 AND quota_bytes BETWEEN 1 AND 1000000000000 AND EXISTS(SELECT 1 FROM settings WHERE key='payment' AND length(trim(value))>0) AND NOT EXISTS(SELECT 1 FROM settings WHERE key='node_status:'||? AND value IN ('paused','archived')) AND NOT EXISTS(SELECT 1 FROM customer_orders WHERE user_id=? AND state='awaiting_receipt')")
+      .bind(id,actor.telegramId,input.nodeId,input.requestKey,now,input.planId,input.nodeId,actor.telegramId),
   ]);
   const result=await db.prepare("SELECT * FROM customer_orders WHERE user_id=? AND request_key=?")
     .bind(actor.telegramId,input.requestKey).first<OrderRow>();

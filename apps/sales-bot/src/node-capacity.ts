@@ -12,6 +12,7 @@ export const reservationPredicate =
 export interface NodeCapacity {
   id: string;
   name: string;
+  operational_status: 'active'|'paused'|'archived';
   healthy: number;
   last_seen: number;
   agent_capabilities: string;
@@ -39,7 +40,7 @@ export async function nodeCapacities(
           FROM managed_accounts a
         )
         SELECT
-          n.id,n.name,n.healthy,n.last_seen,n.agent_capabilities,
+          n.id,n.name,COALESCE(os.value,'active') AS operational_status,n.healthy,n.last_seen,n.agent_capabilities,
           n.max_accounts,n.max_accounts_unlimited,n.max_allocated_bytes,
           COALESCE(SUM(CASE WHEN a.is_live=1 THEN 1 ELSE 0 END),0) reserved_accounts,
           COALESCE(SUM(CASE WHEN a.is_live=1 AND a.quota_bytes IS NOT NULL THEN a.quota_bytes ELSE 0 END),0) committed_bytes,
@@ -51,6 +52,7 @@ export async function nodeCapacities(
             ELSE a.used_bytes
           END),0) finalized_used_bytes
         FROM nodes n
+        LEFT JOIN settings os ON os.key='node_status:'||n.id
         LEFT JOIN accounted a ON a.node_id=n.id
         WHERE (? IS NULL OR n.id=?)
         GROUP BY n.id
