@@ -1,0 +1,43 @@
+name: Refresh patched dependency lockfile
+on:
+  push:
+    branches: ['impl/sales-connection-stability-20261028']
+    paths:
+      - 'package.json'
+      - 'apps/api/package.json'
+      - 'apps/web/package.json'
+      - 'apps/sales-bot/package.json'
+      - 'pnpm-workspace.yaml'
+      - '.github/workflows/refresh-security-lock.yml'
+permissions:
+  contents: write
+jobs:
+  refresh:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: impl/sales-connection-stability-20261028
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.9.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Resolve patched dependency graph
+        run: pnpm install --no-frozen-lockfile
+      - name: Commit regenerated lockfile
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pnpm-lock.yaml
+          if git diff --cached --quiet; then
+            echo "Lockfile already current"
+          else
+            git commit -m "build: refresh lockfile for patched dependencies"
+            git push origin HEAD:impl/sales-connection-stability-20261028
+          fi
+      - name: Verify high-severity advisories are resolved
+        run: pnpm audit --audit-level high
