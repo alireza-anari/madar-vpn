@@ -44,13 +44,19 @@ class AccountProcess:
             try:self.frontend.add(client,base)
             except Exception:self.stop();raise
     def sample(self):
-        if self.frontend:self.frontend.check()
-        if self.process.poll() is not None:raise ValueError('XRAY_EXITED')
-        try:
-            values=read_counters(f'127.0.0.1:{self.api}',[self.client['accountId']],self.binary,allow_unregistered=not self.seen)
-            if values is None:return 0
-            self.seen=True;return values[self.client['accountId']]
-        except Exception:raise ValueError('STATS_UNAVAILABLE') from None
+        # A single transient stats-query failure must not permanently revoke an
+        # otherwise healthy account. Cumulative counters remain authoritative:
+        # never infer usage during a missed query, and fail closed if both fail.
+        for attempt in range(2):
+            if self.frontend:self.frontend.check()
+            if self.process.poll() is not None:raise ValueError('XRAY_EXITED')
+            try:
+                values=read_counters(f'127.0.0.1:{self.api}',[self.client['accountId']],self.binary,allow_unregistered=not self.seen)
+                if values is None:return 0
+                self.seen=True;return values[self.client['accountId']]
+            except Exception:
+                if attempt:raise ValueError('STATS_UNAVAILABLE') from None
+                time.sleep(.1)
     def stop(self):
         if self.process.poll() is None:
             self.process.terminate()
