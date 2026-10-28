@@ -304,10 +304,22 @@ test("ordinary buyer completes plan selection, payment instructions, and receipt
   expect(order).toMatchObject({user_id:"10",state:"awaiting_receipt",price:250000,quota_bytes:20e9,duration_seconds:30*86400,node_id:"n"});
   expect(await env.SALES_DB.prepare("SELECT conversation FROM users WHERE id='10'").first("conversation")).toBe("customer-receipt:"+order.id);
   const checkout=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u8042:reply'").first<string>("payload"))||"{}");
-  expect(checkout.text).toContain(order.id);
+  expect(checkout.text).toContain("#"+order.id.slice(0,8).toUpperCase());
+  expect(checkout.text).not.toContain("<code>"+order.id+"</code>");
   expect(checkout.text).toContain("اطلاعات پرداخت");
   expect(checkout.text).toContain("کارت نمونه");
+  expect(checkout.text).toContain("در انتظار واریز");
+  expect(checkout.text).toContain("<blockquote>");
+  expect(checkout.reply_markup.inline_keyboard.flat().some((b:any)=>b.copy_text?.text===order.id)).toBe(true);
+  expect(checkout.reply_markup.inline_keyboard.flat().some((b:any)=>b.copy_text?.text==="کارت نمونه")).toBe(true);
+  expect(checkout.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="customer:cancel-confirm:"+order.id)).toBe(true);
   expect(JSON.stringify(checkout)).not.toContain("web_app");
+  expect(await send({update_id:8043,callback_query:{id:"receipt",from:{id:10},message:{message_id:4,chat:{id:10,type:"private"}},data:"customer:receipt:"+order.id}})).toBe(true);
+  const receiptView=JSON.parse((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u8043:reply'").first<string>("payload"))||"{}");
+  expect(receiptView.text).toContain("اطلاعات پرداخت");
+  expect(receiptView.text).toContain("کارت نمونه");
+  expect(receiptView.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="customer:cancel-confirm:"+order.id)).toBe(true);
+  expect(await env.SALES_DB.prepare("SELECT state FROM customer_orders WHERE id=?").bind(order.id).first("state")).toBe("awaiting_receipt");
 
   expect(await send({update_id:805,message:{message_id:5,chat:{id:10,type:"private"},from:{id:10},photo:[{file_id:"buyer-proof"}]}})).toBe(true);
   expect(await env.SALES_DB.prepare("SELECT state FROM customer_orders WHERE id=?").bind(order.id).first("state")).toBe("pending_review");
