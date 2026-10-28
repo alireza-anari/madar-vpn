@@ -36,7 +36,7 @@ export async function handleTelegramSupport(env:Env,u:TelegramUpdate,now:number)
   const existingState=await db.prepare("SELECT conversation FROM users WHERE id=?")
     .bind(userId).first<string>("conversation");
   const state=existingState||"";
-  if(data.startsWith("support:") || command==="/support" || (state.startsWith("support:") && !command.startsWith("/"))) {
+  if(data.startsWith("support:") || command==="/support" || (state.startsWith("support:") && !!u.message && !command.startsWith("/"))) {
     const reply=(value:string,rows:Record<string,unknown>[][],extra:Record<string,unknown>={})=>
       enqueue(db,"u"+u.update_id+":reply",userId,{
         text:value,parse_mode:"HTML",reply_markup:{inline_keyboard:rows},...extra,
