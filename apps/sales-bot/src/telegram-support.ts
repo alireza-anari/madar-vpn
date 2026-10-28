@@ -93,6 +93,10 @@ export async function handleTelegramSupport(env:Env,u:TelegramUpdate,now:number)
       await reply("این صندوق مخصوص مشتریان و مدیر مدار است.",[[adminHome()[0]!]]);
       return true;
     }
+    if(!isAdmin && data.startsWith("support:admin:")) {
+      await reply("این بخش در دسترس نیست.",[[btn("💬 پشتیبانی","support:home")]]);
+      return true;
+    }
     if(command==="/support" || data==="support:home") {
       await setState("");
       if(isAdmin) {
