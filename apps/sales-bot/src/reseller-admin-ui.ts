@@ -167,6 +167,7 @@ async function showNodeList(
   if (page > 0) navigation.push(btn("◀️ قبلی", `rs:nodes:${page - 1}`));
   if ((page + 1) * perPage < nodes.length) navigation.push(btn("بعدی ▶️", `rs:nodes:${page + 1}`));
   if (navigation.length) rows.push(navigation);
+  rows.push([btn("➕ افزودن سرور در ربات","enroll:start")]);
   rows.push([btn("🔄 تازه‌سازی فهرست","rs:nodes")]);
   rows.push(home());
   await reply(

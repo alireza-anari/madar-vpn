@@ -22,7 +22,9 @@ export async function deliverOutbox(
     try {
       const payload = JSON.parse(row.payload) as Record<string, unknown>;
       const method =
-        payload._method === "sendDocument"
+        payload._method === "deleteMessage"
+          ? "deleteMessage"
+          : payload._method === "sendDocument"
           ? "sendDocument"
           : payload._method === "sendPhoto"
             ? "sendPhoto"

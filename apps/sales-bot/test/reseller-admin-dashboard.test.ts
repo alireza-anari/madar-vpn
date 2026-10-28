@@ -252,7 +252,8 @@ test("admin node list paginates beyond eight servers and keeps add-VPS action", 
   expect(second.text).toContain("صفحه ۲ از ۲");
   expect(secondButtons.filter((b:any)=>b.callback_data?.startsWith("rs:nodedetail:")).length).toBe(6);
   expect(secondButtons.some((b:any)=>b.callback_data==="rs:nodes:0")).toBe(true);
-  expect(secondButtons.some((b:any)=>b.web_app?.url?.endsWith("/enroll"))).toBe(true);
+  expect(secondButtons.some((b:any)=>b.callback_data==="enroll:start")).toBe(true);
+  expect(secondButtons.some((b:any)=>b.web_app?.url?.endsWith("/enroll"))).toBe(false);
 });
 
 test("admin seller list has eight-per-page navigation with seller management actions", async () => {

@@ -182,8 +182,8 @@ export async function handleUpdate(env: Env, u: TelegramUpdate, now: number) {
           [
             [
               {
-                text: "افزودن VPS با نصب خودکار",
-                web_app: { url: `${env.PUBLIC_BASE_URL}/enroll` },
+                text: "➕ افزودن سرور در ربات",
+                callback_data: "enroll:start",
               },
             ],
           ],
