@@ -145,7 +145,7 @@ test("ordinary users never receive the management Mini App entry", async () => {
   expect(flatButtons(ordinary).some((b: any) => b.web_app?.url?.endsWith("/app"))).toBe(false);
 });
 
-test("add VPS fallback lives under server management, not the admin home", async () => {
+test("native Add VPS works from both admin home and server inventory", async () => {
   await send(9, "/start", 5020);
   const home = await payload(5020);
   expect(
@@ -158,8 +158,9 @@ test("add VPS fallback lives under server management, not the admin home", async
   await click(9, "rs:nodes", 5021);
   const nodes = await payload(5021);
   expect(
-    flatButtons(nodes).some((b: any) => b.web_app?.url?.endsWith("/enroll")),
+    flatButtons(nodes).some((b: any) => b.callback_data === "enroll:start"),
   ).toBe(true);
+  expect(flatButtons(nodes).some((b: any) => b.web_app?.url?.endsWith("/enroll"))).toBe(false);
 });
 
 test("node detail includes alert status and a config-list action", async () => {
