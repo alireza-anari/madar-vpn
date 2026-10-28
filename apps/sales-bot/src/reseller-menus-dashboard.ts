@@ -74,6 +74,11 @@ const meter = (used: number, max: number | null) => {
   return "🟩".repeat(filled) + "⬜".repeat(8 - filled);
 };
 const divider = "━━━━━━━━━━━━━━━━";
+// Optional live metrics tolerate older migration fixtures without hiding the admin panel.
+async function optionalCount(db:D1Database,sql:string):Promise<number|null> {
+  try { return (await db.prepare(sql).first<number>("n"))??0; }
+  catch { return null; }
+}
 async function pendingCustomerReceipts(db: D1Database): Promise<number | null> {
   try {
     return (await db.prepare("SELECT COUNT(*) n FROM customer_orders WHERE state='pending_review'")
@@ -136,47 +141,53 @@ async function rewriteHome(
   }
   if (actor.role !== "admin") return;
 
-  const [capacities, pendingReceipts] = await Promise.all([
-    nodeCapacities(db, now),
+  const [capacities,pendingReceipts,pendingUpgrades,openSupport,activePlans,orders,paid,sellers] = await Promise.all([
+    nodeCapacities(db,now),
     pendingCustomerReceipts(db),
+    optionalCount(db,"SELECT COUNT(*) n FROM customer_upgrades WHERE state='pending_review'"),
+    optionalCount(db,"SELECT COUNT(*) n FROM support_tickets WHERE state='open'"),
+    optionalCount(db,"SELECT COUNT(*) n FROM plans WHERE enabled=1 AND quota_bytes BETWEEN 1 AND 1000000000000"),
+    optionalCount(db,"SELECT COUNT(*) n FROM customer_orders WHERE state='awaiting_receipt'"),
+    optionalCount(db,"SELECT COALESCE(SUM(price),0) n FROM customer_orders WHERE state='approved' AND currency='IRT'"),
+    optionalCount(db,"SELECT COUNT(*) n FROM resellers WHERE enabled=1"),
   ]);
-  const activeNodes = capacities.filter(
-    (n) =>
-      n.healthy === 1 &&
-      n.last_seen > now - 90 &&
-      n.agent_capabilities.split(",").includes("quota-v2"),
-  );
-  const committed = capacities.reduce((sum, n) => sum + n.committed_bytes, 0);
-  const finalized = capacities.reduce((sum, n) => sum + n.finalized_used_bytes, 0);
-  const serviceCount = capacities.reduce((sum, n) => sum + n.reserved_accounts, 0);
-  const sellers = (await db.prepare("SELECT COUNT(*) n FROM resellers WHERE enabled=1").first<number>("n")) || 0;
-  const text = [
-    "📊 وضعیت کلی مدار",
+  const activeNodes=capacities.filter(n=>n.healthy===1 && n.last_seen>now-90 &&
+    n.agent_capabilities.split(",").includes("quota-v2"));
+  const committed=capacities.reduce((sum,n)=>sum+n.committed_bytes,0);
+  const finalized=capacities.reduce((sum,n)=>sum+n.finalized_used_bytes,0);
+  const serviceCount=capacities.reduce((sum,n)=>sum+n.reserved_accounts,0);
+  const issues=(pendingReceipts||0)+(pendingUpgrades||0)+(openSupport||0);
+  const text=[
+    "🛡️ <b>پنل مدیریت مدار</b>",
     divider,
-    "<b>🛰️ سرورها و ظرفیت</b>",
+    "<b>📊 وضعیت کلی مدار</b>",
     `سرورهای فعال: ${fa(activeNodes.length)} از ${fa(capacities.length)}`,
     `کانفیگ‌های در سرویس: ${fa(serviceCount)}`,
     `رزرو فعال: ${formatBytes(committed)}`,
     `مصرف قطعی: ${formatBytes(finalized)}`,
     "",
-    "<b>👥 فروش و سفارش‌ها</b>",
-    `فروشنده‌های فعال: ${fa(sellers)}`,
-    ...(pendingReceipts !== null ? [
-      `📨 رسیدهای منتظر بررسی: ${fa(pendingReceipts)}`,
-      ...(pendingReceipts > 0 ? ["⚠️ رسیدهای مشتریان نیاز به بررسی مدیر دارند."] : []),
-    ] : []),
+    "<b>💳 فروش و سفارش‌ها</b>",
+    `فروشنده‌های فعال: ${fa(sellers||0)}`,
+    ...(activePlans===null?[]:[`🛍️ پلن‌های فعال: ${fa(activePlans)}`]),
+    ...(pendingReceipts===null?[]:[`📨 رسیدهای منتظر بررسی: ${fa(pendingReceipts)}`]),
+    ...(pendingUpgrades===null?[]:[`🔁 تمدید و حجم منتظر: ${fa(pendingUpgrades)}`]),
+    ...(orders===null?[]:[`🧾 سفارش‌های پرداخت‌نشده: ${fa(orders)}`]),
+    ...(paid===null?[]:[`💰 مجموع سفارش‌های تأییدشده (تومان): ${fa(paid)}`]),
+    ...(openSupport===null?[]:[`💬 تیکت‌های باز: ${fa(openSupport)}`]),
     "",
-    "👇 <b>بخش مدیریتی موردنظر را انتخاب کن.</b>",
+    issues>0?"🔔 <b>درخواست‌های مشتری منتظر رسیدگی هستند.</b>":"✅ مورد فوری در صندوق‌های مشتریان دیده نشد.",
+    "👇 <b>بخش موردنظر را انتخاب کن.</b>",
   ].join("\n");
-  const rows: Record<string, unknown>[][] = [
-    [btn("🌐 سرورها", "rs:nodes"), btn("👥 فروشندگان", "rs:sellers")],
-    [btn("➕ صدور کانفیگ", "rs:sale"), btn("🎁 تست", "rs:trial")],
-    [btn("📋 کانفیگ‌ها", "rs:list"), btn("📈 گزارش", "rs:reports")],
-    [btn("📖 راهنما", "rs:help")],
+  const rows:Record<string,unknown>[][]=[
+    [btn("🛍️ مدیریت فروشگاه","adminstore:home"),btn("💳 رسیدهای مشتریان","cust:inbox:0")],
+    [btn("🔁 رسیدهای تمدید و حجم","cust:up:list:0"),btn("💬 پشتیبانی مشتریان","support:admin:inbox:0")],
+    [btn("🌐 سرورها","rs:nodes"),btn("👥 فروشندگان","rs:sellers")],
+    [btn("➕ صدور کانفیگ","rs:sale"),btn("🎁 تست","rs:trial")],
+    [btn("📋 کانفیگ‌ها","rs:list"),btn("📈 گزارش‌ها","rs:reports")],
+    [btn("📖 راهنمای مدیریت","adminstore:guide"),btn("🔄 تازه‌سازی","rs:home")],
   ];
-  // The existing dashboard enhancer keeps the customer-receipt inbox entry.
-  if (env.PUBLIC_BASE_URL)
-    rows.push([{ text: "➕ افزودن VPS", web_app: { url: `${env.PUBLIC_BASE_URL}/enroll` } }]);
+  if(env.PUBLIC_BASE_URL)
+    rows.push([{text:"➕ افزودن VPS (ابزار پیشرفته)",web_app:{url:env.PUBLIC_BASE_URL+"/enroll"}}]);
   await replaceReply(db, reply.id, reply.payload, text, rows, true);
 }
 
@@ -371,7 +382,8 @@ async function rewriteAdminReport(
   ].join("\n");
   await replaceReply(env.SALES_DB, reply.id, reply.payload, text, [
     [btn("🌐 سرورها", "rs:nodes"), btn("👥 فروشندگان", "rs:sellers")],
-    [btn("💳 رسیدهای مشتریان", "cust:inbox:0")],
+    [btn("💳 رسیدهای مشتریان", "cust:inbox:0"),btn("🔁 تمدید و حجم","cust:up:list:0")],
+    [btn("🛍️ فروشگاه","adminstore:home"),btn("💬 پشتیبانی","support:admin:inbox:0")],
     home(),
   ], true);
 }
