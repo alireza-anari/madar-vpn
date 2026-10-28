@@ -17,6 +17,7 @@ import m12 from "../migrations/0012-telegram-profiles.sql?raw";
 import m13 from "../migrations/0013-managed-account-archive.sql?raw";
 import customerMigration from "../migrations/0016-customer-checkout.sql?raw";
 import upgradeMigration from "../migrations/0017-customer-upgrades.sql?raw";
+import supportMigration from "../migrations/0018-telegram-support.sql?raw";
 import { customerApi } from "../src/customer-api";
 import { handleUpdate } from "../src/menus";
 import { handleCustomerTelegramUpdate } from "../src/customer-telegram";
@@ -59,6 +60,8 @@ beforeEach(async()=>{
   for (const statement of customerMigration.split(/;\s*(?:\n|$)/).map(s=>s.trim()).filter(Boolean))
     await env.SALES_DB.prepare(statement).run();
   for (const statement of upgradeMigration.split(/;\s*(?:\n|$)/).map(s=>s.trim()).filter(Boolean))
+    await env.SALES_DB.prepare(statement).run();
+  for (const statement of supportMigration.split(/;\s*(?:\n|$)/).map(s=>s.trim()).filter(Boolean))
     await env.SALES_DB.prepare(statement).run();
   await env.SALES_DB.prepare(
     "INSERT INTO nodes(id,name,target_ip,vpn_port,state,revision,acked_revision,last_seen,healthy,agent_capabilities,max_accounts,max_allocated_bytes) VALUES('n','Stockholm','8.8.8.8',443,'ready',1,1,?,1,'quota-v2,shared-443',1,30000000000)",
