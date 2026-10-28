@@ -1,0 +1,1 @@
+CREATE TABLE support_tickets (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, state TEXT NOT NULL);
