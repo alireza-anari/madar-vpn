@@ -62,7 +62,7 @@ export async function setNodePurpose(
   requireSalesAdmin(actor);
   if (
     !["sale", "trial"].includes(purpose) ||
-    !(await db.prepare("SELECT id FROM nodes WHERE id=?").bind(nodeId).first())
+    !(await db.prepare("SELECT id FROM nodes WHERE id=? AND NOT EXISTS(SELECT 1 FROM settings WHERE key='node_status:'||id AND value IN ('paused','archived'))").bind(nodeId).first())
   )
     throw Error("INVALID_NODE");
   await db.batch([
