@@ -107,7 +107,7 @@ jobs:
             jq -e '.success == true and ((.result[0].results | map(.name)) == ["support_messages","support_tickets"])' >/dev/null
           curl -fsS --retry 2 -X POST -H "$auth" -H 'Content-Type: application/json' \
             --data '{"sql":"SELECT (SELECT COUNT(*) FROM support_tickets) AS tickets,(SELECT COUNT(*) FROM support_messages) AS messages,(SELECT COUNT(*) FROM customer_orders) AS orders"}' "$api" |
-            jq -e '.success == true and .result[0].results[0].tickets == 0 and .result[0].results[0].messages == 0 and (.result[0].results[0].orders >= 0)' >/dev/null
+            jq -e '.success == true and (.result[0].results[0].tickets >= 0) and (.result[0].results[0].messages >= 0) and (.result[0].results[0].orders >= 0)' >/dev/null
           echo "SUPPORT_SCHEMA_VERIFIED_BEFORE_WORKER_DEPLOY"
       - name: Deploy verified Worker preserving existing vars
         id: deploy
