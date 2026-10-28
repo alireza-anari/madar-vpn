@@ -281,3 +281,52 @@ test("seller cannot open admin inventory pages or receive privileged VPS links",
     expect(p.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="rs:nodedetail:n1")).toBe(false);
   }
 });
+
+test("admin can pause, resume, safely archive and restore a server entirely in Telegram",async()=>{
+  await click(9,"rs:nodedetail:n1",4900);
+  const detail=await payload(4900);
+  expect(detail.reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="rs:nodeops:pause:n1")).toBe(true);
+  await click(10,"rs:nodeops:pause:n1",4901);
+  expect((await payload(4901)).text).toContain("فقط برای مدیر");
+  await click(9,"rs:nodeops:pause:n1",4902);
+  expect((await payload(4902)).text).toContain("تأیید عملیات");
+  expect(await env.SALES_DB.prepare("SELECT value FROM settings WHERE key='node_status:n1'").first("value")).toBeNull();
+  await click(9,"rs:nodeops:apply",4903);
+  expect(await env.SALES_DB.prepare("SELECT value FROM settings WHERE key='node_status:n1'").first("value")).toBe("paused");
+  await click(9,"rs:nodeops:apply",4904);
+  expect((await payload(4904)).text).toContain("منقضی");
+  await click(9,"rs:nodedetail:n1",4905);
+  expect((await payload(4905)).text).toContain("⏸ متوقف");
+  await click(9,"rs:nodeops:archive:n1",4906);
+  expect((await payload(4906)).text).toContain("بایگانی");
+  await click(9,"rs:nodeops:apply",4907);
+  expect(await env.SALES_DB.prepare("SELECT value FROM settings WHERE key='node_status:n1'").first("value")).toBe("archived");
+  await click(9,"rs:nodes",4908);
+  expect((await payload(4908)).reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="rs:nodedetail:n1")).toBe(false);
+  await click(9,"rs:nodeops:archive:list",4909);
+  expect((await payload(4909)).reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="rs:nodedetail:n1")).toBe(true);
+  await click(9,"rs:nodeops:restore:n1",4910);
+  await click(9,"rs:nodeops:apply",4911);
+  expect(await env.SALES_DB.prepare("SELECT value FROM settings WHERE key='node_status:n1'").first("value")).toBe("active");
+  await click(9,"rs:nodeops:rename:n1",4912);
+  await send(9,"Stockholm Updated",4913);
+  expect(await env.SALES_DB.prepare("SELECT name FROM nodes WHERE id='n1'").first<string>("name")).toBe("Stockholm Updated");
+  expect(await env.SALES_DB.prepare("SELECT COUNT(*) n FROM audit_events WHERE target_id='n1' AND action LIKE 'node_mode_%'").first<number>("n")).toBe(3);
+  expect(await env.SALES_DB.prepare("SELECT COUNT(*) n FROM nodes").first<number>("n")).toBe(2);
+});
+test("pausing a node keeps live accounts intact and blocks new allocations and archiving",async()=>{
+  const {createAccount}=await import("../src/accounts");
+  const {availableCustomerNodes}=await import("../src/customer-store");
+  await account("existing","n1","active",30,2);
+  await click(9,"rs:nodeops:pause:n1",4915);
+  await click(9,"rs:nodeops:apply",4916);
+  expect(await env.SALES_DB.prepare("SELECT state FROM managed_accounts WHERE id='existing'").first("state")).toBe("active");
+  expect((await availableCustomerNodes(env.SALES_DB,100,1e9)).some(n=>n.id==="n1")).toBe(false);
+  await expect(createAccount(env.SALES_DB,{telegramId:"10",role:"seller"},{
+    kind:"sale",label:"new",requestKey:"blocked-001",quotaBytes:1e9,durationSeconds:86400,nodeId:"n1",
+  },100)).rejects.toThrow();
+  expect(await env.SALES_DB.prepare("SELECT COUNT(*) n FROM managed_accounts WHERE node_id='n1'").first<number>("n")).toBe(1);
+  await click(9,"rs:nodeops:archive:n1",4917);
+  expect((await payload(4917)).text).toContain("بایگانی امن مجاز نیست");
+  expect(await env.SALES_DB.prepare("SELECT value FROM settings WHERE key='node_status:n1'").first("value")).toBe("paused");
+});
