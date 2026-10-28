@@ -21,9 +21,9 @@ export async function nodeCapacities(
   return (
     await db
       .prepare(
-        `SELECT n.id,n.name,n.healthy,n.last_seen,n.agent_capabilities,n.max_accounts,n.max_allocated_bytes,COUNT(a.id) reserved_accounts,COALESCE(SUM(a.quota_bytes),0) allocated_bytes,COUNT(a.id)-COUNT(a.quota_bytes) uncapped_accounts FROM nodes n LEFT JOIN managed_accounts a ON a.node_id=n.id AND ${reservationPredicate} WHERE (? IS NULL OR n.id=?) GROUP BY n.id ORDER BY n.name LIMIT 100`,
+        `SELECT n.id,n.name,CASE WHEN n.healthy=1 AND n.state='ready' AND n.revision=n.acked_revision AND n.last_seen>? THEN 1 ELSE 0 END AS healthy,n.last_seen,n.agent_capabilities,n.max_accounts,n.max_allocated_bytes,COUNT(a.id) reserved_accounts,COALESCE(SUM(a.quota_bytes),0) allocated_bytes,COUNT(a.id)-COUNT(a.quota_bytes) uncapped_accounts FROM nodes n LEFT JOIN managed_accounts a ON a.node_id=n.id AND ${reservationPredicate} WHERE (? IS NULL OR n.id=?) GROUP BY n.id ORDER BY n.name LIMIT 100`,
       )
-      .bind(now, nodeId, nodeId)
+      .bind(now - 90, now, nodeId, nodeId)
       .all<NodeCapacity>()
   ).results;
 }
