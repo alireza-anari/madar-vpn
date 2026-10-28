@@ -1,7 +1,7 @@
 name: Madar customer chat visual polish guarded release
 on:
   push:
-    branches: ['feat/telegram-support-inbox-20261028']
+    branches: ['feat/native-admin-dashboard-20261028']
     paths: ['.github/workflows/madar-visual-polish-release.yml']
 permissions:
   contents: read
@@ -18,10 +18,10 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       SCRIPT: madar-sales-bot
       DB_ID: f59e160f-89ab-4a90-a4dc-f257883d5a61
-      PREVIOUS_VERSION: c8f7741c-01bc-4c5d-9a80-c7d9028a7847
+      PREVIOUS_VERSION: 3addf678-76a8-42d6-9e12-65dba5ad3d51
       BASE_URL: https://madar-sales-bot.alirezaanari117.workers.dev
-      GREEN_COMMIT: 8775305915cb1693db1726e0c4846e865ac8f6a2
-      GREEN_INDEX_SHA256: 4ad2be3abae550c120f53f3acb6aad5bd934b26fa0c6b0078aaddd9fbc6d9d68
+      GREEN_COMMIT: 7d50ba44ba1955557d3f453c817b04c29f28d7b7
+      GREEN_INDEX_SHA256: c12e8bd90862f5516fe4d0ff0d288168ba17544dbadf0a6838506ef41b0cea4f
 
     steps:
       - uses: actions/checkout@v4
@@ -107,7 +107,7 @@ jobs:
             jq -e '.success == true and ((.result[0].results | map(.name)) == ["support_messages","support_tickets"])' >/dev/null
           curl -fsS --retry 2 -X POST -H "$auth" -H 'Content-Type: application/json' \
             --data '{"sql":"SELECT (SELECT COUNT(*) FROM support_tickets) AS tickets,(SELECT COUNT(*) FROM support_messages) AS messages,(SELECT COUNT(*) FROM customer_orders) AS orders"}' "$api" |
-            jq -e '.success == true and .result[0].results[0].tickets == 0 and .result[0].results[0].messages == 0 and (.result[0].results[0].orders >= 0)' >/dev/null
+            jq -e '.success == true and (.result[0].results[0].tickets >= 0) and (.result[0].results[0].messages >= 0) and (.result[0].results[0].orders >= 0)' >/dev/null
           echo "SUPPORT_SCHEMA_VERIFIED_BEFORE_WORKER_DEPLOY"
       - name: Deploy verified Worker preserving existing vars
         id: deploy

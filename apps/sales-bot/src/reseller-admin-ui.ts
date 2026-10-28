@@ -159,7 +159,7 @@ async function showNodeList(
     const status = available ? "🟢" : "🔴";
     const freeSlots = Math.max(0, n.max_accounts - n.reserved_accounts);
     return [btn(
-      `${status} ${n.name.slice(0,22)} · ${freeSlots.toLocaleString("fa-IR")} جای خالی · ${remaining === null ? "♾" : formatBytes(remaining)}`,
+      `${status} ${n.name.slice(0,20)} · ${freeSlots.toLocaleString("fa-IR")} جای خالی · ${remaining === null ? "♾" : formatBytes(remaining)}`,
       `rs:nodedetail:${n.id}`,
     )];
   });
@@ -167,6 +167,7 @@ async function showNodeList(
   if (page > 0) navigation.push(btn("◀️ قبلی", `rs:nodes:${page - 1}`));
   if ((page + 1) * perPage < nodes.length) navigation.push(btn("بعدی ▶️", `rs:nodes:${page + 1}`));
   if (navigation.length) rows.push(navigation);
+  rows.push([btn("🔄 تازه‌سازی فهرست","rs:nodes")]);
   rows.push(home());
   await reply(
     [
@@ -175,7 +176,8 @@ async function showNodeList(
       `🟢 آماده فروش: ${healthy.toLocaleString("fa-IR")} از ${nodes.length.toLocaleString("fa-IR")}`,
       `🔴 نیازمند بررسی: ${(nodes.length - healthy).toLocaleString("fa-IR")}`,
       "",
-      nodes.length ? "برای مشاهده سقف کانفیگ، حجم و تنظیمات یک سرور را انتخاب کن." : "هنوز سروری ثبت نشده است.",
+      "📊 وضعیت بر اساس سلامت، ظرفیت تعداد و حجم واقعی محاسبه می‌شود.",
+      nodes.length ? "👇 یک سرور را برای مشاهده جزئیات و تغییر سقف انتخاب کن." : "هنوز سروری ثبت نشده است.",
       nodes.length ? `صفحه ${(page + 1).toLocaleString("fa-IR")} از ${Math.max(1, Math.ceil(nodes.length / perPage)).toLocaleString("fa-IR")}` : "",
     ].filter(Boolean).join("\n"),
     rows,
@@ -206,9 +208,12 @@ async function showNodeDetail(
   await reply(
     [
       summary[0],
+      "━━━━━━━━━━━━━━━━",
       `وضعیت: ${health}`,
       ...summary.slice(1),
       `کاربرد: ${purposeText}`,
+      "",
+      "👇 تغییر سقف‌ها فقط روی ظرفیت صدورهای جدید اثر می‌گذارد.",
     ].join("\n"),
     nodeRows(n),
   );
@@ -243,6 +248,7 @@ async function showSellerList(
   rows.push(
     [btn("🔗 دعوت فروشنده", "rs:invite")],
     [btn("➕ افزودن با شناسه", "rs:seller"), btn("⛔ قطع دسترسی", "rs:disable")],
+    [btn("🔄 تازه‌سازی", "rs:sellers")],
     home(),
   );
   await reply(
@@ -250,8 +256,9 @@ async function showSellerList(
       "👥 فروشندگان | مدیریت فروش",
       "━━━━━━━━━━━━━━━━",
       `🟢 فعال: ${active.toLocaleString("fa-IR")} از ${total.toLocaleString("fa-IR")}`,
+      `⚪ غیرفعال: ${(total-active).toLocaleString("fa-IR")}`,
       "",
-      total ? "برای مشاهده آمار فروش، سقف حجمی و تسویه یک فروشنده را انتخاب کن." :
+      total ? "👇 فروشنده را برای مشاهده فروش، سهمیه و تسویه انتخاب کن." :
         "هنوز فروشنده‌ای ثبت نشده است.",
       total ? `صفحه ${(page + 1).toLocaleString("fa-IR")} از ${Math.max(1, Math.ceil(total / perPage)).toLocaleString("fa-IR")}` : "",
     ].filter(Boolean).join("\n"),
@@ -282,29 +289,32 @@ async function sellerDetailText(env: Env, sellerId: string, now: number) {
     : "هنوز فروشی در تسویهٔ جاری ثبت نشده است.";
   return [
     `👤 فروشنده ${sellerId}`,
+    "━━━━━━━━━━━━━━━━",
     `وضعیت: ${seller.enabled ? "🟢 فعال" : "⚪ غیرفعال"}`,
     "",
-    "این تسویه",
+    "📅 این تسویه",
     `فروش: ${formatBytes(current.soldBytes)} · ${current.configCount.toLocaleString("fa-IR")} کانفیگ`,
     `مصرف واقعی: ${formatBytes(current.usedBytes)}`,
     `در سرویس: ${(current.liveCount + current.blockedCount).toLocaleString("fa-IR")}`,
     "",
-    "کل دوره",
+    "📈 کل دوره",
     `فروش: ${formatBytes(all.soldBytes)} · ${all.configCount.toLocaleString("fa-IR")} کانفیگ`,
     `مصرف واقعی: ${formatBytes(all.usedBytes)}`,
     "",
-    "سقف‌های جاری",
+    "🎯 سقف‌های جاری",
     `تعداد: ${limits.maxReservedAccounts === null ? "نامحدود" : limits.maxReservedAccounts.toLocaleString("fa-IR")}`,
     `حجم: ${limits.maxCommittedBytes === null ? "نامحدود" : formatBytes(limits.maxCommittedBytes)}`,
     "",
-    "تفکیک سرور",
+    "🛰️ تفکیک سرور",
     breakdown,
+    "",
+    "👇 مدیریت سهمیه یا تسویه را انتخاب کن.",
   ].join("\n");
 }
 
 function sellerDetailRows(sellerId: string) {
   return [
-    [btn("⚙️ سقف‌ها", `rs:limits:${sellerId}`), btn("🧾 تسویه", `rs:settle:${sellerId}`)],
+    [btn("🎯 سقف‌های فروش", `rs:limits:${sellerId}`), btn("🧾 تسویه", `rs:settle:${sellerId}`)],
     [btn("📚 تسویه‌های اخیر", `rs:settlements:${sellerId}`)],
     backSellers(),
     home(),

@@ -818,3 +818,82 @@ test("support media, authorization, closure and reopening work without affecting
   expect(message.document).toBe("diagnostics-file");
   expect(await env.SALES_DB.prepare("SELECT COUNT(*) n FROM customer_orders").first<number>("n")).toBe(0);
 });
+
+test("admin dashboard uses native customer-style navigation and private real-time status cards",async()=>{
+  await env.SALES_DB.prepare("INSERT INTO settings(key,value) VALUES('app_mode','reseller')").run();
+  await setup();
+  await env.SALES_DB.prepare("INSERT INTO support_tickets(id,user_id,category,created_update_id,created_at,updated_at) VALUES('11111111-1111-4111-8111-111111111111','10','connection',9901,100,100)").run();
+  expect(await handleUpdate(E,{update_id:8100,callback_query:{id:"home",from:{id:1},message:{message_id:1,chat:{id:1,type:"private"}},data:"rs:home"}},now)).toBeUndefined();
+  const p=JSON.parse(await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u8100:reply'").first<string>("payload")||"{}");
+  expect(p.text).toContain("پنل مدیریت مدار");
+  expect(p.text).toContain("تیکت‌های باز: ۱");
+  expect(p.text).toContain("پلن‌های فعال: ۱");
+  const buttons=p.reply_markup.inline_keyboard.flat();
+  for(const callback of ["adminstore:home","cust:inbox:0","cust:up:list:0","support:admin:inbox:0","rs:nodes","rs:sellers","rs:list","rs:reports","adminstore:guide"])
+    expect(buttons.some((b:any)=>b.callback_data===callback)).toBe(true);
+  const ordered=buttons.map((b:any)=>b.callback_data).filter(Boolean);
+  expect(ordered.indexOf("adminstore:home")).toBeLessThan(ordered.indexOf("rs:nodes"));
+});
+
+test("native admin plan creation/editing and activation require a separate preview confirmation",async()=>{
+  await env.SALES_DB.prepare("INSERT INTO settings(key,value) VALUES('app_mode','reseller')").run();
+  const click=async(i:number,u:number,data:string)=>
+    handleUpdate(E,{update_id:i,callback_query:{id:"c"+i,from:{id:u},message:{message_id:1,chat:{id:u,type:"private"},text:"پنل مدیر"},data}},now);
+  const say=async(i:number,u:number,text:string)=>
+    handleUpdate(E,{update_id:i,message:{message_id:i,chat:{id:u,type:"private"},from:{id:u},text}},now);
+  const output=async(i:number)=>JSON.parse(await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id=?").bind("u"+i+":reply").first<string>("payload")||"{}");
+  await click(8200,1,"adminstore:new");
+  await say(8201,1,"monthly_40 | اشتراک ۴۰ گیگ | ۴۰ | ۳۰ | ۱۸۰۰۰۰");
+  const preview=await output(8201);
+  expect(preview.text).toContain("پیش‌نمایش پلن");
+  expect(preview.text).toContain("۱۸۰٬۰۰۰");
+  expect(await env.SALES_DB.prepare("SELECT id FROM plans WHERE id='monthly_40'").first()).toBeNull();
+  await click(8202,10,"adminstore:confirm");
+  expect((await output(8202)).text).toContain("فقط برای مدیر");
+  await click(8203,1,"adminstore:confirm");
+  const created=await env.SALES_DB.prepare("SELECT * FROM plans WHERE id='monthly_40'").first<any>();
+  expect(created).toMatchObject({price:180000,currency:"IRT",duration:30*86400,quota_bytes:40e9,enabled:0});
+  await click(8204,1,"adminstore:toggle:monthly_40");
+  expect((await output(8204)).text).toContain("تأیید تغییر وضعیت");
+  expect(await env.SALES_DB.prepare("SELECT enabled FROM plans WHERE id='monthly_40'").first<number>("enabled")).toBe(0);
+  await click(8205,1,"adminstore:toggleok");
+  expect(await env.SALES_DB.prepare("SELECT enabled FROM plans WHERE id='monthly_40'").first<number>("enabled")).toBe(1);
+  await click(8206,1,"adminstore:toggleok");
+  expect((await output(8206)).text).toContain("منقضی شده");
+  await click(8207,1,"adminstore:edit:monthly_40");
+  await say(8208,1,"اشتراک ویژه | ۵۰ | ۶۰ | ۲۲۰۰۰۰");
+  expect(await env.SALES_DB.prepare("SELECT price FROM plans WHERE id='monthly_40'").first<number>("price")).toBe(180000);
+  await click(8209,1,"adminstore:confirm");
+  const changed=await env.SALES_DB.prepare("SELECT * FROM plans WHERE id='monthly_40'").first<any>();
+  expect(changed).toMatchObject({name:"اشتراک ویژه",price:220000,duration:60*86400,quota_bytes:50e9,enabled:1});
+  await click(8210,1,"adminstore:plans:0");
+  expect((await output(8210)).reply_markup.inline_keyboard.flat().some((b:any)=>b.callback_data==="adminstore:plan:monthly_40")).toBe(true);
+  expect(await env.SALES_DB.prepare("SELECT COUNT(*) n FROM audit_events WHERE action='customer_plan' AND target_id='monthly_40'").first<number>("n")).toBe(3);
+});
+
+test("admin payment changes are staged until confirmed; non-admin cannot view bank settings",async()=>{
+  await env.SALES_DB.prepare("INSERT INTO settings(key,value) VALUES('app_mode','reseller')").run();
+  await setup();
+  const click=async(i:number,u:number,data:string)=>
+    handleUpdate(E,{update_id:i,callback_query:{id:"c"+i,from:{id:u},message:{message_id:3,chat:{id:u,type:"private"},text:"مدیریت"},data}},now);
+  const say=async(i:number,u:number,text:string)=>
+    handleUpdate(E,{update_id:i,message:{message_id:i,chat:{id:u,type:"private"},from:{id:u},text}},now);
+  const output=async(i:number)=>JSON.parse(await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id=?").bind("u"+i+":reply").first<string>("payload")||"{}");
+  await click(8300,10,"adminstore:payment");
+  expect((await output(8300)).text).toContain("فقط برای مدیر");
+  expect(JSON.stringify(await output(8300))).not.toContain("کارت نمونه");
+  await click(8301,1,"adminstore:payment");
+  expect((await output(8301)).text).toContain("کارت نمونه");
+  await click(8302,1,"adminstore:paymentedit");
+  await say(8303,1,"شماره کارت آزمایشی \u003cTEST\u003e\nدارنده: مدار");
+  const preview=await output(8303);
+  expect(preview.text).toContain("&lt;TEST&gt;");
+  expect(await env.SALES_DB.prepare("SELECT value FROM settings WHERE key='payment'").first<string>("value")).toBe("کارت نمونه");
+  await click(8304,10,"adminstore:confirm");
+  expect((await output(8304)).text).toContain("فقط برای مدیر");
+  await click(8305,1,"adminstore:confirm");
+  expect(await env.SALES_DB.prepare("SELECT value FROM settings WHERE key='payment'").first<string>("value")).toContain("دارنده: مدار");
+  expect(await env.SALES_DB.prepare("SELECT COUNT(*) n FROM audit_events WHERE action='save_payment'").first<number>("n")).toBeGreaterThanOrEqual(2);
+  await click(8306,1,"adminstore:guide");
+  expect((await output(8306)).text).toContain("راهنمای مدیریت");
+});
