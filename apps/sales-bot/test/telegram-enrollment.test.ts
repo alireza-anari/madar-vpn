@@ -3,6 +3,7 @@ import { beforeEach,expect,test } from "vitest";
 import { resetDb } from "./db";
 import { handleUpdate } from "../src/menus";
 import { recordUpdate } from "../src/telegram";
+import worker from "../src/index";
 import { sealTelegramEnrollmentSecret } from "../src/telegram-enrollment";
 import m1 from "../migrations/0001.sql?raw";
 import m2 from "../migrations/0002.sql?raw";
@@ -120,4 +121,22 @@ test("secure webhook sealing rejects invalid secrets without storing input and p
   const state=await env.SALES_DB.prepare("SELECT conversation FROM users WHERE id='9'").first<string>("conversation");
   expect(state).toBe("");
   expect(await env.SALES_DB.prepare("SELECT COUNT(*) AS n FROM nodes").first<number>("n")).toBe(0);
+});
+
+test("real webhook automatically seals incoming SSH secret and queues Telegram message deletion",async()=>{
+  await env.SALES_DB.prepare("INSERT INTO users(id,conversation) VALUES('9',?)").bind('enroll:'+JSON.stringify({step:"secret",method:"password"})).run();
+  const secret="SENSITIVE_TG_SSH_PASSWORD_12345";
+  const update={update_id:9500,message:{message_id:9500,chat:{id:9,type:"private"},from:{id:9},text:secret}};
+  const response=await worker.fetch(new Request("https://example.test/webhook",{
+    method:"POST",
+    headers:{"X-Telegram-Bot-Api-Secret-Token":"test-secret-native-enrollment","Content-Type":"application/json"},
+    body:JSON.stringify(update),
+  }),{...E,TELEGRAM_WEBHOOK_SECRET:"test-secret-native-enrollment"});
+  expect(response.status).toBe(200);
+  const stored=await env.SALES_DB.prepare("SELECT payload FROM telegram_updates WHERE id=9500").first<string>("payload");
+  expect(stored).toContain("enroll-sealed:");
+  expect(stored).not.toContain(secret);
+  const deletion=JSON.parse(await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='u9500:delete'").first<string>("payload")||"{}");
+  expect(deletion).toMatchObject({_method:"deleteMessage",message_id:9500});
+  expect(await env.SALES_DB.prepare("SELECT chat_id FROM outbox WHERE id='u9500:delete'").first<string>("chat_id")).toBe("9");
 });
