@@ -110,7 +110,7 @@ test("seller home counts all still-in-service configs even after settlement", as
   expect(home.text).toContain("کل فروش: ۱ کانفیگ");
 });
 
-test("admin and enabled seller homes expose the Madar Mini App while legacy actions remain", async () => {
+test("admin retains optional Mini App but seller home is now fully native", async () => {
   await send(9, "/start", 5011);
   const admin = await payload(5011);
   const adminButtons = flatButtons(admin);
@@ -128,15 +128,9 @@ test("admin and enabled seller homes expose the Madar Mini App while legacy acti
   await send(10, "/start", 5012);
   const seller = await payload(5012);
   const sellerButtons = flatButtons(seller);
-  expect(sellerButtons).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        text: "باز کردن پنل مدار",
-        web_app: { url: "https://example.test/app" },
-      }),
-    ]),
-  );
-  expect(sellerButtons.some((b: any) => b.callback_data)).toBe(true);
+  expect(sellerButtons.some((b: any) => b.web_app)).toBe(false);
+  for (const action of ["seller:clients:all:0", "seller:alerts", "seller:settlements:0", "support:home"])
+    expect(sellerButtons.some((b: any) => b.callback_data === action)).toBe(true);
 });
 
 test("ordinary users never receive the management Mini App entry", async () => {
