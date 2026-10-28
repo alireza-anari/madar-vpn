@@ -95,7 +95,7 @@ export async function handleTelegramEnrollment(env:Env,u:TelegramUpdate,now:numb
     preflight:"🔎 بررسی پیش‌نیازها",running:"⚙️ در حال نصب",installing:"⚙️ در حال نصب",
     verifying:"🔐 بررسی سلامت نهایی",ready:"✅ آماده",failed:"❌ ناموفق",
   } as Record<string,string>)[state]||"⏳ در حال بررسی";
-  const error=async(s:string)=>reply("⚠️ "+s,[[btn("🔄 شروع مجدد","enroll:start")],back(),home()]);
+  const error=async(s:string):Promise<boolean>=>{await reply("⚠️ "+s,[[btn("🔄 شروع مجدد","enroll:start")],back(),home()]);return true;};
   if(data==="enroll:cancel"){
     await set(null);
     await reply("↩️ افزودن سرور لغو شد. هیچ نصب جدیدی از این مرحله آغاز نشده است.",[back(),home()]);
