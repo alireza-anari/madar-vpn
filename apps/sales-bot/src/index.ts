@@ -25,7 +25,8 @@ import { appLifecycleApi } from "./app-lifecycle-api";
 import { cleanupCredentials } from "./enrollment";
 import { drainInbox } from "./inbox";
 import { authenticateUpdate } from "./auth";
-import { recordUpdate } from "./telegram";
+import { recordUpdate, enqueue } from "./telegram";
+import { sealTelegramEnrollmentSecret } from "./telegram-enrollment";
 import { deliverOutbox } from "./outbox";
 import { epoch } from "./contracts";
 
@@ -96,7 +97,14 @@ export default {
       if (!update)
         return Response.json({ error: "UNAUTHORIZED" }, { status: 401 });
       try {
+        // Seal SSH secrets before the update is ever persisted in D1.
+        const secretMessage=await sealTelegramEnrollmentSecret(env, update);
         await recordUpdate(env.SALES_DB, update);
+        if (secretMessage && update.message?.message_id) {
+          await enqueue(env.SALES_DB,"u"+update.update_id+":delete",String(update.message.chat.id),{
+            _method:"deleteMessage",message_id:update.message.message_id,
+          });
+        }
         if (ctx)
           ctx.waitUntil(
             (async () => {
