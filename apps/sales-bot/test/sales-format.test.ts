@@ -5,6 +5,7 @@ const load = () => import("../src/" + "sales-format");
 const node = (patch: Partial<NodeCapacity> = {}): NodeCapacity => ({
   id: "n",
   name: "Stockholm",
+  operational_status: "active",
   healthy: 1,
   last_seen: 100,
   agent_capabilities: "quota-v2,shared-443",
