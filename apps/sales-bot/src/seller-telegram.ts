@@ -226,7 +226,8 @@ export async function handleSellerTelegram(env:Env,u:TelegramUpdate,now:number):
       return true;
     }
     const a=await ownedAccount(db,{telegramId:user,role:"seller"},accountId);
-    if(a.kind!=="sale"||a.archived_at!==null||a.state==="revoked"){
+    const archivedAt=await db.prepare("SELECT archived_at FROM managed_accounts WHERE id=? AND seller_id=?").bind(accountId,user).first<number|null>("archived_at");
+    if(a.kind!=="sale"||archivedAt!=null||a.state==="revoked"){
       await reply("امکان درخواست برای این کانفیگ وجود ندارد.",[[btn("👥 مشتریان","seller:clients:all:0")],home()]);
       return true;
     }
