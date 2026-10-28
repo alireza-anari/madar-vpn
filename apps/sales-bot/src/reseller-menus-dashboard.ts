@@ -113,7 +113,7 @@ async function rewriteHome(
     const atLimit = countLeft === 0 || bytesLeft === 0 ||
       (cappedBytes && limits.uncappedAccounts > 0);
     const text = [
-      "💼 <b>پنل فروشنده مدار</b>",
+      "💼 پنل فروش مدار",
       divider,
       "<b>📊 وضعیت فروش</b>",
       `در سرویس: ${fa(inService(all))}`,
