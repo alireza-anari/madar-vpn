@@ -108,3 +108,33 @@ def test_preflight_refuses_symlinked_quota_state(tmp_path):
     real_db.symlink_to(target_db)
     with pytest.raises(ValueError, match='QUOTA_STATE_MISSING'):
         m.preflight('node-test', root=paths[0], etc=paths[1], units=paths[2], state=paths[3])
+
+
+def test_two_account_canary_allowed_only_on_stockholm2(tmp_path):
+    m = module()
+    paths = fixture_node(tmp_path, live=2)
+    with pytest.raises(ValueError, match='TWO_ACCOUNTS_AWS_STOCKHOLM_2_ONLY'):
+        m.preflight('node-test', root=paths[0], etc=paths[1], units=paths[2],
+                    state=paths[3], max_live_accounts=2)
+    for file in (paths[0] / 'manifest.json', paths[1] / 'config.json'):
+        values = json.loads(file.read_text())
+        values['nodeId'] = m.AWS_STOCKHOLM_2_NODE_ID
+        file.write_text(json.dumps(values))
+    result = m.preflight(m.AWS_STOCKHOLM_2_NODE_ID, root=paths[0], etc=paths[1],
+                         units=paths[2], state=paths[3], max_live_accounts=2)
+    assert result['liveAccounts'] == 2
+    with pytest.raises(ValueError, match='BUSY_SALES_NODE'):
+        m.preflight(m.AWS_STOCKHOLM_2_NODE_ID, root=paths[0], etc=paths[1],
+                    units=paths[2], state=paths[3])
+
+
+def test_three_accounts_never_pass_even_with_aws_two_account_flag(tmp_path):
+    m = module()
+    paths = fixture_node(tmp_path, live=3)
+    for file in (paths[0] / 'manifest.json', paths[1] / 'config.json'):
+        values = json.loads(file.read_text())
+        values['nodeId'] = m.AWS_STOCKHOLM_2_NODE_ID
+        file.write_text(json.dumps(values))
+    with pytest.raises(ValueError, match='BUSY_SALES_NODE'):
+        m.preflight(m.AWS_STOCKHOLM_2_NODE_ID, root=paths[0], etc=paths[1],
+                    units=paths[2], state=paths[3], max_live_accounts=2)
