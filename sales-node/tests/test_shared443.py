@@ -123,7 +123,7 @@ def test_shared_frontend_pid_probe_is_amortized_across_active_accounts(monkeypat
     monkeypatch.setattr(m.time,'monotonic',lambda:clock[0])
     def systemctl(args,**kwargs):
         calls.append(args)
-        return subprocess.CompletedProcess(args,0,stdout=str(main_pid[0])+'\\n',stderr='')
+        return subprocess.CompletedProcess(args,0,stdout=str(main_pid[0])+'\n',stderr='')
     def procstat(path):
         assert path.as_posix()==f'/proc/{123}/stat'
         if not alive[0]:raise FileNotFoundError(str(path))
@@ -155,7 +155,7 @@ def test_shared_frontend_zombie_is_never_healthy_inside_pid_cache(monkeypatch):
     import subprocess
     m=module();clock=[42.0];state=['S'];calls=[]
     monkeypatch.setattr(m.time,'monotonic',lambda:clock[0])
-    monkeypatch.setattr(m.subprocess,'run',lambda args,**kw:(calls.append(args) or subprocess.CompletedProcess(args,0,stdout='888\\n',stderr='')))
+    monkeypatch.setattr(m.subprocess,'run',lambda args,**kw:(calls.append(args) or subprocess.CompletedProcess(args,0,stdout='888\n',stderr='')))
     monkeypatch.setattr(pathlib.Path,'read_text',lambda p:'888 (xray) '+state[0]+' '+' '.join(str(i) for i in range(1,25)))
     front=m.SharedFrontend({'frontendService':'madar-zombie-test.service'},'xray')
     state[0]='Z'
@@ -169,7 +169,7 @@ def test_shared_frontend_systemctl_failures_are_not_cached(monkeypatch):
     monkeypatch.setattr(m.time,'monotonic',lambda:clock[0])
     def service(args,**kwargs):
         calls.append(args)
-        return subprocess.CompletedProcess(args,0,stdout=str(results.pop(0))+'\\n',stderr='')
+        return subprocess.CompletedProcess(args,0,stdout=str(results.pop(0))+'\n',stderr='')
     monkeypatch.setattr(m.subprocess,'run',service)
     monkeypatch.setattr(pathlib.Path,'read_text',lambda p:'444 (xray) S '+' '.join(str(i) for i in range(1,25)))
     settings={'frontendService':'madar-stopped-test.service'}
