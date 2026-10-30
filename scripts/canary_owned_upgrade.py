@@ -19,6 +19,7 @@ ETC = pathlib.Path('/etc/madar-sales-node')
 UNITS = pathlib.Path('/etc/systemd/system')
 STATE = pathlib.Path('/var/lib/madar-sales-node')
 RUNTIME = pathlib.Path('/run/madar-sales-node')
+AWS_STOCKHOLM_2_NODE_ID = 'edde0ebd-5fef-48bf-a9e5-91726324c058'
 
 CODE_FILES = (
     'agent.py', 'policy.py', 'xray.py', 'guard.py', 'stats.py',
@@ -37,7 +38,7 @@ def safe_file(path):
         raise ValueError('NOT_AN_OWNED_FILE')
     return path.read_bytes()
 
-def preflight(node_id, *, root=ROOT, etc=ETC, units=UNITS, state=STATE, now=None):
+def preflight(node_id, *, root=ROOT, etc=ETC, units=UNITS, state=STATE, now=None, max_live_accounts=1):
     now = int(time.time() if now is None else now)
     owner = json.loads(safe_file(root / 'manifest.json'))
     config = json.loads(safe_file(etc / 'config.json'))
@@ -60,12 +61,16 @@ def preflight(node_id, *, root=ROOT, etc=ETC, units=UNITS, state=STATE, now=None
     database = state / 'quota.sqlite'
     if database.is_symlink() or not database.is_file():
         raise ValueError('QUOTA_STATE_MISSING')
-    # Never canary on a busy sales node: exactly zero or one eligible account.
+    # Default canary is <=1 account; only Stockholm 2 may explicitly allow 2.
+    if max_live_accounts not in (0, 1, 2):
+        raise ValueError('INVALID_CANARY_LIMIT')
+    if max_live_accounts == 2 and node_id != AWS_STOCKHOLM_2_NODE_ID:
+        raise ValueError('TWO_ACCOUNTS_AWS_STOCKHOLM_2_ONLY')
     uri = 'file:' + str(database) + '?mode=ro'
     with sqlite3.connect(uri, uri=True, timeout=2) as db:
         live = db.execute('SELECT COUNT(*) FROM accounts WHERE present=1 AND blocked=0 AND until_time>? AND (cap IS NULL OR used<cap)', (now,)).fetchone()[0]
         snapshot = {ident: (epoch, used, blocked) for ident, epoch, used, blocked in db.execute('SELECT id,epoch,used,blocked FROM accounts')}
-    if live > 1:
+    if live > max_live_accounts:
         raise ValueError('BUSY_SALES_NODE')
     return {'nodeId': node_id, 'liveAccounts': live,
             'sourceRef': owner.get('sourceRef'), 'quota': snapshot}
@@ -155,7 +160,8 @@ def rollback(files, directory):
 def execute(args):
     if os.geteuid() != 0:
         raise ValueError('ROOT_REQUIRED')
-    before = preflight(args.node_id)
+    # A dry run and the actual install must enforce exactly the same account cap.
+    before = preflight(args.node_id, max_live_accounts=args.max_live_accounts)
     if not args.apply:
         print('CANARY_PREFLIGHT_OK; live_accounts=' + str(before['liveAccounts']))
         return
@@ -194,7 +200,7 @@ def main():
     if (not re.fullmatch('[a-f0-9-]{36}', args.node_id)
             or not re.fullmatch('[0-9a-f]{40}', args.source_ref)
             or not re.fullmatch('[0-9a-f]{64}', args.manifest_sha256)
-            or not 0 <= args.max_live_accounts <= 1):
+            or not 0 <= args.max_live_accounts <= 2):
         raise SystemExit('INVALID_CANARY_ARGUMENTS')
     try:
         execute(args)
