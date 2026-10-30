@@ -1,5 +1,5 @@
 """Share one REALITY 443 frontend while isolating managed traffic behind loopback workers."""
-import copy, hashlib, hmac, json, os, pathlib, subprocess, uuid
+import copy, hashlib, hmac, json, os, pathlib, subprocess, threading, time, uuid
 from xray import render_config, atomic_write
 
 API_TAG='madar-shared-api'
@@ -42,16 +42,34 @@ def backend_config(settings,client,now):
     return conf
 
 class SharedFrontend:
+    # Every account samples stats each second. A systemctl subprocess for every
+    # worker would contend with Xray's stats CLI and cause avoidable failures.
+    # Cache only the service's MainPID briefly across instances, not its liveness:
+    # /proc starttime is rechecked on every call and detects exit/PID reuse.
+    _pid_lock=threading.Lock()
+    _pid_cache={}
+    _pid_cache_ttl=.25
+
     def __init__(self,settings,binary):
         self.settings=settings;self.binary=binary
         self.pid=self.current_pid()
     def current_pid(self):
         service=self.settings.get('frontendService','xray.service')
-        result=subprocess.run(['systemctl','show',service,'--property=MainPID','--value'],capture_output=True,text=True,check=True,timeout=2)
-        pid=int(result.stdout.strip())
-        if pid<=0:raise ValueError('FRONTEND_NOT_RUNNING')
-        # PID reuse cannot conceal a restart.
-        return (pid,pathlib.Path(f'/proc/{pid}/stat').read_text().rsplit(')',1)[1].split()[19])
+        with self._pid_lock:
+            now=time.monotonic()
+            cached=self._pid_cache.get(service)
+            if cached and 0<=now-cached[0]<self._pid_cache_ttl:
+                pid=cached[1]
+            else:
+                result=subprocess.run(['systemctl','show',service,'--property=MainPID','--value'],capture_output=True,text=True,check=True,timeout=2)
+                pid=int(result.stdout.strip())
+                if pid<=0:raise ValueError('FRONTEND_NOT_RUNNING')
+                self._pid_cache[service]=(now,pid)
+        # Never cache process identity/liveness: a killed, zombified or reused
+        # service PID must fail closed even inside the 250ms query window.
+        fields=pathlib.Path(f'/proc/{pid}/stat').read_text().rsplit(')',1)[1].split()
+        if fields[0] in ('Z','X','x'):raise ValueError('FRONTEND_NOT_RUNNING')
+        return (pid,fields[19])
     def check(self):
         if self.current_pid()!=self.pid:raise ValueError('FRONTEND_RESTARTED')
     def add(self,client,base):
