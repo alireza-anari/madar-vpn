@@ -64,7 +64,7 @@ def preflight(node_id, *, root=ROOT, etc=ETC, units=UNITS, state=STATE, now=None
     uri = 'file:' + str(database) + '?mode=ro'
     with sqlite3.connect(uri, uri=True, timeout=2) as db:
         live = db.execute('SELECT COUNT(*) FROM accounts WHERE present=1 AND blocked=0 AND until_time>? AND (cap IS NULL OR used<cap)', (now,)).fetchone()[0]
-        snapshot = dict(db.execute('SELECT id,epoch,used,blocked FROM accounts'))
+        snapshot = {ident: (epoch, used, blocked) for ident, epoch, used, blocked in db.execute('SELECT id,epoch,used,blocked FROM accounts')}
     if live > 1:
         raise ValueError('BUSY_SALES_NODE')
     return {'nodeId': node_id, 'liveAccounts': live,
@@ -129,7 +129,7 @@ def healthy(node_id, source_ref, before, *, timeout=35):
                 raise ValueError('STALE_QUOTA_HEARTBEAT')
             with sqlite3.connect('file:' + str(STATE / 'quota.sqlite') + '?mode=ro',
                                  uri=True, timeout=2) as db:
-                after = dict(db.execute('SELECT id,epoch,used,blocked FROM accounts'))
+                after = {ident: (epoch, used, blocked) for ident, epoch, used, blocked in db.execute('SELECT id,epoch,used,blocked FROM accounts')}
             for ident, (epoch, used, blocked) in before['quota'].items():
                 observed = after.get(ident)
                 if (not observed or observed[0] != epoch or observed[1] < used
