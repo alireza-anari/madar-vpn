@@ -114,3 +114,66 @@ def test_frontend_service_is_configurable_for_fresh_and_defaults_for_personal(mo
     personal_front=object.__new__(m.SharedFrontend);personal_front.settings={};personal_front.binary='xray'
     assert personal_front.current_pid()[0]==123
     assert calls[-1][2]=='xray.service'
+
+
+def test_shared_frontend_pid_probe_is_amortized_across_active_accounts(monkeypatch):
+    import subprocess
+    m=module()
+    clock=[100.0];main_pid=[123];calls=[];alive=[True]
+    monkeypatch.setattr(m.time,'monotonic',lambda:clock[0])
+    def systemctl(args,**kwargs):
+        calls.append(args)
+        return subprocess.CompletedProcess(args,0,stdout=str(main_pid[0])+'\\n',stderr='')
+    def procstat(path):
+        assert path.as_posix()==f'/proc/{123}/stat'
+        if not alive[0]:raise FileNotFoundError(str(path))
+        return '123 (xray) S '+' '.join(str(i) for i in range(1,25))
+    monkeypatch.setattr(m.subprocess,'run',systemctl)
+    monkeypatch.setattr(pathlib.Path,'read_text',procstat)
+    settings={'frontendService':'madar-amortization-test.service'}
+    clients=[m.SharedFrontend(settings,'xray') for _ in range(40)]
+    for client in clients:client.check()
+    # 80 checks, but only one heavyweight systemctl invocation.
+    assert len(calls)==1
+    assert all(c.pid==(123,'19') for c in clients)
+
+    # Even when MainPID comes from cache, liveness is never assumed.
+    alive[0]=False
+    with pytest.raises(FileNotFoundError):clients[0].check()
+    assert len(calls)==1
+
+    # A service restart after the short cache window is detected.
+    alive[0]=True
+    clock[0]+=.251
+    main_pid[0]=456
+    monkeypatch.setattr(pathlib.Path,'read_text',lambda p:'456 (xray) S '+' '.join(str(i) for i in range(1,25)))
+    with pytest.raises(ValueError,match='FRONTEND_RESTARTED'):clients[0].check()
+    assert len(calls)==2
+
+
+def test_shared_frontend_zombie_is_never_healthy_inside_pid_cache(monkeypatch):
+    import subprocess
+    m=module();clock=[42.0];state=['S'];calls=[]
+    monkeypatch.setattr(m.time,'monotonic',lambda:clock[0])
+    monkeypatch.setattr(m.subprocess,'run',lambda args,**kw:(calls.append(args) or subprocess.CompletedProcess(args,0,stdout='888\\n',stderr='')))
+    monkeypatch.setattr(pathlib.Path,'read_text',lambda p:'888 (xray) '+state[0]+' '+' '.join(str(i) for i in range(1,25)))
+    front=m.SharedFrontend({'frontendService':'madar-zombie-test.service'},'xray')
+    state[0]='Z'
+    with pytest.raises(ValueError,match='FRONTEND_NOT_RUNNING'):front.check()
+    assert len(calls)==1
+
+
+def test_shared_frontend_systemctl_failures_are_not_cached(monkeypatch):
+    import subprocess
+    m=module();clock=[1.0];results=[0,444];calls=[]
+    monkeypatch.setattr(m.time,'monotonic',lambda:clock[0])
+    def service(args,**kwargs):
+        calls.append(args)
+        return subprocess.CompletedProcess(args,0,stdout=str(results.pop(0))+'\\n',stderr='')
+    monkeypatch.setattr(m.subprocess,'run',service)
+    monkeypatch.setattr(pathlib.Path,'read_text',lambda p:'444 (xray) S '+' '.join(str(i) for i in range(1,25)))
+    settings={'frontendService':'madar-stopped-test.service'}
+    with pytest.raises(ValueError,match='FRONTEND_NOT_RUNNING'):m.SharedFrontend(settings,'xray')
+    front=m.SharedFrontend(settings,'xray')
+    assert front.pid[0]==444
+    assert len(calls)==2
