@@ -135,7 +135,7 @@ def preflight():
             raise ValueError("BRIDGE_ROUTING_MISSING")
     listeners = run(["ss", "-H", "-lnt"]).stdout
     for port in (*PORTS, *(p + 1000 for p in PORTS)):
-        if re.search(rf":{port}(?:\\s|$)", listeners):
+        if re.search(rf":{port}(?:\s|$)", listeners):
             raise ValueError("PROBE_PORT_BUSY:" + str(port))
     if not pathlib.Path(XRAY).is_file():
         raise ValueError("XRAY_BINARY_MISSING")
