@@ -1,4 +1,4 @@
-"""Share one REALITY 443 frontend while isolating managed traffic behind loopback workers."""
+"""Share one REALITY 443 frontend while isolating managed traffic behind loopback."""
 import copy, hashlib, hmac, json, os, pathlib, subprocess, threading, time, uuid
 from xray import render_config, atomic_write
 
@@ -73,9 +73,14 @@ class SharedFrontend:
     def check(self):
         if self.current_pid()!=self.pid:raise ValueError('FRONTEND_RESTARTED')
     def add(self,client,base):
+        # Vision is opt-in per managed account. The loopback metering worker
+        # remains plain VLESS, so StatsService does not depend on Vision splice
+        # counter timing. Missing flow preserves the historical empty-flow path.
+        flow=client.get('flow','')
+        if flow not in ('','xtls-rprx-vision'):raise ValueError('INVALID_CLIENT_FLOW')
         self.check()
         path=pathlib.Path(base)/(client['accountId']+'.frontend.json')
-        atomic_write(path,{'inbounds':[{'tag':self.settings['frontendTag'],'port':443,'protocol':'vless','settings':{'decryption':'none','clients':[{'id':client['uuid'],'email':f"madar-{client['listenPort']}",'flow':'','level':0}]}}]})
+        atomic_write(path,{'inbounds':[{'tag':self.settings['frontendTag'],'port':443,'protocol':'vless','settings':{'decryption':'none','clients':[{'id':client['uuid'],'email':f"madar-{client['listenPort']}",'flow':flow,'level':0}]}}]})
         try:
             result=subprocess.run([self.binary,'api','adu','--server='+self.settings['frontendApi'],'-timeout','1',str(path)],check=True,capture_output=True,text=True,timeout=2)
             if 'Added 1 user(s) in total.' not in result.stdout:raise ValueError('FRONTEND_USER_NOT_ADDED')
