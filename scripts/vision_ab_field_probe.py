@@ -199,14 +199,24 @@ def cleanup(state_path):
         subprocess.run(["systemctl", "stop", timer + ".timer"], capture_output=True, timeout=5)
     for pid, config_path in zip(state.get("workerPids", []), state.get("workerConfigs", [])):
         terminate_owned(pid, config_path)
-    for email in state.get("emails", []):
-        if not isinstance(email, str) or not email.startswith("madar-"):
-            continue
-        subprocess.run(
-            [XRAY, "api", "rmu", "--server=127.0.0.1:19999",
-             "-timeout", "1", "-tag=" + state["frontendTag"], email],
-            capture_output=True, timeout=5,
-        )
+    # Only remove dynamic users from the exact frontend process that received them.
+    # If the frontend restarted, its in-memory users vanished; do not touch a new
+    # process that may since have reused one of these email/port labels.
+    try:
+        same_frontend = frontend_pid() == state.get("frontendPid")
+    except Exception:
+        same_frontend = False
+    if same_frontend:
+        for email in state.get("emails", []):
+            if not isinstance(email, str) or not email.startswith("madar-"):
+                continue
+            subprocess.run(
+                [XRAY, "api", "rmu", "--server=127.0.0.1:19999",
+                 "-timeout", "1", "-tag=" + state["frontendTag"], email],
+                capture_output=True, timeout=5,
+            )
+    else:
+        print("FRONTEND_CHANGED; old dynamic users are gone, skipped API removal")
     shutil.rmtree(state_path.parent, ignore_errors=False)
     print("TEMPORARY_PLAIN_AND_VISION_ACCOUNTS_REMOVED")
 
@@ -264,11 +274,15 @@ def start_probe():
     }
     save_state(state_path, state)
     script = ROOT / "vision_ab_field_probe.py"
-    subprocess.run([
-        "systemd-run", "--quiet", "--unit=" + timer,
-        "--on-active=" + str(CLEANUP_SECONDS) + "s",
-        "/usr/bin/python3", str(script), "--cleanup", str(state_path)
-    ], check=True, capture_output=True, timeout=12)
+    try:
+        subprocess.run([
+            "systemd-run", "--quiet", "--unit=" + timer,
+            "--on-active=" + str(CLEANUP_SECONDS) + "s",
+            "/usr/bin/python3", str(script), "--cleanup", str(state_path)
+        ], check=True, capture_output=True, timeout=12)
+    except Exception:
+        shutil.rmtree(directory, ignore_errors=True)
+        raise
 
     settings = dict(config)
     settings.update({
@@ -362,16 +376,26 @@ def start_probe():
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--preflight", action="store_true")
     parser.add_argument("--start", action="store_true")
     parser.add_argument("--cleanup", type=pathlib.Path)
     args = parser.parse_args()
     try:
         if args.cleanup:
             cleanup(args.cleanup)
+        elif args.preflight:
+            config, _tag, pid = preflight()
+            print("FIELD_PREFLIGHT_OK")
+            print("NODE_ID:", config["nodeId"])
+            print("PUBLIC_IP:", EXPECTED_PUBLIC_IP)
+            print("REGION:", EXPECTED_REGION)
+            print("FRONTEND_PID:", pid)
+            print("TEST_PORTS:", ",".join(str(p) for p in PORTS))
+            print("NO_SERVICES_RESTARTED; NO_USERS_ADDED")
         elif args.start:
             start_probe()
         else:
-            parser.error("use --start or --cleanup")
+            parser.error("use --preflight, --start or --cleanup")
     except KeyboardInterrupt:
         print("\nFIELD_TEST_INTERRUPTED; cleanup requested")
         raise
