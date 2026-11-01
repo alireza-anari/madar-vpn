@@ -177,3 +177,32 @@ def test_shared_frontend_systemctl_failures_are_not_cached(monkeypatch):
     front=m.SharedFrontend(settings,'xray')
     assert front.pid[0]==444
     assert len(calls)==2
+
+
+def test_managed_frontend_flow_defaults_to_plain_and_allows_explicit_vision(tmp_path,monkeypatch):
+    import subprocess
+    m=module();observed=[]
+    front=object.__new__(m.SharedFrontend)
+    front.settings={'frontendTag':'madar-shared-vless','frontendApi':'127.0.0.1:19999'}
+    front.binary='xray';front.check=lambda:None
+    def api_add(args,**kwargs):
+        payload=json.loads(pathlib.Path(args[-1]).read_text())
+        observed.append(payload['inbounds'][0]['settings']['clients'][0]['flow'])
+        return subprocess.CompletedProcess(args,0,stdout='Added 1 user(s) in total.',stderr='')
+    monkeypatch.setattr(subprocess,'run',api_add)
+    base={'accountId':'vision-probe','uuid':'22222222-2222-4222-8222-222222222222','listenPort':20000}
+    front.add(base,tmp_path)
+    front.add({**base,'accountId':'plain-probe','listenPort':20001,'flow':'xtls-rprx-vision'},tmp_path)
+    assert observed==['','xtls-rprx-vision']
+    assert not list(tmp_path.iterdir())
+
+
+def test_managed_frontend_rejects_unknown_flow_before_api_call(tmp_path,monkeypatch):
+    import subprocess
+    m=module();front=object.__new__(m.SharedFrontend)
+    front.settings={'frontendTag':'madar-shared-vless','frontendApi':'127.0.0.1:19999'}
+    front.binary='xray';front.check=lambda:None
+    monkeypatch.setattr(subprocess,'run',lambda *a,**k:pytest.fail('API must not be called'))
+    with pytest.raises(ValueError,match='INVALID_CLIENT_FLOW'):
+        front.add({'accountId':'bad-flow','uuid':'22222222-2222-4222-8222-222222222222','listenPort':20002,'flow':'unknown'},tmp_path)
+    assert not list(tmp_path.iterdir())
