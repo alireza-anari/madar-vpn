@@ -5,7 +5,8 @@ from shared443 import build_fresh_frontend,backend_config,SharedFrontend
 from stats import read_counters
 from probe_live_stats import port,wait_tls
 
-def main(binary):
+def main(binary,flow=''):
+    if flow not in ('','xtls-rprx-vision'):raise ValueError('INVALID_PROBE_FLOW')
     processes=[];received=[0]
     with tempfile.TemporaryDirectory() as td:
         base=pathlib.Path(td);tls,front,api,proxy,target=[port() for _ in range(5)]
@@ -45,8 +46,8 @@ def main(binary):
                     if time.monotonic()>deadline:raise RuntimeError('API_NOT_READY')
                     time.sleep(.05)
             bridge=object.__new__(SharedFrontend);bridge.settings=runtime;bridge.binary=binary;bridge.pid=fp.pid;bridge.current_pid=lambda:fp.pid if fp.poll() is None else 0
-            client={'uuid':managed,'accountId':account,'listenPort':20000};bridge.add(client,base)
-            cp=start('client',{'inbounds':[{'listen':'127.0.0.1','port':proxy,'protocol':'http'}],'outbounds':[{'protocol':'vless','settings':{'vnext':[{'address':'127.0.0.1','port':front,'users':[{'id':managed,'encryption':'none','flow':''}]}]},'streamSettings':{'network':'tcp','security':'reality','realitySettings':{'serverName':'probe.example','fingerprint':'chrome','publicKey':public,'shortId':sid}}}]})
+            client={'uuid':managed,'accountId':account,'listenPort':20000,'flow':flow};bridge.add(client,base)
+            cp=start('client',{'inbounds':[{'listen':'127.0.0.1','port':proxy,'protocol':'http'}],'outbounds':[{'protocol':'vless','settings':{'vnext':[{'address':'127.0.0.1','port':front,'users':[{'id':managed,'encryption':'none','flow':flow}]}]},'streamSettings':{'network':'tcp','security':'reality','realitySettings':{'serverName':'probe.example','fingerprint':'chrome','publicKey':public,'shortId':sid}}}]})
             def consume():
                 deadline=time.monotonic()+5
                 while True:
@@ -70,10 +71,10 @@ def main(binary):
             counters=read_counters('127.0.0.1:21000',[account],binary);assert counters[account]>0
             bp.terminate();bp.wait(timeout=2);bridge.remove(client);before=received[0];time.sleep(.4)
             assert received[0]==before and fp.poll() is None and cp.poll() is None
-            print(json.dumps({'result':'PASS','freshZeroUserFrontend':True,'dynamicManagedUser':True,'managedCounterPositive':True,'frontendSurvivesCutoff':True}))
+            print(json.dumps({'result':'PASS','publicFlow':flow or 'empty','loopbackBackendFlow':'empty','freshZeroUserFrontend':True,'dynamicManagedUser':True,'managedCounterPositive':True,'frontendSurvivesCutoff':True}))
         finally:
             for p in reversed(processes):
                 if p.poll() is None:p.terminate()
             for p in processes:p.wait(timeout=5)
             httpd.shutdown();httpd.server_close()
-if __name__=='__main__':main(sys.argv[1])
+if __name__=='__main__':main(sys.argv[1],sys.argv[2] if len(sys.argv)>2 else '')
