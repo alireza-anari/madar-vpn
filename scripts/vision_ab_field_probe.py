@@ -24,6 +24,7 @@ SERVICE = "madar-sales-xray.service"
 AGENT = "madar-sales-node.service"
 WATCHDOG = "madar-sales-watchdog.timer"
 EXPECTED_PUBLIC_IP = "13.51.138.193"
+EXPECTED_NODE_ID = "c5e6a942-8d8c-4c20-8698-323d08490a2c"
 EXPECTED_REGION = "eu-north-1"
 OTHER_NODE_ID = "edde0ebd-5fef-48bf-a9e5-91726324c058"
 PORTS = (20998, 20999)
@@ -75,8 +76,8 @@ def preflight():
         raise ValueError("ROOT_REQUIRED")
     config = read_json(CONFIG)
     frontend = read_json(FRONTEND)
-    if config.get("nodeId") == OTHER_NODE_ID:
-        raise ValueError("WRONG_NODE_STOCKHOLM2")
+    if config.get("nodeId") != EXPECTED_NODE_ID or config.get("nodeId") == OTHER_NODE_ID:
+        raise ValueError("WRONG_NODE_ID")
     if metadata("public-ipv4") != EXPECTED_PUBLIC_IP:
         raise ValueError("WRONG_PUBLIC_IP")
     if metadata("placement/region") != EXPECTED_REGION:
@@ -195,8 +196,6 @@ def cleanup(state_path):
     if state.get("nodeId") != current.get("nodeId"):
         raise ValueError("CLEANUP_NODE_MISMATCH")
     timer = state.get("timerUnit")
-    if isinstance(timer, str) and re.fullmatch(r"madar-vision-ab-[0-9a-f]{12}", timer):
-        subprocess.run(["systemctl", "stop", timer + ".timer"], capture_output=True, timeout=5)
     for pid, config_path in zip(state.get("workerPids", []), state.get("workerConfigs", [])):
         terminate_owned(pid, config_path)
     # Only remove dynamic users from the exact frontend process that received them.
@@ -217,6 +216,8 @@ def cleanup(state_path):
             )
     else:
         print("FRONTEND_CHANGED; old dynamic users are gone, skipped API removal")
+    if isinstance(timer, str) and re.fullmatch(r"madar-vision-ab-[0-9a-f]{12}", timer):
+        subprocess.run(["systemctl", "stop", timer + ".timer"], capture_output=True, timeout=5)
     shutil.rmtree(state_path.parent, ignore_errors=False)
     print("TEMPORARY_PLAIN_AND_VISION_ACCOUNTS_REMOVED")
 
@@ -254,6 +255,25 @@ def link(config, ident, flow, label):
     if flow:
         params.insert(1, ("flow", flow))
     return f"vless://{ident}@{EXPECTED_PUBLIC_IP}:443?{urlencode(params)}#Madar-{label}"
+
+
+def stop_test_account(label, port, process, frontend_tag, original_pid, reason):
+    """Fail closed: stop this worker BEFORE touching its public credential."""
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=3)
+    # Dynamic credentials are process-local. Never touch a replacement frontend.
+    if frontend_pid() != original_pid:
+        raise ValueError("FRONTEND_CHANGED_DURING_ACCOUNT_STOP")
+    run([
+        XRAY, "api", "rmu", "--server=127.0.0.1:19999",
+        "-timeout", "1", "-tag=" + frontend_tag, f"madar-{port}",
+    ], timeout=5)
+    print(f"TEST_ACCOUNT_STOPPED: {label} ({reason})", flush=True)
 
 
 def start_probe():
@@ -339,36 +359,58 @@ def start_probe():
         print(f"Automatic cleanup is armed for {CLEANUP_SECONDS // 60} minutes. Press Ctrl+C when finished.")
         deadline = time.monotonic() + DURATION_SECONDS
         last_print = 0
-        capped = set()
-        while time.monotonic() < deadline and len(capped) < len(PORTS):
+        stopped = set()
+        seen = set()
+        last_totals = {}
+        while time.monotonic() < deadline and len(stopped) < len(PORTS):
             if frontend_pid() != original_pid:
                 raise ValueError("FRONTEND_RESTARTED_DURING_TEST")
             now = time.monotonic()
             totals = {}
-            for (label, _flow), port in zip(FLOWS, PORTS):
-                if label in capped:
-                    totals[label] = "CAPPED"
+            for index, ((label, _flow), port) in enumerate(zip(FLOWS, PORTS)):
+                if label in stopped:
+                    totals[label] = "STOPPED"
                     continue
+                process = processes[index]
+                if process.poll() is not None:
+                    raise ValueError("METER_WORKER_EXITED:" + label)
                 account = f"vision-field-{probe_id}-{label.lower()}"
                 try:
-                    values = read_counters(f"127.0.0.1:{port+1000}", [account], XRAY, allow_unregistered=True)
+                    values = read_counters(
+                        f"127.0.0.1:{port+1000}", [account], XRAY,
+                        allow_unregistered=label not in seen,
+                    )
                     total = 0 if values is None else values[account]
+                    if values is not None:
+                        seen.add(label)
+                    if total < last_totals.get(label, 0):
+                        raise ValueError("COUNTER_DECREASED")
+                    last_totals[label] = total
                     totals[label] = total
                     if total >= MAX_BYTES_PER_ACCOUNT:
-                        capped.add(label)
+                        # Do not merely mark as capped: immediately stop its
+                        # loopback worker, cutting active streams as well.
+                        stop_test_account(label, port, process, frontend_tag,
+                                          original_pid, "LIMIT_REACHED")
+                        stopped.add(label)
+                        totals[label] = "LIMIT_REACHED/STOPPED"
                 except Exception:
-                    totals[label] = "METER_RETRY"
+                    if label in stopped:
+                        raise
+                    # No further unmetered transfer is allowed after an API
+                    # failure. Stop only the affected temporary worker.
+                    stop_test_account(label, port, process, frontend_tag,
+                                      original_pid, "METER_FAILED")
+                    stopped.add(label)
+                    totals[label] = "METER_FAILED/STOPPED"
             if now - last_print >= 5:
                 def fmt(value):
                     return value if isinstance(value, str) else f"{value/(1024*1024):.1f} MiB"
-                print("METER:", " | ".join(f"{k}={fmt(v)}" for k,v in totals.items()), flush=True)
+                print("METER:", " | ".join(f"{k}={fmt(v)}" for k, v in totals.items()), flush=True)
                 last_print = now
-            if len(capped) == len(PORTS):
-                print("BOTH_TEST_ACCOUNTS_REACHED_TEMPORARY_CAP")
+            if len(stopped) == len(PORTS):
+                print("BOTH_TEMPORARY_TEST_ACCOUNTS_STOPPED")
                 break
-            for process in processes:
-                if process.poll() is not None:
-                    raise ValueError("METER_WORKER_EXITED")
             time.sleep(1)
     finally:
         cleanup(state_path)
@@ -388,6 +430,7 @@ def main():
             print("FIELD_PREFLIGHT_OK")
             print("NODE_ID:", config["nodeId"])
             print("PUBLIC_IP:", EXPECTED_PUBLIC_IP)
+            print("PINNED_NODE_ID:", EXPECTED_NODE_ID)
             print("REGION:", EXPECTED_REGION)
             print("FRONTEND_PID:", pid)
             print("TEST_PORTS:", ",".join(str(p) for p in PORTS))
