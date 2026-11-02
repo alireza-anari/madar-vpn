@@ -17,6 +17,7 @@ def module():
 def test_field_probe_is_pinned_to_madar_node01_and_bounded():
     m = module()
     assert m.EXPECTED_PUBLIC_IP == "13.51.138.193"
+    assert m.EXPECTED_NODE_ID == "c5e6a942-8d8c-4c20-8698-323d08490a2c"
     assert m.EXPECTED_REGION == "eu-north-1"
     assert m.OTHER_NODE_ID == "edde0ebd-5fef-48bf-a9e5-91726324c058"
     assert m.PORTS == (20998, 20999)
@@ -56,3 +57,52 @@ def test_cleanup_kills_only_its_own_worker_command(tmp_path, monkeypatch):
     monkeypatch.setattr(os, "kill", lambda *args: calls.append(args))
     m.terminate_owned(4321, tmp_path / "worker.json")
     assert calls == []
+
+
+def test_limit_and_meter_failure_cutoff_stops_worker_before_removing_user(monkeypatch):
+    import subprocess
+    m = module()
+    trace = []
+    class FakeWorker:
+        running = True
+        def poll(self):
+            return None if self.running else 0
+        def terminate(self):
+            trace.append("terminate")
+            self.running = False
+        def wait(self, timeout):
+            trace.append("wait")
+            return 0
+    worker = FakeWorker()
+    monkeypatch.setattr(m, "frontend_pid", lambda: 501)
+    def fake_run(args, **kwargs):
+        assert worker.running is False
+        trace.append("rmu")
+        assert args[:3] == [m.XRAY, "api", "rmu"]
+        assert args[-1] == "madar-20998"
+        return subprocess.CompletedProcess(args, 0)
+    monkeypatch.setattr(m, "run", fake_run)
+    m.stop_test_account("Vision", 20998, worker, "madar-shared-vless",
+                        501, "LIMIT_REACHED")
+    assert trace == ["terminate", "wait", "rmu"]
+
+
+def test_cutoff_refuses_to_touch_new_frontend(monkeypatch):
+    m = module()
+    class FakeWorker:
+        def poll(self): return 0
+    monkeypatch.setattr(m, "frontend_pid", lambda: 502)
+    monkeypatch.setattr(m, "run", lambda *_args, **_kw: (_ for _ in ()).throw(AssertionError("Must not remove user from changed frontend")))
+    import pytest
+    with pytest.raises(ValueError, match="FRONTEND_CHANGED"):
+        m.stop_test_account("Vision", 20998, FakeWorker(), "madar-shared-vless",
+                            501, "METER_FAILED")
+
+
+def test_meter_fail_closed_and_cap_stop_are_wired_in_main_loop():
+    source = SCRIPT.read_text()
+    assert "stop_test_account(label, port, process, frontend_tag," in source
+    assert '"LIMIT_REACHED"' in source
+    assert '"METER_FAILED"' in source
+    assert 'stopped.add(label)' in source
+    assert '"COUNTER_DECREASED"' in source
