@@ -1,6 +1,7 @@
 """CI acceptance against verified pinned Xray, never a system executable."""
 import os,pathlib,subprocess,sys,tempfile
 ROOT=pathlib.Path(__file__).resolve().parents[1]
+compile((ROOT/'scripts/vision_ab_field_probe.py').read_text(),str(ROOT/'scripts/vision_ab_field_probe.py'),'exec')
 sys.path.insert(0,str(ROOT/'sales-runner'))
 from artifacts import download,VERSION
 with tempfile.TemporaryDirectory() as temp:
