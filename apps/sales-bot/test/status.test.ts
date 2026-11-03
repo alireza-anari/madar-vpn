@@ -1,3 +1,4 @@
+import visionMigration from "../migrations/0019-managed-vision-optin.sql?raw";
 import { env } from "cloudflare:workers";
 import { beforeEach, expect, test } from "vitest";
 import { resetDb } from "./db";
@@ -9,7 +10,7 @@ import { queueAccountDelivery } from "../src/account-delivery";
 import { accountStatus, statusResponse } from "../src/status-routes";
 beforeEach(async () => {
   await resetDb();
-  for (const s of [a, b, c, d]) await env.SALES_DB.exec(s);
+  for (const s of [a, b, c, d, visionMigration]) await env.SALES_DB.exec(s);
   await env.SALES_DB.exec(
     "INSERT INTO nodes(id,name,target_ip,revision,acked_revision,last_seen,healthy,public_key,short_id,sni,agent_capabilities) VALUES('n','n','8.8.8.8',2,2,100,1,'public','1234','example.com','quota-v2,per-account-process');INSERT INTO managed_accounts(id,seller_id,request_key,node_id,kind,label,uuid,quota_bytes,duration_seconds,created_at,state,started_at,valid_until,activation_revision,listen_port) VALUES('a','10','r','n','sale','client','private-uuid',30000000000,1800,1,'preparing',100,1900,2,20000);",
   );
