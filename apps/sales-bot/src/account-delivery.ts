@@ -27,6 +27,13 @@ export async function queueAccountDelivery(
     !node.policy_payload
   )
     return;
+  // Never deliver Vision when an older/downgraded agent cannot honor it.
+  if (
+    a.connection_flow === "xtls-rprx-vision" &&
+    (!node.agent_capabilities.split(",").includes("vision-metered") ||
+      !node.agent_capabilities.split(",").includes("shared-443"))
+  )
+    return;
   const policy = JSON.parse(node.policy_payload) as QuotaPolicy;
   if (
     policy.version !== 2 ||
@@ -36,7 +43,8 @@ export async function queueAccountDelivery(
       (c) =>
         c.accountId === a.id &&
         c.uuid === a.uuid &&
-        c.validUntil === a.valid_until,
+        c.validUntil === a.valid_until &&
+      (c.flow || "") === (a.connection_flow || ""),
     )
   )
     return;
@@ -47,7 +55,7 @@ export async function queueAccountDelivery(
     url = `${env.PUBLIC_BASE_URL}/usage/${token}`;
   const q = new URLSearchParams({
     encryption: "none",
-    flow: "",
+    flow: a.connection_flow === "xtls-rprx-vision" ? "xtls-rprx-vision" : "",
     security: "reality",
     sni: node.sni,
     fp: "chrome",
