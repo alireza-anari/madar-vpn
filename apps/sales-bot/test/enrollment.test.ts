@@ -1,3 +1,4 @@
+import visionMigration from "../migrations/0019-managed-vision-optin.sql?raw";
 import allocation from "../migrations/0009-node-allocation-cap.sql?raw";
 import accountsMigration from "../migrations/0004-reseller-accounts.sql?raw";
 import capacity from "../migrations/0007-node-capacity.sql?raw";
@@ -46,6 +47,7 @@ beforeEach(async () => {
   await env.SALES_DB.exec(accountsMigration);
   await env.SALES_DB.exec(capacity);
   await env.SALES_DB.exec(allocation);
+  await env.SALES_DB.exec(visionMigration);
 });
 test("Mini App verifies signature freshness and role", async () => {
   expect((await verifyMiniApp(signed(9), e, 100)).role).toBe("admin");
