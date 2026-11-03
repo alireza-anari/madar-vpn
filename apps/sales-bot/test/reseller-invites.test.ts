@@ -1,3 +1,4 @@
+import visionMigration from "../migrations/0019-managed-vision-optin.sql?raw";
 import { env } from "cloudflare:workers";
 import { beforeEach, expect, test } from "vitest";
 import { resetDb } from "./db";
@@ -20,7 +21,7 @@ const E = {
 const admin = { telegramId: "9", role: "admin" as const };
 beforeEach(async () => {
   await resetDb();
-  for (const sql of [a, b, c, d, invites]) await env.SALES_DB.exec(sql);
+  for (const sql of [a, b, c, d, invites, visionMigration]) await env.SALES_DB.exec(sql);
   await env.SALES_DB.exec(
     "INSERT INTO settings VALUES('bot_username','MadarTestBot')",
   );
