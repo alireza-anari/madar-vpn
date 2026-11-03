@@ -23,6 +23,7 @@ export interface ManagedAccount {
   kind: "sale" | "trial";
   label: string;
   uuid: string;
+  connection_flow: "" | "xtls-rprx-vision";
   state: string;
   quota_bytes: number | null;
   used_bytes: number;
@@ -128,9 +129,13 @@ export async function createAccount(
         )
         INSERT OR IGNORE INTO managed_accounts(
           id,seller_id,request_key,node_id,kind,label,uuid,quota_bytes,
-          duration_seconds,created_at,seller_settlement_epoch
+          duration_seconds,created_at,seller_settlement_epoch,connection_flow
         )
-        SELECT ?,?,?,?,?,?,?,?,?,?,COALESCE(sc.current_settlement_epoch,0)
+        SELECT ?,?,?,?,?,?,?,?,?,?,COALESCE(sc.current_settlement_epoch,0),
+          CASE WHEN n.vision_opt_in=1 AND n.state='ready' AND n.healthy=1 AND n.last_seen>? AND n.revision=n.acked_revision
+             AND instr(','||n.agent_capabilities||',',',shared-443,')>0
+             AND instr(','||n.agent_capabilities||',',',vision-metered,')>0
+             THEN 'xtls-rprx-vision' ELSE '' END
         FROM nodes n
         CROSS JOIN node_usage nu
         CROSS JOIN seller_usage su
@@ -163,6 +168,7 @@ export async function createAccount(
         requestedBytes,
         input.durationSeconds,
         now,
+        now - 90,
         actor.telegramId,
         nodeId,
         requestedBytes,
