@@ -1,3 +1,4 @@
+import visionMigration from "../migrations/0019-managed-vision-optin.sql?raw";
 import { createHmac } from "node:crypto";
 import { env } from "cloudflare:workers";
 import { beforeEach, expect, test } from "vitest";
@@ -63,6 +64,7 @@ beforeEach(async()=>{
     await env.SALES_DB.prepare(statement).run();
   for (const statement of supportMigration.split(/;\s*(?:\n|$)/).map(s=>s.trim()).filter(Boolean))
     await env.SALES_DB.prepare(statement).run();
+  await env.SALES_DB.exec(visionMigration);
   await env.SALES_DB.prepare(
     "INSERT INTO nodes(id,name,target_ip,vpn_port,state,revision,acked_revision,last_seen,healthy,agent_capabilities,max_accounts,max_allocated_bytes) VALUES('n','Stockholm','8.8.8.8',443,'ready',1,1,?,1,'quota-v2,shared-443',1,30000000000)",
   ).bind(now).run();
