@@ -13,7 +13,7 @@ beforeEach(async () => {
   for (const s of [a, b, c, d, visionMigration]) await env.SALES_DB.exec(s);
 });
 
-async function fixture(capabilities: string) {
+async function fixture(capabilities: string, vision = false) {
   const policy = JSON.stringify({
     version: 2,
     nodeId: "n",
@@ -29,6 +29,7 @@ async function fixture(capabilities: string) {
         validUntil: 300,
         generation: "a:1",
         listenPort: 20000,
+        flow: vision ? "xtls-rprx-vision" : "",
       },
     ],
   });
@@ -40,6 +41,7 @@ async function fixture(capabilities: string) {
   await env.SALES_DB.prepare(
     "INSERT INTO managed_accounts(id,seller_id,request_key,node_id,kind,label,uuid,state,quota_bytes,duration_seconds,started_at,valid_until,prepared_revision,activation_revision,created_at,listen_port) VALUES('a','10','r','n','sale','A','11111111-1111-4111-8111-111111111111','active',1000000000,86400,10,300,4,5,1,20000)",
   ).run();
+  if (vision) await env.SALES_DB.exec("UPDATE managed_accounts SET connection_flow='xtls-rprx-vision' WHERE id='a'");
 }
 
 async function deliveredText() {
@@ -63,4 +65,29 @@ test("legacy quota-v2 delivery keeps its account-specific public port", async ()
   await queueAccountDelivery(env, "a", 100);
   const text = await deliveredText();
   expect(text).toContain(":20000?");
+});
+
+test("managed Vision is delivered only when signed policy and live agent capability agree", async () => {
+  await fixture("quota-v2,per-account-process,shared-443,vision-metered", true);
+  await queueAccountDelivery(env, "a", 100);
+  const content = await deliveredText();
+  expect(content).toContain("flow=xtls-rprx-vision");
+  expect(content).toContain(":443?");
+});
+
+test("Vision delivery fails closed when agent capability downgrades", async () => {
+  await fixture("quota-v2,per-account-process,shared-443", true);
+  await queueAccountDelivery(env, "a", 100);
+  expect(await env.SALES_DB.prepare("SELECT COUNT(*) n FROM outbox").first<number>("n")).toBe(0);
+});
+
+test("Vision delivery fails closed when signed policy flow differs", async () => {
+  await fixture("quota-v2,per-account-process,shared-443,vision-metered", true);
+  const original = JSON.parse((await env.SALES_DB.prepare(
+    "SELECT policy_payload FROM nodes WHERE id='n'",
+  ).first<string>("policy_payload"))!);
+  original.clients[0].flow = "";
+  await env.SALES_DB.prepare("UPDATE nodes SET policy_payload=? WHERE id='n'").bind(JSON.stringify(original)).run();
+  await queueAccountDelivery(env, "a", 100);
+  expect(await env.SALES_DB.prepare("SELECT COUNT(*) n FROM outbox").first<number>("n")).toBe(0);
 });
