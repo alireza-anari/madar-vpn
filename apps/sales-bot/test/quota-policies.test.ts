@@ -89,3 +89,31 @@ test("shared443 capability survives authenticated ready ACK", async () => {
     ).first("agent_capabilities"),
   ).toBe("quota-v2,per-account-process,shared-443");
 });
+
+test("Vision policy is explicit and refuses a legacy agent ACK", async () => {
+  await env.SALES_DB.exec(
+    "UPDATE managed_accounts SET connection_flow='xtls-rprx-vision' WHERE id='a'",
+  );
+  const policy = await buildQuotaPolicy(env.SALES_DB, "n", 100);
+  expect(policy.clients[0].flow).toBe("xtls-rprx-vision");
+  await ackQuotaPolicy(env.SALES_DB, "n", policy.revision, {
+    healthy: true, capabilities: ["quota-v2", "per-account-process", "shared-443"],
+  }, 101);
+  expect(await env.SALES_DB.prepare("SELECT started_at FROM managed_accounts WHERE id='a'").first("started_at")).toBe(null);
+  expect(await env.SALES_DB.prepare("SELECT acked_revision FROM nodes WHERE id='n'").first("acked_revision")).toBe(0);
+
+  await ackQuotaPolicy(env.SALES_DB, "n", policy.revision, {
+    healthy: true, capabilities: ["quota-v2", "per-account-process", "shared-443", "vision-metered"],
+  }, 102);
+  expect(await env.SALES_DB.prepare("SELECT started_at FROM managed_accounts WHERE id='a'").first("started_at")).toBe(102);
+  expect(await env.SALES_DB.prepare("SELECT agent_capabilities FROM nodes WHERE id='n'").first("agent_capabilities")).toContain("vision-metered");
+});
+
+test("empty-flow policy preserves legacy agent acknowledgement", async () => {
+  const policy = await buildQuotaPolicy(env.SALES_DB, "n", 100);
+  expect(policy.clients[0].flow).toBe("");
+  await ackQuotaPolicy(env.SALES_DB, "n", policy.revision, {
+    healthy: true, capabilities: ["quota-v2", "per-account-process"],
+  }, 102);
+  expect(await env.SALES_DB.prepare("SELECT started_at FROM managed_accounts WHERE id='a'").first("started_at")).toBe(102);
+});
