@@ -1,3 +1,4 @@
+import visionMigration from "../migrations/0019-managed-vision-optin.sql?raw";
 import { env } from "cloudflare:workers";
 import { beforeEach, expect, test } from "vitest";
 import { resetDb } from "./db";
@@ -8,7 +9,7 @@ import d from "../migrations/0004-reseller-accounts.sql?raw";
 import { buildQuotaPolicy, ackQuotaPolicy } from "../src/quota-policies";
 beforeEach(async () => {
   await resetDb();
-  for (const s of [a, b, c, d]) await env.SALES_DB.exec(s);
+  for (const s of [a, b, c, d, visionMigration]) await env.SALES_DB.exec(s);
   await env.SALES_DB.exec(
     "INSERT INTO nodes(id,name,target_ip) VALUES('n','n','8.8.8.8'); INSERT INTO managed_accounts(id,seller_id,request_key,node_id,kind,label,uuid,quota_bytes,duration_seconds,created_at) VALUES('a','10','r','n','sale','a','11111111-1111-4111-8111-111111111111',100,1800,1);",
   );
