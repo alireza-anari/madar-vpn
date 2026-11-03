@@ -61,7 +61,10 @@ function fail(): never {
 function normalizeHost(value: string): string {
   if (typeof value !== "string" || !value || value.trim() !== value) fail();
   try {
-    return publicTarget(value);
+    const target = publicTarget(value);
+    if (!target.includes(":")) return target;
+    const canonical = new URL(`http://[${target}]/`).hostname;
+    return canonical.slice(1, -1).toLowerCase();
   } catch {
     return fail();
   }
