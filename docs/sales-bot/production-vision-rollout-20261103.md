@@ -26,3 +26,13 @@ The 52 old managed test accounts, quota reports, trial rows and delivery outbox 
 ## Limitations
 
 No production rollout or EC2 file modification is accomplished by landing this patch. Deployment and end-to-end canary validation are separate, logged operations with rollback. The earlier Visual A/B does not guarantee a fixed ping for all locations or operators.
+
+## Execution log — 2026-11-03
+
+- Pre-migration D1 Time Travel bookmark: `000000ba-0000026c-00005118-4ec31f43516a1100b45d8b3f4faeb8db`.
+- Migration `0019-managed-vision-optin.sql` applied and recorded in `d1_migrations`. Schema checks confirm `vision_opt_in=0` for all 5 nodes and `connection_flow=''` default for existing accounts. `PRAGMA foreign_key_check` returned no rows.
+- Worker deployed successfully as version **52** (`0b7510ac-92d8-4c1c-b25c-579a32186340`) at 100% traffic. Previous production version **50** (`85af8be4-5112-4d2f-87ff-581b5ea83677`) remains available as rollback target.
+- Post-deploy smoke: `/health` returned `{"status":"prepared","telegram":"configured"}`; `/customer` served the customer page; unauthenticated `/api/customer/me` returned HTTP 403. `/app` without Telegram WebApp init data correctly showed the login-required screen.
+- Worker bindings were re-read after deployment: D1, BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, RUNNER_SERVICE_SECRET, POLICY_SIGNING_SECRET and USAGE_LINK_SECRET are still present; the one-minute cron remains configured.
+- All nodes remain opted out. Stockholm node `c5e6a942-8d8c-4c20-8698-323d08490a2c` is currently reporting `quota-v2,per-account-process,shared-443`, but not yet `vision-metered`. No account has been issued with Vision.
+- The managed-agent update on Stockholm is **pending**. Its last recorded managed install is version `26.3.27` from 2026-10-17. Before running `update_owned.py`, an operator must confirm the exact EC2 instance ID and ownership, obtain a fresh authorized AWS/SSM session, and create a local backup of the managed agent files, systemd units and `quota.sqlite`. No EC2 instance, service, or Personal-VPN configuration has been changed in this rollout.
