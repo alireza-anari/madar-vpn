@@ -240,3 +240,27 @@ def test_stats_retry_cannot_hide_shared_frontend_restart(monkeypatch):
     p.frontend=Frontend()
     monkeypatch.setattr(runtime,'read_counters',lambda *args,**kwargs:None)
     with pytest.raises(ValueError,match='FRONTEND_RESTARTED'):p.sample()
+
+def test_vision_capability_requires_healthy_shared_frontend(tmp_path):
+    from quota import QuotaStore
+    from quota_runtime import QuotaRuntime
+    path=tmp_path/'q';QuotaStore(path).close()
+    class Frontend:
+        live=True
+        def check(self):
+            if not self.live:raise ValueError('FRONTEND_DOWN')
+    front=Frontend()
+    c=QuotaRuntime({'policyKey':'k','nodeId':'n','shared443':True},None,lambda p,*args:p,
+                   base=tmp_path/'run',database=path,frontend_factory=lambda *args:front)
+    assert 'vision-metered' in c.capabilities()
+    front.live=False
+    assert 'vision-metered' not in c.capabilities()
+    c.store.close()
+
+
+def test_vision_never_activates_on_legacy_nonshared_port(tmp_path):
+    import pytest
+    from quota_runtime import AccountProcess
+    with pytest.raises(ValueError,match='UNSUPPORTED_CLIENT_FLOW'):
+        AccountProcess({'shared443':False}, {'accountId':'a','flow':'xtls-rprx-vision','listenPort':20000}, tmp_path)
+    assert not list(tmp_path.iterdir())
