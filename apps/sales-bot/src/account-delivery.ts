@@ -1,6 +1,7 @@
 import { hash } from "./crypto";
 import type { ManagedAccount } from "./accounts";
 import type { QuotaPolicy } from "./quota-policies";
+import { buildVlessRealityConfig } from "./connection-config";
 import { usageUrl as createUsageUrl } from "./usage-links";
 
 export interface AccountDeliveryArtifact {
@@ -16,6 +17,26 @@ export interface AccountDeliveryArtifact {
   usageUrl: string;
 }
 
+interface DeliveryNode {
+  id: string;
+  name: string;
+  target_ip: string;
+  vpn_port: number | null;
+  state: string;
+  revision: number;
+  acked_revision: number;
+  last_seen: number;
+  healthy: number;
+  agent_capabilities: string;
+  public_key: string | null;
+  short_id: string | null;
+  sni: string | null;
+  policy_payload: string | null;
+}
+
+const capabilitiesOf = (raw: string) =>
+  new Set(raw.split(",").map((value) => value.trim()).filter(Boolean));
+
 export async function buildAccountDeliveryArtifact(
   env: Env,
   accountId: string,
@@ -27,56 +48,110 @@ export async function buildAccountDeliveryArtifact(
       "SELECT * FROM managed_accounts WHERE id=? AND state='active' AND valid_until>?",
     )
     .bind(accountId, now)
-    .first<ManagedAccount & { listen_port: number }>();
+    .first<ManagedAccount & { listen_port: number | null }>();
   if (!a) return null;
+
   const node = await db
     .prepare(
-      "SELECT * FROM nodes WHERE id=? AND healthy=1 AND revision=acked_revision AND last_seen>?",
+      "SELECT * FROM nodes WHERE id=? AND state='ready' AND healthy=1 AND revision=acked_revision AND last_seen>?",
     )
     .bind(a.node_id, now - 90)
-    .first<any>();
+    .first<DeliveryNode>();
   if (
     !node ||
-    !node.agent_capabilities.split(",").includes("quota-v2") ||
-    !node.public_key ||
-    !node.policy_payload
+    !node.policy_payload ||
+    !Number.isSafeInteger(node.revision) ||
+    node.revision < 1 ||
+    node.acked_revision !== node.revision
   )
     return null;
+
+  const capabilities = capabilitiesOf(node.agent_capabilities || "");
   if (
-    a.connection_flow === "xtls-rprx-vision" &&
-    (!node.agent_capabilities.split(",").includes("vision-metered") ||
-      !node.agent_capabilities.split(",").includes("shared-443"))
-  ) return null;
-  const policy = JSON.parse(node.policy_payload) as QuotaPolicy;
+    !capabilities.has("quota-v2") ||
+    !capabilities.has("per-account-process")
+  )
+    return null;
+
+  const flow = a.connection_flow;
+  if (flow !== "" && flow !== "xtls-rprx-vision") return null;
+  const shared443 = capabilities.has("shared-443");
+  if (
+    flow === "xtls-rprx-vision" &&
+    (!shared443 || !capabilities.has("vision-metered"))
+  )
+    return null;
+
+  if (
+    !Number.isSafeInteger(a.valid_until) ||
+    a.valid_until <= now ||
+    !Number.isSafeInteger(a.activation_revision) ||
+    a.activation_revision! < 1 ||
+    a.activation_revision! > node.acked_revision ||
+    !Number.isSafeInteger(a.quota_epoch) ||
+    !Number.isSafeInteger(a.listen_port) ||
+    a.listen_port! < 20000 ||
+    a.listen_port! > 20999
+  )
+    return null;
+
+  let policy: QuotaPolicy;
+  try {
+    policy = JSON.parse(node.policy_payload) as QuotaPolicy;
+  } catch {
+    return null;
+  }
   if (
     policy.version !== 2 ||
+    policy.nodeId !== node.id ||
+    policy.revision !== node.revision ||
+    !Number.isSafeInteger(policy.expiresAt) ||
     policy.expiresAt <= now ||
-    node.acked_revision < a.activation_revision! ||
-    !policy.clients.some(
-      (c) =>
-        c.accountId === a.id &&
-        c.uuid === a.uuid &&
-        c.validUntil === a.valid_until &&
-        (c.flow || "") === (a.connection_flow || ""),
-    )
+    policy.expiresAt > now + 330 ||
+    !Array.isArray(policy.clients)
   )
     return null;
-  const q = new URLSearchParams({
-    encryption: "none",
-    flow: a.connection_flow === "xtls-rprx-vision" ? "xtls-rprx-vision" : "",
-    security: "reality",
-    sni: node.sni,
-    fp: "chrome",
-    pbk: node.public_key,
-    sid: node.short_id,
-    type: "tcp",
-  });
-  const host = node.target_ip.includes(":")
-    ? `[${node.target_ip}]`
-    : node.target_ip;
-  const publicPort = node.agent_capabilities.split(",").includes("shared-443")
-    ? node.vpn_port
-    : a.listen_port;
+
+  const matchingClients = policy.clients.filter(
+    (client) => client.accountId === a.id,
+  );
+  if (matchingClients.length !== 1) return null;
+  const client = matchingClients[0]!;
+  if (
+    client.uuid !== a.uuid ||
+    client.quotaEpoch !== a.quota_epoch ||
+    client.generation !== `${a.id}:${a.quota_epoch}` ||
+    client.validUntil !== a.valid_until ||
+    client.listenPort !== a.listen_port ||
+    client.flow !== flow
+  )
+    return null;
+
+  let publicPort: number;
+  if (shared443) {
+    if (node.vpn_port !== 443) return null;
+    publicPort = node.vpn_port;
+  } else {
+    publicPort = a.listen_port;
+  }
+
+  let config: string;
+  try {
+    config = buildVlessRealityConfig({
+      uuid: a.uuid,
+      host: node.target_ip,
+      port: publicPort,
+      sni: node.sni || "",
+      publicKey: node.public_key || "",
+      shortId: node.short_id || "",
+      flow,
+      label: `Madar-${a.id.slice(0, 6)}`,
+    });
+  } catch {
+    // A config is never delivered from incomplete or malformed node metadata.
+    return null;
+  }
+
   let usageUrl = "";
   try {
     usageUrl = createUsageUrl(env, a.id);
@@ -93,7 +168,7 @@ export async function buildAccountDeliveryArtifact(
     durationSeconds: a.duration_seconds,
     validUntil: a.valid_until,
     serverName: node.name,
-    config: `vless://${a.uuid}@${host}:${publicPort}?${q}#Madar-${a.id.slice(0, 6)}`,
+    config,
     usageUrl,
   };
 }
