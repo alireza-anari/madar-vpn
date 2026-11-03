@@ -63,6 +63,8 @@ jobs:
       - run: CGO_ENABLED=0 go build -trimpath -o /tmp/madar-speed-enforcer ./cmd/madar-speed-enforcer
         working-directory: speed-enforcer
       - run: pnpm test
+      - name: Generate Cloudflare Worker environment types
+        run: pnpm --filter @madar/sales-bot types
       - run: pnpm typecheck
       - run: pnpm build
       - run: pnpm test:python
