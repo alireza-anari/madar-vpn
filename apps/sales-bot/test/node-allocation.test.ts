@@ -254,3 +254,32 @@ test("uncapped legacy accounts prevent new finite allocations", async () => {
     createAccount(env.SALES_DB, seller, input("new", GB), 100),
   ).rejects.toThrow("NODE_ALLOCATION_FULL");
 });
+
+test("default-off Vision does not alter existing sales", async () => {
+  const created = await createAccount(env.SALES_DB, seller, input("plain"), 100);
+  expect(await env.SALES_DB.prepare("SELECT connection_flow FROM managed_accounts WHERE id=?").bind(created.id).first("connection_flow")).toBe("");
+});
+
+test("new accounts pin Vision only on opted-in healthy Shared-443 nodes", async () => {
+  await env.SALES_DB.exec("UPDATE nodes SET vision_opt_in=1,state='ready',healthy=1,last_seen=99,revision=3,acked_revision=3,agent_capabilities='quota-v2,per-account-process,shared-443,vision-metered' WHERE id='n'");
+  const first = await createAccount(env.SALES_DB, seller, input("vision"), 100);
+  expect(await env.SALES_DB.prepare("SELECT connection_flow FROM managed_accounts WHERE id=?").bind(first.id).first("connection_flow")).toBe("xtls-rprx-vision");
+  await env.SALES_DB.exec("UPDATE nodes SET vision_opt_in=0 WHERE id='n'");
+  const again = await createAccount(env.SALES_DB, seller, input("vision"), 100);
+  expect(again.id).toBe(first.id);
+  expect(await env.SALES_DB.prepare("SELECT connection_flow FROM managed_accounts WHERE id=?").bind(first.id).first("connection_flow")).toBe("xtls-rprx-vision");
+  const second = await createAccount(env.SALES_DB, seller, input("after-optout"), 100);
+  expect(await env.SALES_DB.prepare("SELECT connection_flow FROM managed_accounts WHERE id=?").bind(second.id).first("connection_flow")).toBe("");
+});
+
+test("stale or incapable nodes cannot accidentally issue Vision", async () => {
+  await env.SALES_DB.exec("UPDATE nodes SET vision_opt_in=1,state='ready',healthy=1,last_seen=1,revision=3,acked_revision=3,agent_capabilities='quota-v2,per-account-process,shared-443,vision-metered' WHERE id='n'");
+  const stale = await createAccount(env.SALES_DB, seller, input("stale"), 100);
+  expect(await env.SALES_DB.prepare("SELECT connection_flow FROM managed_accounts WHERE id=?").bind(stale.id).first("connection_flow")).toBe("");
+  await env.SALES_DB.exec("UPDATE nodes SET last_seen=99,agent_capabilities='quota-v2,per-account-process,shared-443' WHERE id='n'");
+  const legacy = await createAccount(env.SALES_DB, seller, input("legacy"), 100);
+  expect(await env.SALES_DB.prepare("SELECT connection_flow FROM managed_accounts WHERE id=?").bind(legacy.id).first("connection_flow")).toBe("");
+  await env.SALES_DB.exec("UPDATE nodes SET agent_capabilities='quota-v2,per-account-process,shared-443,vision-metered',revision=4 WHERE id='n'");
+  const unacked = await createAccount(env.SALES_DB, seller, input("unacked"), 100);
+  expect(await env.SALES_DB.prepare("SELECT connection_flow FROM managed_accounts WHERE id=?").bind(unacked.id).first("connection_flow")).toBe("");
+});
