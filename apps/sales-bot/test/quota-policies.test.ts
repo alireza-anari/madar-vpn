@@ -95,7 +95,7 @@ test("Vision policy is explicit and refuses a legacy agent ACK", async () => {
     "UPDATE managed_accounts SET connection_flow='xtls-rprx-vision' WHERE id='a'",
   );
   const policy = await buildQuotaPolicy(env.SALES_DB, "n", 100);
-  expect(policy.clients[0].flow).toBe("xtls-rprx-vision");
+  expect(policy.clients[0]?.flow).toBe("xtls-rprx-vision");
   await ackQuotaPolicy(env.SALES_DB, "n", policy.revision, {
     healthy: true, capabilities: ["quota-v2", "per-account-process", "shared-443"],
   }, 101);
@@ -111,7 +111,7 @@ test("Vision policy is explicit and refuses a legacy agent ACK", async () => {
 
 test("empty-flow policy preserves legacy agent acknowledgement", async () => {
   const policy = await buildQuotaPolicy(env.SALES_DB, "n", 100);
-  expect(policy.clients[0].flow).toBe("");
+  expect(policy.clients[0]?.flow).toBe("");
   await ackQuotaPolicy(env.SALES_DB, "n", policy.revision, {
     healthy: true, capabilities: ["quota-v2", "per-account-process"],
   }, 102);
