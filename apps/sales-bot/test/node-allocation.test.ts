@@ -1,3 +1,4 @@
+import visionMigration from "../migrations/0019-managed-vision-optin.sql?raw";
 import { env } from "cloudflare:workers";
 import { beforeEach, expect, test } from "vitest";
 import { resetDb } from "./db";
@@ -36,6 +37,7 @@ beforeEach(async () => {
     allocation,
     accounting,
     slotMode,
+    visionMigration,
   ])
     await env.SALES_DB.exec(sql);
   await env.SALES_DB.exec(
