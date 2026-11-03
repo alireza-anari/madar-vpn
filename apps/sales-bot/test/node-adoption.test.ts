@@ -1,3 +1,4 @@
+import visionMigration from "../migrations/0019-managed-vision-optin.sql?raw";
 import { env } from "cloudflare:workers";
 import { beforeEach, expect, test } from "vitest";
 import { resetDb } from "./db";
@@ -20,7 +21,7 @@ const body = {
 };
 beforeEach(async () => {
   await resetDb();
-  for (const sql of [a, b, c, d]) await env.SALES_DB.exec(sql);
+  for (const sql of [a, b, c, d, visionMigration]) await env.SALES_DB.exec(sql);
   await env.SALES_DB.prepare(
     "INSERT INTO nodes(id,name,target_ip) VALUES('personal','Personal','13.60.255.118')",
   ).run();
