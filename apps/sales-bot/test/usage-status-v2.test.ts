@@ -6,6 +6,7 @@ import m2 from "../migrations/0002.sql?raw";
 import m3 from "../migrations/0003.sql?raw";
 import m4 from "../migrations/0004-reseller-accounts.sql?raw";
 import m14 from "../migrations/0014-on-demand-usage.sql?raw";
+import m19 from "../migrations/0019-managed-vision-optin.sql?raw";
 import { hash } from "../src/crypto";
 import { buildAccountDeliveryArtifact } from "../src/account-delivery";
 import { statusResponse } from "../src/status-routes";
@@ -13,6 +14,7 @@ import { createUsageToken } from "../src/usage-links";
 
 const now = 100;
 const secret = "usage-secret-for-tests-1234567890";
+const accountUuid = "11111111-1111-4111-8111-111111111111";
 const E = {
   ...env,
   PUBLIC_BASE_URL: "https://example.test",
@@ -21,13 +23,30 @@ const E = {
 
 beforeEach(async () => {
   await resetDb();
-  for (const sql of [m1,m2,m3,m4,m14]) await env.SALES_DB.exec(sql);
+  for (const sql of [m1,m2,m3,m4,m14,m19]) await env.SALES_DB.exec(sql);
+  const policy = JSON.stringify({
+    version: 2,
+    nodeId: "n",
+    revision: 2,
+    expiresAt: 400,
+    clients: [{
+      accountId: "a",
+      uuid: accountUuid,
+      quotaEpoch: 1,
+      quotaBytes: 30000000000,
+      usedBytes: 5000000000,
+      validUntil: 1000,
+      generation: "a:1",
+      listenPort: 20000,
+      flow: "",
+    }],
+  });
   await env.SALES_DB.prepare(
-    "INSERT INTO nodes(id,name,target_ip,vpn_port,revision,acked_revision,last_seen,healthy,public_key,short_id,sni,agent_capabilities,policy_payload) VALUES('n','Stockholm','8.8.8.8',443,2,2,100,1,'public','1234','example.com','quota-v2,per-account-process,shared-443',?)",
-  ).bind(JSON.stringify({version:2,expiresAt:400,clients:[{accountId:'a',uuid:'uuid-a',validUntil:1000}]})).run();
-  await env.SALES_DB.exec(
-    "INSERT INTO managed_accounts(id,seller_id,request_key,node_id,kind,label,uuid,state,quota_bytes,used_bytes,duration_seconds,started_at,valid_until,activation_revision,listen_port,created_at) VALUES('a','10','r','n','sale','Client','uuid-a','active',30000000000,5000000000,86400,90,1000,2,20000,80);"
-  );
+    "INSERT INTO nodes(id,name,target_ip,vpn_port,state,revision,acked_revision,last_seen,healthy,public_key,short_id,sni,agent_capabilities,policy_payload) VALUES('n','Stockholm','8.8.8.8',443,'ready',2,2,100,1,?,'1234','example.com','quota-v2,per-account-process,shared-443',?)",
+  ).bind("A".repeat(43), policy).run();
+  await env.SALES_DB.prepare(
+    "INSERT INTO managed_accounts(id,seller_id,request_key,node_id,kind,label,uuid,state,quota_bytes,used_bytes,duration_seconds,started_at,valid_until,activation_revision,listen_port,created_at) VALUES('a','10','r','n','sale','Client',?,'active',30000000000,5000000000,86400,90,1000,2,20000,80)",
+  ).bind(accountUuid).run();
 });
 
 test("signed v2 usage URL resolves the same limited status and rejects tampering/revocation", async () => {

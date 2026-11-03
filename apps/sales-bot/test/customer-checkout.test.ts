@@ -66,7 +66,7 @@ beforeEach(async()=>{
     await env.SALES_DB.prepare(statement).run();
   await env.SALES_DB.exec(visionMigration);
   await env.SALES_DB.prepare(
-    "INSERT INTO nodes(id,name,target_ip,vpn_port,state,revision,acked_revision,last_seen,healthy,agent_capabilities,max_accounts,max_allocated_bytes) VALUES('n','Stockholm','8.8.8.8',443,'ready',1,1,?,1,'quota-v2,shared-443',1,30000000000)",
+    "INSERT INTO nodes(id,name,target_ip,vpn_port,state,revision,acked_revision,last_seen,healthy,agent_capabilities,max_accounts,max_allocated_bytes) VALUES('n','Stockholm','8.8.8.8',443,'ready',1,1,?,1,'quota-v2,per-account-process,shared-443',1,30000000000)",
   ).bind(now).run();
 });
 async function setup() {
@@ -155,11 +155,11 @@ test("on ready node ACK the private VPN config is addressed to the buying custom
   const account=await env.SALES_DB.prepare("SELECT id,uuid FROM managed_accounts WHERE request_key=?")
     .bind("customer-order:"+o.id).first<{id:string;uuid:string}>();
   const policy=JSON.stringify({version:2,nodeId:"n",revision:2,expiresAt:now+300,
-    clients:[{accountId:account!.id,uuid:account!.uuid,validUntil:now+200,quotaEpoch:1,quotaBytes:20e9,usedBytes:0,generation:"v1",listenPort:20000}]});
+    clients:[{accountId:account!.id,uuid:account!.uuid,validUntil:now+200,quotaEpoch:1,quotaBytes:20e9,usedBytes:0,generation:account!.id+":1",listenPort:20000,flow:""}]});
   await env.SALES_DB.prepare("UPDATE managed_accounts SET state='active',valid_until=?,activation_revision=2,listen_port=20000 WHERE id=?")
     .bind(now+200,account!.id).run();
-  await env.SALES_DB.prepare("UPDATE nodes SET revision=2,acked_revision=2,public_key='pub',short_id='1234567890abcdef',sni='www.cloudflare.com',policy_payload=? WHERE id='n'")
-    .bind(policy).run();
+  await env.SALES_DB.prepare("UPDATE nodes SET revision=2,acked_revision=2,public_key=?,short_id='1234567890abcdef',sni='www.cloudflare.com',policy_payload=? WHERE id='n'")
+    .bind("A".repeat(43),policy).run();
   await queueAccountDelivery(E,account!.id,now);
   const payload=await env.SALES_DB.prepare("SELECT chat_id,payload FROM outbox WHERE id=?")
     .bind("account:"+account!.id).first<{chat_id:string;payload:string}>();

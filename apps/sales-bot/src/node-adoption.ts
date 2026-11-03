@@ -1,4 +1,5 @@
 import { publicTarget } from "./targets";
+import { isValidSni } from "./connection-config";
 import { boundedText } from "./auth";
 import { hash } from "./crypto";
 // Owner-issued, hashed, expiring, one-use grant. Never accepts an arbitrary node ID.
@@ -31,11 +32,7 @@ export async function adoptionApi(request: Request, env: Env, now: number) {
       !/^[a-f0-9]{64}$/.test(body.policyKey) ||
       !/^[A-Za-z0-9_-]{43}$/.test(body.publicKey) ||
       !/^(?:[a-f0-9]{2}){1,8}$/.test(body.shortId) ||
-      typeof body.sni !== "string" ||
-      body.sni.length > 253 ||
-      !/^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$/.test(
-        body.sni,
-      )
+      !isValidSni(body.sni)
     )
       return fail(400);
     const ip = publicTarget(body.publicIp);
