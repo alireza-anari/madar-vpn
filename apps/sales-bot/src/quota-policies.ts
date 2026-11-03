@@ -116,6 +116,11 @@ export async function ackQuotaPolicy(
   if (!node) return;
   const policy = JSON.parse(node.policy_payload) as QuotaPolicy;
   if (policy.version !== 2 || policy.expiresAt <= now) return;
+  // A signed Vision policy must never be acknowledged by a legacy agent.
+  if (
+    policy.clients.some((client) => client.flow === "xtls-rprx-vision") &&
+    !["shared-443", "vision-metered"].every((cap) => health.capabilities.includes(cap))
+  ) return;
   await db
     .prepare(
       "UPDATE nodes SET acked_revision=?,last_seen=?,healthy=1,agent_capabilities=?,state='ready' WHERE id=? AND revision=?",
