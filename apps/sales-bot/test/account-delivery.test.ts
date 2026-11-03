@@ -1,3 +1,4 @@
+import visionMigration from "../migrations/0019-managed-vision-optin.sql?raw";
 import { env } from "cloudflare:workers";
 import { beforeEach, expect, test } from "vitest";
 import { resetDb } from "./db";
@@ -9,7 +10,7 @@ import { queueAccountDelivery } from "../src/account-delivery";
 
 beforeEach(async () => {
   await resetDb();
-  for (const s of [a, b, c, d]) await env.SALES_DB.exec(s);
+  for (const s of [a, b, c, d, visionMigration]) await env.SALES_DB.exec(s);
 });
 
 async function fixture(capabilities: string) {
