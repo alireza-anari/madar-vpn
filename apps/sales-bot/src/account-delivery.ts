@@ -42,6 +42,11 @@ export async function buildAccountDeliveryArtifact(
     !node.policy_payload
   )
     return null;
+  if (
+    a.connection_flow === "xtls-rprx-vision" &&
+    (!node.agent_capabilities.split(",").includes("vision-metered") ||
+      !node.agent_capabilities.split(",").includes("shared-443"))
+  ) return null;
   const policy = JSON.parse(node.policy_payload) as QuotaPolicy;
   if (
     policy.version !== 2 ||
@@ -51,13 +56,14 @@ export async function buildAccountDeliveryArtifact(
       (c) =>
         c.accountId === a.id &&
         c.uuid === a.uuid &&
-        c.validUntil === a.valid_until,
+        c.validUntil === a.valid_until &&
+        (c.flow || "") === (a.connection_flow || ""),
     )
   )
     return null;
   const q = new URLSearchParams({
     encryption: "none",
-    flow: "",
+    flow: a.connection_flow === "xtls-rprx-vision" ? "xtls-rprx-vision" : "",
     security: "reality",
     sni: node.sni,
     fp: "chrome",

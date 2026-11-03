@@ -21,6 +21,7 @@ def verify_policy(envelope,key,node_id,now,last_revision):
             cap=client.get('quotaBytes')
             if cap is not None and (type(cap) is not int or not 1<=cap<=1000000000000):raise ValueError('INVALID_QUOTA')
             if type(port) is not int or not 20000<=port<=20999 or port in ports or client.get('generation')!=ident+':'+str(client['quotaEpoch']):raise ValueError('INVALID_QUOTA')
+            if client.get('flow','') not in ('','xtls-rprx-vision'):raise ValueError('INVALID_FLOW')
             ports.add(port)
     elif 'version' in policy:raise ValueError('UNSUPPORTED_POLICY')
     return policy

@@ -1,3 +1,4 @@
+import visionMigration from "../migrations/0019-managed-vision-optin.sql?raw";
 import { env } from "cloudflare:workers";
 import { beforeEach, expect, test } from "vitest";
 import { resetDb } from "./db";
@@ -19,7 +20,7 @@ const load = () => import("../src/" + "seller-accounting");
 
 beforeEach(async () => {
   await resetDb();
-  for (const sql of [m1, m2, m3, m4, m5, m6, m7, m8, m9, m10])
+  for (const sql of [m1, m2, m3, m4, m5, m6, m7, m8, m9, m10, visionMigration])
     await env.SALES_DB.exec(sql);
   await env.SALES_DB.exec(
     "INSERT INTO nodes(id,name,target_ip,max_accounts,max_allocated_bytes) VALUES('n1','Stockholm','8.8.8.8',20,1000000000000),('n2','Frankfurt','1.1.1.1',20,1000000000000);" +

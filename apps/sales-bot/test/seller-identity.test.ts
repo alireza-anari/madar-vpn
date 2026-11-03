@@ -1,3 +1,4 @@
+import visionMigration from "../migrations/0019-managed-vision-optin.sql?raw";
 import { env } from "cloudflare:workers";
 import { beforeEach, expect, test } from "vitest";
 import { resetDb } from "./db";
@@ -20,7 +21,7 @@ const now = 10_000;
 
 beforeEach(async () => {
   await resetDb();
-  for (const sql of [m1,m2,m3,m4,m5,m6,m7,m8,m9,m10,m11,m12])
+  for (const sql of [m1,m2,m3,m4,m5,m6,m7,m8,m9,m10,m11,m12,visionMigration])
     await env.SALES_DB.exec(sql);
   await env.SALES_DB.exec(
     "INSERT INTO resellers(telegram_id,enabled,created_at) VALUES('10',1,100),('20',1,90),('30',1,80);" +

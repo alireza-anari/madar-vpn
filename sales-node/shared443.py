@@ -55,9 +55,11 @@ class SharedFrontend:
     def check(self):
         if self.current_pid()!=self.pid:raise ValueError('FRONTEND_RESTARTED')
     def add(self,client,base):
+        flow=client.get('flow','')
+        if flow not in ('','xtls-rprx-vision'):raise ValueError('INVALID_CLIENT_FLOW')
         self.check()
         path=pathlib.Path(base)/(client['accountId']+'.frontend.json')
-        atomic_write(path,{'inbounds':[{'tag':self.settings['frontendTag'],'port':443,'protocol':'vless','settings':{'decryption':'none','clients':[{'id':client['uuid'],'email':f"madar-{client['listenPort']}",'flow':'','level':0}]}}]})
+        atomic_write(path,{'inbounds':[{'tag':self.settings['frontendTag'],'port':443,'protocol':'vless','settings':{'decryption':'none','clients':[{'id':client['uuid'],'email':f"madar-{client['listenPort']}",'flow':flow,'level':0}]}}]})
         try:
             result=subprocess.run([self.binary,'api','adu','--server='+self.settings['frontendApi'],'-timeout','1',str(path)],check=True,capture_output=True,text=True,timeout=2)
             if 'Added 1 user(s) in total.' not in result.stdout:raise ValueError('FRONTEND_USER_NOT_ADDED')
