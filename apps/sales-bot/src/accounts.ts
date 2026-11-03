@@ -15,6 +15,7 @@ export interface ManagedAccount {
   kind: "sale" | "trial";
   label: string;
   uuid: string;
+  connection_flow: "" | "xtls-rprx-vision";
   state: string;
   quota_bytes: number | null;
   used_bytes: number;
@@ -82,7 +83,7 @@ export async function createAccount(
   await db.batch([
     db
       .prepare(
-        `WITH reserved AS (SELECT COUNT(*) slots,COALESCE(SUM(a.quota_bytes),0) bytes,COUNT(*)-COUNT(a.quota_bytes) uncapped FROM managed_accounts a WHERE a.node_id=? AND ${reservationPredicate}) INSERT OR IGNORE INTO managed_accounts(id,seller_id,request_key,node_id,kind,label,uuid,quota_bytes,duration_seconds,created_at) SELECT ?,?,?,?,?,?,?,?,?,? FROM nodes n CROSS JOIN reserved r WHERE n.id=? AND r.slots<n.max_accounts AND (n.max_allocated_bytes IS NULL OR (r.uncapped=0 AND r.bytes+?<=n.max_allocated_bytes))`,
+        `WITH reserved AS (SELECT COUNT(*) slots,COALESCE(SUM(a.quota_bytes),0) bytes,COUNT(*)-COUNT(a.quota_bytes) uncapped FROM managed_accounts a WHERE a.node_id=? AND ${reservationPredicate}) INSERT OR IGNORE INTO managed_accounts(id,seller_id,request_key,node_id,kind,label,uuid,quota_bytes,duration_seconds,created_at,connection_flow) SELECT ?,?,?,?,?,?,?,?,?,?,CASE WHEN n.vision_opt_in=1 AND n.healthy=1 AND n.last_seen>? AND n.revision=n.acked_revision AND instr(','||n.agent_capabilities||',',',vision-metered,')>0 AND instr(','||n.agent_capabilities||',',',shared-443,')>0 THEN 'xtls-rprx-vision' ELSE '' END FROM nodes n CROSS JOIN reserved r WHERE n.id=? AND r.slots<n.max_accounts AND (n.max_allocated_bytes IS NULL OR (r.uncapped=0 AND r.bytes+?<=n.max_allocated_bytes))`,
       )
       .bind(
         nodeId,
@@ -97,6 +98,7 @@ export async function createAccount(
         input.kind === "trial" ? 1e9 : input.quotaBytes,
         input.durationSeconds,
         now,
+        now - 90,
         nodeId,
         input.kind === "trial" ? 1e9 : input.quotaBytes,
       ),
