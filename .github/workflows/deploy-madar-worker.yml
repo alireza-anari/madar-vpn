@@ -1,0 +1,93 @@
+name: Guarded Madar production Worker deploy
+
+on:
+  push:
+    branches: ['feat/native-seller-operations-20261028']
+    paths:
+      - 'docs/sales-bot/production-deploy-trigger.md'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: madar-sales-worker-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.event.head_commit.message == 'deploy production Worker (Madar)'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Guard exact validated release tree
+        env:
+          DEPLOY_SHA: ${{ github.sha }}
+          VALIDATED_SHA: 8c66ae319f0c892e7794a5d9c19be673d070b7b0
+          VALIDATED_TREE: cbd851eca419f93670619fd421a1dd8b0fbceffc
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse "${VALIDATED_SHA}^{tree}")" = "$VALIDATED_TREE"
+          git merge-base --is-ancestor "$VALIDATED_SHA" "$DEPLOY_SHA"
+          changed="$(git diff --name-only "$VALIDATED_SHA" "$DEPLOY_SHA")"
+          printf '%s\n' "$changed"
+          while IFS= read -r file; do
+            case "$file" in
+              .github/workflows/deploy-madar-worker.yml|docs/sales-bot/production-deploy-trigger.md) ;;
+              *) echo "Unexpected post-validation change: $file"; exit 1 ;;
+            esac
+          done <<< "$changed"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install pinned dependencies
+        run: |
+          corepack enable
+          corepack prepare pnpm@12.9.1 --activate
+          pnpm install --frozen-lockfile
+
+      - name: Re-verify audited Worker package
+        run: |
+          pnpm audit --audit-level high
+          pnpm --filter @madar/sales-bot types
+          pnpm --filter @madar/sales-bot typecheck
+          pnpm --filter @madar/sales-bot test
+          pnpm --filter @madar/sales-bot build
+
+      - name: Verify Cloudflare account access
+        working-directory: apps/sales-bot
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: '2e4e0d025c81b9134fd2d19f17535e30'
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          pnpm exec wrangler whoami
+
+      - name: Deploy Worker and verify health (rollback on failed health check)
+        working-directory: apps/sales-bot
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: '2e4e0d025c81b9134fd2d19f17535e30'
+          WORKER_URL: https://madar-sales-bot.alirezaanari117.workers.dev
+          PREVIOUS_VERSION_ID: 85af8be4-5112-4d2f-87ff-581b5ea83677
+        run: |
+          set -euo pipefail
+          pnpm exec wrangler deploy --message "Madar production Vision opt-in release"
+          body=""
+          for attempt in $(seq 1 12); do
+            body="$(curl --connect-timeout 5 --max-time 15 -fsS "$WORKER_URL/health" || true)"
+            if [ -n "$body" ] && node -e 'const x=JSON.parse(process.argv[1]); process.exit(x.status==="prepared" && x.telegram==="configured" ? 0 : 1)' "$body"; then
+              echo "WORKER_HEALTH_PASS $body"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Worker health check failed; restoring previous production version."
+          curl --fail-with-body --silent --show-error             -X POST "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/madar-sales-bot/deployments"             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"             -H "Content-Type: application/json"             --data "{"strategy":"percentage","versions":[{"version_id":"$PREVIOUS_VERSION_ID","percentage":100}],"annotations":{"workers/message":"Automatic rollback after failed Madar health check"}}"
+          exit 1
