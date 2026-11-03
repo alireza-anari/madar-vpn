@@ -1,3 +1,4 @@
+import visionMigration from "../migrations/0019-managed-vision-optin.sql?raw";
 import allocation from "../migrations/0009-node-allocation-cap.sql?raw";
 import capacity from "../migrations/0007-node-capacity.sql?raw";
 import { env } from "cloudflare:workers";
@@ -24,6 +25,7 @@ beforeEach(async () => {
   await env.SALES_DB.exec(migration);
   await env.SALES_DB.exec(capacity);
   await env.SALES_DB.exec(allocation);
+  await env.SALES_DB.exec(visionMigration);
   await env.SALES_DB.prepare(
     "INSERT INTO nodes(id,name,target_ip) VALUES('sale','sale','8.8.8.8'),('trial','trial','1.1.1.1')",
   ).run();
