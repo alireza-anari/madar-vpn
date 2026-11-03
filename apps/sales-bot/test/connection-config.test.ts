@@ -15,6 +15,13 @@ const base = {
   label: "Madar-111111",
 };
 
+const withQueryParameter = (value: string, parameter: string) => {
+  const fragment = value.indexOf("#");
+  return fragment < 0
+    ? value + "&" + parameter
+    : value.slice(0, fragment) + "&" + parameter + value.slice(fragment);
+};
+
 test("builds one canonical TCP/REALITY VLESS URI and omits empty Flow", () => {
   const value = buildVlessRealityConfig(base);
   const parsed = parseVlessRealityConfig(value);
@@ -88,12 +95,17 @@ test("rejects invalid UUID, port, SNI, public key, short ID, Flow and label", ()
 test("parser rejects duplicate, empty and unknown query parameters", () => {
   const value = buildVlessRealityConfig(base);
   expect(() =>
-    parseVlessRealityConfig(value + "&flow="),
+    parseVlessRealityConfig(withQueryParameter(value, "flow=")),
   ).toThrow("INVALID_VLESS_REALITY_CONFIG");
   expect(() =>
-    parseVlessRealityConfig(value + "&flow=xtls-rprx-vision&flow=xtls-rprx-vision"),
+    parseVlessRealityConfig(
+      withQueryParameter(
+        value,
+        "flow=xtls-rprx-vision&flow=xtls-rprx-vision",
+      ),
+    ),
   ).toThrow("INVALID_VLESS_REALITY_CONFIG");
   expect(() =>
-    parseVlessRealityConfig(value + "&alpn=h2"),
+    parseVlessRealityConfig(withQueryParameter(value, "alpn=h2")),
   ).toThrow("INVALID_VLESS_REALITY_CONFIG");
 });
