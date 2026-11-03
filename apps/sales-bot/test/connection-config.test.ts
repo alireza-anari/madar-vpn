@@ -59,7 +59,7 @@ test("adds Vision only when the account's pinned Flow explicitly requests it", (
 test("brackets IPv6 endpoints correctly for URI importers", () => {
   const value = buildVlessRealityConfig({
     ...base,
-    host: "2606:4700:4700::1111",
+    host: "2606:4700:4700:0000:0000:0000:0000:1111",
   });
   expect(value).toContain("@[2606:4700:4700::1111]:443?");
   expect(parseVlessRealityConfig(value).host).toBe(
