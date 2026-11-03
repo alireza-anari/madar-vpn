@@ -7,6 +7,7 @@ export interface QuotaClient {
   validUntil: number;
   generation: string;
   listenPort: number;
+  flow: "" | "xtls-rprx-vision";
 }
 export interface QuotaPolicy {
   version: 2;
@@ -61,6 +62,7 @@ export async function buildQuotaPolicy(
     validUntil: a.valid_until || now + 300,
     generation: `${a.id}:${a.quota_epoch}`,
     listenPort: a.listen_port,
+    flow: a.connection_flow === "xtls-rprx-vision" ? "xtls-rprx-vision" : "",
   }));
   const old = node.policy_payload ? JSON.parse(node.policy_payload) : null;
   if (
@@ -122,7 +124,8 @@ export async function ackQuotaPolicy(
       revision,
       now,
       "quota-v2,per-account-process" +
-        (health.capabilities.includes("shared-443") ? ",shared-443" : ""),
+        (health.capabilities.includes("shared-443") ? ",shared-443" : "") +
+        (health.capabilities.includes("shared-443") && health.capabilities.includes("vision-metered") ? ",vision-metered" : ""),
       nodeId,
       revision,
     )
