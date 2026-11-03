@@ -89,5 +89,6 @@ jobs:
             sleep 5
           done
           echo "Worker health check failed; restoring previous production version."
-          curl --fail-with-body --silent --show-error             -X POST "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/madar-sales-bot/deployments"             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"             -H "Content-Type: application/json"             --data "{"strategy":"percentage","versions":[{"version_id":"$PREVIOUS_VERSION_ID","percentage":100}],"annotations":{"workers/message":"Automatic rollback after failed Madar health check"}}"
+          rollback_payload="$(printf '{"strategy":"percentage","versions":[{"version_id":"%s","percentage":100}],"annotations":{"workers/message":"Automatic rollback after failed Madar health check"}}' "$PREVIOUS_VERSION_ID")"
+          curl --fail-with-body --silent --show-error -X POST "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/madar-sales-bot/deployments" -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json" --data "$rollback_payload"
           exit 1
