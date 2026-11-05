@@ -70,9 +70,9 @@ jobs:
           pnpm exec wrangler whoami
           api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID"
           auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
-          current="$(curl --fail-with-body -fsS --retry 2 -H "$auth" "$api/workers/scripts/madar-sales-bot/deployments" | jq -er '.result.deployments[0].versions[0].version_id')"
+          current="$(curl --fail-with-body -sS --retry 2 -H "$auth" "$api/workers/scripts/madar-sales-bot/deployments" | jq -er '.result.deployments[0].versions[0].version_id')"
           test "$current" = "0b7510ac-92d8-4c1c-b25c-579a32186340" || { echo "::error::Production deployment changed; abort"; exit 1; }
-          curl --fail-with-body -fsS --retry 2 -H "$auth" "$api/workers/scripts/madar-sales-bot/settings" |
+          curl --fail-with-body -sS --retry 2 -H "$auth" "$api/workers/scripts/madar-sales-bot/settings" |
             jq -e --arg db "f59e160f-89ab-4a90-a4dc-f257883d5a61" '
               .success == true and
               ([.result.bindings[] | select(.name=="SALES_DB" and ((.id // .database_id)==$db))] | length == 1) and
@@ -85,9 +85,9 @@ jobs:
                 (index("POLICY_SIGNING_SECRET") != null) and
                 (index("RUNNER_SERVICE_SECRET") != null) and
                 (index("USAGE_LINK_SECRET") != null))' >/dev/null
-          curl --fail-with-body -fsS --retry 2 -H "$auth" "$api/workers/scripts/madar-sales-bot/schedules" |
+          curl --fail-with-body -sS --retry 2 -H "$auth" "$api/workers/scripts/madar-sales-bot/schedules" |
             jq -e '.success == true and any(.result.schedules[]; .cron == "* * * * *")' >/dev/null
-          curl --fail-with-body -fsS --retry 2 -X POST -H "$auth" -H 'Content-Type: application/json'             --data '{"sql":"SELECT name FROM d1_migrations WHERE name=\u00270019-managed-vision-optin.sql\u0027"}'             "$api/d1/database/f59e160f-89ab-4a90-a4dc-f257883d5a61/query" |
+          curl --fail-with-body -sS --retry 2 -X POST -H "$auth" -H 'Content-Type: application/json'             --data '{"sql":"SELECT name FROM d1_migrations WHERE name=\u00270019-managed-vision-optin.sql\u0027"}'             "$api/d1/database/f59e160f-89ab-4a90-a4dc-f257883d5a61/query" |
             jq -e '.success == true and .result[0].results[0].name == "0019-managed-vision-optin.sql"' >/dev/null
           grep -q '"keep_vars": true' wrangler.jsonc
           echo "PRODUCTION_BASELINE_GUARDS_PASSED"
@@ -129,7 +129,7 @@ jobs:
           test "$unauthorized" = 403 && test "$webhook" = 401
           api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID"
           auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
-          curl --fail-with-body -fsS --retry 2 -H "$auth" "$api/workers/scripts/madar-sales-bot/settings" |
+          curl --fail-with-body -sS --retry 2 -H "$auth" "$api/workers/scripts/madar-sales-bot/settings" |
             jq -e --arg db "f59e160f-89ab-4a90-a4dc-f257883d5a61" '
               .success == true and
               ([.result.bindings[] | select(.name=="SALES_DB" and ((.id // .database_id)==$db))] | length == 1) and
@@ -142,9 +142,9 @@ jobs:
                 (index("POLICY_SIGNING_SECRET") != null) and
                 (index("RUNNER_SERVICE_SECRET") != null) and
                 (index("USAGE_LINK_SECRET") != null))' >/dev/null
-          curl --fail-with-body -fsS --retry 2 -H "$auth" "$api/workers/scripts/madar-sales-bot/schedules" |
+          curl --fail-with-body -sS --retry 2 -H "$auth" "$api/workers/scripts/madar-sales-bot/schedules" |
             jq -e '.success == true and any(.result.schedules[]; .cron == "* * * * *")' >/dev/null
-          current="$(curl --fail-with-body -fsS --retry 2 -H "$auth" "$api/workers/scripts/madar-sales-bot/deployments" |
+          current="$(curl --fail-with-body -sS --retry 2 -H "$auth" "$api/workers/scripts/madar-sales-bot/deployments" |
             jq -er '.result.deployments[0].versions[0].version_id')"
           test "$current" != "0b7510ac-92d8-4c1c-b25c-579a32186340" || { echo "::error::New Worker version was not activated"; exit 1; }
           echo "MADAR_WORKER_RELEASE_OK"
@@ -159,5 +159,5 @@ jobs:
           : "$CLOUDFLARE_API_TOKEN"
           api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/madar-sales-bot/deployments"
           payload='{"strategy":"percentage","versions":[{"version_id":"0b7510ac-92d8-4c1c-b25c-579a32186340","percentage":100}],"annotations":{"workers/message":"Rollback after failed Madar VLESS PR37 deployment"}}'
-          curl --fail-with-body -fsS --retry 2 -X POST "$api" -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json" --data "$payload" >/dev/null
+          curl --fail-with-body -sS --retry 2 -X POST "$api" -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json" --data "$payload" >/dev/null
           echo "PREVIOUS_WORKER_VERSION_RESTORED"
