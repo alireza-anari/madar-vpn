@@ -3,6 +3,7 @@ import { handleCustomerTelegramUpdate } from "./customer-telegram";
 import { handleTelegramSupport } from "./telegram-support";
 import { handleAdminStoreTelegram } from "./admin-telegram-store";
 import { handleTelegramEnrollment } from "./telegram-enrollment";
+import { handleSellerTelegram } from "./seller-telegram";
 import { handleResellerAdminUi } from "./reseller-admin-ui";
 import { handleResellerUpdate as handleDashboardResellerUpdate } from "./reseller-menus-dashboard";
 import { sellerNodeStats, sellerStats } from "./seller-accounting";
@@ -117,6 +118,25 @@ async function enhanceAdminReply(env: Env, u: TelegramUpdate, now: number) {
     return;
   }
 
+  if (data.startsWith("rs:view:")) {
+    const ownerId=id;
+    const accountId=data.slice("rs:view:".length);
+    const owned=await env.SALES_DB.prepare(
+      "SELECT id FROM managed_accounts WHERE id=? AND seller_id=?",
+    ).bind(accountId,ownerId).first<string>("id");
+    if(owned){
+      const ownButtons=[
+        {text:"👤 جزئیات و خدمات مشتری",callback_data:"seller:account:"+accountId},
+      ];
+      const beforeBack=keyboard.findIndex(row=>row.some(x=>x.callback_data==="rs:list"));
+      if(beforeBack>=0)keyboard.splice(beforeBack,0,ownButtons);
+      else keyboard.push(ownButtons);
+      reply.payload.reply_markup={inline_keyboard:keyboard};
+      await saveReply(env,reply);
+    }
+    return;
+  }
+
   if (data.startsWith("rs:seller:")) {
     const sellerId = data.slice(10);
     const [current, all, currentNodes, allNodes] = await Promise.all([
@@ -184,10 +204,7 @@ async function enhanceDashboardReply(env: Env, u: TelegramUpdate, now: number) {
   const actor = await resolveSalesActor(env.SALES_DB, id, env);
 
   if (actor.role === "seller") {
-    // The sales home explicitly distinguishes current-settlement and all-time totals.
-    // Do not overwrite the current live count with the all-time figure.
-    if (env.PUBLIC_BASE_URL) addMiniAppEntry(reply.payload, env.PUBLIC_BASE_URL);
-    await saveReply(env, reply);
+    // The entire seller home is native Telegram. Do not append the old Mini App action.
     return;
   }
 
@@ -252,7 +269,14 @@ export async function handleResellerUpdate(
     await editAdminSellerCallbackReply(env, u);
     return;
   }
-  if (await handleTelegramSupport(env, u, now)) return;
+  if (await handleTelegramSupport(env, u, now)) {
+    await editAdminSellerCallbackReply(env, u);
+    return;
+  }
+  if (await handleSellerTelegram(env, u, now)) {
+    await editAdminSellerCallbackReply(env, u);
+    return;
+  }
   if (await handleCustomerTelegramUpdate(env, u, now)) {
     await editAdminSellerCallbackReply(env, u);
     return;

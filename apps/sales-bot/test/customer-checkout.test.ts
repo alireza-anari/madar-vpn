@@ -1,3 +1,4 @@
+import visionMigration from "../migrations/0019-managed-vision-optin.sql?raw";
 import { createHmac } from "node:crypto";
 import { env } from "cloudflare:workers";
 import { beforeEach, expect, test } from "vitest";
@@ -63,8 +64,9 @@ beforeEach(async()=>{
     await env.SALES_DB.prepare(statement).run();
   for (const statement of supportMigration.split(/;\s*(?:\n|$)/).map(s=>s.trim()).filter(Boolean))
     await env.SALES_DB.prepare(statement).run();
+  await env.SALES_DB.exec(visionMigration);
   await env.SALES_DB.prepare(
-    "INSERT INTO nodes(id,name,target_ip,vpn_port,state,revision,acked_revision,last_seen,healthy,agent_capabilities,max_accounts,max_allocated_bytes) VALUES('n','Stockholm','8.8.8.8',443,'ready',1,1,?,1,'quota-v2,shared-443',1,30000000000)",
+    "INSERT INTO nodes(id,name,target_ip,vpn_port,state,revision,acked_revision,last_seen,healthy,agent_capabilities,max_accounts,max_allocated_bytes) VALUES('n','Stockholm','8.8.8.8',443,'ready',1,1,?,1,'quota-v2,per-account-process,shared-443',1,30000000000)",
   ).bind(now).run();
 });
 async function setup() {
@@ -153,11 +155,11 @@ test("on ready node ACK the private VPN config is addressed to the buying custom
   const account=await env.SALES_DB.prepare("SELECT id,uuid FROM managed_accounts WHERE request_key=?")
     .bind("customer-order:"+o.id).first<{id:string;uuid:string}>();
   const policy=JSON.stringify({version:2,nodeId:"n",revision:2,expiresAt:now+300,
-    clients:[{accountId:account!.id,uuid:account!.uuid,validUntil:now+200,quotaEpoch:1,quotaBytes:20e9,usedBytes:0,generation:"v1",listenPort:20000}]});
+    clients:[{accountId:account!.id,uuid:account!.uuid,validUntil:now+200,quotaEpoch:1,quotaBytes:20e9,usedBytes:0,generation:account!.id+":1",listenPort:20000,flow:""}]});
   await env.SALES_DB.prepare("UPDATE managed_accounts SET state='active',valid_until=?,activation_revision=2,listen_port=20000 WHERE id=?")
     .bind(now+200,account!.id).run();
-  await env.SALES_DB.prepare("UPDATE nodes SET revision=2,acked_revision=2,public_key='pub',short_id='1234567890abcdef',sni='www.cloudflare.com',policy_payload=? WHERE id='n'")
-    .bind(policy).run();
+  await env.SALES_DB.prepare("UPDATE nodes SET revision=2,acked_revision=2,public_key=?,short_id='1234567890abcdef',sni='www.cloudflare.com',policy_payload=? WHERE id='n'")
+    .bind("A".repeat(43),policy).run();
   await queueAccountDelivery(E,account!.id,now);
   const payload=await env.SALES_DB.prepare("SELECT chat_id,payload FROM outbox WHERE id=?")
     .bind("account:"+account!.id).first<{chat_id:string;payload:string}>();
@@ -919,4 +921,76 @@ test("archive refuses a node with an unfulfilled customer order",async()=>{
   await expect(updateNodeMode(env.SALES_DB,{telegramId:"1",role:"admin"},"n","paused","archived",now))
     .rejects.toThrow("NODE_HAS_DEPENDENCIES");
   expect(await env.SALES_DB.prepare("SELECT value FROM settings WHERE key='node_status:n'").first("value")).toBe("paused");
+});
+
+test("seller native dashboard, customer search, alerts and settlement history are owner-only",async()=>{
+  await env.SALES_DB.prepare("INSERT INTO settings(key,value) VALUES('app_mode','reseller')").run();
+  await env.SALES_DB.prepare("INSERT INTO resellers(telegram_id,enabled,created_at) VALUES('42',1,100),('43',1,100)").run();
+  await env.SALES_DB.prepare("INSERT INTO managed_accounts(id,seller_id,request_key,node_id,kind,label,uuid,state,quota_bytes,used_bytes,duration_seconds,valid_until,created_at) VALUES('s1','42','sale_test_s1','n','sale','Ali Customer','test-uuid-s1','active',30000000000,5000000000,86400,?,300),('s2','42','sale_test_s2','n','sale','Bahar Customer','test-uuid-s2','exhausted',10000000000,10000000000,86400,?,300),('s3','43','sale_test_s3','n','sale','Private Customer','test-uuid-s3','active',5000000000,0,86400,?,300)").bind(now+86400,now+86400,now+86400).run();
+  const cb=async(i:number,id:number,data:string)=>handleUpdate(E,{update_id:i,callback_query:{id:"cb"+i,from:{id},message:{message_id:i,chat:{id,type:"private"},text:"💼 پنل"},data}},now);
+  const say=async(i:number,id:number,text:string)=>handleUpdate(E,{update_id:i,message:{message_id:i,chat:{id,type:"private"},from:{id},text}},now);
+  const response=async(i:number)=>JSON.parse(await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id=?").bind("u"+i+":reply").first<string>("payload")||"{}");
+
+  await cb(9600,42,"rs:home");
+  const h=await response(9600);
+  for(const key of ["seller:clients:all:0","seller:alerts","seller:settlements:0","seller:nodes","support:home"])
+    expect(h.reply_markup.inline_keyboard.flat().some((x:any)=>x.callback_data===key)).toBe(true);
+  expect(h.reply_markup.inline_keyboard.flat().some((x:any)=>x.web_app)).toBe(false);
+  expect(h.text).toContain("حجم فروش");
+  expect(h.text).not.toContain("فروشنده‌های فعال");
+
+  await cb(9601,42,"seller:clients:all:0");
+  expect(JSON.stringify(await response(9601))).toContain("Ali Customer");
+  expect(JSON.stringify(await response(9601))).not.toContain("Private Customer");
+  await cb(9602,42,"seller:alerts");
+  expect((await response(9602)).text).toContain("نزدیک انقضا");
+  expect(JSON.stringify(await response(9602))).toContain("Ali Customer");
+  await cb(9603,42,"seller:search");
+  await say(9604,42,"Bahar");
+  expect(JSON.stringify(await response(9604))).toContain("Bahar Customer");
+  expect(JSON.stringify(await response(9604))).not.toContain("Ali Customer");
+  await cb(9605,42,"seller:account:s1");
+  expect((await response(9605)).text).toContain("Ali Customer");
+  await cb(9606,42,"seller:account:s3");
+  const denied=await response(9606);
+  expect(JSON.stringify(denied)).not.toContain("Private Customer");
+  await cb(9607,43,"seller:clients:all:0");
+  expect(JSON.stringify(await response(9607))).not.toContain("Ali Customer");
+
+  const {settleSeller}=await import("../src/seller-accounting");
+  await settleSeller(env.SALES_DB,{telegramId:"1",role:"admin"},"42",now);
+  await cb(9608,42,"seller:settlements:0");
+  const list=await response(9608);
+  expect(list.text).toContain("تاریخچه تسویه");
+  const settleKey=list.reply_markup.inline_keyboard.flat().find((x:any)=>x.callback_data?.startsWith("seller:settlement:"))?.callback_data;
+  expect(settleKey).toBeTruthy();
+  await cb(9609,42,settleKey);
+  expect((await response(9609)).text).toContain("۲");
+  await cb(9610,43,settleKey);
+  expect((await response(9610)).text).toContain("متعلق به حساب");
+});
+test("seller renewal/traffic request opens tracked admin ticket without changing service or payment",async()=>{
+  await env.SALES_DB.prepare("INSERT INTO settings(key,value) VALUES('app_mode','reseller')").run();
+  await env.SALES_DB.prepare("INSERT INTO resellers(telegram_id,enabled,created_at) VALUES('42',1,100),('43',1,100)").run();
+  await env.SALES_DB.prepare("INSERT INTO managed_accounts(id,seller_id,request_key,node_id,kind,label,uuid,state,quota_bytes,used_bytes,duration_seconds,valid_until,created_at) VALUES('s1','42','sale_test_s1','n','sale','S1 client','test-uuid-s1','active',30000000000,5000000000,86400,?,300)").bind(now+86400).run();
+  const cb=async(i:number,id:number,data:string)=>handleUpdate(E,{update_id:i,callback_query:{id:"cb"+i,from:{id},message:{message_id:i,chat:{id,type:"private"},text:"صفحه"},data}},now);
+  const response=async(i:number)=>JSON.parse(await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id=?").bind("u"+i+":reply").first<string>("payload")||"{}");
+  await cb(9650,43,"seller:request:renew:s1");
+  expect(JSON.stringify(await response(9650))).not.toContain("S1 client");
+  await cb(9651,42,"seller:request:renew:s1");
+  const sent=await response(9651);
+  expect(sent.text).toContain("درخواست تمدید");
+  const ticket=await env.SALES_DB.prepare("SELECT id,user_id,category,state FROM support_tickets WHERE created_update_id=9651").first<any>();
+  expect(ticket).toMatchObject({user_id:"42",category:"renewal",state:"open"});
+  expect((await env.SALES_DB.prepare("SELECT payload FROM outbox WHERE id='seller-upgrade:9651:1'").first<string>("payload"))).toContain("S1 client");
+  expect(await env.SALES_DB.prepare("SELECT quota_bytes FROM managed_accounts WHERE id='s1'").first<number>("quota_bytes")).toBe(30000000000);
+  await cb(9652,42,"support:ticket:"+ticket.id);
+  expect((await response(9652)).text).toContain("درخواست");
+  await cb(9653,1,"support:admin:ticket:"+ticket.id);
+  expect((await response(9653)).text).toContain("کانفیگ s1");
+  await cb(9654,42,"seller:request:traffic:s1");
+  expect((await response(9654)).text).toContain("درخواست حجم اضافه");
+  expect(await env.SALES_DB.prepare("SELECT quota_bytes FROM managed_accounts WHERE id='s1'").first<number>("quota_bytes")).toBe(30000000000);
+  const payment=await env.SALES_DB.prepare("SELECT value FROM settings WHERE key='payment'").first("value");
+  expect(payment).toBeNull();
 });

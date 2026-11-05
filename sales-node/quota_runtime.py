@@ -21,6 +21,8 @@ def shared_frontend(settings,binary,base):
 
 class AccountProcess:
     def __init__(self,settings,client,base,binary='/opt/madar-sales-node/xray'):
+        flow=client.get('flow','')
+        if flow not in ('','xtls-rprx-vision') or (flow=='xtls-rprx-vision' and not settings.get('shared443')):raise ValueError('UNSUPPORTED_CLIENT_FLOW')
         self.client=client;self.generation=uuid.uuid4().hex;self.api=client['listenPort']+1000;self.seen=False
         self.frontend=None
         if settings.get('shared443'):
@@ -90,7 +92,7 @@ class QuotaRuntime:
         except Exception:return False
     def capabilities(self):
         result=['quota-v2','per-account-process']
-        if self.config.get('shared443') and self.frontend_ready():result.append('shared-443')
+        if self.config.get('shared443') and self.frontend_ready():result.extend(['shared-443','vision-metered'])
         return result
     def reports_for_sync(self,now):
         # Local metering remains continuous and authoritative for hard quotas.

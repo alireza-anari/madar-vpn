@@ -1,3 +1,4 @@
+import visionMigration from "../migrations/0019-managed-vision-optin.sql?raw";
 import { createHmac } from "node:crypto";
 import { env } from "cloudflare:workers";
 import { beforeEach, expect, test } from "vitest";
@@ -66,7 +67,7 @@ function request(path: string, id: number, body?: unknown) {
 
 beforeEach(async () => {
   await resetDb();
-  for (const sql of [m1, m2, m3, m4, m5, m6, m7, m8, m9, m10, m11])
+  for (const sql of [m1, m2, m3, m4, m5, m6, m7, m8, m9, m10, m11, visionMigration])
     await env.SALES_DB.exec(sql);
   await env.SALES_DB.exec(
     "INSERT INTO resellers(telegram_id,enabled,created_at) VALUES('10',1,1),('20',1,1);",
@@ -189,7 +190,7 @@ async function readyDeliveryFixture() {
     version: 2,
     nodeId: "ready",
     revision: 5,
-    expiresAt: now + 500,
+    expiresAt: now + 300,
     clients: [
       {
         accountId: "ready-account",
@@ -200,6 +201,7 @@ async function readyDeliveryFixture() {
         validUntil: now + 300,
         generation: "ready-account:1",
         listenPort: 20000,
+        flow: "",
       },
     ],
   });
@@ -207,9 +209,9 @@ async function readyDeliveryFixture() {
     `INSERT INTO nodes(
       id,name,target_ip,vpn_port,state,revision,acked_revision,last_seen,healthy,public_key,
       short_id,sni,policy_payload,agent_capabilities,max_accounts,max_allocated_bytes
-    ) VALUES('ready','Stockholm','8.8.4.4',443,'ready',5,5,?,1,'public','1234567890abcdef','www.cloudflare.com',?,'quota-v2,shared-443',10,100000000000)`,
+    ) VALUES('ready','Stockholm','8.8.4.4',443,'ready',5,5,?,1,?,'1234567890abcdef','www.cloudflare.com',?,'quota-v2,per-account-process,shared-443',10,100000000000)`,
   )
-    .bind(now, policy)
+    .bind(now, "A".repeat(43), policy)
     .run();
   await env.SALES_DB.prepare(
     `INSERT INTO managed_accounts(

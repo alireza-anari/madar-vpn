@@ -8,3 +8,7 @@ allowBuilds:
 
 overrides:
   sharp@<0.35.5: ^0.35.5
+
+  vite@8.3.2: 8.3.3
+  zod@4.4.3: 4.6.6
+  undici@7.29.1: 7.30.1

@@ -1,3 +1,4 @@
+import visionMigration from "../migrations/0019-managed-vision-optin.sql?raw";
 import { env } from "cloudflare:workers";
 import { beforeEach, expect, test } from "vitest";
 import { resetDb } from "./db";
@@ -9,21 +10,54 @@ import onDemand from "../migrations/0014-on-demand-usage.sql?raw";
 import { createUsageToken } from "../src/usage-links";
 import { queueAccountDelivery } from "../src/account-delivery";
 import { accountStatus, statusResponse } from "../src/status-routes";
+
+const accountUuid = "11111111-1111-4111-8111-111111111111";
+const longSni = [
+  "a".repeat(60),
+  "b".repeat(60),
+  "c".repeat(60),
+  "d".repeat(55),
+  "com",
+].join(".");
+const policyPayload = (quotaBytes = 30000000000) =>
+  JSON.stringify({
+    version: 2,
+    nodeId: "n",
+    revision: 2,
+    expiresAt: 400,
+    clients: [
+      {
+        accountId: "a",
+        uuid: accountUuid,
+        quotaEpoch: 1,
+        quotaBytes,
+        usedBytes: 0,
+        validUntil: 1900,
+        generation: "a:1",
+        listenPort: 20000,
+        flow: "",
+      },
+    ],
+  });
+
 beforeEach(async () => {
   await resetDb();
-  for (const s of [a, b, c, d, onDemand]) await env.SALES_DB.exec(s);
-  await env.SALES_DB.exec(
-    "INSERT INTO nodes(id,name,target_ip,revision,acked_revision,last_seen,healthy,public_key,short_id,sni,agent_capabilities) VALUES('n','n','8.8.8.8',2,2,100,1,'public','1234','example.com','quota-v2,per-account-process');INSERT INTO managed_accounts(id,seller_id,request_key,node_id,kind,label,uuid,quota_bytes,duration_seconds,created_at,state,started_at,valid_until,activation_revision,listen_port) VALUES('a','10','r','n','sale','client','private-uuid',30000000000,1800,1,'preparing',100,1900,2,20000);",
-  );
+  for (const s of [a, b, c, d, onDemand, visionMigration]) await env.SALES_DB.exec(s);
+  await env.SALES_DB.prepare(
+    "INSERT INTO nodes(id,name,target_ip,vpn_port,state,revision,acked_revision,last_seen,healthy,public_key,short_id,sni,agent_capabilities) VALUES('n','n','8.8.8.8',443,'ready',2,2,100,1,?,'1234','example.com','quota-v2,per-account-process')",
+  )
+    .bind("A".repeat(43))
+    .run();
+  await env.SALES_DB.prepare(
+    "INSERT INTO managed_accounts(id,seller_id,request_key,node_id,kind,label,uuid,quota_bytes,duration_seconds,created_at,state,started_at,valid_until,activation_revision,listen_port) VALUES('a','10','r','n','sale','client',?,30000000000,1800,1,'preparing',100,1900,2,20000)",
+  )
+    .bind(accountUuid)
+    .run();
 });
 test("delivery waits for activation then is durable and capability scoped", async () => {
   await env.SALES_DB.prepare("UPDATE nodes SET policy_payload=?")
     .bind(
-      JSON.stringify({
-        version: 2,
-        expiresAt: 400,
-        clients: [{ accountId: "a", uuid: "private-uuid", validUntil: 1900 }],
-      }),
+      policyPayload(),
     )
     .run();
   const E = { ...env, PUBLIC_BASE_URL: "https://example.com" };
@@ -57,7 +91,7 @@ test("delivery waits for activation then is durable and capability scoped", asyn
   expect(await accountStatus(env.SALES_DB, "x".repeat(43), 103)).toBe(null);
   const response = await statusResponse(new Request(url), E, 103);
   expect(response.headers.get("Cache-Control")).toBe("no-store");
-  expect(await response.text()).not.toContain("private-uuid");
+  expect(await response.text()).not.toContain(accountUuid);
   await env.SALES_DB.exec(
     "UPDATE managed_accounts SET state='revoked',status_token_hash=NULL WHERE id='a'",
   );
@@ -87,11 +121,7 @@ test("shared frontend exports public443 rather than private worker port", async 
   );
   await env.SALES_DB.prepare("UPDATE nodes SET policy_payload=?")
     .bind(
-      JSON.stringify({
-        version: 2,
-        expiresAt: 400,
-        clients: [{ accountId: "a", uuid: "private-uuid", validUntil: 1900 }],
-      }),
+      policyPayload(),
     )
     .run();
   await queueAccountDelivery(
@@ -111,11 +141,7 @@ test("delivery is forwardable HTML with private usage button and one-touch confi
   )
     .bind(
       "p".repeat(43),
-      JSON.stringify({
-        version: 2,
-        expiresAt: 400,
-        clients: [{ accountId: "a", uuid: "private-uuid", validUntil: 1900 }],
-      }),
+      policyPayload(1000000000),
     )
     .run();
   await env.SALES_DB.exec(
@@ -140,7 +166,7 @@ test("delivery is forwardable HTML with private usage button and one-touch confi
   expect(payload.text).toContain("&lt;b&gt;مشتری&lt;/b&gt;");
   expect(payload.text).toContain("۱ گیگابایت");
   expect(copy.copy_text.text.length).toBeLessThanOrEqual(256);
-  expect(copy.copy_text.text).toMatch(/^vless:\/\/private-uuid@8.8.8.8:443\?/);
+  expect(copy.copy_text.text).toContain(`vless://${accountUuid}@8.8.8.8:443?`);
   expect(payload.text).toContain("<pre>");
   expect(payload.text).not.toContain("headerType=");
 });
@@ -148,12 +174,8 @@ test("delivery is forwardable HTML with private usage button and one-touch confi
 test("long config retains a complete code block without invalid copy_text", async () => {
   await env.SALES_DB.prepare("UPDATE nodes SET sni=?,policy_payload=?")
     .bind(
-      "a".repeat(240),
-      JSON.stringify({
-        version: 2,
-        expiresAt: 400,
-        clients: [{ accountId: "a", uuid: "private-uuid", validUntil: 1900 }],
-      }),
+      longSni,
+      policyPayload(),
     )
     .run();
   await env.SALES_DB.exec("UPDATE managed_accounts SET state='active';");
@@ -170,7 +192,7 @@ test("long config retains a complete code block without invalid copy_text", asyn
   expect(
     payload.reply_markup.inline_keyboard.flat().some((b: any) => b.copy_text),
   ).toBe(false);
-  expect(payload.text).toContain("a".repeat(240));
+  expect(payload.text).toContain(longSni);
   expect(payload.text).toContain("<pre>");
 });
 

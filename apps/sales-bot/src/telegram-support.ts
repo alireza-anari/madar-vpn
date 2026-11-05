@@ -46,6 +46,7 @@ export async function handleTelegramSupport(env:Env,u:TelegramUpdate,now:number)
       await db.prepare("UPDATE users SET conversation=? WHERE id=?").bind(value,userId).run();
     };
     const adminIds=[...new Set((env.ADMIN_TELEGRAM_IDS||"").split(",").map(s=>s.trim()).filter(x=>/^\d+$/.test(x)))];
+    const ownerHome=()=>actor.role==="seller"?btn("🏠 پنل فروشنده","rs:home"):home()[0]!;
     const notify=async(ticket:Ticket,body:string,file?:{kind:"photo"|"document";id:string})=>{
       const recipients=isAdmin?[ticket.user_id]:adminIds;
       for(const recipient of recipients) {
@@ -81,7 +82,7 @@ export async function handleTelegramSupport(env:Env,u:TelegramUpdate,now:number)
         if(isAdmin) rows.push([btn("✅ بستن درخواست","support:admin:close:"+t.id)]);
       } else if(!isAdmin) rows.push([btn("🔄 بازگشایی درخواست","support:reopen:"+t.id)]);
       rows.push([isAdmin?btn("📥 صندوق درخواست‌ها","support:admin:inbox:0"):btn("📋 درخواست‌های من","support:mine:0")]);
-      rows.push([isAdmin?adminHome()[0]!:home()[0]!]);
+      rows.push([isAdmin?adminHome()[0]!:ownerHome()]);
       await reply("💬 <b>درخواست "+ticketRef(t.id)+"</b>\n"+
         "موضوع: "+categoryName(t.category)+"\n"+
         "وضعیت: <b>"+(t.state==="open"?"🟢 باز":"✅ بسته‌شده")+"</b>\n"+
@@ -89,10 +90,6 @@ export async function handleTelegramSupport(env:Env,u:TelegramUpdate,now:number)
         "\n<b>آخرین پیام‌ها:</b>\n"+(excerpt||"هنوز پیامی وجود ندارد."),rows);
     };
 
-    if(actor.role==="seller") {
-      await reply("این صندوق مخصوص مشتریان و مدیر مدار است.",[[adminHome()[0]!]]);
-      return true;
-    }
     if(!isAdmin && data.startsWith("support:admin:")) {
       await reply("این بخش در دسترس نیست.",[[btn("💬 پشتیبانی","support:home")]]);
       return true;
@@ -106,7 +103,7 @@ export async function handleTelegramSupport(env:Env,u:TelegramUpdate,now:number)
       await reply("💬 <b>پشتیبانی مدار</b>\n\nبرای مشکل اتصال، پرداخت، تمدید یا مصرف از همین ربات درخواست ثبت کن. پاسخ مدیر همین‌جا به تو می‌رسد.",[
         [btn("➕ درخواست جدید","support:new")],
         [btn("📋 درخواست‌های من","support:mine:0")],
-        home(),
+        [ownerHome()],
       ]);
       return true;
     }

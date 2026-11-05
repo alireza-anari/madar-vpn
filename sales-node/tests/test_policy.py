@@ -28,3 +28,19 @@ def test_node_http_identifies_the_service(monkeypatch):
   return io.BytesIO(b'{}')
  monkeypatch.setattr(agent.urllib.request,'urlopen',open_request)
  assert agent.request({'baseUrl':'https://bot.example','nodeToken':'test-node'},'policy')=={}
+
+def test_signed_quota_policy_explicit_vision_and_flow_allowlist():
+    client={
+        'accountId':'11111111-1111-4111-8111-111111111111',
+        'uuid':'22222222-2222-4222-8222-222222222222',
+        'quotaEpoch':1,'usedBytes':0,'quotaBytes':1000,'validUntil':400,
+        'generation':'11111111-1111-4111-8111-111111111111:1',
+        'listenPort':20000,'flow':'xtls-rprx-vision',
+    }
+    def signed(flow):
+        updated={**client,'flow':flow}
+        payload=json.dumps({'version':2,'nodeId':'n','revision':1,'expiresAt':400,'clients':[updated]})
+        return {'payload':payload,'signature':hmac.new(b'key',payload.encode(),hashlib.sha256).hexdigest()}
+    assert verify_policy(signed('xtls-rprx-vision'),'key','n',100,0)['clients'][0]['flow']=='xtls-rprx-vision'
+    assert verify_policy(signed(''),'key','n',100,0)['clients'][0]['flow']==''
+    with pytest.raises(ValueError,match='INVALID_FLOW'):verify_policy(signed('unknown'),'key','n',100,0)

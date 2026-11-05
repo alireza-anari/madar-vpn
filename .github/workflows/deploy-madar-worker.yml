@@ -1,0 +1,163 @@
+name: Guarded Madar production Worker deploy
+
+on:
+  push:
+    branches: ['feat/native-seller-operations-20261028']
+    paths:
+      - 'docs/sales-bot/production-deploy-trigger.md'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: madar-sales-worker-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.event.head_commit.message == 'deploy production Worker (Madar)'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Guard exact validated release tree
+        env:
+          DEPLOY_SHA: ${{ github.sha }}
+          VALIDATED_SHA: 8d1cd74dc6d0dd20453be1a083914e638dd2c162
+          VALIDATED_TREE: 53b2fe0ea6987164621df6208a407d046b1c84c4
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse "${VALIDATED_SHA}^{tree}")" = "$VALIDATED_TREE"
+          git merge-base --is-ancestor "$VALIDATED_SHA" "$DEPLOY_SHA"
+          changed="$(git diff --name-only "$VALIDATED_SHA" "$DEPLOY_SHA")"
+          printf '%s\n' "$changed"
+          while IFS= read -r file; do
+            case "$file" in
+              .github/workflows/deploy-madar-worker.yml|docs/sales-bot/production-deploy-trigger.md) ;;
+              *) echo "Unexpected post-validation change: $file"; exit 1 ;;
+            esac
+          done <<< "$changed"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install pinned dependencies
+        run: |
+          corepack enable
+          corepack prepare pnpm@12.9.1 --activate
+          pnpm install --frozen-lockfile
+
+      - name: Re-verify audited Worker package
+        run: |
+          pnpm audit --audit-level high
+          pnpm --filter @madar/sales-bot types
+          pnpm --filter @madar/sales-bot typecheck
+          pnpm --filter @madar/sales-bot test
+          pnpm --filter @madar/sales-bot build
+
+      - name: Verify Cloudflare account access
+        working-directory: apps/sales-bot
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: '2e4e0d025c81b9134fd2d19f17535e30'
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          pnpm exec wrangler whoami
+          api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID"
+          auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+          current="$(curl --fail-with-body -sS --retry 2 -H "$auth" "$api/workers/scripts/madar-sales-bot/deployments" | jq -er '.result.deployments[0].versions[0].version_id')"
+          test "$current" = "0b7510ac-92d8-4c1c-b25c-579a32186340" || { echo "::error::Production deployment changed; abort"; exit 1; }
+          curl --fail-with-body -sS --retry 2 -H "$auth" "$api/workers/scripts/madar-sales-bot/settings" |
+            jq -e --arg db "f59e160f-89ab-4a90-a4dc-f257883d5a61" '
+              .success == true and
+              ([.result.bindings[] | select(.name=="SALES_DB" and ((.id // .database_id)==$db))] | length == 1) and
+              ([.result.bindings[].name] |
+                (index("ADMIN_TELEGRAM_IDS") != null) and
+                (index("PUBLIC_BASE_URL") != null) and
+                (index("RUNNER_PUBLIC_KEY") != null) and
+                (index("BOT_TOKEN") != null) and
+                (index("TELEGRAM_WEBHOOK_SECRET") != null) and
+                (index("POLICY_SIGNING_SECRET") != null) and
+                (index("RUNNER_SERVICE_SECRET") != null) and
+                (index("USAGE_LINK_SECRET") != null))' >/dev/null
+          curl --fail-with-body -sS --retry 2 -H "$auth" "$api/workers/scripts/madar-sales-bot/schedules" |
+            jq -e '.success == true and any(.result.schedules[]; .cron == "* * * * *")' >/dev/null
+          curl --fail-with-body -sS --retry 2 -X POST -H "$auth" -H 'Content-Type: application/json'             --data '{"sql":"SELECT name FROM d1_migrations WHERE name=\u00270019-managed-vision-optin.sql\u0027"}'             "$api/d1/database/f59e160f-89ab-4a90-a4dc-f257883d5a61/query" |
+            jq -e '.success == true and .result[0].results[0].name == "0019-managed-vision-optin.sql"' >/dev/null
+          grep -q '"keep_vars": true' wrangler.jsonc
+          echo "PRODUCTION_BASELINE_GUARDS_PASSED"
+
+      - name: Deploy the pinned production Worker preserving existing bindings
+        id: deploy
+        working-directory: apps/sales-bot
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: '2e4e0d025c81b9134fd2d19f17535e30'
+        run: |
+          set -euo pipefail
+          pnpm exec wrangler deploy --message "Madar validated VLESS config fix PR37"
+
+      - name: Verify production routes, auth, bindings, cron and new deployment
+        working-directory: apps/sales-bot
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: '2e4e0d025c81b9134fd2d19f17535e30'
+          BASE_URL: https://madar-sales-bot.alirezaanari117.workers.dev
+        run: |
+          set -euo pipefail
+          healthy=0
+          for attempt in $(seq 1 15); do
+            body="$(curl -fsS --connect-timeout 5 --max-time 15 "$BASE_URL/health" || true)"
+            if [ -n "$body" ] && node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.status==="prepared"&&x.telegram==="configured"?0:1)' "$body"; then
+              healthy=1
+              break
+            fi
+            sleep 3
+          done
+          test "$healthy" -eq 1
+          for path in /app /customer /customer.css /customer.js /madar-logo.png; do
+            status="$(curl --connect-timeout 5 --max-time 15 -sS -o /dev/null -w '%{http_code}' "$BASE_URL$path")"
+            test "$status" = 200 || { echo "::error::Route $path returned HTTP $status"; exit 1; }
+          done
+          unauthorized="$(curl --max-time 15 -sS -o /dev/null -w '%{http_code}' "$BASE_URL/api/customer/me")"
+          webhook="$(curl --max-time 15 -sS -X POST -o /dev/null -w '%{http_code}' "$BASE_URL/webhook")"
+          test "$unauthorized" = 403 && test "$webhook" = 401
+          api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID"
+          auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+          curl --fail-with-body -sS --retry 2 -H "$auth" "$api/workers/scripts/madar-sales-bot/settings" |
+            jq -e --arg db "f59e160f-89ab-4a90-a4dc-f257883d5a61" '
+              .success == true and
+              ([.result.bindings[] | select(.name=="SALES_DB" and ((.id // .database_id)==$db))] | length == 1) and
+              ([.result.bindings[].name] |
+                (index("ADMIN_TELEGRAM_IDS") != null) and
+                (index("PUBLIC_BASE_URL") != null) and
+                (index("RUNNER_PUBLIC_KEY") != null) and
+                (index("BOT_TOKEN") != null) and
+                (index("TELEGRAM_WEBHOOK_SECRET") != null) and
+                (index("POLICY_SIGNING_SECRET") != null) and
+                (index("RUNNER_SERVICE_SECRET") != null) and
+                (index("USAGE_LINK_SECRET") != null))' >/dev/null
+          curl --fail-with-body -sS --retry 2 -H "$auth" "$api/workers/scripts/madar-sales-bot/schedules" |
+            jq -e '.success == true and any(.result.schedules[]; .cron == "* * * * *")' >/dev/null
+          current="$(curl --fail-with-body -sS --retry 2 -H "$auth" "$api/workers/scripts/madar-sales-bot/deployments" |
+            jq -er '.result.deployments[0].versions[0].version_id')"
+          test "$current" != "0b7510ac-92d8-4c1c-b25c-579a32186340" || { echo "::error::New Worker version was not activated"; exit 1; }
+          echo "MADAR_WORKER_RELEASE_OK"
+
+      - name: Restore previous Worker if a production release step fails
+        if: ${{ failure() && steps.deploy.outcome != 'skipped' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: '2e4e0d025c81b9134fd2d19f17535e30'
+        run: |
+          set -euo pipefail
+          : "$CLOUDFLARE_API_TOKEN"
+          api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/madar-sales-bot/deployments"
+          payload='{"strategy":"percentage","versions":[{"version_id":"0b7510ac-92d8-4c1c-b25c-579a32186340","percentage":100}],"annotations":{"workers/message":"Rollback after failed Madar VLESS PR37 deployment"}}'
+          curl --fail-with-body -sS --retry 2 -X POST "$api" -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json" --data "$payload" >/dev/null
+          echo "PREVIOUS_WORKER_VERSION_RESTORED"
