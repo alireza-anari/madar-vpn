@@ -7,3 +7,5 @@ Protected production rollback version: `0b7510ac-92d8-4c1c-b25c-579a32186340`.
 This one-time trigger is approved to deploy only the Telegram sales Worker code that validates VLESS/Reality config delivery. All existing Cloudflare bindings, secrets, D1 data, schedules and routes must remain intact. The guarded workflow checks its exact source tree and unchanged production version before deploying, smoke-tests the live Worker, and restores the previous Worker version on failure.
 
 No database migration, node opt-in, AWS EC2 update, Xray restart, personal VPN change or test account creation is part of this release.
+
+Release retry: correct the production guard's mutually exclusive curl flags. The earlier preflight stopped before any deployment and verified that the prior Worker version remained at 100% traffic.
