@@ -4,6 +4,7 @@ import { refreshNodeAvailabilityAlerts } from "./node-availability-alerts";
 import { statusResponse } from "./status-routes";
 import { nodeApi } from "./node-api";
 import { subscriptionResponse } from "./subscriptions";
+import { managedSubscriptionResponse } from "./managed-subscriptions";
 import { runnerApi } from "./runner-api";
 import enrollHtml from "../public/enroll.html";
 import brandLogo from "../public/madar-logo.png";
@@ -52,6 +53,8 @@ export default {
     if (path.startsWith("/usage/") || path.startsWith("/api/usage/"))
       return statusResponse(request, env, epoch());
     if (path.startsWith("/api/node/")) return nodeApi(request, env, epoch());
+    if (path.startsWith("/managed-subscription/"))
+      return managedSubscriptionResponse(request, env, epoch());
     if (path.startsWith("/subscription/"))
       return subscriptionResponse(env, path.slice(14), epoch());
     if (path === "/madar-logo.png")
