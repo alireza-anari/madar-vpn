@@ -4,6 +4,7 @@ import type { QuotaPolicy } from "./quota-policies";
 import { buildVlessRealityConfig } from "./connection-config";
 import { buildManagedVmessWsConfig, managedWsFallbackIsDeliverable, readManagedWsRollout } from "./alternate-transport";
 import { usageUrl as createUsageUrl } from "./usage-links";
+import { managedSubscriptionUrl } from "./managed-subscription-tokens";
 
 export interface AccountDeliveryArtifact {
   accountId: string;
@@ -229,6 +230,13 @@ export async function queueAccountDelivery(
     ).join("");
     url = `${env.PUBLIC_BASE_URL}/usage/${token}`;
   }
+  let currentSubscriptionUrl = "";
+  try {
+    currentSubscriptionUrl = managedSubscriptionUrl(env, artifact.accountId);
+  } catch {
+    // No signed subscription URL when credentials/origin are unavailable.
+    // Keep the existing verified one-config Telegram delivery.
+  }
   const digest = hash(token);
   const alternateText = artifact.alternateConfig
     ? `\n\n📶 مسیر جایگزین ایرانسل (همان حجم و اعتبار):\n<pre>${escape(artifact.alternateConfig)}</pre>`
@@ -237,6 +245,8 @@ export async function queueAccountDelivery(
   const rows: Record<string, unknown>[][] = [];
   if (artifact.config.length <= 256)
     rows.push([{ text: "📋 کپی کانفیگ", copy_text: { text: artifact.config } }]);
+  if (currentSubscriptionUrl)
+    rows.push([{ text: "🔄 لینک اشتراک به‌روزشونده", url: currentSubscriptionUrl }]);
   rows.push([{ text: "📊 مصرف و اعتبار", url }]);
   const payload = JSON.stringify({
     text,
