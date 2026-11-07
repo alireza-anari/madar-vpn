@@ -191,3 +191,21 @@ def test_ws_capability_requires_all_registered_accounts(tmp_path, monkeypatch):
     assert "shared-443" in controller.capabilities()
     controller.ws_router.stop()
     controller.store.close()
+
+
+
+def test_ws_revocation_api_timeout_stops_only_secondary_frontend(tmp_path, monkeypatch):
+    router = object.__new__(ManagedWsFrontend)
+    router.base = tmp_path
+    router.binary = "xray"
+    router.process = SimpleNamespace(poll=lambda: None)
+    router.clients = {"account": (UUID, 20000)}
+    stopped = []
+    router.stop = lambda: stopped.append("ws-frontend")
+    def failing_run(args, **kwargs):
+        raise subprocess.TimeoutExpired(args, timeout=3)
+    monkeypatch.setattr(subprocess, "run", failing_run)
+    with pytest.raises(ValueError, match="WS_REVOCATION_UNCONFIRMED"):
+        router.detach({"accountId": "account", "uuid": UUID, "listenPort": 20000})
+    assert stopped == ["ws-frontend"]
+    assert "account" not in router.clients
