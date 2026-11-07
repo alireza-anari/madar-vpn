@@ -2,6 +2,7 @@ import { hash } from "./crypto";
 import type { ManagedAccount } from "./accounts";
 import type { QuotaPolicy } from "./quota-policies";
 import { buildVlessRealityConfig } from "./connection-config";
+import { buildManagedVmessWsConfig, managedWsFallbackIsDeliverable, readManagedWsRollout } from "./alternate-transport";
 import { usageUrl as createUsageUrl } from "./usage-links";
 
 export interface AccountDeliveryArtifact {
@@ -14,6 +15,7 @@ export interface AccountDeliveryArtifact {
   validUntil: number;
   serverName: string;
   config: string;
+  alternateConfig?: string;
   usageUrl: string;
 }
 
@@ -155,6 +157,34 @@ export async function buildAccountDeliveryArtifact(
     return null;
   }
 
+  // Extra transport uses the SAME account UUID and the SAME metered loopback
+  // backend. No delivery on stale ACK, missing agent capability, missing
+  // admin approval, endpoint mismatch, or temporary Cloudflare hostnames.
+  let alternateConfig: string | undefined;
+  if (policy.wsFallback && capabilities.has("ws-metered")) {
+    const approved = await readManagedWsRollout(db, node.id);
+    if (
+      approved &&
+      JSON.stringify(approved) === JSON.stringify(policy.wsFallback) &&
+      managedWsFallbackIsDeliverable(
+        policy.wsFallback,
+        capabilities,
+        true,
+        true,
+      )
+    ) {
+      try {
+        alternateConfig = buildManagedVmessWsConfig({
+          ...approved,
+          uuid: a.uuid,
+          label: `Madar-Irancell-${a.id.slice(0, 6)}`,
+        });
+      } catch {
+        // Preserve the working MCI path if secondary delivery cannot be built.
+      }
+    }
+  }
+
   let usageUrl = "";
   try {
     usageUrl = createUsageUrl(env, a.id);
@@ -172,6 +202,7 @@ export async function buildAccountDeliveryArtifact(
     validUntil: a.valid_until,
     serverName: node.name,
     config,
+    alternateConfig,
     usageUrl,
   };
 }
@@ -199,7 +230,10 @@ export async function queueAccountDelivery(
     url = `${env.PUBLIC_BASE_URL}/usage/${token}`;
   }
   const digest = hash(token);
-  const text = `🟢 اشتراک مدار · ${escape(artifact.label)}\n${artifact.kind === "trial" ? "🎁 تست ۳۰ دقیقه‌ای · حجم: ۱ گیگابایت" : `📦 حجم: ${(Number(artifact.quotaBytes) / 1e9).toLocaleString("fa-IR")} گیگابایت · مدت: ${(artifact.durationSeconds / 86400).toLocaleString("fa-IR")} روز`}\n⏳ انقضا: ${new Date(artifact.validUntil * 1000).toLocaleString("fa-IR", { timeZone: "Asia/Tehran" })} (تهران)\n\n<pre>${escape(artifact.config)}</pre>\n\nکانفیگ را کپی و در برنامهٔ اتصال وارد کنید.\nبرای دیدن مصرف و حجم باقی‌مانده، دکمهٔ «مصرف و اعتبار» را بزنید.\n🔒 این پیام مخصوص شماست؛ آن را خصوصی نگه دارید.`;
+  const alternateText = artifact.alternateConfig
+    ? `\n\n📶 مسیر جایگزین ایرانسل (همان حجم و اعتبار):\n<pre>${escape(artifact.alternateConfig)}</pre>`
+    : "";
+  const text = `🟢 اشتراک مدار · ${escape(artifact.label)}\n${artifact.kind === "trial" ? "🎁 تست ۳۰ دقیقه‌ای · حجم: ۱ گیگابایت" : `📦 حجم: ${(Number(artifact.quotaBytes) / 1e9).toLocaleString("fa-IR")} گیگابایت · مدت: ${(artifact.durationSeconds / 86400).toLocaleString("fa-IR")} روز`}\n⏳ انقضا: ${new Date(artifact.validUntil * 1000).toLocaleString("fa-IR", { timeZone: "Asia/Tehran" })} (تهران)\n\n<pre>${escape(artifact.config)}</pre>${alternateText}\n\nکانفیگ را کپی و در برنامهٔ اتصال وارد کنید.\nبرای دیدن مصرف و حجم باقی‌مانده، دکمهٔ «مصرف و اعتبار» را بزنید.\n🔒 این پیام مخصوص شماست؛ آن را خصوصی نگه دارید.`;
   const rows: Record<string, unknown>[][] = [];
   if (artifact.config.length <= 256)
     rows.push([{ text: "📋 کپی کانفیگ", copy_text: { text: artifact.config } }]);
