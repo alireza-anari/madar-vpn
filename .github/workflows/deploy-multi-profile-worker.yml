@@ -64,10 +64,10 @@ jobs:
           : "${CLOUDFLARE_API_TOKEN:?Missing deployment credential}"
           api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID"
           auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
-          curl --fail-with-body -fsS --retry 2 -H "$auth" "$api/workers/scripts/$SCRIPT/deployments" |
+          curl --fail-with-body -sS --retry 2 -H "$auth" "$api/workers/scripts/$SCRIPT/deployments" |
             jq -e --arg prior "$PREVIOUS_VERSION" \
               '.success == true and .result.deployments[0].versions == [{"version_id":$prior,"percentage":100}]' >/dev/null
-          curl --fail-with-body -fsS --retry 2 -H "$auth" "$api/workers/scripts/$SCRIPT/settings" |
+          curl --fail-with-body -sS --retry 2 -H "$auth" "$api/workers/scripts/$SCRIPT/settings" |
             jq -e --arg db "$DB_ID" '
               .success == true and
               ([.result.bindings[] | select(.name=="SALES_DB" and
@@ -81,14 +81,14 @@ jobs:
                  (index("POLICY_SIGNING_SECRET") != null) and
                  (index("RUNNER_SERVICE_SECRET") != null) and
                  (index("USAGE_LINK_SECRET") != null))' >/dev/null
-          curl --fail-with-body -fsS --retry 2 -H "$auth" "$api/workers/scripts/$SCRIPT/schedules" |
+          curl --fail-with-body -sS --retry 2 -H "$auth" "$api/workers/scripts/$SCRIPT/schedules" |
             jq -e '.success == true and any(.result.schedules[]; .cron == "* * * * *")' >/dev/null
-          curl --fail-with-body -fsS --retry 2 -X POST -H "$auth" \
+          curl --fail-with-body -sS --retry 2 -X POST -H "$auth" \
             -H 'Content-Type: application/json' \
             --data '{"sql":"SELECT name FROM d1_migrations WHERE name=\u00270019-managed-vision-optin.sql\u0027"}' \
             "$api/d1/database/$DB_ID/query" |
             jq -e '.success == true and .result[0].results[0].name=="0019-managed-vision-optin.sql"' >/dev/null
-          curl --fail-with-body -fsS --connect-timeout 5 --max-time 15 "$BASE_URL/health" |
+          curl --fail-with-body -sS --connect-timeout 5 --max-time 15 "$BASE_URL/health" |
             jq -e '.status == "prepared" and .telegram == "configured"' >/dev/null
           echo "SAFE_WORKER_ONLY_PREFLIGHT_PASSED"
 
@@ -119,7 +119,7 @@ jobs:
           webhook="$(curl -sS -X POST --max-time 15 -o /dev/null -w '%{http_code}' "$BASE_URL/webhook")"
           subscription="$(curl -sS --max-time 15 -o /dev/null -w '%{http_code}' "$BASE_URL/managed-subscription/v1/invalid")"
           test "$account" = 403 && test "$webhook" = 401 && test "$subscription" = 404
-          curl --fail-with-body -fsS -H "$auth" "$api/workers/scripts/$SCRIPT/settings" |
+          curl --fail-with-body -sS -H "$auth" "$api/workers/scripts/$SCRIPT/settings" |
             jq -e --arg db "$DB_ID" '
               .success == true and
               ([.result.bindings[] | select(.name=="SALES_DB" and
@@ -133,9 +133,9 @@ jobs:
                  (index("POLICY_SIGNING_SECRET") != null) and
                  (index("RUNNER_SERVICE_SECRET") != null) and
                  (index("USAGE_LINK_SECRET") != null))' >/dev/null
-          curl --fail-with-body -fsS -H "$auth" "$api/workers/scripts/$SCRIPT/schedules" |
+          curl --fail-with-body -sS -H "$auth" "$api/workers/scripts/$SCRIPT/schedules" |
             jq -e '.success==true and any(.result.schedules[]; .cron=="* * * * *")' >/dev/null
-          curl --fail-with-body -fsS -H "$auth" "$api/workers/scripts/$SCRIPT/deployments" |
+          curl --fail-with-body -sS -H "$auth" "$api/workers/scripts/$SCRIPT/deployments" |
             jq -e --arg old "$PREVIOUS_VERSION" '
               .success == true and .result.deployments[0].versions[0].version_id != $old and
               .result.deployments[0].versions[0].percentage == 100' >/dev/null
@@ -147,7 +147,7 @@ jobs:
           set -euo pipefail
           api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$SCRIPT/deployments"
           body="$(printf '{"strategy":"percentage","versions":[{"version_id":"%s","percentage":100}],"annotations":{"workers/message":"Rollback failed multi-profile Worker release"}}' "$PREVIOUS_VERSION")"
-          curl --fail-with-body -fsS --retry 2 -X POST "$api" \
+          curl --fail-with-body -sS --retry 2 -X POST "$api" \
             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
             -H "Content-Type: application/json" --data "$body" >/dev/null
           echo "RESTORED_PREVIOUS_WORKER_VERSION"
