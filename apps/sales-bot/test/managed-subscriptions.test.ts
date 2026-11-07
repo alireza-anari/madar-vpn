@@ -12,6 +12,7 @@ import {
   verifyManagedSubscriptionToken,
 } from "../src/managed-subscription-tokens";
 import { managedSubscriptionResponse } from "../src/managed-subscriptions";
+import { acceptSecondaryAck } from "../src/managed-secondary";
 import { parseVlessRealityConfig } from "../src/connection-config";
 import { parseManagedVmessWsConfig } from "../src/alternate-transport";
 
@@ -167,4 +168,43 @@ test("one managed subscription dynamically returns only approved multi-port prof
   lines = (await response.text()).trim().split("\n");
   expect(lines).toHaveLength(2);
   expect(parseVlessRealityConfig(lines[0]!).port).toBe(443);
+});
+
+test("primary agent stays on 443 while independent sidecar publishes and withdraws ports", async () => {
+  const policy = signedPolicy() as ReturnType<typeof signedPolicy> & {
+    realityAltPorts?: number[],
+  };
+  policy.realityAltPorts = [2053, 8443];
+  await env.SALES_DB.prepare(
+    "UPDATE nodes SET policy_payload=? WHERE id='n'",
+  ).bind(JSON.stringify(policy)).run();
+
+  for (const [suffix, value] of [
+    ["enabled","1"],["reachability_confirmed","1"],
+    ["ports",JSON.stringify([2053,8443])],
+  ]) await env.SALES_DB.prepare(
+    "INSERT INTO settings(key,value) VALUES(?,?)",
+  ).bind("managed_reality_alt:n:"+suffix,value).run();
+
+  // No additional capability is ever added to the existing primary agent.
+  expect((await env.SALES_DB.prepare(
+    "SELECT agent_capabilities FROM nodes WHERE id='n'",
+  ).first<string>("agent_capabilities"))).toBe(
+    "quota-v2,per-account-process,shared-443",
+  );
+  let response = await managedSubscriptionResponse(requestFor(),testEnv(),100);
+  expect((await response.text()).trim().split("\n")).toHaveLength(1);
+
+  await acceptSecondaryAck(
+    env.SALES_DB, "n", {revision:5,ports:[2053,8443],healthy:true},100,
+  );
+  response = await managedSubscriptionResponse(requestFor(),testEnv(),101);
+  let links = (await response.text()).trim().split("\n");
+  expect(links).toHaveLength(3);
+  expect(links.map(line=>parseVlessRealityConfig(line).port))
+    .toEqual([443,2053,8443]);
+  response = await managedSubscriptionResponse(requestFor(),testEnv(),121);
+  links = (await response.text()).trim().split("\n");
+  expect(links).toHaveLength(1);
+  expect(parseVlessRealityConfig(links[0]!).port).toBe(443);
 });
