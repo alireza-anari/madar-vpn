@@ -224,3 +224,29 @@ def test_quota_shutdown_kills_shared_backend_before_slow_or_failed_auxiliary_api
     controller.stop_account(ident)
     assert events == ["backend.stop", "ws.detach", "reality.detach"]
     assert ident not in controller.processes
+
+
+
+def test_reality_partial_revocation_failure_stops_secondary_not_primary(tmp_path, monkeypatch):
+    router = object.__new__(ManagedRealityAltFrontend)
+    router.settings = SETTINGS
+    router.base = tmp_path
+    router.binary = "xray"
+    router.ports = [2053, 8443]
+    router.process = SimpleNamespace(poll=lambda: None)
+    router.clients = {ACCOUNT: (UUID, 20000)}
+    commands = []
+    stopped = []
+    router.stop = lambda: stopped.append("secondary-only")
+
+    def fail_second(args, **kwargs):
+        commands.append(args)
+        if "8443" in " ".join(args):
+            raise subprocess.TimeoutExpired(args, timeout=3)
+        return subprocess.CompletedProcess(args, 0)
+    monkeypatch.setattr(subprocess, "run", fail_second)
+    with pytest.raises(ValueError, match="REALITY_ALT_REVOCATION_UNCONFIRMED"):
+        router.detach(CLIENT)
+    assert len(commands) == 2
+    assert stopped == ["secondary-only"]
+    assert ACCOUNT not in router.clients
