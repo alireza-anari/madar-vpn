@@ -5,6 +5,7 @@ import { buildVlessRealityConfig } from "./connection-config";
 import { buildManagedVmessWsConfig, managedWsFallbackIsDeliverable, readManagedWsRollout } from "./alternate-transport";
 import { usageUrl as createUsageUrl } from "./usage-links";
 import { approvedRealityPortsForDelivery, readApprovedRealityPorts } from "./managed-reality-ports";
+import { readConfirmedSecondaryPorts } from "./managed-secondary";
 import { managedSubscriptionUrl } from "./managed-subscription-tokens";
 
 export interface AccountTransportProfile {
@@ -175,9 +176,19 @@ export async function buildAccountDeliveryArtifact(
   }];
   // Optional direct ports route into the same quota-limited loopback worker.
   // Never deliver merely because a port was typed into admin settings.
-  if (policy.realityAltPorts && capabilities.has("reality-alt-metered")) {
+  if (policy.realityAltPorts) {
+    const sidecarPorts = await readConfirmedSecondaryPorts(
+      db, node.id, node.revision, now,
+    );
+    const sidecarReady = sidecarPorts !== null &&
+      JSON.stringify(sidecarPorts) === JSON.stringify(policy.realityAltPorts);
     const approved = await readApprovedRealityPorts(db, node.id);
-    const ports = approvedRealityPortsForDelivery(node, policy, approved, now);
+    const effectiveNode = sidecarReady
+      ? { ...node, agent_capabilities: node.agent_capabilities + ",reality-alt-metered" }
+      : node;
+    const ports = approvedRealityPortsForDelivery(
+      effectiveNode, policy, approved, now,
+    );
     for (const port of ports) {
       try {
         const additional = buildVlessRealityConfig({
