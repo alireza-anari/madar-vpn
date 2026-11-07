@@ -77,17 +77,22 @@ def signed(policy):
 
 
 def policy(ports=[2053, 8443], clients=None):
-    return {
+    value = {
         "version": 2, "nodeId": "node", "revision": 5,
-        "expiresAt": 400, "realityAltPorts": ports,
+        "expiresAt": 400,
         "clients": clients if clients is not None else [CLIENT],
     }
+    if ports is not None:
+        value["realityAltPorts"] = ports
+    return value
 
 
 def test_controller_only_starts_optional_frontend_after_signed_policy_and_backend(tmp_path):
     from secondary_sidecar import Secondary
     obj = Secondary(CONFIG, base=tmp_path, frontend_factory=FakeFrontend)
-    assert not obj.apply(policy(), 100, port_checker=lambda p: False)  # raises instead
+    with pytest.raises(ValueError, match="METERED_BACKEND_UNREACHABLE"):
+        obj.apply(policy(), 100, port_checker=lambda p: False)
+    assert obj.router is None
 
 
 def test_controller_optional_port_lifecycle_and_shared_identity(tmp_path):
