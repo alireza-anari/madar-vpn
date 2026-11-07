@@ -36,9 +36,17 @@ The sales-runner installer and checksum-pinned node updater now package the opti
 7. Existing owned updater stops the managed agent and can briefly restart the primary REALITY frontend. It does NOT currently guarantee strictly zero interruption; do not run it during critical MCI customer sessions.
 8. Rollback: disable the optional route in admin Telegram. Next signed policy refresh stops the secondary frontend; leave the primary 443 config and persistent quota database intact.
 
+## No-domain development and subscription URLs
+
+The managed subscription URL uses the **existing** Madar Worker HTTPS origin stored in PUBLIC_BASE_URL. It does **not** require purchasing a second domain. Each managed account receives a separate HMAC-authenticated bearer URL on `/managed-subscription/v1/`. That URL dynamically returns its canonical REALITY config and appends the VMess/WSS config ONLY if every existing policy/ACK, customer and public-ingress gate succeeds. Revoke or expire the account, and the URL stops returning usable credentials. A separate HMAC context prevents usage-page tokens from being mistaken for subscription credentials. Responses are no-store/no-referrer.
+
+When the optional ingress is disabled (the current default), the subscription URL is useful immediately for the existing REALITY service once this Worker version is released. A proper approved public VPN ingress hostname remains a later prerequisite for the *second* connection; the Worker URL is **not** a VPN hostname.
+
+This branch is not deployed. No server purchases, domains, DNS, or production migration are needed for further source/test work. Do not treat `trycloudflare.com` addresses as durable subscriptions or activate this test endpoint for paid customers.
+
 ## Unfinished scope
 
-The new code does not deploy external ingress automatically or create a single renewable subscription URL containing multiple configs. Bot delivery initially sends both configs in one Telegram message when policy/agent gates are live. Commercial operation and capacity tests have not been proven.
+The new code does not deploy external ingress automatically or purchase a domain. Commercial ingress, exact Xray and concurrent cap field tests, and safe production rollout have not been proven. The current updater can restart the active node; do not run it as a zero-downtime procedure.
 
 Official references:
 - https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/
