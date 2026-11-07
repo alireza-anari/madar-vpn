@@ -2,7 +2,7 @@ import { buildAccountDeliveryArtifact } from "./account-delivery";
 import { verifyManagedSubscriptionForEnv } from "./managed-subscription-tokens";
 
 /**
- * A stable subscription URL served from Madar's EXISTING Worker hostname.
+ * A stable multi-profile subscription URL from Madar's EXISTING Worker hostname.
  * No new VPN ingress domain is needed for the subscription endpoint.
  * Every fetch re-evaluates the exact node ACK and signed policy, so removal
  * of the secondary transport immediately removes it from the response.
@@ -33,10 +33,7 @@ export async function managedSubscriptionResponse(
   if (!artifact)
     return new Response("Subscription unavailable", { status: 503, headers });
 
-  const configs = [
-    artifact.config,
-    ...(artifact.alternateConfig ? [artifact.alternateConfig] : []),
-  ];
+  const configs = artifact.profiles.map(profile => profile.config);
   return new Response(configs.join("\n") + "\n", {
     status: 200,
     headers: {
