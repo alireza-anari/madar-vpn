@@ -289,3 +289,77 @@ test("Telegram delivery offers a renewable subscription URL on the existing Work
   expect(buttons.some((button: {text:string}) =>
     button.text.includes("مصرف و اعتبار"))).toBe(true);
 });
+
+async function setRealityPortPolicy(ports: number[], capabilities = "quota-v2,per-account-process,shared-443,reality-alt-metered") {
+  await env.SALES_DB.prepare(
+    "UPDATE nodes SET agent_capabilities=? WHERE id='n'",
+  ).bind(capabilities).run();
+  const raw = await env.SALES_DB.prepare(
+    "SELECT policy_payload FROM nodes WHERE id='n'",
+  ).first<string>("policy_payload");
+  const policy = JSON.parse(raw!);
+  policy.realityAltPorts = ports;
+  await env.SALES_DB.prepare(
+    "UPDATE nodes SET policy_payload=? WHERE id='n'",
+  ).bind(JSON.stringify(policy)).run();
+}
+
+async function approveRealityPorts(ports: number[]) {
+  for (const [suffix, value] of [
+    ["enabled", "1"], ["reachability_confirmed", "1"],
+    ["ports", JSON.stringify(ports)],
+  ]) {
+    await env.SALES_DB.prepare(
+      "INSERT INTO settings(key,value) VALUES(?,?)",
+    ).bind("managed_reality_alt:n:" + suffix, value).run();
+  }
+}
+
+test("one account supplies REALITY 443 and two independently ACKed alternate ports", async () => {
+  await fixture("quota-v2,per-account-process,shared-443");
+  await setRealityPortPolicy([2053, 8443]);
+  await approveRealityPorts([2053, 8443]);
+  await queueAccountDelivery(env, "a", 100);
+  const body = await deliveredText();
+  const configs = [...body.matchAll(/<pre>(.*?)<\/pre>/gs)].map(match =>
+    match[1]!.replace(/&amp;/g, "&"));
+  expect(configs).toHaveLength(3);
+  const parsed = configs.map(parseVlessRealityConfig);
+  expect(parsed.map(config => config.port)).toEqual([443, 2053, 8443]);
+  expect(parsed.map(config => config.uuid)).toEqual([accountUuid, accountUuid, accountUuid]);
+});
+
+test("no additional ports without live capability or signed exact policy", async () => {
+  await fixture("quota-v2,per-account-process,shared-443");
+  await setRealityPortPolicy([8443], "quota-v2,per-account-process,shared-443");
+  await approveRealityPorts([8443]);
+  await queueAccountDelivery(env, "a", 100);
+  expect((await deliveredText()).match(/<pre>/g)).toHaveLength(1);
+});
+
+test("mismatched reality settings and signed policy fail closed to 443", async () => {
+  await fixture("quota-v2,per-account-process,shared-443");
+  await setRealityPortPolicy([2053, 8443]);
+  await approveRealityPorts([8443]);
+  await queueAccountDelivery(env, "a", 100);
+  expect((await deliveredText()).match(/<pre>/g)).toHaveLength(1);
+});
+
+test("VMess WSS and both REALITY alternate ports share the same account identity", async () => {
+  await fixture("quota-v2,per-account-process,shared-443");
+  await setRealityPortPolicy(
+    [2053, 8443],
+    "quota-v2,per-account-process,shared-443,reality-alt-metered,ws-metered",
+  );
+  await approveRealityPorts([2053, 8443]);
+  await prepareWsSettings();
+  await setSignedWsPolicy();
+  await queueAccountDelivery(env, "a", 100);
+  const body = await deliveredText();
+  const configs = [...body.matchAll(/<pre>(.*?)<\/pre>/gs)].map(match =>
+    match[1]!.replace(/&amp;/g, "&"));
+  expect(configs).toHaveLength(4);
+  expect(configs.slice(0, 3).map(s => parseVlessRealityConfig(s).port))
+    .toEqual([443, 2053, 8443]);
+  expect(parseManagedVmessWsConfig(configs[3]!).uuid).toBe(accountUuid);
+});
