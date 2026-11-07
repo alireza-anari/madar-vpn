@@ -153,3 +153,37 @@ export function managedWsFallbackIsDeliverable(
     return false;
   }
 }
+
+/**
+ * Settings are deliberately per-node and fail-closed. Absence of any key
+ * leaves all existing customers on the original, proven REALITY transport.
+ * No automatic enabling from a successful temporary Quick Tunnel test.
+ */
+export async function readManagedWsRollout(
+  db: D1Database,
+  nodeId: string,
+): Promise<ManagedWsFallback | null> {
+  const prefix = "managed_ws:" + nodeId + ":";
+  const rows = await db.prepare(
+    "SELECT key,value FROM settings WHERE key IN (?,?,?,?)",
+  ).bind(
+    prefix + "enabled",
+    prefix + "terms_approved",
+    prefix + "hostname",
+    prefix + "path",
+  ).all<{ key: string; value: string }>();
+  const values = new Map(rows.results.map((row) => [row.key, row.value]));
+  if (
+    values.get(prefix + "enabled") !== "1" ||
+    values.get(prefix + "terms_approved") !== "1"
+  ) return null;
+  try {
+    return validateManagedWsFallback({
+      type: "vmess-ws-aead",
+      hostname: values.get(prefix + "hostname"),
+      path: values.get(prefix + "path"),
+    });
+  } catch {
+    return null;
+  }
+}
