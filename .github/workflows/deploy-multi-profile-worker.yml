@@ -22,7 +22,7 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       SCRIPT: madar-sales-bot
       DB_ID: f59e160f-89ab-4a90-a4dc-f257883d5a61
-      PREVIOUS_VERSION: b6244c85-434b-4c79-96d0-110c62b7f50d
+      PREVIOUS_VERSION: 0f0ab17d-7797-4055-b5a3-f59c4f281350
       BASE_URL: https://madar-sales-bot.alirezaanari117.workers.dev
     steps:
       - uses: actions/checkout@v4
@@ -34,7 +34,7 @@ jobs:
       - name: Verify exact CI green source, no accidental node or Worker changes
         run: |
           set -euo pipefail
-          validated=c1d1fb1c0211e2563c5722f92c11b6e29da88dd8
+          validated=7c98512929242841113a64787ae20eee0d60854b
           git merge-base --is-ancestor "$validated" HEAD
           git diff --exit-code "$validated" HEAD -- \
             apps/sales-bot sales-node sales-runner pnpm-lock.yaml
