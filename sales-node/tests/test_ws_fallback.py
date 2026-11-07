@@ -20,7 +20,6 @@ SETTINGS = {
     "bridgeKey": "a" * 64,
     "shared443": True,
     "frontendManaged": True,
-    "managedWsOptIn": True,
     "frontendService": "madar-sales-xray.service",
     "nodeId": "node",
     "sni": "www.cloudflare.com",
@@ -74,7 +73,7 @@ def test_endpoint_and_opt_in_are_mandatory():
         with pytest.raises(ValueError):
             validate_endpoint(invalid)
     with pytest.raises(ValueError, match="WS_NOT_OPTED_IN"):
-        render_ws_frontend({**SETTINGS, "managedWsOptIn": False}, ENDPOINT)
+        render_ws_frontend({**SETTINGS, "frontendManaged": False}, ENDPOINT)
 
 
 def test_dynamically_registers_shared_account_user_and_revokes_it(tmp_path, monkeypatch):
