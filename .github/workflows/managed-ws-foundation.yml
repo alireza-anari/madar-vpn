@@ -39,6 +39,22 @@ jobs:
             sales-node/tests \
             sales-runner/tests/test_source_manifest.py \
             sales-runner/tests/test_installer.py
+      - name: Fetch source-hash-verified pinned Xray binary (CI only)
+        run: |
+          python3 - <<'PY'
+          import pathlib, sys
+          sys.path.insert(0, 'sales-runner')
+          from artifacts import VERSION, download
+          binary = download('x86_64', VERSION)['xray']
+          target = pathlib.Path('/tmp/madar-ci-xray')
+          target.write_bytes(binary)
+          target.chmod(0o755)
+          print('Validated pinned Xray release', VERSION)
+          PY
+      - name: Check real Xray HandlerService registration and revoke (isolated loopback)
+        env:
+          MADAR_XRAY_BIN: /tmp/madar-ci-xray
+        run: python3 -m pytest -q sales-node/tests/test_alt_xray_integration.py
       - name: Production opt-in must not be a default
         run: |
           ! grep -q "'managedWsOptIn':True" sales-runner/installer.py
