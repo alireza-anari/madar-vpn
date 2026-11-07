@@ -216,7 +216,7 @@ test("customer receives both paths only with ready, metered and approved WS rout
   const body = await deliveredText();
   const links = [...body.matchAll(/<pre>(.*?)<\/pre>/gs)].map((match) => match[1]!);
   expect(links).toHaveLength(2);
-  expect(parseVlessRealityConfig(links[0]!).port).toBe(443);
+  expect(parseVlessRealityConfig(links[0]!.replace(/&amp;/g, "&")).port).toBe(443);
   const ws = parseManagedVmessWsConfig(links[1]!);
   expect(ws.uuid).toBe(accountUuid);
   expect(ws.hostname).toBe(fallback.hostname);
