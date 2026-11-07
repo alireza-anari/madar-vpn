@@ -1,3 +1,4 @@
+import { validateManagedWsFallback, type ManagedWsFallback } from "./alternate-transport";
 import { requireSalesAdmin, type SalesActor } from "./resellers";
 
 async function requireNode(db: D1Database, nodeId: string) {
@@ -84,5 +85,40 @@ export async function setNodeMaxAllocatedBytes(
         "INSERT INTO audit_events(actor_id,action,target_id,created_at) VALUES(?,'node_allocation_cap',?,?)",
       )
       .bind(actor.telegramId, nodeId, now),
+  ]);
+}
+
+/** Admin-only, explicit, per-node rollout; current REALITY settings are untouched. */
+export async function setNodeWsFallback(
+  db: D1Database,
+  actor: SalesActor,
+  nodeId: string,
+  endpoint: ManagedWsFallback | null,
+  confirmedTerms: boolean,
+  now: number,
+): Promise<void> {
+  requireSalesAdmin(actor);
+  await requireNode(db, nodeId);
+  if (endpoint && confirmedTerms !== true)
+    throw Error("WS_TERMS_CONFIRMATION_REQUIRED");
+  const metadata = endpoint ? validateManagedWsFallback(endpoint) : null;
+  const prefix = "managed_ws:" + nodeId + ":";
+  const rows: [string, string][] = [
+    ["enabled", metadata ? "1" : "0"],
+    ["terms_approved", metadata ? "1" : "0"],
+  ];
+  if (metadata) rows.push(
+    ["hostname", metadata.hostname],
+    ["path", metadata.path],
+  );
+  await db.batch([
+    ...rows.map(([key, value]) =>
+      db.prepare(
+        "INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+      ).bind(prefix + key, value),
+    ),
+    db.prepare(
+      "INSERT INTO audit_events(actor_id,action,target_id,created_at) VALUES(?,?,?,?)",
+    ).bind(actor.telegramId, metadata ? "node_ws_enabled" : "node_ws_disabled", nodeId, now),
   ]);
 }
