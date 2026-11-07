@@ -52,7 +52,8 @@ def test_alternative_port_frontend_forwards_only_to_existing_quota_workers():
     assert all(inbound["streamSettings"]["security"] == "reality" for inbound in public)
     assert config["inbounds"][-1]["listen"] == "127.0.0.1"
     assert config["api"]["services"] == ["HandlerService"]
-    assert len(config["outbounds"]) == 2
+    assert len(config["outbounds"]) == 3
+    assert config["outbounds"][0] == {"tag": "madar-deny-unmatched", "protocol": "blackhole"}
     for port in [20000, 20001]:
         tag = "madar-" + str(port)
         downstream = next(o for o in config["outbounds"] if o["tag"] == tag)
@@ -64,7 +65,12 @@ def test_alternative_port_frontend_forwards_only_to_existing_quota_workers():
         route = next(r for r in config["routing"]["rules"] if r.get("user") == [tag])
         assert set(route["inboundTag"]) == {"madar-reality-2053", "madar-reality-8443"}
         assert route["outboundTag"] == tag
-    assert all(outbound["protocol"] == "vless" for outbound in config["outbounds"])
+    assert all(outbound["protocol"] == "vless" for outbound in config["outbounds"][1:])
+    assert config["routing"]["rules"][-1] == {
+        "type": "field",
+        "inboundTag": ["madar-reality-2053", "madar-reality-8443"],
+        "outboundTag": "madar-deny-unmatched",
+    }
 
 
 def test_single_account_is_attached_to_both_ports_and_removed_safely(tmp_path, monkeypatch):
