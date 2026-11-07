@@ -103,7 +103,9 @@ class QuotaRuntime:
 
     def configure_ws_router(self,policy):
         """Optional and always noncritical: no error may stop the REALITY path."""
-        endpoint=policy.get('wsFallback') if self.config.get('managedWsOptIn') is True else None
+        # Signed policy is the sole opt-in; new SSH-onboarded nodes need no
+        # per-server manual flag. Existing policies have no wsFallback field.
+        endpoint=policy.get('wsFallback') if self.config.get('frontendManaged') is True else None
         try:
             if endpoint is not None:
                 from ws_fallback import validate_endpoint
