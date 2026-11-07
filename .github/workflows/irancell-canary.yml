@@ -1,0 +1,36 @@
+name: Madar Ariant isolated WS canary safeguards
+
+on:
+  push:
+    branches:
+      - 'impl/irancell-isolated-ws-canary-20261107'
+    paths:
+      - 'experiments/irancell-ws/**'
+      - '.github/workflows/irancell-canary.yml'
+  pull_request:
+    paths:
+      - 'experiments/irancell-ws/**'
+      - '.github/workflows/irancell-canary.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  canary-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Byte-compile isolated canary
+        run: python3 -m py_compile experiments/irancell-ws/irancell_ws_canary.py
+      - name: Run fail-closed canary regression tests
+        run: python3 -m unittest discover -s experiments/irancell-ws -p 'test_*.py' -v
+      - name: Confirm no existing sales source files were modified
+        run: |
+          test -e experiments/irancell-ws/irancell_ws_canary.py
+          ! grep -q 'systemctl restart madar-sales-xray' experiments/irancell-ws/irancell_ws_canary.py
+          ! grep -q 'systemctl restart xray.service' experiments/irancell-ws/irancell_ws_canary.py
