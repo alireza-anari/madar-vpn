@@ -1,5 +1,7 @@
 import { readManagedWsRollout, validateManagedWsFallback } from "./alternate-transport";
 import type { ManagedWsFallback } from "./alternate-transport";
+import { readApprovedRealityPorts, validateManagedRealityPorts } from "./managed-reality-ports";
+import type { ManagedRealityPort } from "./managed-reality-ports";
 export interface QuotaClient {
   accountId: string;
   uuid: string;
@@ -18,6 +20,7 @@ export interface QuotaPolicy {
   expiresAt: number;
   clients: QuotaClient[];
   wsFallback?: ManagedWsFallback;
+  realityAltPorts?: ManagedRealityPort[];
 }
 export async function buildQuotaPolicy(
   db: D1Database,
@@ -68,12 +71,14 @@ export async function buildQuotaPolicy(
     flow: a.connection_flow === "xtls-rprx-vision" ? "xtls-rprx-vision" : "",
   }));
   const wsFallback = await readManagedWsRollout(db, nodeId);
+  const realityAltPorts = await readApprovedRealityPorts(db, nodeId);
   const old = node.policy_payload ? JSON.parse(node.policy_payload) : null;
   if (
     old?.version === 2 &&
     old.expiresAt > now + 240 &&
     JSON.stringify(old.clients) === JSON.stringify(clients) &&
-    JSON.stringify(old.wsFallback ?? null) === JSON.stringify(wsFallback)
+    JSON.stringify(old.wsFallback ?? null) === JSON.stringify(wsFallback) &&
+    JSON.stringify(old.realityAltPorts ?? null) === JSON.stringify(realityAltPorts)
   )
     return old;
   const policy: QuotaPolicy = {
@@ -83,6 +88,7 @@ export async function buildQuotaPolicy(
     expiresAt: now + 300,
     clients,
     ...(wsFallback ? { wsFallback } : {}),
+    ...(realityAltPorts ? { realityAltPorts } : {}),
   };
   const payload = JSON.stringify(policy);
   const results = await db.batch([
@@ -122,6 +128,13 @@ export async function ackQuotaPolicy(
   if (!node) return;
   const policy = JSON.parse(node.policy_payload) as QuotaPolicy;
   if (policy.version !== 2 || policy.expiresAt <= now) return;
+  let realityAltValid = false;
+  try {
+    if (policy.realityAltPorts) {
+      validateManagedRealityPorts(policy.realityAltPorts);
+      realityAltValid = true;
+    }
+  } catch { realityAltValid = false; }
   let wsPolicyValid = false;
   try {
     if (policy.wsFallback) {
@@ -147,7 +160,8 @@ export async function ackQuotaPolicy(
       "quota-v2,per-account-process" +
         (health.capabilities.includes("shared-443") ? ",shared-443" : "") +
         (health.capabilities.includes("shared-443") && health.capabilities.includes("vision-metered") ? ",vision-metered" : "") +
-        (wsPolicyValid && health.capabilities.includes("shared-443") && health.capabilities.includes("ws-metered") ? ",ws-metered" : ""),
+        (wsPolicyValid && health.capabilities.includes("shared-443") && health.capabilities.includes("ws-metered") ? ",ws-metered" : "") +
+        (realityAltValid && health.capabilities.includes("shared-443") && health.capabilities.includes("reality-alt-metered") ? ",reality-alt-metered" : ""),
       nodeId,
       revision,
     )
