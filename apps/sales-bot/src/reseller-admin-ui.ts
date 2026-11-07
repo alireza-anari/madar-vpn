@@ -6,7 +6,8 @@ import {
 } from "./node-capacity";
 import { refreshCapacityAlert } from "./capacity-alerts";
 import { nodeDependencies,updateNodeMode,renameNode,type NodeMode } from "./node-operations";
-import { setNodeMaxAccounts, setNodeMaxAllocatedBytes } from "./node-settings";
+import { setNodeMaxAccounts, setNodeMaxAllocatedBytes, setNodeWsFallback } from "./node-settings";
+import { readManagedWsRollout, validateManagedWsFallback } from "./alternate-transport";
 import {
   sellerLimits,
   sellerNodeStats,
@@ -47,7 +48,7 @@ function isAdminCallback(data: string | undefined) {
   if (!data) return false;
   if (data === "rs:nodes" || data === "rs:sellers" || data.startsWith("rs:nodeops:") ||
     /^rs:(?:nodes|sellers):(0|[1-9][0-9]{0,2})$/.test(data)) return true;
-  return /^rs:(?:nodedetail|unlimit|capacity|allocation|seller|settle|settleok|settlements|limits|limitcount|limitbytes):/.test(
+  return /^rs:(?:nodedetail|ws|unlimit|capacity|allocation|seller|settle|settleok|settlements|limits|limitcount|limitbytes):/.test(
     data,
   );
 }
@@ -133,6 +134,7 @@ function nodeRows(n: Awaited<ReturnType<typeof nodeCapacities>>[number]) {
       btn("🧪 سرور تست","rs:node:trial:"+n.id),
     ]);
     rows.push([btn("🔢 سقف کانفیگ","rs:capacity:"+n.id),btn("📦 سقف حجم","rs:allocation:"+n.id)]);
+    rows.push([btn("📶 مسیر جایگزین ایرانسل","rs:ws:status:"+n.id)]);
     if(n.max_allocated_bytes!==null)rows.push([btn("♾ نامحدود کردن حجم","rs:unlimit:"+n.id)]);
     rows.push([btn("🗑 حذف از فهرست (بایگانی امن)","rs:nodeops:archive:"+n.id)]);
   }
@@ -399,6 +401,83 @@ export async function handleResellerAdminUi(
 
   const db = env.SALES_DB;
   try {
+    const wsState = ctx.state as {step?: string; nodeId?: string; hostname?: string; path?: string};
+    if (text && wsState?.step === "admin_ws_hostname") {
+      const hostname = text.toLowerCase().trim();
+      const path = "/madar-" + Array.from(
+        crypto.getRandomValues(new Uint8Array(12)),
+        (byte) => byte.toString(16).padStart(2, "0"),
+      ).join("");
+      validateManagedWsFallback({type: "vmess-ws-aead", hostname, path});
+      ctx.set({step: "admin_ws_confirm", nodeId: wsState.nodeId, hostname, path});
+      await ctx.reply(
+        "📶 ثبت مسیر ایرانسل\n\nدامنه: " + hostname +
+        "\n\n⚠️ پیش از تأیید باید دامنه به ورودی پایدار و مجاز سرور روی 127.0.0.1:18080 متصل شده و اجازه استفاده تجاری از ارائه‌دهنده دریافت شده باشد." +
+        "\n\nبا تأیید، این تنظیم در Policy ثبت می‌شود اما تا زمانی که Agent مسیر حجم‌دار را ACK نکند، هیچ کانفیگ دومی صادر نمی‌شود.",
+        [
+          [btn("✅ دامنه و مجوز تجاری را تأیید می‌کنم", "rs:ws:confirm")],
+          [btn("❌ انصراف", "rs:nodedetail:" + wsState.nodeId)],
+        ],
+      );
+      return true;
+    }
+    if (data === "rs:ws:confirm") {
+      if (wsState?.step !== "admin_ws_confirm" ||
+          !wsState.nodeId || !wsState.hostname || !wsState.path)
+        throw Error("WS_CONFIRMATION_EXPIRED");
+      await setNodeWsFallback(db, actor, wsState.nodeId, {
+        type: "vmess-ws-aead", hostname: wsState.hostname, path: wsState.path,
+      }, true, now);
+      ctx.set({});
+      await ctx.reply(
+        "✅ درخواست مسیر دوم ذخیره شد.\nتا زمان نصب نسخهٔ جدید Agent و تأیید قابلیت ws-metered، ربات فقط کانفیگ اصلی را صادر می‌کند.",
+        [[btn("📶 وضعیت مسیر", "rs:ws:status:" + wsState.nodeId)],
+         [btn("🔎 سرور", "rs:nodedetail:" + wsState.nodeId)], home()],
+      );
+      return true;
+    }
+    const wsAction = data?.match(/^rs:ws:(status|setup|disable):([a-zA-Z0-9-]{1,80})$/);
+    if (wsAction) {
+      const action = wsAction[1]!;
+      const nodeId = wsAction[2]!;
+      const node = (await nodeCapacities(db, now, nodeId))[0];
+      if (!node) throw Error("INVALID_NODE");
+      if (action === "setup") {
+        ctx.set({step: "admin_ws_hostname", nodeId});
+        await ctx.reply(
+          "📶 دامنه عمومی پایدار مسیر ایرانسل را بفرست (مثلاً edge.example.com).\n\nآدرس trycloudflare.com و IP پذیرفته نمی‌شود. ابتدا باید مسیر HTTPS مجاز را در ارائه‌دهنده تنظیم کرده باشی.",
+          [[btn("❌ انصراف", "rs:nodedetail:" + nodeId)], home()],
+        );
+        return true;
+      }
+      if (action === "disable") {
+        await setNodeWsFallback(db, actor, nodeId, null, false, now);
+        ctx.set({});
+        await ctx.reply(
+          "⏸ مسیر ایرانسل غیرفعال شد؛ کانفیگ REALITY و اشتراک‌های همراه اول بدون تغییرند.",
+          [[btn("📶 وضعیت مسیر", "rs:ws:status:" + nodeId)],
+           [btn("🔎 سرور", "rs:nodedetail:" + nodeId)], home()],
+        );
+        return true;
+      }
+      ctx.set({});
+      const enabled = await readManagedWsRollout(db, nodeId);
+      const metered = node.agent_capabilities.split(",").includes("ws-metered");
+      const ready = enabled && metered && node.healthy === 1 && node.last_seen > now - 90;
+      await ctx.reply(
+        "📶 مسیر جایگزین ایرانسل · " + node.name +
+        "\n\nتنظیم دامنه: " + (enabled ? enabled.hostname : "غیرفعال") +
+        "\nتأیید سهمیه مشترک توسط Agent: " + (metered ? "✅" : "⏳") +
+        "\nآمادگی صدور کانفیگ: " + (ready ? "✅ آماده" : "⏸ هنوز آماده نیست") +
+        "\n\nمسیر REALITY فعلی مستقل و فعال باقی می‌ماند.",
+        [
+          [btn("⚙️ ثبت / اصلاح دامنه", "rs:ws:setup:" + nodeId)],
+          ...(enabled ? [[btn("⏸ غیرفعال کردن مسیر دوم", "rs:ws:disable:" + nodeId)]] : []),
+          [btn("🔎 سرور", "rs:nodedetail:" + nodeId)], home(),
+        ],
+      );
+      return true;
+    }
     if(data==="rs:nodeops:archive:list" || /^rs:nodeops:archive:page:(0|[1-9][0-9]{0,2})$/.test(data||"")){
       ctx.set({});
       const page=data==="rs:nodeops:archive:list"?0:Number(data!.slice("rs:nodeops:archive:page:".length));
