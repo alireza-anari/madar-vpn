@@ -87,3 +87,43 @@ test("node setting validation rejects invalid values and missing nodes", async (
     setNodeMaxAccounts(env.SALES_DB, admin, "missing", 10, 100),
   ).rejects.toThrow("INVALID_NODE");
 });
+
+test("admin-only managed WS enrollment is explicit, audited and reversible", async () => {
+  const { setNodeWsFallback } = await load();
+  const { readManagedWsRollout } = await import("../src/alternate-transport");
+  const endpoint = {
+    type: "vmess-ws-aead" as const,
+    hostname: "edge.madar.example.com",
+    path: "/madar-" + "a".repeat(24),
+  };
+  expect(await readManagedWsRollout(env.SALES_DB, "n")).toBeNull();
+  await expect(
+    setNodeWsFallback(env.SALES_DB, seller, "n", endpoint, true, 100),
+  ).rejects.toThrow("ADMIN_REQUIRED");
+  await expect(
+    setNodeWsFallback(env.SALES_DB, admin, "n", endpoint, false, 100),
+  ).rejects.toThrow("WS_TERMS_CONFIRMATION_REQUIRED");
+  await expect(
+    setNodeWsFallback(env.SALES_DB, admin, "n", {
+      ...endpoint, hostname: "test.trycloudflare.com",
+    }, true, 100),
+  ).rejects.toThrow("INVALID_MANAGED_WS_FALLBACK");
+  expect(await readManagedWsRollout(env.SALES_DB, "n")).toBeNull();
+  await setNodeWsFallback(env.SALES_DB, admin, "n", endpoint, true, 100);
+  expect(await readManagedWsRollout(env.SALES_DB, "n")).toEqual(endpoint);
+  await setNodeWsFallback(env.SALES_DB, admin, "n", null, false, 110);
+  expect(await readManagedWsRollout(env.SALES_DB, "n")).toBeNull();
+  expect(await env.SALES_DB.prepare(
+    "SELECT action FROM audit_events WHERE actor_id='9' AND target_id='n' AND action='node_ws_enabled'",
+  ).first("action")).toBe("node_ws_enabled");
+  expect(await env.SALES_DB.prepare(
+    "SELECT action FROM audit_events WHERE actor_id='9' AND target_id='n' AND action='node_ws_disabled'",
+  ).first("action")).toBe("node_ws_disabled");
+});
+
+test("invalid WS rollout endpoint does not block primary node policy", async () => {
+  const { setNodeWsFallback } = await load();
+  await expect(
+    setNodeWsFallback(env.SALES_DB, admin, "nonexistent", null, false, 100),
+  ).rejects.toThrow("INVALID_NODE");
+});
