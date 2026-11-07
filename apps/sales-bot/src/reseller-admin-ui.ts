@@ -7,7 +7,7 @@ import {
 import { refreshCapacityAlert } from "./capacity-alerts";
 import { nodeDependencies,updateNodeMode,renameNode,type NodeMode } from "./node-operations";
 import { setNodeMaxAccounts, setNodeMaxAllocatedBytes, setNodeWsFallback } from "./node-settings";
-import { readManagedWsRollout, validateManagedWsFallback } from "./alternate-transport";
+import { readManagedWsRollout, validateManagedWsFallback, managedWsStatusReady, type ManagedWsNodeStatus } from "./alternate-transport";
 import {
   sellerLimits,
   sellerNodeStats,
@@ -463,7 +463,9 @@ export async function handleResellerAdminUi(
       ctx.set({});
       const enabled = await readManagedWsRollout(db, nodeId);
       const metered = node.agent_capabilities.split(",").includes("ws-metered");
-      const ready = enabled && metered && node.healthy === 1 && node.last_seen > now - 90;
+      const nodePolicy = await db.prepare("SELECT id,state,healthy,last_seen,revision,acked_revision,policy_payload,agent_capabilities FROM nodes WHERE id=?")
+        .bind(nodeId).first<ManagedWsNodeStatus>();
+      const ready = nodePolicy ? managedWsStatusReady(nodePolicy, enabled, now) : false;
       await ctx.reply(
         "📶 مسیر جایگزین ایرانسل · " + node.name +
         "\n\nتنظیم دامنه: " + (enabled ? enabled.hostname : "غیرفعال") +
