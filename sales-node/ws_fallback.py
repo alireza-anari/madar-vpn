@@ -223,9 +223,11 @@ class ManagedWsFrontend:
                     stderr=subprocess.DEVNULL, timeout=3,
                 )
         except Exception:
-            # The owned backend process has already been terminated or will be
-            # terminated by QuotaRuntime. A frontend user can never bypass it.
-            pass
+            # If deregistration did not ACK, no old credential may remain
+            # usable when a different customer is later assigned this port.
+            # Only this disposable secondary child is stopped, NEVER :443.
+            self.stop()
+            raise ValueError("WS_REVOCATION_UNCONFIRMED") from None
 
     def ready_for(self, processes):
         try:
