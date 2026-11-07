@@ -193,3 +193,34 @@ def test_optional_port_capability_requires_all_accounts_attached(tmp_path, monke
     assert "shared-443" in runtime.capabilities()
     runtime.reality_router.stop()
     runtime.store.close()
+
+
+
+def test_quota_shutdown_kills_shared_backend_before_slow_or_failed_auxiliary_api():
+    events = []
+    ident = ACCOUNT
+
+    class Account:
+        client = CLIENT
+
+        def stop(self):
+            events.append("backend.stop")
+
+    class Alt:
+        def __init__(self, name, fail=False):
+            self.name = name
+            self.fail = fail
+
+        def detach(self, client):
+            assert client is CLIENT
+            events.append(self.name + ".detach")
+            if self.fail:
+                raise TimeoutError("API did not respond")
+
+    controller = object.__new__(QuotaRuntime)
+    controller.processes = {ident: Account()}
+    controller.ws_router = Alt("ws", fail=True)
+    controller.reality_router = Alt("reality")
+    controller.stop_account(ident)
+    assert events == ["backend.stop", "ws.detach", "reality.detach"]
+    assert ident not in controller.processes
