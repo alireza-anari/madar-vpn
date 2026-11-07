@@ -15,6 +15,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 
@@ -208,11 +209,17 @@ def preflight():
 
 def stage():
     preflight()
-    ETC.mkdir(mode=0o700)
-    OPT.mkdir(mode=0o700)
     identifier = str(uuid.uuid4())
     path = "/madar-" + secrets.token_hex(12)
-    private_write(CONFIG, json.dumps(render_xray(identifier, path)))
+    candidate = json.dumps(render_xray(identifier, path))
+    # Validate before writing any persistent files or systemd units.
+    with tempfile.TemporaryDirectory(prefix="madar-irancell-preflight-") as directory:
+        test_config = Path(directory) / "xray.json"
+        private_write(test_config, candidate)
+        run(str(XRAY), "run", "-test", "-config", str(test_config))
+    ETC.mkdir(mode=0o700)
+    OPT.mkdir(mode=0o700)
+    private_write(CONFIG, candidate)
     private_write(STATE, json.dumps({
         "nodeId": NODE_ID, "id": identifier, "path": path,
         "activatedAt": None, "expiresAt": None,
@@ -220,7 +227,6 @@ def stage():
     }))
     private_write(INSTALLED_SCRIPT, Path(__file__).read_text())
     os.chmod(INSTALLED_SCRIPT, 0o700)
-    run(str(XRAY), "run", "-test", "-config", str(CONFIG))
     for name, contents in render_units().items():
         private_write(UNITS / name, contents)
         os.chmod(UNITS / name, 0o644)
