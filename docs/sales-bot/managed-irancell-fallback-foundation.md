@@ -65,8 +65,8 @@ The sales-runner installer and checksum-pinned node updater now package the opti
 
 ## Required production release gates (not completed)
 
-1. Confirm written acceptance of planned commercial proxy traffic by BOTH VPS and public ingress providers. Public Cloudflare Tunnel CDN routes on Free/Pro/Business require specific paid services for video and other large files. VPN users may transfer such content. Quick Tunnel is for development and not suitable as a resale backbone.
-2. Obtain a stable public hostname and configure a contract-compliant ingress to the optional localhost service. The connected Cloudflare account currently has zero managed DNS zones.
+1. For the **WSS** variant, verify the intended commercial proxy traffic is permitted by both VPS and public ingress providers. Public Cloudflare CDN proxying of video/large files may require additional products. Quick Tunnel is temporary and not a resale backbone. For direct REALITY port testing, no public CDN ingress is needed.
+2. **Only if enabling VMess/WSS:** obtain a stable, contract-compliant public HTTPS ingress hostname connected to localhost 18080. Do not purchase a domain for the direct REALITY 2053/8443 or the existing Worker-hosted subscription URL.
 3. Remove staged experimental canary on Ariant before production use of local port 18080. Do not stop or change the live REALITY 443 unit.
 4. Verify source manifest checksums, test the managed Xray dynamic VMess user API on an authorized test node, and validate alternate ingress with Irancell and MCI.
 5. Prove a hard shared quota across alternate and primary concurrent streams; validate expiration, revocation, byte continuity, cap exhaustion, WS frontend crashes, agent restarts, and 1 vCPU/1 GiB resource headroom.
