@@ -8,6 +8,7 @@ import c from "../migrations/0003.sql?raw";
 import d from "../migrations/0004-reseller-accounts.sql?raw";
 import { queueAccountDelivery } from "../src/account-delivery";
 import { parseVlessRealityConfig } from "../src/connection-config";
+import { parseManagedVmessWsConfig } from "../src/alternate-transport";
 
 const accountUuid = "11111111-1111-4111-8111-111111111111";
 const publicKey = "A".repeat(43);
@@ -172,4 +173,96 @@ test("shared-443 capability cannot publish a non-443 port", async () => {
   ).run();
   await queueAccountDelivery(env, "a", 100);
   expect(await outboxCount()).toBe(0);
+});
+
+const fullWsCapabilities = "quota-v2,per-account-process,shared-443,ws-metered";
+const fallback = {
+  type: "vmess-ws-aead",
+  hostname: "edge.madar.example.com",
+  path: "/madar-" + "b".repeat(24),
+};
+
+async function prepareWsSettings(termsApproved = true, enabled = true) {
+  const rows = [
+    ["enabled", enabled ? "1" : "0"],
+    ["terms_approved", termsApproved ? "1" : "0"],
+    ["hostname", fallback.hostname],
+    ["path", fallback.path],
+  ];
+  for (const [suffix, value] of rows) {
+    await env.SALES_DB.prepare(
+      "INSERT INTO settings(key,value) VALUES(?,?)",
+    ).bind("managed_ws:n:" + suffix, value).run();
+  }
+}
+
+async function setSignedWsPolicy(candidate: unknown = fallback) {
+  const original = JSON.parse(
+    (await env.SALES_DB.prepare(
+      "SELECT policy_payload FROM nodes WHERE id='n'",
+    ).first<string>("policy_payload"))!,
+  );
+  original.wsFallback = candidate;
+  await env.SALES_DB.prepare(
+    "UPDATE nodes SET policy_payload=? WHERE id='n'",
+  ).bind(JSON.stringify(original)).run();
+}
+
+test("customer receives both paths only with ready, metered and approved WS route", async () => {
+  await fixture(fullWsCapabilities);
+  await setSignedWsPolicy();
+  await prepareWsSettings();
+  await queueAccountDelivery(env, "a", 100);
+  const body = await deliveredText();
+  const links = [...body.matchAll(/<pre>(.*?)<\/pre>/gs)].map((match) => match[1]!);
+  expect(links).toHaveLength(2);
+  expect(parseVlessRealityConfig(links[0]!).port).toBe(443);
+  const ws = parseManagedVmessWsConfig(links[1]!);
+  expect(ws.uuid).toBe(accountUuid);
+  expect(ws.hostname).toBe(fallback.hostname);
+  expect(ws.path).toBe(fallback.path);
+});
+
+test("WS path does not appear if capability is missing (normal deployment)", async () => {
+  await fixture("quota-v2,per-account-process,shared-443");
+  await setSignedWsPolicy();
+  await prepareWsSettings();
+  await queueAccountDelivery(env, "a", 100);
+  expect((await deliveredText()).match(/<pre>/g)).toHaveLength(1);
+});
+
+test("disabled or unapproved WS path leaves normal REALITY delivery intact", async () => {
+  for (const [approved, enabled] of [[false, true], [true, false]] as const) {
+    await resetDb();
+    for (const s of [a, b, c, d, visionMigration]) await env.SALES_DB.exec(s);
+    await fixture(fullWsCapabilities);
+    await setSignedWsPolicy();
+    await prepareWsSettings(approved, enabled);
+    await queueAccountDelivery(env, "a", 100);
+    expect((await deliveredText()).match(/<pre>/g)).toHaveLength(1);
+  }
+});
+
+test("stale or mismatched WS endpoint cannot appear in delivered config", async () => {
+  await fixture(fullWsCapabilities);
+  await setSignedWsPolicy();
+  await prepareWsSettings();
+  await env.SALES_DB.prepare(
+    "UPDATE settings SET value=? WHERE key='managed_ws:n:path'",
+  ).bind("/madar-" + "a".repeat(24)).run();
+  await queueAccountDelivery(env, "a", 100);
+  expect((await deliveredText()).match(/<pre>/g)).toHaveLength(1);
+});
+
+test("Quick Tunnel is never delivered as a commercial WS path", async () => {
+  await fixture(fullWsCapabilities);
+  await setSignedWsPolicy({
+    ...fallback, hostname: "temporary.trycloudflare.com",
+  });
+  await prepareWsSettings();
+  await env.SALES_DB.prepare(
+    "UPDATE settings SET value='temporary.trycloudflare.com' WHERE key='managed_ws:n:hostname'",
+  ).run();
+  await queueAccountDelivery(env, "a", 100);
+  expect((await deliveredText()).match(/<pre>/g)).toHaveLength(1);
 });
