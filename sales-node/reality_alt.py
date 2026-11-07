@@ -187,8 +187,8 @@ class ManagedRealityAltFrontend:
             return
         if self.process is None or self.process.poll() is not None:
             return
-        for public_port in self.ports:
-            try:
+        try:
+            for public_port in self.ports:
                 subprocess.run(
                     [self.binary, "api", "rmu",
                      "--server=127.0.0.1:" + str(API_PORT), "-timeout", "1",
@@ -197,9 +197,11 @@ class ManagedRealityAltFrontend:
                     check=True, stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL, timeout=3,
                 )
-            except Exception:
-                # Backend is stopped independently on revoke; no direct egress.
-                pass
+        except Exception:
+            # Partial deregistration must kill this entire optional frontend;
+            # an old UUID must not inherit a newly reused backend port.
+            self.stop()
+            raise ValueError("REALITY_ALT_REVOCATION_UNCONFIRMED") from None
 
     def ready_for(self, processes):
         try:
