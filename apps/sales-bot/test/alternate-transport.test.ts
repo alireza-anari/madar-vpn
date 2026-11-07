@@ -2,6 +2,7 @@ import { expect, test } from "vitest";
 import {
   buildManagedVmessWsConfig,
   managedWsFallbackIsDeliverable,
+  managedWsStatusReady,
   parseManagedVmessWsConfig,
   validateManagedWsFallback,
 } from "../src/alternate-transport";
@@ -101,4 +102,36 @@ test("fallback is strictly gated by agent capability and both rollout approvals"
   expect(managedWsFallbackIsDeliverable(
     { ...endpoint, hostname: "x.trycloudflare.com" }, ready, true, true,
   )).toBe(false);
+});
+
+test("admin readiness requires current ACK and the exact approved signed endpoint", () => {
+  const now = 200;
+  const policy = {
+    version: 2, nodeId: "n", revision: 5, expiresAt: now + 300,
+    clients: [], wsFallback: endpoint,
+  };
+  const node = {
+    id: "n", state: "ready", healthy: 1, last_seen: now,
+    revision: 5, acked_revision: 5, policy_payload: JSON.stringify(policy),
+    agent_capabilities: [...ready].join(","),
+  };
+  expect(managedWsStatusReady(node, endpoint, now)).toBe(true);
+  expect(managedWsStatusReady(node, null, now)).toBe(false);
+  for (const bad of [
+    { state: "verifying" },
+    { healthy: 0 },
+    { last_seen: now - 91 },
+    { revision: 6 },
+    { acked_revision: 4 },
+    { agent_capabilities: "quota-v2,per-account-process" },
+    { policy_payload: "invalid json" },
+    { policy_payload: JSON.stringify({...policy, revision: 4}) },
+    { policy_payload: JSON.stringify({...policy, nodeId: "other"}) },
+    { policy_payload: JSON.stringify({...policy, expiresAt: now - 1}) },
+    { policy_payload: JSON.stringify({...policy, wsFallback: {
+        ...endpoint, path: "/madar-" + "b".repeat(24),
+      }}) },
+  ]) {
+    expect(managedWsStatusReady({...node, ...bad}, endpoint, now)).toBe(false);
+  }
 });
