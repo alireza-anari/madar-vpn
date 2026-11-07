@@ -52,7 +52,6 @@ def render_ws_frontend(settings, endpoint, *, ports=range(20000, 21000)):
     if (
         settings.get("shared443") is not True or
         settings.get("frontendManaged") is not True or
-        settings.get("managedWsOptIn") is not True or
         not isinstance(key, str)
     ):
         raise ValueError("WS_NOT_OPTED_IN")
