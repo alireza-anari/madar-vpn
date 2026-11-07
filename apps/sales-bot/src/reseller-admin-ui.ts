@@ -416,12 +416,35 @@ export async function handleResellerAdminUi(
       );
       return true;
     }
-    const multiAction = data?.match(/^rs:multi:(status|disable|select):([a-zA-Z0-9-]{1,80})(?::(8443|2053|both))?$/);
+    const multiAction = data?.match(/^rs:multi:(status|disable|select|install):([a-zA-Z0-9-]{1,80})(?::(8443|2053|both))?$/);
     if (multiAction) {
       const action = multiAction[1]!;
       const nodeId = multiAction[2]!;
       const node = (await nodeCapacities(db, now, nodeId))[0];
       if (!node) throw Error("INVALID_NODE");
+      if (action === "install") {
+        ctx.set({});
+        const source = "921c858f72d0f9bb1d1122be6a4c91f759244a1b";
+        const installer = "b0b0265804cce2b854ab33f3e016d8e1027220d4772df3bb87fa66793b86787e";
+        const manifest = "4809f041c8f41d031f4d301889d8e4092a4792cb5b95ef2b98f0b9bba51fe94c";
+        const script = "/tmp/madar-secondary-install.py";
+        const command =
+          "curl -fsSL https://raw.githubusercontent.com/alireza-anari/madar-vpn/" + source +
+          "/sales-node/install_secondary.py -o " + script +
+          " && echo '" + installer + "  " + script + "' | sha256sum -c -" +
+          " && sudo python3 " + script + " --node-id " + nodeId +
+          " --source-ref " + source + " --manifest-sha256 " + manifest;
+        await ctx.reply(
+          "🛠 نصب امن مسیرهای جایگزین · " + node.name +
+          "\n\nاین دستور را فقط یک‌بار در SSH همان سرور، نه در تلگرام، اجرا کن:" +
+          "\n\n" + command +
+          "\n\nاین نصب‌کننده، خود Agent و Xray اصلی ۴۴۳ را متوقف یا جایگزین نمی‌کند. فایل‌ها با SHA-256 بررسی می‌شوند؛ اگر سرویس یا پورت‌ها متعلق به Madar نباشند، نصب متوقف می‌شود." +
+          "\nبعد از اجرای موفق، از همین صفحه پورت‌های موردنظر را انتخاب کن و لینک اشتراک جدید را به‌روزرسانی کن." +
+          "\n⚠️ برای اتصال از اینترنت موبایل ممکن است لازم باشد پورت‌ها را در فایروال ارائه‌دهنده باز کنی.",
+          [[btn("🔀 بازگشت به پورت‌ها", "rs:multi:status:" + nodeId)], home()],
+        );
+        return true;
+      }
       if (action === "select") {
         const choice = multiAction[3];
         const ports = choice === "both" ? [2053, 8443] :
@@ -477,6 +500,7 @@ export async function handleResellerAdminUi(
           [btn("➕ REALITY روی 2053", "rs:multi:select:" + nodeId + ":2053")],
           [btn("➕ هر دو پورت", "rs:multi:select:" + nodeId + ":both")],
           ...(approved ? [[btn("⏸ حذف پورت‌های جایگزین", "rs:multi:disable:" + nodeId)]] : []),
+          [btn("🛠 دستور نصب امن پورت‌های جایگزین", "rs:multi:install:" + nodeId)],
           [btn("📶 تنظیم VMess/WSS", "rs:ws:status:" + nodeId)],
           [btn("🔎 جزئیات سرور", "rs:nodedetail:" + nodeId)], home(),
         ],
