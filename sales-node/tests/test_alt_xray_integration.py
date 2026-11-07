@@ -14,6 +14,7 @@ import time
 import pytest
 
 from reality_alt import API_PORT, render_reality_alt
+from ws_fallback import API_PORT as WS_API_PORT, WS_PORT, render_ws_frontend
 
 XRAY = os.environ.get("MADAR_XRAY_BIN")
 pytestmark = pytest.mark.skipif(not XRAY, reason="real Xray smoke is CI opt-in")
@@ -92,6 +93,68 @@ def test_real_xray_accepts_two_approved_ports_same_account_and_revokes_each(tmp_
                 "madar-20000",
             )
             assert "Removed 1 user(s)" in result, result
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+
+
+def test_real_xray_accepts_metered_vmess_ws_user_and_revokes_it(tmp_path):
+    endpoint = {
+        "type": "vmess-ws-aead",
+        "hostname": "vpn.example.com",
+        "path": "/madar-" + "a" * 24,
+    }
+    settings = {
+        "bridgeKey": "b" * 64,
+        "shared443": True,
+        "frontendManaged": True,
+    }
+    config = render_ws_frontend(settings, endpoint, ports=[20000])
+    # Xray only accepts clients on 127.0.0.1; no public ingress exists here.
+    assert all(i["listen"] == "127.0.0.1" for i in config["inbounds"])
+    assert config["outbounds"][0]["protocol"] == "blackhole"
+    path = tmp_path / "xray-ws.json"
+    path.write_text(json.dumps(config))
+    subprocess.run(
+        [XRAY, "run", "-test", "-c", str(path)],
+        timeout=15, check=True, capture_output=True, text=True,
+    )
+    proc = subprocess.Popen(
+        [XRAY, "run", "-c", str(path)],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        wait_port(WS_API_PORT, proc)
+        wait_port(WS_PORT, proc)
+        client = tmp_path / "vmess-client.json"
+        client.write_text(json.dumps({
+            "inbounds": [{
+                "tag": "madar-secondary-ws", "port": WS_PORT,
+                "protocol": "vmess",
+                "settings": {
+                    "clients": [{
+                        "id": UUID, "alterId": 0,
+                        "email": "madar-20000", "level": 0,
+                    }],
+                },
+            }],
+        }))
+        result = run_api(
+            "adu", f"--server=127.0.0.1:{WS_API_PORT}",
+            "-timeout", "3", str(client),
+        )
+        assert "Added 1 user(s) in total." in result, result
+        result = run_api(
+            "rmu", f"--server=127.0.0.1:{WS_API_PORT}",
+            "-timeout", "3", "-tag=madar-secondary-ws", "madar-20000",
+        )
+        assert "Removed 1 user(s)" in result, result
     finally:
         if proc.poll() is None:
             proc.terminate()
