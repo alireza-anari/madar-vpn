@@ -1,0 +1,45 @@
+name: Madar managed WS foundation regression
+
+on:
+  push:
+    branches:
+      - 'impl/madar-managed-fallback-foundation-20261107'
+    paths:
+      - 'sales-node/**'
+      - 'sales-runner/**'
+      - 'apps/sales-bot/**'
+      - '.github/workflows/managed-ws-foundation.yml'
+  pull_request:
+    paths:
+      - 'sales-node/**'
+      - 'sales-runner/**'
+      - 'apps/sales-bot/**'
+      - '.github/workflows/managed-ws-foundation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  python-ws-and-manifest:
+    runs-on: ubuntu-24.04
+    env:
+      PYTHONPATH: sales-node:sales-runner
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 -m pip install --disable-pip-version-check pytest==8.4.2 cryptography==50.0.2 paramiko==5.0.0
+      - run: python3 -m compileall -q sales-node sales-runner
+      - name: Validate new WS routing, legacy quota, source pinning and runner
+        run: |
+          python3 -m pytest -q \
+            sales-node/tests \
+            sales-runner/tests/test_source_manifest.py \
+            sales-runner/tests/test_installer.py
+      - name: Production opt-in must not be a default
+        run: |
+          ! grep -q "'managedWsOptIn':True" sales-runner/installer.py
+          ! grep -q '"managedWsOptIn":true' sales-runner/installer.py
