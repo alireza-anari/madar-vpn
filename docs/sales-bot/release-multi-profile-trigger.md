@@ -27,3 +27,19 @@ new server-side listeners exist or are ready for customer sales.
 The first guarded release stopped in preflight before deployment because curl
 cannot combine -f with --fail-with-body. The workflow invocation was corrected;
 the expected previous version and release source guard remain unchanged.
+
+## 2026-11-08 sidecar API + admin installer link release
+
+Reviewed Worker source: `7c98512929242841113a64787ae20eee0d60854b`.
+
+- New authenticated `/api/node/secondary-ack` for standalone port health.
+
+- Customer subscription includes extra ports only after signed policy, admin approval, primary ACK and fresh independent secondary heartbeat.
+
+- Admin receives exact pinned, SHA256-checked optional installer command in Telegram.
+
+- Existing VPS, Xray :443, quota agent and active customer traffic are NOT touched by this Worker release.
+
+- Rollback to previously confirmed Cloudflare Worker version `0f0ab17d-7797-4055-b5a3-f59c4f281350` on production smoke failure.
+
+- Server-side optional installer still requires one explicitly initiated SSH execution on the owned Ariant VPS; no credentials are persisted or requested via Telegram.
