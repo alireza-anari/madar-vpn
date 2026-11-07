@@ -266,3 +266,26 @@ test("Quick Tunnel is never delivered as a commercial WS path", async () => {
   await queueAccountDelivery(env, "a", 100);
   expect((await deliveredText()).match(/<pre>/g)).toHaveLength(1);
 });
+test("Telegram delivery offers a renewable subscription URL on the existing Worker host", async () => {
+  await fixture("quota-v2,per-account-process,shared-443");
+  const currentEnv = {
+    ...env,
+    SALES_DB: env.SALES_DB,
+    PUBLIC_BASE_URL: "https://madar-bot.example.com",
+    USAGE_LINK_SECRET: "secure-subscription-signing-secret-012345",
+  } as Env;
+  await queueAccountDelivery(currentEnv, "a", 100);
+  const raw = await env.SALES_DB.prepare(
+    "SELECT payload FROM outbox WHERE id='account:a'",
+  ).first<string>("payload");
+  expect(raw).toBeTruthy();
+  const reply = JSON.parse(raw!);
+  const buttons = (reply.reply_markup?.inline_keyboard || []).flat();
+  const subscription = buttons.find((button: {text:string;url?:string}) =>
+    button.text.includes("به‌روزشونده"));
+  expect(subscription?.url).toMatch(
+    /^https:\/\/madar-bot\.example\.com\/managed-subscription\/v1\/m1\./,
+  );
+  expect(buttons.some((button: {text:string}) =>
+    button.text.includes("مصرف و اعتبار"))).toBe(true);
+});
