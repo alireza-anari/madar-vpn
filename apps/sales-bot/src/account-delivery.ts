@@ -202,7 +202,7 @@ export async function buildAccountDeliveryArtifact(
     validUntil: a.valid_until,
     serverName: node.name,
     config,
-    alternateConfig,
+    ...(alternateConfig ? { alternateConfig } : {}),
     usageUrl,
   };
 }
