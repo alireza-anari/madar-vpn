@@ -129,8 +129,8 @@ export async function ackQuotaPolicy(
       wsPolicyValid = true;
     }
   } catch {
-    // Invalid alternate metadata must never activate a new public ingress.
-    return;
+    // A broken optional WS route must never de-ACK the working REALITY path.
+    wsPolicyValid = false;
   }
   // A signed Vision policy must never be acknowledged by a legacy agent.
   if (
