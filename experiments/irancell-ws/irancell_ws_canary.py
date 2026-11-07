@@ -133,6 +133,7 @@ def render_xray(identifier, path):
             {"tag": "block", "protocol": "blackhole"},
         ],
         "routing": {
+            "domainStrategy": "IPIfNonMatch",
             "rules": [
                 {"type": "field", "inboundTag": ["irancell-stats-api"],
                  "outboundTag": "irancell-stats-api"},
@@ -316,7 +317,7 @@ def valid_hostname(host):
     if not isinstance(host, str) or not 4 <= len(host) <= 253:
         raise ValueError("INVALID_HOSTNAME")
     labels = host.split(".")
-    if len(labels) < 2 or any(
+    if len(labels) < 2 or not re.fullmatch(r"[a-zA-Z]{2,63}", labels[-1]) or any(
         not re.fullmatch(r"[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?", x)
         for x in labels
     ):
