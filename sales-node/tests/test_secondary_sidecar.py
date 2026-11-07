@@ -171,3 +171,15 @@ def test_secondary_install_requires_pinned_sources_and_own_service(tmp_path, mon
     )
     with pytest.raises(ValueError, match="SECONDARY_MANIFEST_HASH_MISMATCH"):
         fetch_and_verify("a" * 40, "0" * 64)
+
+
+def test_secondary_manifest_is_exact_and_independent_from_primary_manifest():
+    root = __import__("pathlib").Path(__file__).resolve().parents[1]
+    manifest = json.loads((root / "secondary-source-manifest.json").read_text())
+    from install_secondary import SOURCE_FILES
+    assert set(manifest) == set(SOURCE_FILES)
+    for path, digest in manifest.items():
+        assert hashlib.sha256((root / path).read_bytes()).hexdigest() == digest
+    primary = json.loads((root / "source-manifest.json").read_text())
+    assert "secondary_sidecar.py" not in primary
+    assert "install_secondary.py" not in primary
