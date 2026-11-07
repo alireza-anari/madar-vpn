@@ -6,8 +6,9 @@ import {
 } from "./node-capacity";
 import { refreshCapacityAlert } from "./capacity-alerts";
 import { nodeDependencies,updateNodeMode,renameNode,type NodeMode } from "./node-operations";
-import { setNodeMaxAccounts, setNodeMaxAllocatedBytes, setNodeWsFallback } from "./node-settings";
+import { setNodeMaxAccounts, setNodeMaxAllocatedBytes, setNodeWsFallback, setNodeRealityAltPorts } from "./node-settings";
 import { readManagedWsRollout, validateManagedWsFallback, managedWsStatusReady, type ManagedWsNodeStatus } from "./alternate-transport";
+import { readApprovedRealityPorts, approvedRealityPortsForDelivery } from "./managed-reality-ports";
 import {
   sellerLimits,
   sellerNodeStats,
@@ -48,7 +49,7 @@ function isAdminCallback(data: string | undefined) {
   if (!data) return false;
   if (data === "rs:nodes" || data === "rs:sellers" || data.startsWith("rs:nodeops:") ||
     /^rs:(?:nodes|sellers):(0|[1-9][0-9]{0,2})$/.test(data)) return true;
-  return /^rs:(?:nodedetail|ws|unlimit|capacity|allocation|seller|settle|settleok|settlements|limits|limitcount|limitbytes):/.test(
+  return /^rs:(?:nodedetail|ws|multi|unlimit|capacity|allocation|seller|settle|settleok|settlements|limits|limitcount|limitbytes):/.test(
     data,
   );
 }
@@ -134,7 +135,8 @@ function nodeRows(n: Awaited<ReturnType<typeof nodeCapacities>>[number]) {
       btn("🧪 سرور تست","rs:node:trial:"+n.id),
     ]);
     rows.push([btn("🔢 سقف کانفیگ","rs:capacity:"+n.id),btn("📦 سقف حجم","rs:allocation:"+n.id)]);
-    rows.push([btn("📶 مسیر جایگزین ایرانسل","rs:ws:status:"+n.id)]);
+    rows.push([btn("🔀 پروتکل‌ها و پورت‌ها", "rs:multi:status:"+n.id)]);
+    rows.push([btn("📶 مسیر WSS آزمایشی","rs:ws:status:"+n.id)]);
     if(n.max_allocated_bytes!==null)rows.push([btn("♾ نامحدود کردن حجم","rs:unlimit:"+n.id)]);
     rows.push([btn("🗑 حذف از فهرست (بایگانی امن)","rs:nodeops:archive:"+n.id)]);
   }
@@ -401,6 +403,77 @@ export async function handleResellerAdminUi(
 
   const db = env.SALES_DB;
   try {
+    const multiState = ctx.state as { step?: string; nodeId?: string; ports?: number[] };
+    if (data === "rs:multi:confirm") {
+      if (multiState.step !== "admin_multi_confirm" || !multiState.nodeId ||
+          !Array.isArray(multiState.ports)) throw Error("CONFIRMATION_EXPIRED");
+      await setNodeRealityAltPorts(db, actor, multiState.nodeId, multiState.ports, true, now);
+      ctx.set({});
+      await ctx.reply(
+        "✅ پورت‌های انتخابی ثبت شدند. تنها در صورتی در اشتراک مشتری ظاهر می‌شوند که Agent مدیریت‌شده وجود آنها و شمارش حجم مشترک را تأیید کند. اتصال واقعی از اینترنت موبایل هم باید جداگانه آزمایش شود.",
+        [[btn("🔀 وضعیت پروتکل‌ها", "rs:multi:status:" + multiState.nodeId)], home()],
+      );
+      return true;
+    }
+    const multiAction = data?.match(/^rs:multi:(status|disable|select):([a-zA-Z0-9-]{1,80})(?::(8443|2053|both))?$/);
+    if (multiAction) {
+      const action = multiAction[1]!;
+      const nodeId = multiAction[2]!;
+      const node = (await nodeCapacities(db, now, nodeId))[0];
+      if (!node) throw Error("INVALID_NODE");
+      if (action === "select") {
+        const choice = multiAction[3];
+        const ports = choice === "both" ? [2053, 8443] :
+          choice === "2053" ? [2053] : choice === "8443" ? [8443] : null;
+        if (!ports) throw Error("INVALID_PORT");
+        ctx.set({step: "admin_multi_confirm", nodeId, ports});
+        await ctx.reply(
+          "🔀 تأیید پورت‌های جایگزین سرور " + node.name +
+          "\nپورت‌ها: " + ports.join("، ") +
+          "\n\nاین پورت‌ها جایگزین ۴۴۳ نمی‌شوند؛ از همان حساب و حجم استفاده می‌کنند." +
+          "\n⚠️ پیش از تأیید باید مالکیت سرور، باز بودن پورت، مجاز بودن استفاده و اتصال واقعی موبایل را بررسی کرده باشی. ثبت این گزینه، به‌تنهایی آزمون شبکه نیست.",
+          [[btn("✅ تأیید تنظیمات پورت", "rs:multi:confirm")],
+           [btn("❌ انصراف", "rs:multi:status:" + nodeId)]],
+        );
+        return true;
+      }
+      if (action === "disable") {
+        await setNodeRealityAltPorts(db, actor, nodeId, null, false, now);
+        ctx.set({});
+        await ctx.reply(
+          "⏸ پورت‌های جایگزین غیرفعال شدند؛ کانفیگ اصلی ۴۴۳ تغییری نکرد.",
+          [[btn("🔀 وضعیت", "rs:multi:status:" + nodeId)], home()],
+        );
+        return true;
+      }
+      const approved = await readApprovedRealityPorts(db, nodeId);
+      const live = await db.prepare(
+        "SELECT id,state,healthy,last_seen,revision,acked_revision,policy_payload,agent_capabilities FROM nodes WHERE id=?",
+      ).bind(nodeId).first<ManagedWsNodeStatus>();
+      let policy: { version?:number; nodeId?:string; revision?:number;
+                    expiresAt?:number; realityAltPorts?:unknown } = {};
+      try { policy = JSON.parse(live?.policy_payload || "{}"); } catch {}
+      const effective = live ?
+        approvedRealityPortsForDelivery(live, policy, approved, now) : [];
+      ctx.set({});
+      await ctx.reply(
+        "🔀 پروتکل‌ها و پورت‌های " + node.name +
+        "\n\n✅ مسیر اصلی: VLESS + REALITY · TCP 443" +
+        "\nپورت‌های درخواستی: " + (approved?.join("، ") || "غیرفعال") +
+        "\nپورت‌های تأییدشده در Policy و ACK: " + (effective.join("، ") || "هنوز هیچ‌کدام") +
+        "\n📶 VMess/WSS در بخش جداگانه مدیریت می‌شود." +
+        "\n\nهمه کانفیگ‌های فعال یک حجم و تاریخ انقضا دارند. باز بودن پورت از اینترنت ایران باید جداگانه تست شود.",
+        [
+          [btn("➕ REALITY روی 8443", "rs:multi:select:" + nodeId + ":8443")],
+          [btn("➕ REALITY روی 2053", "rs:multi:select:" + nodeId + ":2053")],
+          [btn("➕ هر دو پورت", "rs:multi:select:" + nodeId + ":both")],
+          ...(approved ? [[btn("⏸ حذف پورت‌های جایگزین", "rs:multi:disable:" + nodeId)]] : []),
+          [btn("📶 تنظیم VMess/WSS", "rs:ws:status:" + nodeId)],
+          [btn("🔎 جزئیات سرور", "rs:nodedetail:" + nodeId)], home(),
+        ],
+      );
+      return true;
+    }
     const wsState = ctx.state as {step?: string; nodeId?: string; hostname?: string; path?: string};
     if (text && wsState?.step === "admin_ws_hostname") {
       const hostname = text.toLowerCase().trim();
