@@ -226,13 +226,16 @@ class QuotaRuntime:
             self.stopping.wait(3)
     def stop_account(self,ident,ambiguous=False):
         process=self.processes.pop(ident,None)
+        # HARD CAP: kill the ONLY metered backend first. A stalled auxiliary
+        # HandlerService API must never prolong Internet access after expiry,
+        # quota exhaustion, or revocation. Detached inbounds cannot egress.
+        if process:process.stop()
         if process and self.ws_router:
             try:self.ws_router.detach(process.client)
             except Exception:pass
         if process and self.reality_router:
             try:self.reality_router.detach(process.client)
             except Exception:pass
-        if process:process.stop()
         if ambiguous:
             try:self.store.block(ident)
             except Exception:
