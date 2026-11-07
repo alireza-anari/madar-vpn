@@ -187,3 +187,59 @@ export async function readManagedWsRollout(
     return null;
   }
 }
+
+/**
+ * Admin UI status follows exactly the same signed-policy/ACK prerequisites
+ * as a customer delivery. An old ACK after hostname rotation or a disabled
+ * route must never be presented to an operator as ready for sale.
+ */
+export interface ManagedWsNodeStatus {
+  id: string;
+  state: string;
+  healthy: number;
+  last_seen: number;
+  revision: number;
+  acked_revision: number;
+  policy_payload: string | null;
+  agent_capabilities: string;
+}
+
+export function managedWsStatusReady(
+  node: ManagedWsNodeStatus,
+  approvedEndpoint: ManagedWsFallback | null,
+  now: number,
+): boolean {
+  if (!approvedEndpoint || node.state !== "ready" ||
+      node.healthy !== 1 ||
+      !Number.isSafeInteger(node.last_seen) ||
+      node.last_seen <= now - 90 ||
+      !Number.isSafeInteger(node.revision) ||
+      node.revision < 1 ||
+      node.revision !== node.acked_revision ||
+      !node.policy_payload) return false;
+
+  const capabilities = new Set(
+    node.agent_capabilities.split(",").map(v => v.trim()).filter(Boolean),
+  );
+  if (!managedWsFallbackIsDeliverable(approvedEndpoint, capabilities, true, true))
+    return false;
+
+  try {
+    const p = JSON.parse(node.policy_payload) as {
+      version?: number;
+      nodeId?: string;
+      revision?: number;
+      expiresAt?: number;
+      wsFallback?: unknown;
+    };
+    return p.version === 2 &&
+      p.nodeId === node.id &&
+      p.revision === node.revision &&
+      Number.isSafeInteger(p.expiresAt) &&
+      (p.expiresAt as number) > now &&
+      (p.expiresAt as number) <= now + 330 &&
+      JSON.stringify(p.wsFallback) === JSON.stringify(approvedEndpoint);
+  } catch {
+    return false;
+  }
+}
