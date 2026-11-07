@@ -62,7 +62,9 @@ def render_reality_alt(settings, ports, *, account_ports=range(20000, 21000)):
         "log": {"loglevel": "warning"},
         "api": {"tag": API_TAG, "services": ["HandlerService"]},
         "inbounds": inbounds,
-        "outbounds": [],
+        # Fail-closed default: unmatched authenticated users must NEVER be
+        # routed through some other account's loopback worker.
+        "outbounds": [{"tag": "madar-deny-unmatched", "protocol": "blackhole"}],
         "routing": {"rules": [
             {"type": "field", "inboundTag": [API_TAG], "outboundTag": API_TAG},
         ]},
@@ -86,6 +88,10 @@ def render_reality_alt(settings, ports, *, account_ports=range(20000, 21000)):
             "type": "field", "inboundTag": inbound_tags,
             "user": [label], "outboundTag": label,
         })
+    config["routing"]["rules"].append({
+        "type": "field", "inboundTag": inbound_tags,
+        "outboundTag": "madar-deny-unmatched",
+    })
     return config
 
 
