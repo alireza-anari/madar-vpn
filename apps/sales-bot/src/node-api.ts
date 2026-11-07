@@ -1,4 +1,5 @@
 import { deliverReadyAccounts } from "./account-delivery";
+import { acceptSecondaryAck } from "./managed-secondary";
 import { refreshCapacityAlert } from "./capacity-alerts";
 import { buildQuotaPolicy, ackQuotaPolicy } from "./quota-policies";
 import { acceptQuotaReports } from "./quota-reports";
@@ -24,6 +25,7 @@ export async function nodeApi(request: Request, env: Env, now: number) {
       "/api/node/policy-v2",
       "/api/node/ack-v2",
       "/api/node/quota-reports",
+      "/api/node/secondary-ack",
     ].includes(path)
   ) {
     // Explicit rollout gate: legacy nodes never accidentally receive quota policies.
@@ -59,6 +61,10 @@ export async function nodeApi(request: Request, env: Env, now: number) {
           path.endsWith("/quota-reports") ? 65536 : 2048,
         ),
       );
+      if (path.endsWith("/secondary-ack")) {
+        await acceptSecondaryAck(env.SALES_DB, node.id, body, now);
+        return Response.json({ ok: true });
+      }
       if (path.endsWith("/quota-reports")) {
         const result = await acceptQuotaReports(
           env.SALES_DB,
