@@ -127,3 +127,30 @@ test("invalid WS rollout endpoint does not block primary node policy", async () 
     setNodeWsFallback(env.SALES_DB, admin, "nonexistent", null, false, 100),
   ).rejects.toThrow("INVALID_NODE");
 });
+
+test("REALITY alternate port selection is admin-only, reversible and audited", async () => {
+  const { setNodeRealityAltPorts } = await load();
+  const { readApprovedRealityPorts } = await import("../src/managed-reality-ports");
+  expect(await readApprovedRealityPorts(env.SALES_DB, "n")).toBeNull();
+  await expect(
+    setNodeRealityAltPorts(env.SALES_DB, seller, "n", [8443], true, 100),
+  ).rejects.toThrow("ADMIN_REQUIRED");
+  await expect(
+    setNodeRealityAltPorts(env.SALES_DB, admin, "n", [8443], false, 100),
+  ).rejects.toThrow("REALITY_PORT_TEST_REQUIRED");
+  for (const bad of [[443], [2053, 2053], [8443, 22], ["8443"], [], [80]]) {
+    await expect(
+      setNodeRealityAltPorts(env.SALES_DB, admin, "n", bad, true, 100),
+    ).rejects.toThrow("INVALID_MANAGED_REALITY_PORTS");
+  }
+  await setNodeRealityAltPorts(env.SALES_DB, admin, "n", [8443, 2053], true, 100);
+  expect(await readApprovedRealityPorts(env.SALES_DB, "n")).toEqual([2053, 8443]);
+  expect(await env.SALES_DB.prepare(
+    "SELECT COUNT(*) c FROM audit_events WHERE action='node_reality_alt_enabled' AND target_id='n'",
+  ).first("c")).toBe(1);
+  await setNodeRealityAltPorts(env.SALES_DB, admin, "n", null, false, 101);
+  expect(await readApprovedRealityPorts(env.SALES_DB, "n")).toBeNull();
+  expect(await env.SALES_DB.prepare(
+    "SELECT COUNT(*) c FROM audit_events WHERE action='node_reality_alt_disabled' AND target_id='n'",
+  ).first("c")).toBe(1);
+});
