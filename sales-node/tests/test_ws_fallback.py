@@ -50,7 +50,9 @@ def test_all_ws_listeners_are_local_and_route_into_same_metered_bridge():
         rule = next(x for x in ws["routing"]["rules"] if x.get("user") == [label])
         assert rule["inboundTag"] == ["madar-secondary-ws"]
         assert rule["outboundTag"] == label
-    assert len(ws["outbounds"]) == 2
+    assert len(ws["outbounds"]) == 3
+    assert ws["outbounds"][0] == {"tag": "madar-deny-unmatched", "protocol": "blackhole"}
+    assert ws["routing"]["rules"][-1] == {"type": "field", "inboundTag": ["madar-secondary-ws"], "outboundTag": "madar-deny-unmatched"}
     assert ws["api"]["services"] == ["HandlerService"]
 
 
