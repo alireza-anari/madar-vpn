@@ -75,7 +75,9 @@ def render_ws_frontend(settings, endpoint, *, ports=range(20000, 21000)):
                 "settings": {"address": "127.0.0.1"},
             },
         ],
-        "outbounds": [],
+        # Fail-closed default: unmatched authenticated users must NEVER be
+        # routed through some other account's loopback worker.
+        "outbounds": [{"tag": "madar-deny-unmatched", "protocol": "blackhole"}],
         "routing": {
             "rules": [
                 {"type": "field", "inboundTag": [API_TAG], "outboundTag": API_TAG},
@@ -107,6 +109,11 @@ def render_ws_frontend(settings, endpoint, *, ports=range(20000, 21000)):
             "user": [name],
             "outboundTag": name,
         })
+    conf["routing"]["rules"].append({
+        "type": "field",
+        "inboundTag": [TAG],
+        "outboundTag": "madar-deny-unmatched",
+    })
     return conf
 
 
