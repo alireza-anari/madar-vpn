@@ -21,6 +21,44 @@ A second VMess config is delivered ONLY when all of the following hold:
 
 Temporary Quick Tunnel hostnames and private addresses are never accepted. Missing or malformed metadata leaves the existing working REALITY delivery intact.
 
+## Multi-profile shared subscription (no domain purchase)
+
+The customer or admin creates **one managed account**. Madar prepares a single
+revocation-aware HMAC-signed subscription link using the existing Worker domain.
+The link returns between 1 and 4 connection profiles, based on independent,
+live agent ACK and signed policy gates:
+
+1. VLESS/REALITY TCP 443: original frontend (always first).
+2. VLESS/REALITY TCP 2053: optional owned frontend on the same VPS IP.
+3. VLESS/REALITY TCP 8443: optional owned frontend on the same VPS IP.
+4. VMess AEAD/WSS 443: optional independent public HTTPS ingress (not ready without a proper permitted public hostname).
+
+The two direct REALITY alternative ports **do not require any domain**;
+they remain default-OFF until admin explicitly selects an allowlisted port and
+confirms reachability, and the node actually reports `reality-alt-metered`.
+Direct alternative inbounds are owned by a **separate Xray child process** with
+its own loopback management API at 127.0.0.1:18091. It never binds 443.
+No new frontend is allowed a direct Internet outbound. Their only outbound
+transport is the existing HMAC-derived VLESS bridge on localhost 20000-20999
+which is enforced and metered by the original per-account backend. Existing
+MCI user flows are unchanged.
+
+If any additional listener is unavailable or lacks valid policy, it is omitted
+from customer delivery and the existing 443 route continues. Any change of
+available profiles takes effect when the client refreshes the SAME subscription
+URL. Hard quota and expiry apply to the shared account, not individual ports.
+
+The system does NOT attempt to generate Shadowsocks, Trojan, Hysteria2 or
+arbitrary protocols with no matching live managed implementation. It must never
+issue unmetered or fictional configs. More protocols can use the same profile
+interface once their node ingress, client format and common-metering field
+tests have passed.
+
+**Important:** All implemented flows in this branch are local code. Real-world
+TCP reachability, Iranian carrier compatibility and dual-path concurrent
+accounting remain field-test gates. Extra ports also need any applicable
+host/cloud firewall policy; none is changed by this PR.
+
 ## Managed node onboarding
 
 The sales-runner installer and checksum-pinned node updater now package the optional WS router module. After release, new servers onboarded through the existing authorized SSH enrollment can receive the code automatically. No manual per-server flag is needed: signing the alternate route into policy is the only startup opt-in. The tunnel/ingress provider still needs a proper integration; no DNS, paid plans or tunnels are purchased or created by this code.
@@ -46,7 +84,7 @@ This branch is not deployed. No server purchases, domains, DNS, or production mi
 
 ## Unfinished scope
 
-The new code does not deploy external ingress automatically or purchase a domain. Commercial ingress, exact Xray and concurrent cap field tests, and safe production rollout have not been proven. The current updater can restart the active node; do not run it as a zero-downtime procedure.
+The new code does not deploy external WSS ingress automatically or purchase a domain. The direct REALITY 2053/8443 alternatives need no domain but require firewall/network testing. Commercial ingress, exact Xray and concurrent cap field tests, and safe production rollout have not been proven. The current updater can restart the active node; do not run it as a zero-downtime procedure.
 
 Official references:
 - https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/
