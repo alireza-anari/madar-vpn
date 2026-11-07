@@ -10,6 +10,10 @@ def verify_policy(envelope,key,node_id,now,last_revision):
     for client in policy['clients']:
         if not re.fullmatch(r'[a-f0-9-]{36}',client.get('uuid','')) or not isinstance(client.get('validUntil'),int):raise ValueError('INVALID_CLIENT')
     if policy.get('version')==2:
+        if 'realityAltPorts' in policy:
+            from reality_alt import validate_ports
+            # Forbid arbitrary public listeners and conflicting dynamic configs.
+            validate_ports(policy['realityAltPorts'])
         ids=set();ports=set()
         for client in policy['clients']:
             ident=client.get('accountId');port=client.get('listenPort')
