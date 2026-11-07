@@ -9,6 +9,7 @@ import { nodeDependencies,updateNodeMode,renameNode,type NodeMode } from "./node
 import { setNodeMaxAccounts, setNodeMaxAllocatedBytes, setNodeWsFallback, setNodeRealityAltPorts } from "./node-settings";
 import { readManagedWsRollout, validateManagedWsFallback, managedWsStatusReady, type ManagedWsNodeStatus } from "./alternate-transport";
 import { readApprovedRealityPorts, approvedRealityPortsForDelivery } from "./managed-reality-ports";
+import { readConfirmedSecondaryPorts } from "./managed-secondary";
 import {
   sellerLimits,
   sellerNodeStats,
@@ -453,8 +454,16 @@ export async function handleResellerAdminUi(
       let policy: { version?:number; nodeId?:string; revision?:number;
                     expiresAt?:number; realityAltPorts?:unknown } = {};
       try { policy = JSON.parse(live?.policy_payload || "{}"); } catch {}
-      const effective = live ?
-        approvedRealityPortsForDelivery(live, policy, approved, now) : [];
+      const sidecar = live
+        ? await readConfirmedSecondaryPorts(db, nodeId, live.revision, now)
+        : null;
+      const effectiveNode = live && sidecar &&
+        JSON.stringify(sidecar) === JSON.stringify(policy.realityAltPorts)
+        ? { ...live, agent_capabilities: live.agent_capabilities + ",reality-alt-metered" }
+        : live;
+      const effective = effectiveNode
+        ? approvedRealityPortsForDelivery(effectiveNode, policy, approved, now)
+        : [];
       ctx.set({});
       await ctx.reply(
         "🔀 پروتکل‌ها و پورت‌های " + node.name +
