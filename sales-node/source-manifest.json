@@ -5,7 +5,8 @@
   "guard.py": "1b116deea04aab1b32cb326f6b2459a7ca9fcf94f9256d800d6c811ce5d63b1a",
   "stats.py": "90c3d5ec52f057002441bf1897b51ab3dedad19ecfdee4013a815c646075557f",
   "quota.py": "4dbc6dbb9cff20a0b341190469cdcf22371256cf79cb904c44e37d1285a2dfaa",
-  "quota_runtime.py": "5e8b224a4cff1210a9187afa1dfc3a108e414a2261f7e867e29a5fafa7e01e34",
-  "update_owned.py": "60eabfffa4c1aa69318c987750f3378db826ac01975b85350ceb7eefddeb6ff9",
-  "shared443.py": "4dab8b822c54cee385f58f3293a2288f9d23a50f0f0f90c034f88bc25007083e"
+  "quota_runtime.py": "c240f4c9b97a450acee38bdbc8c5f7d0dc5807d020532357a1a9d2e7f2f50345",
+  "update_owned.py": "c2b8d8feff04c05cb73b4d084ced196993495f38f59fdd9ec7afc97b310cc25a",
+  "shared443.py": "4dab8b822c54cee385f58f3293a2288f9d23a50f0f0f90c034f88bc25007083e",
+  "ws_fallback.py": "87fa11e57f8186b9a90acca49962d236c0a39ba6aa7565dc961dcd85f0a9f9d0"
 }
