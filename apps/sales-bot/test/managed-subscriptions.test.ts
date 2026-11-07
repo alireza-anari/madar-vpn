@@ -121,3 +121,50 @@ test("one stable link dynamically includes approved and metered fallback only", 
   response = await managedSubscriptionResponse(request, testEnv(), now);
   expect((await response.text()).trim().split("\n")).toHaveLength(1);
 });
+
+test("one managed subscription dynamically returns only approved multi-port profiles", async () => {
+  const request = requestFor();
+  const policy = signedPolicy(endpoint) as ReturnType<typeof signedPolicy> & {
+    realityAltPorts?: number[],
+  };
+  policy.realityAltPorts = [2053, 8443];
+  await env.SALES_DB.prepare(
+    "UPDATE nodes SET agent_capabilities='quota-v2,per-account-process,shared-443,reality-alt-metered,ws-metered',policy_payload=? WHERE id='n'",
+  ).bind(JSON.stringify(policy)).run();
+
+  for (const [suffix, value] of [
+    ["enabled", "1"], ["reachability_confirmed", "1"],
+    ["ports", JSON.stringify([2053, 8443])],
+  ]) {
+    await env.SALES_DB.prepare(
+      "INSERT INTO settings(key,value) VALUES(?,?)",
+    ).bind("managed_reality_alt:n:" + suffix, value).run();
+  }
+
+  let response = await managedSubscriptionResponse(request, testEnv(), now);
+  let lines = (await response.text()).trim().split("\n");
+  expect(lines).toHaveLength(3);
+  expect(lines.map(config => parseVlessRealityConfig(config).port))
+    .toEqual([443, 2053, 8443]);
+
+  for (const [key, value] of [
+    ["enabled", "1"], ["terms_approved", "1"],
+    ["hostname", endpoint.hostname], ["path", endpoint.path],
+  ]) {
+    await env.SALES_DB.prepare(
+      "INSERT INTO settings(key,value) VALUES(?,?)",
+    ).bind("managed_ws:n:" + key, value).run();
+  }
+  response = await managedSubscriptionResponse(request, testEnv(), now);
+  lines = (await response.text()).trim().split("\n");
+  expect(lines).toHaveLength(4);
+  expect(parseManagedVmessWsConfig(lines[3]!).uuid).toBe(UUID);
+
+  await env.SALES_DB.exec(
+    "UPDATE settings SET value='0' WHERE key='managed_reality_alt:n:enabled'",
+  );
+  response = await managedSubscriptionResponse(request, testEnv(), now);
+  lines = (await response.text()).trim().split("\n");
+  expect(lines).toHaveLength(2);
+  expect(parseVlessRealityConfig(lines[0]!).port).toBe(443);
+});
