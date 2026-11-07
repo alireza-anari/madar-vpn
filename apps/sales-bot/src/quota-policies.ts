@@ -1,3 +1,5 @@
+import { readManagedWsRollout, validateManagedWsFallback } from "./alternate-transport";
+import type { ManagedWsFallback } from "./alternate-transport";
 export interface QuotaClient {
   accountId: string;
   uuid: string;
@@ -15,6 +17,7 @@ export interface QuotaPolicy {
   revision: number;
   expiresAt: number;
   clients: QuotaClient[];
+  wsFallback?: ManagedWsFallback;
 }
 export async function buildQuotaPolicy(
   db: D1Database,
@@ -64,11 +67,13 @@ export async function buildQuotaPolicy(
     listenPort: a.listen_port,
     flow: a.connection_flow === "xtls-rprx-vision" ? "xtls-rprx-vision" : "",
   }));
+  const wsFallback = await readManagedWsRollout(db, nodeId);
   const old = node.policy_payload ? JSON.parse(node.policy_payload) : null;
   if (
     old?.version === 2 &&
     old.expiresAt > now + 240 &&
-    JSON.stringify(old.clients) === JSON.stringify(clients)
+    JSON.stringify(old.clients) === JSON.stringify(clients) &&
+    JSON.stringify(old.wsFallback ?? null) === JSON.stringify(wsFallback)
   )
     return old;
   const policy: QuotaPolicy = {
@@ -77,6 +82,7 @@ export async function buildQuotaPolicy(
     revision: node.revision + 1,
     expiresAt: now + 300,
     clients,
+    ...(wsFallback ? { wsFallback } : {}),
   };
   const payload = JSON.stringify(policy);
   const results = await db.batch([
@@ -116,6 +122,16 @@ export async function ackQuotaPolicy(
   if (!node) return;
   const policy = JSON.parse(node.policy_payload) as QuotaPolicy;
   if (policy.version !== 2 || policy.expiresAt <= now) return;
+  let wsPolicyValid = false;
+  try {
+    if (policy.wsFallback) {
+      validateManagedWsFallback(policy.wsFallback);
+      wsPolicyValid = true;
+    }
+  } catch {
+    // Invalid alternate metadata must never activate a new public ingress.
+    return;
+  }
   // A signed Vision policy must never be acknowledged by a legacy agent.
   if (
     policy.clients.some((client) => client.flow === "xtls-rprx-vision") &&
@@ -130,7 +146,8 @@ export async function ackQuotaPolicy(
       now,
       "quota-v2,per-account-process" +
         (health.capabilities.includes("shared-443") ? ",shared-443" : "") +
-        (health.capabilities.includes("shared-443") && health.capabilities.includes("vision-metered") ? ",vision-metered" : ""),
+        (health.capabilities.includes("shared-443") && health.capabilities.includes("vision-metered") ? ",vision-metered" : "") +
+        (wsPolicyValid && health.capabilities.includes("shared-443") && health.capabilities.includes("ws-metered") ? ",ws-metered" : ""),
       nodeId,
       revision,
     )
