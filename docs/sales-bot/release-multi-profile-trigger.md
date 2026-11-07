@@ -22,3 +22,8 @@ configs and assess readiness.
 
 This release is intended for **bot publication only**, not as proof that
 new server-side listeners exist or are ready for customer sales.
+
+## Retry note
+The first guarded release stopped in preflight before deployment because curl
+cannot combine -f with --fail-with-body. The workflow invocation was corrected;
+the expected previous version and release source guard remain unchanged.
