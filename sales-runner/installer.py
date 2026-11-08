@@ -139,6 +139,13 @@ def install(transport,job,api,check=lambda:None):
     # claim that a port occupied by an unrelated process is usable.
     auto_ports=[2053,8443] if config.get('protocolVersion')==2 and not info['owned'] else []
     if auto_ports and info.get('altPortsBusy'):raise ValueError('PORT_CONFLICT')
+    if auto_ports:
+        # If this is an AWS-owned target, the runner's temporary IAM role
+        # opens ONLY the two allowlisted public VPN ports on its exact SG.
+        # Non-AWS targets are unchanged; provider firewalls need their API.
+        from aws_network import ensure_network
+        ensure_network(job['targetIp'],job['port'],extra_tcp_ports=auto_ports)
+        check()
     files=download(info['arch'],job['artifactVersion']);check()
     for name in ['agent.py','policy.py','xray.py','guard.py','stats.py','quota.py','quota_runtime.py','shared443.py','ws_fallback.py','reality_alt.py','update_owned.py']:files[name]=(BASE.parent/'sales-node'/name).read_bytes()
     for path in (BASE/'templates').iterdir():files[path.name]=path.read_bytes()
