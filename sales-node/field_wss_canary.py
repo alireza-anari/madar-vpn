@@ -348,10 +348,11 @@ def retry_failed_zero_usage():
         fail("FIELD_UNIT_CHANGED")
     if json.loads(CONFIG.read_text()) != build_config(original, state["uuid"]):
         fail("FIELD_CONFIG_CHANGED")
-    if BACKUP_UNIT.read_text().find("madar-xray-wss-canary") >= 0:
-        # Backup is the original one-service no-client unit, not this field
-        # supervisor (which explicitly runs field_wss_canary.py).
-        pass
+    backup_unit = BACKUP_UNIT.read_text()
+    if ("field_wss_canary.py" in backup_unit or
+            "ExecStart=/opt/madar-wss-test/xray run -c /etc/madar-wss-canary/config.json"
+            not in backup_unit):
+        fail("ORIGINAL_UNIT_INVALID")
     marker.write_text("zero-usage failure retry issued at " + str(int(time.time())) + "\\n")
     marker.chmod(0o600)
     # Restoring the original zero-client/blackhole-only canary invalidates
