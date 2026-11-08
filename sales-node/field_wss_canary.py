@@ -202,6 +202,22 @@ def prepare():
         subprocess.run(["systemctl", "restart", "madar-xray-wss-canary"],
                        check=False)
         raise
+    # Do not hand out a credential until the metering API has returned a
+    # valid initial sample. Previously the link was printed while the
+    # supervisor was still retrying and about to crash on a missing value.
+    deadline = time.monotonic() + 12
+    while True:
+        status = json.loads(STATE.read_text())
+        alive = subprocess.run(["systemctl", "is-active", "--quiet",
+                                "madar-xray-wss-canary"]).returncode == 0
+        if not alive or status.get("status") != "running":
+            fail("FIELD_METER_NOT_READY")
+        if status.get("meterReady") is True:
+            break
+        if time.monotonic() >= deadline:
+            fail("FIELD_METER_NOT_READY")
+        time.sleep(.25)
+
     payload = {
         "v": "2", "ps": "Madar-WSS-Field-20min-50MB",
         "add": DOMAIN, "port": "443", "id": ident, "aid": "0",
@@ -283,6 +299,8 @@ def serve():
                 if time.monotonic() >= deadline:
                     raise
                 time.sleep(.3)
+        state["meterReady"] = True
+        atomic_json(STATE, state)
         while True:
             if time.time() >= state["expiresAt"]:
                 state["status"] = "expired"
