@@ -1,0 +1,73 @@
+name: Madar isolated Cloudflare Pages WSS edge diagnostic
+
+on:
+  push:
+    branches: ['feat/madar-wss-pages-edge-20261108']
+    paths:
+      - 'apps/wss-pages-lab/**'
+      - '.github/workflows/deploy-wss-pages-lab.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: madar-pages-edge-diagnostic
+  cancel-in-progress: false
+
+jobs:
+  deploy-pages-probe:
+    runs-on: ubuntu-24.04
+    env:
+      CLOUDFLARE_ACCOUNT_ID: 2e4e0d025c81b9134fd2d19f17535e30
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      TEST_URL: https://madar-cf-edge-probe.pages.dev
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.9.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile
+      - name: Source safety validation
+        run: |
+          set -euo pipefail
+          node --check apps/wss-pages-lab/public/_worker.js
+          grep -q 'vpnReady: false' apps/wss-pages-lab/public/_worker.js
+          ! grep -q -E '(UPSTREAM_HOST|fetch\(origin|RUNNER_SERVICE_SECRET|SALES_DB)' apps/wss-pages-lab/public/_worker.js
+      - name: Publish isolated Pages test only
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          pnpm --filter @madar/sales-bot exec wrangler pages deploy ../../apps/wss-pages-lab/public \
+            --project-name madar-cf-edge-probe --branch main --commit-hash "$GITHUB_SHA" \
+            --commit-dirty=false
+      - name: HTTP and real WSS edge tests
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 12); do
+            if curl -fsS --connect-timeout 5 --max-time 12 "$TEST_URL/healthz" | jq -e '.edge=="available" and .vpnReady==false and .platform=="cloudflare-pages"' >/dev/null; then break; fi
+            sleep 3
+          done
+          curl -fsS "$TEST_URL/healthz" | jq -e '.vpnReady==false and .tunnelConfigured==false'
+          curl -fsS "$TEST_URL/test" | grep -q 'آزمایش مسیر جایگزین'
+          test "$(curl -sS -o /dev/null -w '%{http_code}' "$TEST_URL/__probe")" = 426
+          node --input-type=module <<'JS'
+          await new Promise((resolve,reject) => {
+            const socket = new WebSocket('wss://madar-cf-edge-probe.pages.dev/__probe');
+            const timer = setTimeout(() => {socket.close();reject(new Error('WSS timeout'))}, 12000);
+            socket.addEventListener('open', () => socket.send('ping'));
+            socket.addEventListener('message', event => {
+              clearTimeout(timer);
+              if(event.data !== 'pong') reject(new Error('Bad WSS response'));
+              else resolve();
+              socket.close();
+            });
+            socket.addEventListener('error', () => {clearTimeout(timer);reject(new Error('WSS unavailable'))});
+          });
+          console.log('PAGES_WSS_EDGE_ONLY_TEST_PASSED');
+          JS
