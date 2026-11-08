@@ -105,6 +105,19 @@ def test_stats_counts_both_directions_and_rejects_invalid_data(monkeypatch):
     with pytest.raises(ValueError, match="STATS_NEGATIVE"):
         read_total()
 
+    # Actual Xray zero traffic response omits protobuf's default "value".
+    monkeypatch.setattr(mod.subprocess, "run",
+                        lambda *args, **kw: result({"stat": [
+                            {"name": f"user>>>{EMAIL}>>>traffic>>>uplink"},
+                            {"name": "inbound>>>madar-wss-canary>>>traffic>>>downlink"},
+                        ]}))
+    assert read_total() == 0
+
+    monkeypatch.setattr(mod.subprocess, "run",
+                        lambda *args, **kw: result({}))
+    with pytest.raises(ValueError, match="STATS_UNAVAILABLE"):
+        read_total()
+
 
 def test_generated_config_parses_on_real_pinned_xray(tmp_path):
     binary = os.getenv("MADAR_XRAY_BIN")
@@ -115,3 +128,91 @@ def test_generated_config_parses_on_real_pinned_xray(tmp_path):
     path.write_text(json.dumps(conf))
     subprocess.run([binary, "run", "-test", "-c", str(path)],
                    check=True, capture_output=True, timeout=20)
+
+def test_retry_refuses_rearming_active_service_or_consumed_quota(
+        monkeypatch, tmp_path):
+    import field_wss_canary as mod
+    data = tmp_path / "data"
+    data.mkdir()
+    state = data / "state.json"
+    state.write_text(json.dumps({
+        "status": "stopped", "uuid": "11111111-1111-4111-8111-111111111111",
+        "usedBytes": 1,
+    }))
+    backup_conf = tmp_path / "config.before-field-test.json"
+    backup_unit = tmp_path / "unit.before-field-test.service"
+    backup_conf.write_text("{}")
+    backup_unit.write_text("x")
+    monkeypatch.setattr(mod, "ROOT", tmp_path)
+    monkeypatch.setattr(mod, "DATA", data)
+    monkeypatch.setattr(mod, "STATE", state)
+    monkeypatch.setattr(mod, "BACKUP_CONFIG", backup_conf)
+    monkeypatch.setattr(mod, "BACKUP_UNIT", backup_unit)
+    monkeypatch.setattr(mod.os, "geteuid", lambda: 0)
+
+    with pytest.raises(SystemExit, match="NOT_ZERO_USAGE_FAILURE"):
+        mod.retry_failed_zero_usage()
+
+    state.write_text(json.dumps({
+        "status": "stopped", "uuid": "11111111-1111-4111-8111-111111111111",
+        "usedBytes": 0,
+    }))
+    monkeypatch.setattr(mod.subprocess, "run",
+                        lambda *args, **kw: subprocess.CompletedProcess([], 0))
+    with pytest.raises(SystemExit, match="FIELD_SERVICE_STILL_ACTIVE"):
+        mod.retry_failed_zero_usage()
+
+
+def test_retry_resets_only_exact_owned_zero_usage_test_then_creates_new_uuid(
+        monkeypatch, tmp_path):
+    import field_wss_canary as mod
+    old_uuid = "11111111-1111-4111-8111-111111111111"
+    backup = original_config()
+    data = tmp_path / "data"
+    data.mkdir()
+    state = data / "state.json"
+    state.write_text(json.dumps({
+        "status": "stopped", "uuid": old_uuid,
+        "usedBytes": 0, "quotaBytes": LIMIT,
+    }))
+    backup_conf = tmp_path / "config.before-field-test.json"
+    backup_unit = tmp_path / "unit.before-field-test.service"
+    config = tmp_path / "config.json"
+    unit = tmp_path / "canary.service"
+    path_file = tmp_path / "ws-path"
+    caddy = tmp_path / "Caddyfile"
+    binary = tmp_path / "xray"
+    path = "/madar-" + "a" * 24
+    path_file.write_text(path)
+    caddy.write_text(f"""madar-test.loomera.ir {{
+    @madarxray path {path}
+    reverse_proxy @madarxray 127.0.0.1:18080
+}}""")
+    backup_conf.write_text(json.dumps(backup))
+    backup_unit.write_text(
+        "[Service]\\nExecStart=/opt/madar-wss-test/xray run -c /etc/madar-wss-canary/config.json\\n"
+    )
+    config.write_text(json.dumps(build_config(backup, old_uuid)))
+    unit.write_text(mod.unit_text())
+    binary.write_bytes(b"binary")
+    for key, val in (
+        ("ROOT", tmp_path), ("DATA", data), ("STATE", state),
+        ("BACKUP_CONFIG", backup_conf), ("BACKUP_UNIT", backup_unit),
+        ("CONFIG", config), ("UNIT", unit), ("PATH_FILE", path_file),
+        ("CADDY", caddy), ("BIN", binary),
+    ):
+        monkeypatch.setattr(mod, key, val)
+    monkeypatch.setattr(mod.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(mod.subprocess, "run", lambda *args, **kw:
+                        subprocess.CompletedProcess(args, 1 if "is-active" in args else 0))
+    called = []
+    monkeypatch.setattr(mod, "prepare", lambda: called.append(True))
+    mod.retry_failed_zero_usage()
+    assert called == [True]
+    assert (tmp_path / "field-retry-issued").exists()
+    assert json.loads(config.read_text()) == backup
+    assert unit.read_text() == backup_unit.read_text() if backup_unit.exists() else True
+    assert not state.exists()
+    assert not backup_conf.exists()
+    with pytest.raises(SystemExit, match="FIELD_RETRY_ALREADY_USED"):
+        mod.retry_failed_zero_usage()
