@@ -29,7 +29,7 @@ and systemd unit, and switches **only** this test unit to a one-use,
 non-restarting supervisor. Other services, Caddy, DNS, AWS and sales bot are
 never touched. It prints a **private** VMess/WSS config for the operator.
 
-The sample account uses a 20-minute expiry and a **sampled 50 MB maximum**.
+The sample account uses a 60-minute expiry and a **sampled 50 MB maximum**.
 The program polls Xray StatsService twice per second, stops the child Xray on
 expiry, quota sample threshold, process failure or stats-query failure, and
 persists observed consumption. After the first run it cannot be restarted
@@ -50,7 +50,7 @@ fail closed. A **single** `retry-zero` operation is allowed only when the
 owned test unit is inactive, prior state is `stopped` with exactly zero
 recorded bytes, backup of the original zero-client/blackhole canary matches,
 and both internal listeners are free. This operation invalidates the previous
-VMess UUID and prints a fresh, private link with a new 20-minute window.
+VMess UUID and prints a fresh, private link with a new 60-minute window.
 The `field-retry-issued` marker prevents further programmatic rearming.
 Do not re-use the failed `vmess://` link.
 
@@ -59,6 +59,29 @@ and verify its full SHA-256 before replacing
 `/opt/madar-wss-test/field_wss_canary.py`, then run
 `sudo python3 /opt/madar-wss-test/field_wss_canary.py retry-zero`.
 Leave Caddy/DNS/Security Group unchanged.
+
+## 2026-11-08 expiration / 502 Bad Gateway result
+
+The user provided v2rayNG logs repeatedly showing
+`wss://madar-test.loomera.ir/madar-465148f085316815204bb5d7`
+returning HTTP `502 Bad Gateway` near 23:54–23:55 Tehran time.
+The previous canary expired **23:51:40 Tehran** (`expiresAt=1794169300`).
+As expected, the supervisor terminated the internal `127.0.0.1:18080`
+listener, leaving Caddy on HTTPS 443 unable to proxy that WS path.
+This evidence **does not show that the external domain was blocked**.
+It also does **not explain the earlier slow/unstable connection before expiry**,
+which must be evaluated separately during a live session.
+
+A controlled `retry-expired` is available exactly once for that same
+one-use field canary, and only after it is confirmed `expired`, with
+`meterReady: true`, valid recorded use below the 50 MB sample limit,
+original service backups, exact owned Xray config, unoccupied internal
+listeners and a non-running systemd unit. It invalidates the old VMess UUID,
+records the old consumed bytes in `field-expiry-retry-issued`, and generates
+a *new* private link for a **60-minute, sampled 50 MB test session**.
+Attempting this while still active, unmetered or exhausted fails closed.
+Do not use `retry-zero` for a session that transferred traffic.
+Neither the original nor the new sample cap is suitable for commercial use.
 
 The test path is still shared with the browser WSS upgrade page. When a field
 VMess UUID is installed, unauthorized clients must be rejected. Use client
