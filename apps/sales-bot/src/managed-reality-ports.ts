@@ -22,12 +22,19 @@ export async function readApprovedRealityPorts(
 ): Promise<ManagedRealityPort[] | null> {
   const prefix = "managed_reality_alt:" + nodeId + ":";
   const rows = await db.prepare(
-    "SELECT key,value FROM settings WHERE key IN (?,?,?)",
-  ).bind(prefix + "enabled", prefix + "ports", prefix + "reachability_confirmed")
+    "SELECT key,value FROM settings WHERE key IN (?,?,?,?)",
+  ).bind(
+    prefix + "enabled", prefix + "ports",
+    prefix + "reachability_confirmed", prefix + "auto_installed",
+  )
     .all<{key:string;value:string}>();
   const values = new Map(rows.results.map(row => [row.key, row.value]));
+  // Fresh installs can automatically provision secondary listeners. This is
+  // NOT a claim of mobile-carrier reachability: publication still requires
+  // exact signed policy and an actual live metered listener ACK.
   if (values.get(prefix + "enabled") !== "1" ||
-      values.get(prefix + "reachability_confirmed") !== "1") return null;
+      (values.get(prefix + "reachability_confirmed") !== "1" &&
+       values.get(prefix + "auto_installed") !== "1")) return null;
   try {
     return validateManagedRealityPorts(JSON.parse(values.get(prefix + "ports") || ""));
   } catch {
