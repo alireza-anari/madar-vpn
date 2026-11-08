@@ -228,19 +228,28 @@ def read_total():
         raise ValueError("STATS_INVALID")
     user_total = 0
     inbound_total = 0
+    recognized = 0
     for item in stats:
         name = item.get("name", "")
         if name in (f"user>>>{EMAIL}>>>traffic>>>uplink",
                     f"user>>>{EMAIL}>>>traffic>>>downlink",
                     "inbound>>>madar-wss-canary>>>traffic>>>uplink",
                     "inbound>>>madar-wss-canary>>>traffic>>>downlink"):
-            number = int(item["value"])
+            # Xray uses protobuf JSON; zero-valued uint64 counters can
+            # legitimately omit the "value" field entirely.
+            raw = item.get("value", 0)
+            if isinstance(raw, bool) or not isinstance(raw, (str, int)):
+                raise ValueError("STATS_INVALID_VALUE")
+            number = int(raw)
+            recognized += 1
             if number < 0:
                 raise ValueError("STATS_NEGATIVE")
             if name.startswith("user>>>"):
                 user_total += number
             else:
                 inbound_total += number
+    if recognized == 0:
+        raise ValueError("STATS_UNAVAILABLE")
     # Single-user inbound: additionally count everything crossing the
     # listener, even if user-level accounting is absent or delayed.
     return max(user_total, inbound_total)
@@ -303,6 +312,60 @@ def serve():
         atomic_json(STATE, state)
 
 
+def retry_failed_zero_usage():
+    """One isolated retry for the previously crashed, zero-traffic canary.
+
+    No changes to Caddy, other nodes, or the production bot. The old UUID
+    becomes invalid. A retry marker prevents unlimited restarts with fresh
+    50 MB quotas. Never use this for commercial access.
+    """
+    if os.geteuid() != 0:
+        fail("ROOT_REQUIRED")
+    marker = ROOT / "field-retry-issued"
+    if marker.exists():
+        fail("FIELD_RETRY_ALREADY_USED")
+    if not STATE.is_file() or not BACKUP_CONFIG.is_file() or not BACKUP_UNIT.is_file():
+        fail("FIELD_BACKUPS_MISSING")
+    state = json.loads(STATE.read_text())
+    if (state.get("status") != "stopped" or
+            type(state.get("usedBytes")) is not int or
+            state["usedBytes"] != 0 or
+            not isinstance(state.get("uuid"), str)):
+        fail("NOT_ZERO_USAGE_FAILURE")
+    if subprocess.run(["systemctl", "is-active", "--quiet",
+                       "madar-xray-wss-canary"]).returncode == 0:
+        fail("FIELD_SERVICE_STILL_ACTIVE")
+    for port in (18080, API_PORT):
+        with socket.socket() as sock:
+            try:
+                sock.bind(("127.0.0.1", port))
+            except OSError:
+                fail("FIELD_LISTENER_STILL_ACTIVE")
+    path = PATH_FILE.read_text().strip()
+    original = json.loads(BACKUP_CONFIG.read_text())
+    eligible(original, path, CADDY.read_text())
+    if UNIT.read_text() != unit_text():
+        fail("FIELD_UNIT_CHANGED")
+    if json.loads(CONFIG.read_text()) != build_config(original, state["uuid"]):
+        fail("FIELD_CONFIG_CHANGED")
+    if BACKUP_UNIT.read_text().find("madar-xray-wss-canary") >= 0:
+        # Backup is the original one-service no-client unit, not this field
+        # supervisor (which explicitly runs field_wss_canary.py).
+        pass
+    marker.write_text("zero-usage failure retry issued at " + str(int(time.time())) + "\\n")
+    marker.chmod(0o600)
+    # Restoring the original zero-client/blackhole-only canary invalidates
+    # the old VMess UUID before any new credentials are generated.
+    shutil.copy2(BACKUP_CONFIG, CONFIG)
+    shutil.copy2(BACKUP_UNIT, UNIT)
+    subprocess.run(["systemctl", "daemon-reload"], check=True)
+    STATE.unlink()
+    DATA.rmdir()
+    BACKUP_CONFIG.unlink()
+    BACKUP_UNIT.unlink()
+    prepare()
+
+
 def status():
     if not STATE.exists():
         print("not prepared")
@@ -314,12 +377,14 @@ def status():
 
 def main():
     arg = argparse.ArgumentParser()
-    arg.add_argument("action", choices=["prepare", "serve", "status"])
+    arg.add_argument("action", choices=["prepare", "serve", "status", "retry-zero"])
     args = arg.parse_args()
     if args.action == "prepare":
         prepare()
     elif args.action == "serve":
         serve()
+    elif args.action == "retry-zero":
+        retry_failed_zero_usage()
     else:
         status()
 
