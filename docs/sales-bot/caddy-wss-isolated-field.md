@@ -39,6 +39,27 @@ quota is **sampling-based**, a high-throughput in-flight burst **can exceed**
 account may be issued using this mechanism. All production volume caps remain
 dependent on the existing signed Madar policy + per-account metered backend.
 
+## Fix for 2026-11-08 zero-counter crash
+
+Real Xray 26.3.27 stats-query JSON may omit the `value` member for a
+valid zero-valued protobuf counter. Earlier field supervisor versions raised
+`KeyError: 'value'`, marked state `stopped` with `usedBytes: 0` and killed
+the isolated child (expected fail-closed behavior). Newer code treats only
+that missing counter value as zero; absent/unrecognized counters still
+fail closed. A **single** `retry-zero` operation is allowed only when the
+owned test unit is inactive, prior state is `stopped` with exactly zero
+recorded bytes, backup of the original zero-client/blackhole canary matches,
+and both internal listeners are free. This operation invalidates the previous
+VMess UUID and prints a fresh, private link with a new 20-minute window.
+The `field-retry-issued` marker prevents further programmatic rearming.
+Do not re-use the failed `vmess://` link.
+
+To apply: download the corrected script using an immutable green Git commit
+and verify its full SHA-256 before replacing
+`/opt/madar-wss-test/field_wss_canary.py`, then run
+`sudo python3 /opt/madar-wss-test/field_wss_canary.py retry-zero`.
+Leave Caddy/DNS/Security Group unchanged.
+
 The test path is still shared with the browser WSS upgrade page. When a field
 VMess UUID is installed, unauthorized clients must be rejected. Use client
 software to test actual traffic/connection; a green browser upgrade alone is
