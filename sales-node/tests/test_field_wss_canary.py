@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 from types import SimpleNamespace
 
@@ -43,6 +44,7 @@ def test_real_xray_starts_without_clients_and_test_user_can_only_egress_via_expl
     assert conf["inbounds"][1]["port"] == API_PORT
     assert conf["api"]["services"] == ["StatsService"]
     assert conf["policy"]["levels"]["0"]["statsUserDownlink"] is True
+    assert conf["policy"]["system"]["statsInboundDownlink"] is True
     assert conf["outbounds"][0] == {"tag": "blocked", "protocol": "blackhole"}
     assert conf["outbounds"][1] == {"tag": "field-direct", "protocol": "freedom"}
     rules = conf["routing"]["rules"]
@@ -92,12 +94,24 @@ def test_stats_counts_both_directions_and_rejects_invalid_data(monkeypatch):
         {"name": f"user>>>{EMAIL}>>>traffic>>>uplink", "value": "123"},
         {"name": f"user>>>{EMAIL}>>>traffic>>>downlink", "value": "456"},
         {"name": "unrelated", "value": "1000000"},
+        {"name": "inbound>>>madar-wss-canary>>>traffic>>>downlink", "value": "700"},
     ]}
     monkeypatch.setattr(mod.subprocess, "run", lambda *args, **kw: result(sample))
-    assert read_total() == 579
+    assert read_total() == 700
     monkeypatch.setattr(mod.subprocess, "run",
                         lambda *args, **kw: result({"stat": [
                             {"name": f"user>>>{EMAIL}>>>traffic>>>uplink", "value": "-1"},
                         ]}))
     with pytest.raises(ValueError, match="STATS_NEGATIVE"):
         read_total()
+
+
+def test_generated_config_parses_on_real_pinned_xray(tmp_path):
+    binary = os.getenv("MADAR_XRAY_BIN")
+    if not binary:
+        pytest.skip("Pinned real Xray binary only in integrated CI")
+    conf = build_config(original_config(), "11111111-1111-4111-8111-111111111111")
+    path = tmp_path / "field.json"
+    path.write_text(json.dumps(conf))
+    subprocess.run([binary, "run", "-test", "-c", str(path)],
+                   check=True, capture_output=True, timeout=20)
