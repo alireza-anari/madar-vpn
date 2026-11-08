@@ -183,6 +183,9 @@ def prepare():
     try:
         subprocess.run(["systemctl", "stop", "madar-xray-wss-canary"],
                        check=True, timeout=20)
+        # Xray and the one-use supervisor run as nobody, not root.
+        # Keep the private test UUID unreadable to other local users.
+        os.chown(candidate_path, nobody.pw_uid, nobody.pw_gid)
         os.replace(candidate_path, CONFIG)
         UNIT.write_text(unit_text())
         subprocess.run(["systemctl", "daemon-reload"], check=True)
