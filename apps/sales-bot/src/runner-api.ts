@@ -118,7 +118,7 @@ export async function reportJob(
     }
   }
   const [r] = await env.SALES_DB.batch(actions);
-  if (!r.meta.changes) throw new Error("LEASE_EXPIRED");
+  if (!r?.meta.changes) throw new Error("LEASE_EXPIRED");
   if (job.kind === "install" && state === "failed")
     await env.SALES_DB.prepare(
       "UPDATE nodes SET state='failed',healthy=0 WHERE id=?",
