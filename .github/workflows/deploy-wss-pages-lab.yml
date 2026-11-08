@@ -1,4 +1,4 @@
-name: Madar isolated Cloudflare Pages WSS edge diagnostic
+name: Madar Cloudflare Pages WSS edge diagnostic verification
 
 on:
   push:
@@ -18,8 +18,6 @@ jobs:
   deploy-pages-probe:
     runs-on: ubuntu-24.04
     env:
-      CLOUDFLARE_ACCOUNT_ID: 2e4e0d025c81b9134fd2d19f17535e30
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       TEST_URL: https://madar-cf-edge-probe.pages.dev
     steps:
       - uses: actions/checkout@v4
@@ -39,13 +37,6 @@ jobs:
           node --check apps/wss-pages-lab/public/_worker.js
           grep -q 'vpnReady: false' apps/wss-pages-lab/public/_worker.js
           ! grep -q -E '(UPSTREAM_HOST|fetch\(origin|RUNNER_SERVICE_SECRET|SALES_DB)' apps/wss-pages-lab/public/_worker.js
-      - name: Publish isolated Pages test only
-        run: |
-          set -euo pipefail
-          test -n "$CLOUDFLARE_API_TOKEN"
-          pnpm --filter @madar/sales-bot exec wrangler pages deploy ../../apps/wss-pages-lab/public \
-            --project-name madar-cf-edge-probe --branch main --commit-hash "$GITHUB_SHA" \
-            --commit-dirty=false
       - name: HTTP and real WSS edge tests
         run: |
           set -euo pipefail
