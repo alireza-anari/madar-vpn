@@ -57,6 +57,39 @@ export default {
         vpnReady: false,
       }, { headers: BASE_HEADERS });
     }
+    if (request.method === "GET" && path === "/test") {
+      const html = `<!doctype html><html lang="fa" dir="rtl"><head>
+      <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+      <title>Madar – Cloudflare WSS Lab</title>
+      <style>body{font:17px system-ui;margin:0;background:#0c1220;color:#f0f5ff}
+      main{max-width:620px;margin:8vh auto;padding:24px}
+      section{background:#192335;border:1px solid #34435b;border-radius:16px;padding:26px}
+      #status{padding:16px;border-radius:10px;background:#253650}
+      small{color:#b8c8dc;line-height:1.8}a{color:#9de8ed}</style>
+      </head><body><main><section><h2>☁️ آزمایش WebSocket مدار</h2>
+      <p id="status">در حال بررسی مسیر WSS کلادفلر…</p>
+      <small>این صفحه فقط اتصال تلفن شما به لبه Cloudflare را بررسی می‌کند.
+      موفقیت آن به معنای فعال‌بودن VPN، Xray، کنترل حجم یا پایداری اتصال ایرانسل نیست.</small>
+      </section></main><script>
+      const status = document.getElementById("status");
+      const socket = new WebSocket("wss://" + location.host + "/__probe");
+      const timer = setTimeout(() => { status.textContent = "❌ پاسخی از WSS دریافت نشد"; socket.close(); }, 10000);
+      socket.onopen = () => socket.send("ping");
+      socket.onmessage = event => {
+        clearTimeout(timer);
+        status.textContent = event.data === "pong"
+          ? "✅ اتصال WebSocket به لبه کلادفلر برقرار شد"
+          : "❌ پاسخ غیرمنتظره از WSS";
+        socket.close();
+      };
+      socket.onerror = () => {clearTimeout(timer);status.textContent = "❌ اتصال WSS برقرار نشد";};
+      </script></body></html>`;
+      return new Response(html, { headers: {
+        ...BASE_HEADERS,
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src wss://madar-wss-lab.alirezaanari117.workers.dev",
+      }});
+    }
     if (request.method !== "GET") return new Response("Not found", {
       status: 404, headers: BASE_HEADERS,
     });
