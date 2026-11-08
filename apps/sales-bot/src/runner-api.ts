@@ -78,20 +78,46 @@ export async function reportJob(
       !/^SHA256:[A-Za-z0-9+/]{43}$/.test(details.fingerprint))
   )
     throw new Error("INVALID_REPORT");
-  const r = await env.SALES_DB.prepare(
+  // Never auto-configure EXISTING servers or reuse a previous enrollment.
+  // A fresh quota-v2 installer attests it packaged both optional listeners,
+  // and the signed-policy + live-agent metering gates remain mandatory.
+  const autoProfiles =
+    job.kind === "install" && state === "ready" && !!job.node_id &&
+    details.freshInstall === true && details.protocolVersion === 2 &&
+    JSON.stringify(details.autoRealityPorts) === "[2053,8443]" &&
+    await salesMode(env.SALES_DB) &&
+    !(await env.SALES_DB.prepare(
+      "SELECT id FROM installation_jobs WHERE node_id=? AND id<>? AND kind='install' AND state='ready' LIMIT 1",
+    ).bind(job.node_id, id).first("id")) &&
+    !(await env.SALES_DB.prepare(
+      "SELECT id FROM managed_accounts WHERE node_id=? LIMIT 1",
+    ).bind(job.node_id).first("id"));
+  const update = env.SALES_DB.prepare(
     "UPDATE installation_jobs SET state=?,safe_code=?,lease_until=?,fingerprint=COALESCE(?,fingerprint),encrypted_credentials=CASE WHEN ? IN ('ready','failed') THEN NULL ELSE encrypted_credentials END WHERE id=? AND lease_id=? AND lease_until>? AND state NOT IN ('ready','failed')",
-  )
-    .bind(
-      state,
-      safeCode,
-      ["ready", "failed"].includes(state) ? 0 : now + 120,
-      job.kind === "probe" && state === "ready" ? details.fingerprint : null,
-      state,
-      id,
-      leaseId,
-      now,
-    )
-    .run();
+  ).bind(
+    state,
+    safeCode,
+    ["ready", "failed"].includes(state) ? 0 : now + 120,
+    job.kind === "probe" && state === "ready" ? details.fingerprint : null,
+    state,
+    id,
+    leaseId,
+    now,
+  );
+  const actions: D1PreparedStatement[] = [update];
+  if (autoProfiles) {
+    const prefix = "managed_reality_alt:" + job.node_id + ":";
+    for (const [suffix, value] of [
+      ["enabled", "1"],
+      ["ports", "[2053,8443]"],
+      ["auto_installed", "1"],
+    ] as const) {
+      actions.push(env.SALES_DB.prepare(
+        "INSERT INTO settings(key,value) SELECT ?,? WHERE EXISTS(SELECT 1 FROM installation_jobs WHERE id=? AND lease_id=? AND state='ready' AND node_id=?) AND NOT EXISTS(SELECT 1 FROM managed_accounts WHERE node_id=?) ON CONFLICT(key) DO NOTHING",
+      ).bind(prefix + suffix, value, id, leaseId, job.node_id, job.node_id));
+    }
+  }
+  const [r] = await env.SALES_DB.batch(actions);
   if (!r.meta.changes) throw new Error("LEASE_EXPIRED");
   if (job.kind === "install" && state === "failed")
     await env.SALES_DB.prepare(
@@ -103,7 +129,9 @@ export async function reportJob(
     await enqueue(env.SALES_DB, `install:${id}:${state}`, job.user_id, {
       text:
         state === "ready"
-          ? "نصب نود انجام شد؛ سلامت و دریافت سیاست در حال بررسی است."
+          ? (autoProfiles
+              ? "✅ نصب سرور و آماده‌سازی خودکار REALITY روی پورت‌های ۴۴۳، ۲۰۵۳ و ۸۴۴۳ انجام شد. مسیرهای جایگزین پس از تأیید زنده Agent و حجم مشترک در لینک اشتراک ظاهر می‌شوند؛ کیفیت اپراتور هنوز تست نشده است."
+              : "نصب نود انجام شد؛ سلامت و دریافت سیاست در حال بررسی است.")
           : `نصب متوقف شد: ${safeCode}. اطلاعات اتصال موقت پاک شد.`,
     });
 }
