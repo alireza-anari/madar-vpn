@@ -55,6 +55,10 @@ jobs:
         env:
           MADAR_XRAY_BIN: /tmp/madar-ci-xray
         run: python3 -m pytest -q sales-node/tests/test_alt_xray_integration.py
+      - name: Validate Caddy WSS field-only Xray config using pinned real core
+        env:
+          MADAR_XRAY_BIN: /tmp/madar-ci-xray
+        run: python3 -m pytest -q sales-node/tests/test_field_wss_canary.py
       - name: Production opt-in must not be a default
         run: |
           ! grep -q "'managedWsOptIn':True" sales-runner/installer.py
