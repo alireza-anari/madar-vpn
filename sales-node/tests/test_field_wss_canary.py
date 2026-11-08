@@ -56,15 +56,19 @@ def test_real_xray_starts_without_clients_and_test_user_can_only_egress_via_expl
     assert SECONDS <= 1200
 
 
-def test_adoption_rejects_existing_clients_and_outbound_changes(monkeypatch):
+def test_adoption_rejects_existing_clients_and_outbound_changes(monkeypatch, tmp_path):
     import field_wss_canary as mod
-    monkeypatch.setattr(mod.BIN.__class__, "is_file", lambda self: True)
+    binary = tmp_path / "xray"
+    unit = tmp_path / "canary.service"
+    binary.write_bytes(b"test")
+    unit.write_text("test")
+    monkeypatch.setattr(mod, "BIN", binary)
+    monkeypatch.setattr(mod, "UNIT", unit)
     path = "/madar-" + "a" * 24
     caddy = f"""madar-test.loomera.ir {{
     @madarxray path {path}
     reverse_proxy @madarxray 127.0.0.1:18080
 }}"""
-    monkeypatch.setattr(mod.UNIT.__class__, "is_file", lambda self: True)
     assert eligible(original_config(), path, caddy)
     bad = original_config()
     bad["inbounds"][0]["settings"]["clients"] = [{"id": "pre-existing"}]
