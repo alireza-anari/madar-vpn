@@ -50,3 +50,30 @@ def test_runner_configures_network_before_ssh_probe(monkeypatch):
  job={'id':'j','leaseId':'l','kind':'probe','targetIp':'8.8.8.8','port':22}
  assert runner.run_job(job,Api(),None)=='ready'
  assert calls==['network','ssh','AWS_NETWORK_READY']
+
+
+def test_only_new_install_explicitly_opens_2053_and_8443_on_exact_aws_target():
+ calls=[]
+ def api(region,credentials,params):
+  calls.append(params)
+  return response()
+ assert ensure_network(
+  '8.8.8.8',22,api,lambda:('eu-north-1','56.228.6.3/32',CREDS),
+  extra_tcp_ports=[2053,8443],
+ )
+ ingress=calls[1:]
+ assert [p['IpPermissions.1.FromPort'] for p in ingress]==['22','443','2053','8443']
+ assert [p['IpPermissions.1.IpRanges.1.CidrIp'] for p in ingress]==[
+  '56.228.6.3/32','0.0.0.0/0','0.0.0.0/0','0.0.0.0/0',
+ ]
+ assert all(p['GroupId']=='sg-123abc' for p in ingress)
+ calls.clear()
+ assert not ensure_network(
+  '1.1.1.1',22,api,lambda:('eu-north-1','56.228.6.3/32',CREDS),
+  extra_tcp_ports=[2053,8443],
+ )
+ assert len(calls)==1
+ for extra in [[443],[22],[2053,2053],[20000],['8443'],[8443,9000]]:
+  with pytest.raises(AwsNetworkError,match='INVALID_EXTRA_PORTS'):
+   ensure_network('8.8.8.8',22,api,
+    lambda:('eu-north-1','56.228.6.3/32',CREDS),extra_tcp_ports=extra)
