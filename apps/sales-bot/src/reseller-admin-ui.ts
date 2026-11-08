@@ -471,6 +471,10 @@ export async function handleResellerAdminUi(
         return true;
       }
       const approved = await readApprovedRealityPorts(db, nodeId);
+      const autoInstalled = (await db.prepare(
+        "SELECT value FROM settings WHERE key=?",
+      ).bind("managed_reality_alt:" + nodeId + ":auto_installed")
+        .first<string>("value")) === "1";
       const live = await db.prepare(
         "SELECT id,state,healthy,last_seen,revision,acked_revision,policy_payload,agent_capabilities FROM nodes WHERE id=?",
       ).bind(nodeId).first<ManagedWsNodeStatus>();
@@ -491,6 +495,9 @@ export async function handleResellerAdminUi(
       await ctx.reply(
         "🔀 پروتکل‌ها و پورت‌های " + node.name +
         "\n\n✅ مسیر اصلی: VLESS + REALITY · TCP 443" +
+        "\nروش راه‌اندازی: " + (autoInstalled
+          ? "✅ خودکار، همراه نصب اولیه سرور"
+          : "مدیریت دستی سرور قدیمی") +
         "\nپورت‌های درخواستی: " + (approved?.join("، ") || "غیرفعال") +
         "\nپورت‌های تأییدشده در Policy و ACK: " + (effective.join("، ") || "هنوز هیچ‌کدام") +
         "\n📶 VMess/WSS در بخش جداگانه مدیریت می‌شود." +
@@ -500,7 +507,7 @@ export async function handleResellerAdminUi(
           [btn("➕ REALITY روی 2053", "rs:multi:select:" + nodeId + ":2053")],
           [btn("➕ هر دو پورت", "rs:multi:select:" + nodeId + ":both")],
           ...(approved ? [[btn("⏸ حذف پورت‌های جایگزین", "rs:multi:disable:" + nodeId)]] : []),
-          [btn("🛠 دستور نصب امن پورت‌های جایگزین", "rs:multi:install:" + nodeId)],
+          ...(!autoInstalled ? [[btn("🛠 دستور نصب برای سرور قدیمی", "rs:multi:install:" + nodeId)]] : []),
           [btn("📶 تنظیم VMess/WSS", "rs:ws:status:" + nodeId)],
           [btn("🔎 جزئیات سرور", "rs:nodedetail:" + nodeId)], home(),
         ],
