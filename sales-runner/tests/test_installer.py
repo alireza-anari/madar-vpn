@@ -89,3 +89,56 @@ def test_quota_install_initializes_durable_state_before_starting_agent(tmp_path)
  assert json.loads((tmp_path/'etc/madar-sales-node/config.json').read_text())==config
  with sqlite3.connect(state) as db:assert db.execute('SELECT revision FROM meta').fetchone()[0]==0
  assert json.loads((tmp_path/'opt/madar-sales-node/manifest.json').read_text())['quotaInitialized'] is True
+
+
+def test_fresh_bot_install_automatically_prepares_all_metered_reality_profiles(monkeypatch):
+ import aws_network
+ calls=[]
+ class Api:
+  base='https://bot.example'
+  def post(self,path,body):
+   calls.append(('api',path,body))
+   return {}
+ class Transport:
+  def run(self,command,payload=None,timeout=None):
+   calls.append(('ssh',command,payload is not None))
+   return 'INSTALLED'
+ job={'id':'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      'nodeId':'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      'protocolVersion':2,'artifactVersion':installer.VERSION,
+      'targetIp':'8.8.8.8','port':22,'leaseId':'lease'}
+ monkeypatch.setattr(installer,'preflight',lambda *args: {
+  **info(), 'owned':False,'arch':'x86_64','altPortsBusy':[],
+  'quotaPortsBusy':False,
+ })
+ monkeypatch.setattr(installer,'download',lambda *args: {'xray':b'pinned'})
+ monkeypatch.setattr(aws_network,'ensure_network',lambda target,port,**kw:
+  calls.append(('aws',target,port,kw['extra_tcp_ports'])) or True)
+ result=installer.install(Transport(),job,Api())
+ assert result == {
+  'installed':True,'autoRealityPorts':[2053,8443],
+  'freshInstall':True,'protocolVersion':2,
+ }
+ assert ('aws','8.8.8.8',22,[2053,8443]) in calls
+ assert any(entry[0]=='api' and entry[1]=='register' for entry in calls)
+ assert any(entry[0]=='api' and entry[1]=='report' and
+            entry[2]['state']=='verifying' for entry in calls)
+ assert sum(entry[0]=='ssh' and entry[2] is True for entry in calls)==1
+
+
+def test_fresh_install_rejects_occupied_optional_port_before_any_change(monkeypatch):
+ monkeypatch.setattr(installer,'preflight',lambda *args: {
+  **info(), 'owned':False,'arch':'x86_64','altPortsBusy':[8443],
+  'quotaPortsBusy':False,
+ })
+ class Api:
+  base='https://bot.example'
+  def post(self,*args):raise AssertionError('No API side effects allowed')
+ class Transport:
+  def run(self,*args):raise AssertionError('No SSH side effects allowed')
+ job={'id':'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      'nodeId':'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      'protocolVersion':2,'artifactVersion':installer.VERSION,
+      'targetIp':'8.8.8.8','port':22,'leaseId':'lease'}
+ with pytest.raises(ValueError,match='PORT_CONFLICT'):
+  installer.install(Transport(),job,Api())
