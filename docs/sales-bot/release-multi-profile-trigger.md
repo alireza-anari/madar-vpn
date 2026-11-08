@@ -43,3 +43,21 @@ Reviewed Worker source: `7c98512929242841113a64787ae20eee0d60854b`.
 - Rollback to previously confirmed Cloudflare Worker version `0f0ab17d-7797-4055-b5a3-f59c4f281350` on production smoke failure.
 
 - Server-side optional installer still requires one explicitly initiated SSH execution on the owned Ariant VPS; no credentials are persisted or requested via Telegram.
+
+## 2026-11-08 one-step new-server provisioning rollout
+
+The approved Worker change auto-records optional 2053/8443 from a successful,
+attested fresh quota-v2 Telegram Runner install. The customer link is still
+gated by the actual signed policy revision and live metered node ACK; no
+config becomes downloadable on mere registration. Existing Ariant/AWS Node1
+installations are untouched. No migration or secret changes.
+
+Exact new Worker code reviewed: beeee659e51652602deb803e3ed3675118d0eda3
+(all bot, special node, and overall CI checks green). Latest approved tree
+source containing only docs/workflow changes: 67cee5fa0e86b8fe0b15cac8ccea621fe33a4d64.
+Rollback to the current deployed Worker version:
+ee397191-59f1-4bdf-ac81-404c1a61de2e.
+
+Important: this Worker release does not update the already running standalone
+Runner host. New-node automatic profile creation requires the Runner itself
+to run the new installer, which is pinned via sales-runner/bootstrap.sh.
