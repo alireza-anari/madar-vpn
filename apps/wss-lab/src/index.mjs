@@ -52,7 +52,7 @@ export default {
         service: "madar-wss-lab",
         mode: "test-only",
         edge: "available",
-        tunnelConfigured: originReady && path === relayPath,
+        tunnelConfigured: originReady,
         // This endpoint NEVER asserts that Xray or Irancell was tested.
         vpnReady: false,
       }, { headers: BASE_HEADERS });
