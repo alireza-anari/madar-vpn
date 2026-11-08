@@ -138,6 +138,7 @@ function nodeRows(n: Awaited<ReturnType<typeof nodeCapacities>>[number]) {
     rows.push([btn("🔢 سقف کانفیگ","rs:capacity:"+n.id),btn("📦 سقف حجم","rs:allocation:"+n.id)]);
     rows.push([btn("🔀 پروتکل‌ها و پورت‌ها", "rs:multi:status:"+n.id)]);
     rows.push([btn("📶 مسیر WSS آزمایشی","rs:ws:status:"+n.id)]);
+    rows.push([btn("☁️ آزمایش WSS کلادفلر", "rs:ws:lab:"+n.id)]);
     if(n.max_allocated_bytes!==null)rows.push([btn("♾ نامحدود کردن حجم","rs:unlimit:"+n.id)]);
     rows.push([btn("🗑 حذف از فهرست (بایگانی امن)","rs:nodeops:archive:"+n.id)]);
   }
@@ -549,12 +550,28 @@ export async function handleResellerAdminUi(
       );
       return true;
     }
-    const wsAction = data?.match(/^rs:ws:(status|setup|disable):([a-zA-Z0-9-]{1,80})$/);
+    const wsAction = data?.match(/^rs:ws:(status|setup|disable|lab):([a-zA-Z0-9-]{1,80})$/);
     if (wsAction) {
       const action = wsAction[1]!;
       const nodeId = wsAction[2]!;
       const node = (await nodeCapacities(db, now, nodeId))[0];
       if (!node) throw Error("INVALID_NODE");
+      if (action === "lab") {
+        ctx.set({});
+        const labUrl = "https://madar-wss-lab.alirezaanari117.workers.dev/test";
+        await ctx.reply(
+          "☁️ آزمایش Cloudflare WSS · " + node.name +
+          "\n\nبرای بررسی واقعی اتصال WebSocket از اینترنت همراه، لینک زیر را در همان تلفن و با دیتای ایرانسل/همراه اول باز کن:" +
+          "\n" + labUrl +
+          "\n\n✅ موفقیت آزمون فقط به معنی دسترسی به لبه Cloudflare است؛ هنوز VPN یا تونل Xray را تأیید نمی‌کند." +
+          "\n\nمسیر VMess تا زمانی که ورودی Xray و حجم مشترک به‌صورت زنده تأیید نشوند، در فروش و اشتراک مشتری ظاهر نمی‌شود." +
+          "\n\n⛔ این سرویس فقط آزمایشی است؛ REALITY اصلی و مشتریان تغییری نمی‌کنند.",
+          [[{ text: "🌐 اجرای تست WSS در مرورگر", url: labUrl }],
+           [btn("📶 وضعیت مسیر WSS", "rs:ws:status:" + nodeId)],
+           [btn("🔎 بازگشت به سرور", "rs:nodedetail:" + nodeId)], home()],
+        );
+        return true;
+      }
       if (action === "setup") {
         ctx.set({step: "admin_ws_hostname", nodeId});
         await ctx.reply(
@@ -587,6 +604,7 @@ export async function handleResellerAdminUi(
         "\n⚠️ این وضعیت، اتصال واقعی TLS، مجوز ارائه‌دهنده یا کیفیت اینترنت ایرانسل را تأیید نمی‌کند." +
         "\n\nمسیر REALITY فعلی مستقل و فعال باقی می‌ماند.",
         [
+          [{ text: "☁️ آزمایش WSS کلادفلر", url: "https://madar-wss-lab.alirezaanari117.workers.dev/test" }],
           [btn("⚙️ ثبت / اصلاح دامنه", "rs:ws:setup:" + nodeId)],
           ...(enabled ? [[btn("⏸ غیرفعال کردن مسیر دوم", "rs:ws:disable:" + nodeId)]] : []),
           [btn("🔎 سرور", "rs:nodedetail:" + nodeId)], home(),
