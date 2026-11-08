@@ -30,7 +30,7 @@ STATE = DATA / "state.json"
 BACKUP_CONFIG = ROOT / "config.before-field-test.json"
 BACKUP_UNIT = ROOT / "unit.before-field-test.service"
 LIMIT = 50_000_000
-SECONDS = 1200
+SECONDS = 3600
 EMAIL = "madar-wss-field"
 API_PORT = 18081
 DOMAIN = "madar-test.loomera.ir"
@@ -219,7 +219,7 @@ def prepare():
         time.sleep(.25)
 
     payload = {
-        "v": "2", "ps": "Madar-WSS-Field-20min-50MB",
+        "v": "2", "ps": "Madar-WSS-Field-60min-50MB",
         "add": DOMAIN, "port": "443", "id": ident, "aid": "0",
         "scy": "auto", "net": "ws", "type": "none",
         "host": DOMAIN, "path": path, "tls": "tls", "sni": DOMAIN,
@@ -227,7 +227,7 @@ def prepare():
     encoded = base64.b64encode(
         json.dumps(payload, separators=(",", ":")).encode()
     ).decode()
-    print("FIELD_TEST_ONLY_20_MINUTES_50_MB_SAMPLED_CAP")
+    print("FIELD_TEST_ONLY_60_MINUTES_50_MB_SAMPLED_CAP")
     print("KEEP_THIS_LINK_PRIVATE")
     print("vmess://" + encoded)
 
@@ -330,7 +330,7 @@ def serve():
         atomic_json(STATE, state)
 
 
-def retry_failed_zero_usage():
+def retry_failed_zero_usage(mode="zero"):
     """One isolated retry for the previously crashed, zero-traffic canary.
 
     No changes to Caddy, other nodes, or the production bot. The old UUID
@@ -339,17 +339,29 @@ def retry_failed_zero_usage():
     """
     if os.geteuid() != 0:
         fail("ROOT_REQUIRED")
-    marker = ROOT / "field-retry-issued"
+    if mode not in ("zero", "expired"):
+        fail("INVALID_RETRY_MODE")
+    marker = ROOT / ("field-retry-issued" if mode == "zero" else "field-expiry-retry-issued")
     if marker.exists():
         fail("FIELD_RETRY_ALREADY_USED")
     if not STATE.is_file() or not BACKUP_CONFIG.is_file() or not BACKUP_UNIT.is_file():
         fail("FIELD_BACKUPS_MISSING")
     state = json.loads(STATE.read_text())
-    if (state.get("status") != "stopped" or
-            type(state.get("usedBytes")) is not int or
-            state["usedBytes"] != 0 or
-            not isinstance(state.get("uuid"), str)):
-        fail("NOT_ZERO_USAGE_FAILURE")
+    if not isinstance(state.get("uuid"), str):
+        fail("INVALID_FIELD_STATE")
+    used = state.get("usedBytes")
+    if type(used) is not int or used < 0:
+        fail("INVALID_FIELD_STATE")
+    if mode == "zero":
+        if state.get("status") != "stopped" or used != 0:
+            fail("NOT_ZERO_USAGE_FAILURE")
+    elif (state.get("status") != "expired" or
+          type(state.get("expiresAt")) is not int or
+          state["expiresAt"] > int(time.time()) or
+          type(state.get("quotaBytes")) is not int or
+          not 0 <= used < state["quotaBytes"] or
+          state.get("meterReady") is not True):
+        fail("NOT_EXPIRED_METERED_FIELD")
     if subprocess.run(["systemctl", "is-active", "--quiet",
                        "madar-xray-wss-canary"]).returncode == 0:
         fail("FIELD_SERVICE_STILL_ACTIVE")
@@ -371,7 +383,8 @@ def retry_failed_zero_usage():
             "ExecStart=/opt/madar-wss-test/xray run -c /etc/madar-wss-canary/config.json"
             not in backup_unit):
         fail("ORIGINAL_UNIT_INVALID")
-    marker.write_text("zero-usage failure retry issued at " + str(int(time.time())) + "\\n")
+    marker.write_text(mode + " field rearm at " + str(int(time.time())) +
+                      " from consumed bytes " + str(used) + "\\n")
     marker.chmod(0o600)
     # Restoring the original zero-client/blackhole-only canary invalidates
     # the old VMess UUID before any new credentials are generated.
@@ -396,7 +409,7 @@ def status():
 
 def main():
     arg = argparse.ArgumentParser()
-    arg.add_argument("action", choices=["prepare", "serve", "status", "retry-zero"])
+    arg.add_argument("action", choices=["prepare", "serve", "status", "retry-zero", "retry-expired"])
     args = arg.parse_args()
     if args.action == "prepare":
         prepare()
@@ -404,6 +417,8 @@ def main():
         serve()
     elif args.action == "retry-zero":
         retry_failed_zero_usage()
+    elif args.action == "retry-expired":
+        retry_failed_zero_usage("expired")
     else:
         status()
 
