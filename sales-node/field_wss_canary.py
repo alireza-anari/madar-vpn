@@ -99,7 +99,9 @@ def build_config(original, ident):
     config["stats"] = {}
     config["policy"] = {"levels": {"0": {
         "statsUserUplink": True, "statsUserDownlink": True,
-    }}}
+    }}, "system": {
+        "statsInboundUplink": True, "statsInboundDownlink": True,
+    }}
     config["outbounds"].append({
         "tag": "field-direct", "protocol": "freedom",
     })
@@ -215,22 +217,30 @@ def read_total():
     query = subprocess.run([
         str(BIN), "api", "statsquery",
         f"--server=127.0.0.1:{API_PORT}",
-        f"-pattern=user>>>{EMAIL}>>>traffic>>>",
+        "-pattern=traffic>>>",
     ], capture_output=True, text=True, check=True, timeout=3)
     data = json.loads(query.stdout)
     stats = data.get("stat", [])
     if not isinstance(stats, list):
         raise ValueError("STATS_INVALID")
-    total = 0
+    user_total = 0
+    inbound_total = 0
     for item in stats:
         name = item.get("name", "")
         if name in (f"user>>>{EMAIL}>>>traffic>>>uplink",
-                    f"user>>>{EMAIL}>>>traffic>>>downlink"):
+                    f"user>>>{EMAIL}>>>traffic>>>downlink",
+                    "inbound>>>madar-wss-canary>>>traffic>>>uplink",
+                    "inbound>>>madar-wss-canary>>>traffic>>>downlink"):
             number = int(item["value"])
             if number < 0:
                 raise ValueError("STATS_NEGATIVE")
-            total += number
-    return total
+            if name.startswith("user>>>"):
+                user_total += number
+            else:
+                inbound_total += number
+    # Single-user inbound: additionally count everything crossing the
+    # listener, even if user-level accounting is absent or delayed.
+    return max(user_total, inbound_total)
 
 
 def serve():
