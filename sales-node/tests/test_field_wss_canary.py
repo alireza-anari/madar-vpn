@@ -204,14 +204,14 @@ def test_retry_resets_only_exact_owned_zero_usage_test_then_creates_new_uuid(
         monkeypatch.setattr(mod, key, val)
     monkeypatch.setattr(mod.os, "geteuid", lambda: 0)
     monkeypatch.setattr(mod.subprocess, "run", lambda *args, **kw:
-                        subprocess.CompletedProcess(args, 1 if "is-active" in args else 0))
+                        subprocess.CompletedProcess(args, 1 if args and "is-active" in args[0] else 0))
     called = []
     monkeypatch.setattr(mod, "prepare", lambda: called.append(True))
     mod.retry_failed_zero_usage()
     assert called == [True]
     assert (tmp_path / "field-retry-issued").exists()
     assert json.loads(config.read_text()) == backup
-    assert unit.read_text() == backup_unit.read_text() if backup_unit.exists() else True
+    assert "ExecStart=/opt/madar-wss-test/xray run -c /etc/madar-wss-canary/config.json" in unit.read_text()
     assert not state.exists()
     assert not backup_conf.exists()
     with pytest.raises(SystemExit, match="FIELD_RETRY_ALREADY_USED"):
