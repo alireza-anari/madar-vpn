@@ -46,8 +46,16 @@ def call(region,credentials,params):
   raise AwsNetworkError('AWS_NETWORK_PERMISSION_DENIED' if code in ('UnauthorizedOperation','AuthFailure','AccessDenied') else 'AWS_NETWORK_FAILED') from None
  except Exception:raise AwsNetworkError('AWS_NETWORK_FAILED') from None
 
-def ensure_network(target,ssh_port,api=call,load_identity=identity):
- """Only modify a security group attached to the exact running target IP."""
+def ensure_network(target,ssh_port,api=call,load_identity=identity,extra_tcp_ports=()):
+ """Only modify a security group attached to the exact running target IP.
+
+ Extra public VPN ports are used exclusively after fresh v2 installer preflight.
+ Existing servers, probes and legacy installs keep the original 443 behavior.
+ """
+ if (not isinstance(extra_tcp_ports,(tuple,list)) or
+     any(type(p) is not int or p not in (2053,8443) for p in extra_tcp_ports) or
+     len(set(extra_tcp_ports))!=len(extra_tcp_ports)):
+  raise AwsNetworkError('INVALID_EXTRA_PORTS')
  ip=str(ipaddress.IPv4Address(target)) if ':' not in target else None
  if not ip:return False
  region,source,credentials=load_identity()
@@ -60,6 +68,9 @@ def ensure_network(target,ssh_port,api=call,load_identity=identity):
  if not groups:raise AwsNetworkError('AWS_NETWORK_FAILED')
  group=groups[0].text
  if not re.fullmatch(r'sg-[a-f0-9]+',group or ''):raise AwsNetworkError('AWS_NETWORK_FAILED')
- for start,end,cidr in [(ssh_port,ssh_port,source),(443,443,'0.0.0.0/0')]:
+ for start,end,cidr in (
+  [(ssh_port,ssh_port,source),(443,443,'0.0.0.0/0')]+
+  [(port,port,'0.0.0.0/0') for port in extra_tcp_ports]
+ ):
   api(region,credentials,{'Action':'AuthorizeSecurityGroupIngress','GroupId':group,'IpPermissions.1.IpProtocol':'tcp','IpPermissions.1.FromPort':str(start),'IpPermissions.1.ToPort':str(end),'IpPermissions.1.IpRanges.1.CidrIp':cidr,'IpPermissions.1.IpRanges.1.Description':'Madar automatic enrollment'})
  return True

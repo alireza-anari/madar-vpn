@@ -1,0 +1,153 @@
+name: Madar multi-profile bot explicit production release
+
+on:
+  push:
+    branches: ['impl/madar-managed-fallback-foundation-20261107']
+    paths:
+      - 'docs/sales-bot/release-multi-profile-trigger.md'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: madar-sales-worker-production
+  cancel-in-progress: false
+
+jobs:
+  publish-bot:
+    if: github.event.head_commit.message == '[approved-multi-profile-worker] publish current bot to production'
+    runs-on: ubuntu-24.04
+    env:
+      CLOUDFLARE_ACCOUNT_ID: 2e4e0d025c81b9134fd2d19f17535e30
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      SCRIPT: madar-sales-bot
+      DB_ID: f59e160f-89ab-4a90-a4dc-f257883d5a61
+      PREVIOUS_VERSION: e4ab88c3-ea9f-49a3-86a8-2e0620b7113f
+      BASE_URL: https://madar-sales-bot.alirezaanari117.workers.dev
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact CI green source, no accidental node or Worker changes
+        run: |
+          set -euo pipefail
+          validated=84cc483829a472454b605ffc0d1ca213e8391b14
+          git merge-base --is-ancestor "$validated" HEAD
+          git diff --exit-code "$validated" HEAD -- \
+            apps/sales-bot sales-node sales-runner pnpm-lock.yaml
+          grep -q '"keep_vars": true' apps/sales-bot/wrangler.jsonc
+          grep -q '"crons": \["\* \* \* \* \*"\]' apps/sales-bot/wrangler.jsonc
+          echo "EXACT_GREEN_SOURCE_CONFIRMED"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.9.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Reverify Worker build before production release
+        run: |
+          set -euo pipefail
+          pnpm --filter @madar/sales-bot types
+          pnpm --filter @madar/sales-bot typecheck
+          pnpm --filter @madar/sales-bot test
+          pnpm --filter @madar/sales-bot build
+
+      - name: Read-only production preflight and rollback baseline
+        run: |
+          set -euo pipefail
+          : "${CLOUDFLARE_API_TOKEN:?Missing deployment credential}"
+          api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID"
+          auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+          curl --fail-with-body -sS --retry 2 -H "$auth" "$api/workers/scripts/$SCRIPT/deployments" |
+            jq -e --arg prior "$PREVIOUS_VERSION" \
+              '.success == true and .result.deployments[0].versions == [{"version_id":$prior,"percentage":100}]' >/dev/null
+          curl --fail-with-body -sS --retry 2 -H "$auth" "$api/workers/scripts/$SCRIPT/settings" |
+            jq -e --arg db "$DB_ID" '
+              .success == true and
+              ([.result.bindings[] | select(.name=="SALES_DB" and
+                 ((.id // .database_id)==$db))] | length == 1) and
+              ([.result.bindings[].name] |
+                 (index("ADMIN_TELEGRAM_IDS") != null) and
+                 (index("PUBLIC_BASE_URL") != null) and
+                 (index("RUNNER_PUBLIC_KEY") != null) and
+                 (index("BOT_TOKEN") != null) and
+                 (index("TELEGRAM_WEBHOOK_SECRET") != null) and
+                 (index("POLICY_SIGNING_SECRET") != null) and
+                 (index("RUNNER_SERVICE_SECRET") != null) and
+                 (index("USAGE_LINK_SECRET") != null))' >/dev/null
+          curl --fail-with-body -sS --retry 2 -H "$auth" "$api/workers/scripts/$SCRIPT/schedules" |
+            jq -e '.success == true and any(.result.schedules[]; .cron == "* * * * *")' >/dev/null
+          curl --fail-with-body -sS --retry 2 -X POST -H "$auth" \
+            -H 'Content-Type: application/json' \
+            --data '{"sql":"SELECT name FROM d1_migrations WHERE name=\u00270019-managed-vision-optin.sql\u0027"}' \
+            "$api/d1/database/$DB_ID/query" |
+            jq -e '.success == true and .result[0].results[0].name=="0019-managed-vision-optin.sql"' >/dev/null
+          curl --fail-with-body -sS --connect-timeout 5 --max-time 15 "$BASE_URL/health" |
+            jq -e '.status == "prepared" and .telegram == "configured"' >/dev/null
+          echo "SAFE_WORKER_ONLY_PREFLIGHT_PASSED"
+
+      - name: Deploy multi-profile bot Worker preserving current secrets
+        id: deploy
+        run: pnpm --filter @madar/sales-bot exec wrangler deploy --message "Madar admin multi-profile rollout; VPS unchanged"
+
+      - name: Verify live bot/API and original Cloudflare binding identities
+        run: |
+          set -euo pipefail
+          api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID"
+          auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+          ready=0
+          for attempt in $(seq 1 20); do
+            body="$(curl -fsS --connect-timeout 5 --max-time 15 "$BASE_URL/health" || true)"
+            if [ -n "$body" ] && echo "$body" | jq -e '.status=="prepared" and .telegram=="configured"' >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 3
+          done
+          test "$ready" -eq 1
+          for path in /app /customer /customer.css /customer.js /madar-logo.png; do
+            status="$(curl -sS --connect-timeout 5 --max-time 15 -o /dev/null -w '%{http_code}' "$BASE_URL$path")"
+            test "$status" = 200 || exit 1
+          done
+          account="$(curl -sS --max-time 15 -o /dev/null -w '%{http_code}' "$BASE_URL/api/customer/me")"
+          webhook="$(curl -sS -X POST --max-time 15 -o /dev/null -w '%{http_code}' "$BASE_URL/webhook")"
+          subscription="$(curl -sS --max-time 15 -o /dev/null -w '%{http_code}' "$BASE_URL/managed-subscription/v1/invalid")"
+          test "$account" = 403 && test "$webhook" = 401 && test "$subscription" = 404
+          curl --fail-with-body -sS -H "$auth" "$api/workers/scripts/$SCRIPT/settings" |
+            jq -e --arg db "$DB_ID" '
+              .success == true and
+              ([.result.bindings[] | select(.name=="SALES_DB" and
+                 ((.id // .database_id)==$db))] | length == 1) and
+              ([.result.bindings[].name] |
+                 (index("ADMIN_TELEGRAM_IDS") != null) and
+                 (index("PUBLIC_BASE_URL") != null) and
+                 (index("RUNNER_PUBLIC_KEY") != null) and
+                 (index("BOT_TOKEN") != null) and
+                 (index("TELEGRAM_WEBHOOK_SECRET") != null) and
+                 (index("POLICY_SIGNING_SECRET") != null) and
+                 (index("RUNNER_SERVICE_SECRET") != null) and
+                 (index("USAGE_LINK_SECRET") != null))' >/dev/null
+          curl --fail-with-body -sS -H "$auth" "$api/workers/scripts/$SCRIPT/schedules" |
+            jq -e '.success==true and any(.result.schedules[]; .cron=="* * * * *")' >/dev/null
+          curl --fail-with-body -sS -H "$auth" "$api/workers/scripts/$SCRIPT/deployments" |
+            jq -e --arg old "$PREVIOUS_VERSION" '
+              .success == true and .result.deployments[0].versions[0].version_id != $old and
+              .result.deployments[0].versions[0].percentage == 100' >/dev/null
+          echo "MULTI_PROFILE_BOT_WORKER_PRODUCTION_OK_NODE_UNCHANGED"
+
+      - name: Restore previous Worker if deploy or live verification fails
+        if: ${{ failure() && steps.deploy.outcome != 'skipped' }}
+        run: |
+          set -euo pipefail
+          api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$SCRIPT/deployments"
+          body="$(printf '{"strategy":"percentage","versions":[{"version_id":"%s","percentage":100}],"annotations":{"workers/message":"Rollback failed multi-profile Worker release"}}' "$PREVIOUS_VERSION")"
+          curl --fail-with-body -sS --retry 2 -X POST "$api" \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H "Content-Type: application/json" --data "$body" >/dev/null
+          echo "RESTORED_PREVIOUS_WORKER_VERSION"

@@ -77,6 +77,8 @@ class QuotaRuntime:
         # Startup has bounded grace only while Xray/frontend construction can legitimately block.
         now=int(time.time());self.write_heartbeat(now+STARTUP_GRACE,startup=True)
         self.frontend=None
+        self.ws_router=None;self.ws_endpoint=None;self.ws_retry_after=0
+        self.reality_router=None;self.reality_ports=None;self.reality_retry_after=0
         if self.config.get('shared443'):
             try:self.frontend=frontend_factory(self.config,'/opt/madar-sales-node/xray',self.base)
             except Exception:
@@ -92,8 +94,107 @@ class QuotaRuntime:
         except Exception:return False
     def capabilities(self):
         result=['quota-v2','per-account-process']
-        if self.config.get('shared443') and self.frontend_ready():result.extend(['shared-443','vision-metered'])
+        if self.config.get('shared443') and self.frontend_ready():
+            result.extend(['shared-443','vision-metered'])
+            if (self.policy and self.ws_router and
+                    self.ws_endpoint==self.policy.get('wsFallback') and
+                    self.ws_router.ready_for(self.processes)):
+                result.append('ws-metered')
+            if (self.policy and self.reality_router and
+                    self.reality_ports==self.policy.get('realityAltPorts') and
+                    self.reality_router.ready_for(self.processes)):
+                result.append('reality-alt-metered')
         return result
+
+    def configure_ws_router(self,policy):
+        """Optional and always noncritical: no error may stop the REALITY path."""
+        # Signed policy is the sole opt-in; new SSH-onboarded nodes need no
+        # per-server manual flag. Existing policies have no wsFallback field.
+        endpoint=policy.get('wsFallback') if self.config.get('frontendManaged') is True else None
+        try:
+            if endpoint is not None:
+                from ws_fallback import validate_endpoint
+                endpoint=validate_endpoint(endpoint)
+        except Exception:
+            endpoint=None
+        if self.ws_router and self.ws_endpoint==endpoint:
+            try:
+                self.ws_router.check()
+                return
+            except Exception:pass
+        if self.ws_router:
+            try:self.ws_router.stop()
+            except Exception:pass
+            self.ws_router=None
+        self.ws_endpoint=None
+        if endpoint is None or time.monotonic()<self.ws_retry_after:
+            return
+        try:
+            from ws_fallback import ManagedWsFrontend
+            self.ws_router=ManagedWsFrontend(
+                self.config,endpoint,'/opt/madar-sales-node/xray',self.base
+            )
+            self.ws_endpoint=endpoint
+        except Exception:
+            self.ws_router=None
+            self.ws_retry_after=time.monotonic()+60
+
+    def attach_ws_accounts(self):
+        if not self.ws_router:return
+        try:
+            for process in self.processes.values():
+                self.ws_router.attach(process.client)
+        except Exception:
+            # Never block or deprovision an otherwise healthy MCI account.
+            try:self.ws_router.stop()
+            except Exception:pass
+            self.ws_router=None
+            self.ws_endpoint=None
+            self.ws_retry_after=time.monotonic()+60
+
+    def configure_reality_router(self, policy):
+        """Signed, managed-only optional public ports; no effect on existing :443."""
+        ports=policy.get('realityAltPorts') if self.config.get('frontendManaged') is True else None
+        try:
+            if ports is not None:
+                from reality_alt import validate_ports
+                ports=validate_ports(ports)
+        except Exception:
+            ports=None
+        if self.reality_router and self.reality_ports==ports:
+            try:
+                self.reality_router.check()
+                return
+            except Exception:pass
+        if self.reality_router:
+            try:self.reality_router.stop()
+            except Exception:pass
+            self.reality_router=None
+        self.reality_ports=None
+        if ports is None or time.monotonic()<self.reality_retry_after:
+            return
+        try:
+            from reality_alt import ManagedRealityAltFrontend
+            self.reality_router=ManagedRealityAltFrontend(
+                self.config,ports,'/opt/madar-sales-node/xray',self.base
+            )
+            self.reality_ports=ports
+        except Exception:
+            self.reality_router=None
+            self.reality_retry_after=time.monotonic()+60
+
+    def attach_reality_accounts(self):
+        if not self.reality_router:return
+        try:
+            for process in self.processes.values():
+                self.reality_router.attach(process.client)
+        except Exception:
+            try:self.reality_router.stop()
+            except Exception:pass
+            self.reality_router=None
+            self.reality_ports=None
+            self.reality_retry_after=time.monotonic()+60
+
     def reports_for_sync(self,now):
         # Local metering remains continuous and authoritative for hard quotas.
         # Only explicit customer requests and terminal events reach D1.
@@ -125,7 +226,16 @@ class QuotaRuntime:
             self.stopping.wait(3)
     def stop_account(self,ident,ambiguous=False):
         process=self.processes.pop(ident,None)
+        # HARD CAP: kill the ONLY metered backend first. A stalled auxiliary
+        # HandlerService API must never prolong Internet access after expiry,
+        # quota exhaustion, or revocation. Detached inbounds cannot egress.
         if process:process.stop()
+        if process and self.ws_router:
+            try:self.ws_router.detach(process.client)
+            except Exception:pass
+        if process and self.reality_router:
+            try:self.reality_router.detach(process.client)
+            except Exception:pass
         if ambiguous:
             try:self.store.block(ident)
             except Exception:
@@ -154,6 +264,8 @@ class QuotaRuntime:
                             policy=self.verify(value,self.config['policyKey'],self.config['nodeId'],now,self.revision-1)
                             if policy.get('version')!=2:raise ValueError('QUOTA_POLICY_REQUIRED')
                             self.store.reconcile_policy(policy,now);self.policy=policy;self.revision=policy['revision']
+                            self.configure_ws_router(policy)
+                            self.configure_reality_router(policy)
                             requested=policy.get('refreshAccountIds',[])
                             active={c['accountId'] for c in policy['clients']}
                             self.requested_refresh_ids=(
@@ -185,6 +297,8 @@ class QuotaRuntime:
                             try:self.store.observe(ident,process.generation,0,now)
                             except Exception:process.stop();raise
                             self.processes[ident]=process
+                    self.attach_ws_accounts()
+                    self.attach_reality_accounts()
                     self.healthy=all(ident in self.processes for ident in desired)
                     # Queries run in parallel; the 2-second bounded CLI cannot serialize 10-user liveness.
                     with concurrent.futures.ThreadPoolExecutor(max_workers=32) as pool:
@@ -209,5 +323,11 @@ class QuotaRuntime:
             self.stopping.set()
             for ident in list(self.processes):
                 try:self.checkpoint_account(ident)
+                except Exception:pass
+            if self.ws_router:
+                try:self.ws_router.stop()
+                except Exception:pass
+            if self.reality_router:
+                try:self.reality_router.stop()
                 except Exception:pass
             self.store.close()

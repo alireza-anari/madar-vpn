@@ -6,7 +6,10 @@ import {
 } from "./node-capacity";
 import { refreshCapacityAlert } from "./capacity-alerts";
 import { nodeDependencies,updateNodeMode,renameNode,type NodeMode } from "./node-operations";
-import { setNodeMaxAccounts, setNodeMaxAllocatedBytes } from "./node-settings";
+import { setNodeMaxAccounts, setNodeMaxAllocatedBytes, setNodeWsFallback, setNodeRealityAltPorts } from "./node-settings";
+import { readManagedWsRollout, validateManagedWsFallback, managedWsStatusReady, type ManagedWsNodeStatus } from "./alternate-transport";
+import { readApprovedRealityPorts, approvedRealityPortsForDelivery } from "./managed-reality-ports";
+import { readConfirmedSecondaryPorts } from "./managed-secondary";
 import {
   sellerLimits,
   sellerNodeStats,
@@ -47,7 +50,7 @@ function isAdminCallback(data: string | undefined) {
   if (!data) return false;
   if (data === "rs:nodes" || data === "rs:sellers" || data.startsWith("rs:nodeops:") ||
     /^rs:(?:nodes|sellers):(0|[1-9][0-9]{0,2})$/.test(data)) return true;
-  return /^rs:(?:nodedetail|unlimit|capacity|allocation|seller|settle|settleok|settlements|limits|limitcount|limitbytes):/.test(
+  return /^rs:(?:nodedetail|ws|multi|unlimit|capacity|allocation|seller|settle|settleok|settlements|limits|limitcount|limitbytes):/.test(
     data,
   );
 }
@@ -133,6 +136,9 @@ function nodeRows(n: Awaited<ReturnType<typeof nodeCapacities>>[number]) {
       btn("🧪 سرور تست","rs:node:trial:"+n.id),
     ]);
     rows.push([btn("🔢 سقف کانفیگ","rs:capacity:"+n.id),btn("📦 سقف حجم","rs:allocation:"+n.id)]);
+    rows.push([btn("🔀 پروتکل‌ها و پورت‌ها", "rs:multi:status:"+n.id)]);
+    rows.push([btn("📶 مسیر WSS آزمایشی","rs:ws:status:"+n.id)]);
+    rows.push([btn("☁️ آزمایش WSS کلادفلر", "rs:ws:lab:"+n.id)]);
     if(n.max_allocated_bytes!==null)rows.push([btn("♾ نامحدود کردن حجم","rs:unlimit:"+n.id)]);
     rows.push([btn("🗑 حذف از فهرست (بایگانی امن)","rs:nodeops:archive:"+n.id)]);
   }
@@ -399,6 +405,213 @@ export async function handleResellerAdminUi(
 
   const db = env.SALES_DB;
   try {
+    const multiState = ctx.state as { step?: string; nodeId?: string; ports?: number[] };
+    if (data === "rs:multi:confirm") {
+      if (multiState.step !== "admin_multi_confirm" || !multiState.nodeId ||
+          !Array.isArray(multiState.ports)) throw Error("CONFIRMATION_EXPIRED");
+      await setNodeRealityAltPorts(db, actor, multiState.nodeId, multiState.ports, true, now);
+      ctx.set({});
+      await ctx.reply(
+        "✅ پورت‌های انتخابی ثبت شدند. تنها در صورتی در اشتراک مشتری ظاهر می‌شوند که Agent مدیریت‌شده وجود آنها و شمارش حجم مشترک را تأیید کند. اتصال واقعی از اینترنت موبایل هم باید جداگانه آزمایش شود.",
+        [[btn("🔀 وضعیت پروتکل‌ها", "rs:multi:status:" + multiState.nodeId)], home()],
+      );
+      return true;
+    }
+    const multiAction = data?.match(/^rs:multi:(status|disable|select|install):([a-zA-Z0-9-]{1,80})(?::(8443|2053|both))?$/);
+    if (multiAction) {
+      const action = multiAction[1]!;
+      const nodeId = multiAction[2]!;
+      const node = (await nodeCapacities(db, now, nodeId))[0];
+      if (!node) throw Error("INVALID_NODE");
+      if (action === "install") {
+        ctx.set({});
+        const source = "921c858f72d0f9bb1d1122be6a4c91f759244a1b";
+        const installer = "b0b0265804cce2b854ab33f3e016d8e1027220d4772df3bb87fa66793b86787e";
+        const manifest = "4809f041c8f41d031f4d301889d8e4092a4792cb5b95ef2b98f0b9bba51fe94c";
+        const script = "/tmp/madar-secondary-install.py";
+        const command =
+          "curl -fsSL https://raw.githubusercontent.com/alireza-anari/madar-vpn/" + source +
+          "/sales-node/install_secondary.py -o " + script +
+          " && echo '" + installer + "  " + script + "' | sha256sum -c -" +
+          " && sudo python3 " + script + " --node-id " + nodeId +
+          " --source-ref " + source + " --manifest-sha256 " + manifest;
+        await ctx.reply(
+          "🛠 نصب امن مسیرهای جایگزین · " + node.name +
+          "\n\nاین دستور را فقط یک‌بار در SSH همان سرور، نه در تلگرام، اجرا کن:" +
+          "\n\n" + command +
+          "\n\nاین نصب‌کننده، خود Agent و Xray اصلی ۴۴۳ را متوقف یا جایگزین نمی‌کند. فایل‌ها با SHA-256 بررسی می‌شوند؛ اگر سرویس یا پورت‌ها متعلق به Madar نباشند، نصب متوقف می‌شود." +
+          "\nبعد از اجرای موفق، از همین صفحه پورت‌های موردنظر را انتخاب کن و لینک اشتراک جدید را به‌روزرسانی کن." +
+          "\n⚠️ برای اتصال از اینترنت موبایل ممکن است لازم باشد پورت‌ها را در فایروال ارائه‌دهنده باز کنی.",
+          [[btn("🔀 بازگشت به پورت‌ها", "rs:multi:status:" + nodeId)], home()],
+        );
+        return true;
+      }
+      if (action === "select") {
+        const choice = multiAction[3];
+        const ports = choice === "both" ? [2053, 8443] :
+          choice === "2053" ? [2053] : choice === "8443" ? [8443] : null;
+        if (!ports) throw Error("INVALID_PORT");
+        ctx.set({step: "admin_multi_confirm", nodeId, ports});
+        await ctx.reply(
+          "🔀 تأیید پورت‌های جایگزین سرور " + node.name +
+          "\nپورت‌ها: " + ports.join("، ") +
+          "\n\nاین پورت‌ها جایگزین ۴۴۳ نمی‌شوند؛ از همان حساب و حجم استفاده می‌کنند." +
+          "\n⚠️ پیش از تأیید باید مالکیت سرور، باز بودن پورت، مجاز بودن استفاده و اتصال واقعی موبایل را بررسی کرده باشی. ثبت این گزینه، به‌تنهایی آزمون شبکه نیست.",
+          [[btn("✅ تأیید تنظیمات پورت", "rs:multi:confirm")],
+           [btn("❌ انصراف", "rs:multi:status:" + nodeId)]],
+        );
+        return true;
+      }
+      if (action === "disable") {
+        await setNodeRealityAltPorts(db, actor, nodeId, null, false, now);
+        ctx.set({});
+        await ctx.reply(
+          "⏸ پورت‌های جایگزین غیرفعال شدند؛ کانفیگ اصلی ۴۴۳ تغییری نکرد.",
+          [[btn("🔀 وضعیت", "rs:multi:status:" + nodeId)], home()],
+        );
+        return true;
+      }
+      const approved = await readApprovedRealityPorts(db, nodeId);
+      const autoInstalled = (await db.prepare(
+        "SELECT value FROM settings WHERE key=?",
+      ).bind("managed_reality_alt:" + nodeId + ":auto_installed")
+        .first<string>("value")) === "1";
+      const live = await db.prepare(
+        "SELECT id,state,healthy,last_seen,revision,acked_revision,policy_payload,agent_capabilities FROM nodes WHERE id=?",
+      ).bind(nodeId).first<ManagedWsNodeStatus>();
+      let policy: { version?:number; nodeId?:string; revision?:number;
+                    expiresAt?:number; realityAltPorts?:unknown } = {};
+      try { policy = JSON.parse(live?.policy_payload || "{}"); } catch {}
+      const sidecar = live
+        ? await readConfirmedSecondaryPorts(db, nodeId, live.revision, now)
+        : null;
+      const effectiveNode = live && sidecar &&
+        JSON.stringify(sidecar) === JSON.stringify(policy.realityAltPorts)
+        ? { ...live, agent_capabilities: live.agent_capabilities + ",reality-alt-metered" }
+        : live;
+      const effective = effectiveNode
+        ? approvedRealityPortsForDelivery(effectiveNode, policy, approved, now)
+        : [];
+      ctx.set({});
+      await ctx.reply(
+        "🔀 پروتکل‌ها و پورت‌های " + node.name +
+        "\n\n✅ مسیر اصلی: VLESS + REALITY · TCP 443" +
+        "\nروش راه‌اندازی: " + (autoInstalled
+          ? "✅ خودکار، همراه نصب اولیه سرور"
+          : "مدیریت دستی سرور قدیمی") +
+        "\nپورت‌های درخواستی: " + (approved?.join("، ") || "غیرفعال") +
+        "\nپورت‌های تأییدشده در Policy و ACK: " + (effective.join("، ") || "هنوز هیچ‌کدام") +
+        "\n📶 VMess/WSS در بخش جداگانه مدیریت می‌شود." +
+        "\n\nهمه کانفیگ‌های فعال یک حجم و تاریخ انقضا دارند. باز بودن پورت از اینترنت ایران باید جداگانه تست شود.",
+        [
+          [btn("➕ REALITY روی 8443", "rs:multi:select:" + nodeId + ":8443")],
+          [btn("➕ REALITY روی 2053", "rs:multi:select:" + nodeId + ":2053")],
+          [btn("➕ هر دو پورت", "rs:multi:select:" + nodeId + ":both")],
+          ...(approved ? [[btn("⏸ حذف پورت‌های جایگزین", "rs:multi:disable:" + nodeId)]] : []),
+          ...(!autoInstalled ? [[btn("🛠 دستور نصب برای سرور قدیمی", "rs:multi:install:" + nodeId)]] : []),
+          [btn("📶 تنظیم VMess/WSS", "rs:ws:status:" + nodeId)],
+          [btn("🔎 جزئیات سرور", "rs:nodedetail:" + nodeId)], home(),
+        ],
+      );
+      return true;
+    }
+    const wsState = ctx.state as {step?: string; nodeId?: string; hostname?: string; path?: string};
+    if (text && wsState?.step === "admin_ws_hostname") {
+      const hostname = text.toLowerCase().trim();
+      const path = "/madar-" + Array.from(
+        crypto.getRandomValues(new Uint8Array(12)),
+        (byte) => byte.toString(16).padStart(2, "0"),
+      ).join("");
+      validateManagedWsFallback({type: "vmess-ws-aead", hostname, path});
+      ctx.set({step: "admin_ws_confirm", nodeId: wsState.nodeId, hostname, path});
+      await ctx.reply(
+        "📶 ثبت مسیر ایرانسل\n\nدامنه: " + hostname +
+        "\n\n⚠️ پیش از تأیید باید دامنه به ورودی پایدار و مجاز سرور روی 127.0.0.1:18080 متصل شده و اجازه استفاده تجاری از ارائه‌دهنده دریافت شده باشد." +
+        "\n\nبا تأیید، این تنظیم در Policy ثبت می‌شود اما تا زمانی که Agent مسیر حجم‌دار را ACK نکند، هیچ کانفیگ دومی صادر نمی‌شود.",
+        [
+          [btn("✅ دامنه و مجوز تجاری را تأیید می‌کنم", "rs:ws:confirm")],
+          [btn("❌ انصراف", "rs:nodedetail:" + wsState.nodeId)],
+        ],
+      );
+      return true;
+    }
+    if (data === "rs:ws:confirm") {
+      if (wsState?.step !== "admin_ws_confirm" ||
+          !wsState.nodeId || !wsState.hostname || !wsState.path)
+        throw Error("WS_CONFIRMATION_EXPIRED");
+      await setNodeWsFallback(db, actor, wsState.nodeId, {
+        type: "vmess-ws-aead", hostname: wsState.hostname, path: wsState.path,
+      }, true, now);
+      ctx.set({});
+      await ctx.reply(
+        "✅ درخواست مسیر دوم ذخیره شد.\nتا زمان نصب نسخهٔ جدید Agent و تأیید قابلیت ws-metered، ربات فقط کانفیگ اصلی را صادر می‌کند.",
+        [[btn("📶 وضعیت مسیر", "rs:ws:status:" + wsState.nodeId)],
+         [btn("🔎 سرور", "rs:nodedetail:" + wsState.nodeId)], home()],
+      );
+      return true;
+    }
+    const wsAction = data?.match(/^rs:ws:(status|setup|disable|lab):([a-zA-Z0-9-]{1,80})$/);
+    if (wsAction) {
+      const action = wsAction[1]!;
+      const nodeId = wsAction[2]!;
+      const node = (await nodeCapacities(db, now, nodeId))[0];
+      if (!node) throw Error("INVALID_NODE");
+      if (action === "lab") {
+        ctx.set({});
+        const labUrl = "https://madar-wss-lab.alirezaanari117.workers.dev/test";
+        await ctx.reply(
+          "☁️ آزمایش Cloudflare WSS · " + node.name +
+          "\n\nبرای بررسی واقعی اتصال WebSocket از اینترنت همراه، لینک زیر را در همان تلفن و با دیتای ایرانسل/همراه اول باز کن:" +
+          "\n" + labUrl +
+          "\n\n✅ موفقیت آزمون فقط به معنی دسترسی به لبه Cloudflare است؛ هنوز VPN یا تونل Xray را تأیید نمی‌کند." +
+          "\n\nمسیر VMess تا زمانی که ورودی Xray و حجم مشترک به‌صورت زنده تأیید نشوند، در فروش و اشتراک مشتری ظاهر نمی‌شود." +
+          "\n\n⛔ این سرویس فقط آزمایشی است؛ REALITY اصلی و مشتریان تغییری نمی‌کنند.",
+          [[{ text: "🌐 اجرای تست WSS در مرورگر", url: labUrl }],
+           [btn("📶 وضعیت مسیر WSS", "rs:ws:status:" + nodeId)],
+           [btn("🔎 بازگشت به سرور", "rs:nodedetail:" + nodeId)], home()],
+        );
+        return true;
+      }
+      if (action === "setup") {
+        ctx.set({step: "admin_ws_hostname", nodeId});
+        await ctx.reply(
+          "📶 دامنه عمومی پایدار مسیر ایرانسل را بفرست (مثلاً edge.example.com).\n\nآدرس trycloudflare.com و IP پذیرفته نمی‌شود. ابتدا باید مسیر HTTPS مجاز را در ارائه‌دهنده تنظیم کرده باشی.",
+          [[btn("❌ انصراف", "rs:nodedetail:" + nodeId)], home()],
+        );
+        return true;
+      }
+      if (action === "disable") {
+        await setNodeWsFallback(db, actor, nodeId, null, false, now);
+        ctx.set({});
+        await ctx.reply(
+          "⏸ مسیر ایرانسل غیرفعال شد؛ کانفیگ REALITY و اشتراک‌های همراه اول بدون تغییرند.",
+          [[btn("📶 وضعیت مسیر", "rs:ws:status:" + nodeId)],
+           [btn("🔎 سرور", "rs:nodedetail:" + nodeId)], home()],
+        );
+        return true;
+      }
+      ctx.set({});
+      const enabled = await readManagedWsRollout(db, nodeId);
+      const metered = node.agent_capabilities.split(",").includes("ws-metered");
+      const nodePolicy = await db.prepare("SELECT id,state,healthy,last_seen,revision,acked_revision,policy_payload,agent_capabilities FROM nodes WHERE id=?")
+        .bind(nodeId).first<ManagedWsNodeStatus>();
+      const ready = nodePolicy ? managedWsStatusReady(nodePolicy, enabled, now) : false;
+      await ctx.reply(
+        "📶 مسیر جایگزین ایرانسل · " + node.name +
+        "\n\nتنظیم دامنه: " + (enabled ? enabled.hostname : "غیرفعال") +
+        "\nتأیید سهمیه مشترک توسط Agent: " + (metered ? "✅" : "⏳") +
+        "\nتأیید داخلی صدور کانفیگ: " + (ready ? "✅ تأیید شده" : "⏸ هنوز تأیید نشده") +
+        "\n⚠️ این وضعیت، اتصال واقعی TLS، مجوز ارائه‌دهنده یا کیفیت اینترنت ایرانسل را تأیید نمی‌کند." +
+        "\n\nمسیر REALITY فعلی مستقل و فعال باقی می‌ماند.",
+        [
+          [{ text: "☁️ آزمایش WSS کلادفلر", url: "https://madar-wss-lab.alirezaanari117.workers.dev/test" }],
+          [btn("⚙️ ثبت / اصلاح دامنه", "rs:ws:setup:" + nodeId)],
+          ...(enabled ? [[btn("⏸ غیرفعال کردن مسیر دوم", "rs:ws:disable:" + nodeId)]] : []),
+          [btn("🔎 سرور", "rs:nodedetail:" + nodeId)], home(),
+        ],
+      );
+      return true;
+    }
     if(data==="rs:nodeops:archive:list" || /^rs:nodeops:archive:page:(0|[1-9][0-9]{0,2})$/.test(data||"")){
       ctx.set({});
       const page=data==="rs:nodeops:archive:list"?0:Number(data!.slice("rs:nodeops:archive:page:".length));

@@ -1,0 +1,84 @@
+name: Madar WSS lab isolated Cloudflare release
+
+on:
+  push:
+    branches: [impl/madar-managed-fallback-foundation-20261107]
+    paths:
+      - docs/sales-bot/wss-lab-release-trigger.md
+
+permissions:
+  contents: read
+
+concurrency:
+  group: madar-wss-lab-release
+  cancel-in-progress: false
+
+jobs:
+  deploy-edge-test:
+    if: github.event.head_commit.message == '[deploy-wss-lab-test] publish isolated Cloudflare WSS edge probe'
+    runs-on: ubuntu-24.04
+    env:
+      CLOUDFLARE_ACCOUNT_ID: 2e4e0d025c81b9134fd2d19f17535e30
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      URL: https://madar-wss-lab.alirezaanari117.workers.dev
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.9.1
+      - run: pnpm install --frozen-lockfile
+
+      - name: Verify exact lab code and no unwanted production content changes
+        run: |
+          set -euo pipefail
+          git diff --exit-code 84cc483829a472454b605ffc0d1ca213e8391b14 -- \
+            apps/sales-bot apps/wss-lab sales-node sales-runner pnpm-lock.yaml
+          node --test apps/wss-lab/test/lab.test.mjs
+          grep -q '"workers_dev": true' apps/wss-lab/wrangler.jsonc
+          grep -q '"name": "madar-wss-lab"' apps/wss-lab/wrangler.jsonc
+
+      - name: Deploy only isolated WebSocket test Worker
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          pnpm --filter @madar/sales-bot exec wrangler deploy \
+            --config ../wss-lab/wrangler.jsonc \
+            --message "Madar WSS edge-only experimental probe, no VPN origin"
+
+      - name: Verify publicly accessible browser and real WebSocket handshake
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 12); do
+            if curl -fsS --connect-timeout 5 --max-time 12 "$URL/healthz" \
+              | jq -e '.edge=="available" and .vpnReady==false and .tunnelConfigured==false' >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          curl --fail -fsS "$URL/healthz" \
+            | jq -e '.edge=="available" and .vpnReady==false and .tunnelConfigured==false'
+          curl --fail -fsS "$URL/test" | grep -q "آزمایش WebSocket مدار"
+          test "$(curl -fsS -o /dev/null -w '%{http_code}' "$URL/madar-2df6f8c9ae154b2381da7590")" = "426"
+          node --input-type=module <<'JS'
+          await new Promise((resolve,reject)=>{
+            const socket=new WebSocket('wss://madar-wss-lab.alirezaanari117.workers.dev/__probe');
+            const guard=setTimeout(()=>{socket.close();reject(new Error('WS probe timed out'))},12000);
+            socket.addEventListener('open',()=>socket.send('ping'));
+            socket.addEventListener('message',event=>{
+              clearTimeout(guard);
+              if(event.data!=='pong')reject(new Error('Unexpected WebSocket reply'));
+              else resolve();
+              socket.close();
+            });
+            socket.addEventListener('error',()=>{clearTimeout(guard);reject(new Error('WebSocket unavailable'))});
+          });
+          console.log('CLOUDFLARE_WSS_EDGE_ONLY_TEST_PASSED');
+          JS

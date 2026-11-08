@@ -2,7 +2,18 @@ import { hash } from "./crypto";
 import type { ManagedAccount } from "./accounts";
 import type { QuotaPolicy } from "./quota-policies";
 import { buildVlessRealityConfig } from "./connection-config";
+import { buildManagedVmessWsConfig, managedWsFallbackIsDeliverable, readManagedWsRollout } from "./alternate-transport";
 import { usageUrl as createUsageUrl } from "./usage-links";
+import { approvedRealityPortsForDelivery, readApprovedRealityPorts } from "./managed-reality-ports";
+import { readConfirmedSecondaryPorts } from "./managed-secondary";
+import { managedSubscriptionUrl } from "./managed-subscription-tokens";
+
+export interface AccountTransportProfile {
+  id: "reality-443" | "reality-alt" | "vmess-wss";
+  name: string;
+  config: string;
+  port: number;
+}
 
 export interface AccountDeliveryArtifact {
   accountId: string;
@@ -14,6 +25,8 @@ export interface AccountDeliveryArtifact {
   validUntil: number;
   serverName: string;
   config: string;
+  alternateConfig?: string;
+  profiles: AccountTransportProfile[];
   usageUrl: string;
 }
 
@@ -155,6 +168,77 @@ export async function buildAccountDeliveryArtifact(
     return null;
   }
 
+  const profiles: AccountTransportProfile[] = [{
+    id: "reality-443",
+    name: shared443 ? "REALITY · 443" : "REALITY · " + publicPort,
+    config,
+    port: publicPort,
+  }];
+  // Optional direct ports route into the same quota-limited loopback worker.
+  // Never deliver merely because a port was typed into admin settings.
+  if (policy.realityAltPorts) {
+    const sidecarPorts = await readConfirmedSecondaryPorts(
+      db, node.id, node.revision, now,
+    );
+    const sidecarReady = sidecarPorts !== null &&
+      JSON.stringify(sidecarPorts) === JSON.stringify(policy.realityAltPorts);
+    const approved = await readApprovedRealityPorts(db, node.id);
+    const effectiveNode = sidecarReady
+      ? { ...node, agent_capabilities: node.agent_capabilities + ",reality-alt-metered" }
+      : node;
+    const ports = approvedRealityPortsForDelivery(
+      effectiveNode, policy, approved, now,
+    );
+    for (const port of ports) {
+      try {
+        const additional = buildVlessRealityConfig({
+          uuid: a.uuid, host: node.target_ip, port,
+          sni: node.sni || "", publicKey: node.public_key || "",
+          shortId: node.short_id || "", flow: "",
+          label: `Madar-Reality-${port}-${a.id.slice(0, 6)}`,
+        });
+        profiles.push({
+          id: "reality-alt", name: `REALITY · ${port}`,
+          port, config: additional,
+        });
+      } catch {
+        // A failed extra profile must never hide the working primary one.
+      }
+    }
+  }
+
+  // Extra transport uses the SAME account UUID and the SAME metered loopback
+  // backend. No delivery on stale ACK, missing agent capability, missing
+  // admin approval, endpoint mismatch, or temporary Cloudflare hostnames.
+  let alternateConfig: string | undefined;
+  if (policy.wsFallback && capabilities.has("ws-metered")) {
+    const approved = await readManagedWsRollout(db, node.id);
+    if (
+      approved &&
+      JSON.stringify(approved) === JSON.stringify(policy.wsFallback) &&
+      managedWsFallbackIsDeliverable(
+        policy.wsFallback,
+        capabilities,
+        true,
+        true,
+      )
+    ) {
+      try {
+        alternateConfig = buildManagedVmessWsConfig({
+          ...approved,
+          uuid: a.uuid,
+          label: `Madar-WS-${a.id.slice(0, 6)}`,
+        });
+        profiles.push({
+          id: "vmess-wss", name: "VMess · WSS",
+          port: 443, config: alternateConfig,
+        });
+      } catch {
+        // Preserve the working MCI path if secondary delivery cannot be built.
+      }
+    }
+  }
+
   let usageUrl = "";
   try {
     usageUrl = createUsageUrl(env, a.id);
@@ -172,6 +256,8 @@ export async function buildAccountDeliveryArtifact(
     validUntil: a.valid_until,
     serverName: node.name,
     config,
+    ...(alternateConfig ? { alternateConfig } : {}),
+    profiles,
     usageUrl,
   };
 }
@@ -198,11 +284,23 @@ export async function queueAccountDelivery(
     ).join("");
     url = `${env.PUBLIC_BASE_URL}/usage/${token}`;
   }
+  let currentSubscriptionUrl = "";
+  try {
+    currentSubscriptionUrl = managedSubscriptionUrl(env, artifact.accountId);
+  } catch {
+    // No signed subscription URL when credentials/origin are unavailable.
+    // Keep the existing verified one-config Telegram delivery.
+  }
   const digest = hash(token);
-  const text = `🟢 اشتراک مدار · ${escape(artifact.label)}\n${artifact.kind === "trial" ? "🎁 تست ۳۰ دقیقه‌ای · حجم: ۱ گیگابایت" : `📦 حجم: ${(Number(artifact.quotaBytes) / 1e9).toLocaleString("fa-IR")} گیگابایت · مدت: ${(artifact.durationSeconds / 86400).toLocaleString("fa-IR")} روز`}\n⏳ انقضا: ${new Date(artifact.validUntil * 1000).toLocaleString("fa-IR", { timeZone: "Asia/Tehran" })} (تهران)\n\n<pre>${escape(artifact.config)}</pre>\n\nکانفیگ را کپی و در برنامهٔ اتصال وارد کنید.\nبرای دیدن مصرف و حجم باقی‌مانده، دکمهٔ «مصرف و اعتبار» را بزنید.\n🔒 این پیام مخصوص شماست؛ آن را خصوصی نگه دارید.`;
+  const alternateText = artifact.profiles.slice(1).map(profile =>
+    `\n\n📶 ${escape(profile.name)} · حجم و اعتبار مشترک:\n<pre>${escape(profile.config)}</pre>`
+  ).join("");
+  const text = `🟢 اشتراک مدار · ${escape(artifact.label)}\n${artifact.kind === "trial" ? "🎁 تست ۳۰ دقیقه‌ای · حجم: ۱ گیگابایت" : `📦 حجم: ${(Number(artifact.quotaBytes) / 1e9).toLocaleString("fa-IR")} گیگابایت · مدت: ${(artifact.durationSeconds / 86400).toLocaleString("fa-IR")} روز`}\n⏳ انقضا: ${new Date(artifact.validUntil * 1000).toLocaleString("fa-IR", { timeZone: "Asia/Tehran" })} (تهران)\n\n<pre>${escape(artifact.config)}</pre>${alternateText}\n\nکانفیگ را کپی و در برنامهٔ اتصال وارد کنید.\nبرای دیدن مصرف و حجم باقی‌مانده، دکمهٔ «مصرف و اعتبار» را بزنید.\n🔒 این پیام مخصوص شماست؛ آن را خصوصی نگه دارید.`;
   const rows: Record<string, unknown>[][] = [];
   if (artifact.config.length <= 256)
     rows.push([{ text: "📋 کپی کانفیگ", copy_text: { text: artifact.config } }]);
+  if (currentSubscriptionUrl)
+    rows.push([{ text: "🔄 لینک اشتراک به‌روزشونده", url: currentSubscriptionUrl }]);
   rows.push([{ text: "📊 مصرف و اعتبار", url }]);
   const payload = JSON.stringify({
     text,

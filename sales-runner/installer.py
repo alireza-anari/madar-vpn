@@ -28,18 +28,25 @@ if busy and owner:
   listeners=subprocess.run(['ss','-H','-ltnp','sport = :443'],capture_output=True,text=True,check=True).stdout.splitlines()
   port_owned=pid>0 and pathlib.Path('/proc/'+str(pid)+'/exe').resolve()==pathlib.Path('/opt/madar-sales-node/xray') and bool(listeners) and all(set(re.findall(r'pid=(\d+)',line))=={str(pid)} for line in listeners)
  except Exception:pass
+# Optional direct REALITY ports are reserved only for FRESH v2 provisioning.
+# A conflict is discovered before any installation, never replaced.
+alt_ports_busy=[]
+for extra in (2053,8443):
+ with socket.socket() as probe:
+  try:probe.bind(('0.0.0.0',extra))
+  except OSError:alt_ports_busy.append(extra)
 quota_busy=False
 for port in range(20000,22000):
  with socket.socket() as probe:
   try:probe.bind(('0.0.0.0' if port<21000 else '127.0.0.1',port))
   except OSError:quota_busy=True;break
-print(json.dumps({'quotaPortsBusy':quota_busy,'os':release.get('ID'),'version':release.get('VERSION_ID'),'arch':os.uname().machine,'root':os.getuid()==0,'disk':shutil.disk_usage('/opt').free,'conflict':conflict,'portBusy':busy,'portOwned':port_owned,'owner':owner}))
+print(json.dumps({'quotaPortsBusy':quota_busy,'altPortsBusy':alt_ports_busy,'os':release.get('ID'),'version':release.get('VERSION_ID'),'arch':os.uname().machine,'root':os.getuid()==0,'disk':shutil.disk_usage('/opt').free,'conflict':conflict,'portBusy':busy,'portOwned':port_owned,'owner':owner}))
 '''
 APPLY=r'''
 import io,json,pathlib,sys,tarfile,os,subprocess
 job_id=sys.argv[1]
 root=pathlib.Path('/opt/madar-sales-node');etc=pathlib.Path('/etc/madar-sales-node')
-allowed={'manifest.json','config.json','xray','geoip.dat','geosite.dat','agent.py','policy.py','xray.py','guard.py','stats.py','quota.py','quota_runtime.py','shared443.py','update_owned.py','madar-sales-node.service','madar-sales-xray.service','madar-sales-watchdog.service','madar-sales-watchdog.timer'}
+allowed={'manifest.json','config.json','xray','geoip.dat','geosite.dat','agent.py','policy.py','xray.py','guard.py','stats.py','quota.py','quota_runtime.py','shared443.py','ws_fallback.py','reality_alt.py','update_owned.py','madar-sales-node.service','madar-sales-xray.service','madar-sales-watchdog.service','madar-sales-watchdog.timer'}
 if root.exists():
  try:owner=json.loads((root/'manifest.json').read_text())
  except Exception:raise SystemExit(2)
@@ -128,8 +135,19 @@ def install(transport,job,api,check=lambda:None):
         config={'baseUrl':api.base,'nodeId':job['nodeId'],'nodeToken':secrets.token_urlsafe(32),'policyKey':secrets.token_hex(32),'privateKey':encode(private.private_bytes(serialization.Encoding.Raw,serialization.PrivateFormat.Raw,serialization.NoEncryption())),'publicKey':encode(private.public_key().public_bytes(serialization.Encoding.Raw,serialization.PublicFormat.Raw)),'shortId':secrets.token_hex(8),'sni':DEFAULT_REALITY_SNI,'port':443}
     config=configure_protocol(config,job)
     if config.get('protocolVersion')==2 and info.get('quotaPortsBusy'):raise ValueError('PORT_CONFLICT')
+    # Fresh nodes must be able to host all bundled profiles; do not silently
+    # claim that a port occupied by an unrelated process is usable.
+    auto_ports=[2053,8443] if config.get('protocolVersion')==2 and not info['owned'] else []
+    if auto_ports and info.get('altPortsBusy'):raise ValueError('PORT_CONFLICT')
+    if auto_ports:
+        # If this is an AWS-owned target, the runner's temporary IAM role
+        # opens ONLY the two allowlisted public VPN ports on its exact SG.
+        # Non-AWS targets are unchanged; provider firewalls need their API.
+        from aws_network import ensure_network
+        ensure_network(job['targetIp'],job['port'],extra_tcp_ports=auto_ports)
+        check()
     files=download(info['arch'],job['artifactVersion']);check()
-    for name in ['agent.py','policy.py','xray.py','guard.py','stats.py','quota.py','quota_runtime.py','shared443.py','update_owned.py']:files[name]=(BASE.parent/'sales-node'/name).read_bytes()
+    for name in ['agent.py','policy.py','xray.py','guard.py','stats.py','quota.py','quota_runtime.py','shared443.py','ws_fallback.py','reality_alt.py','update_owned.py']:files[name]=(BASE.parent/'sales-node'/name).read_bytes()
     for path in (BASE/'templates').iterdir():files[path.name]=path.read_bytes()
     files['config.json']=json.dumps(config).encode();files['manifest.json']=json.dumps({'jobId':job['id'],'nodeId':job['nodeId'],'version':VERSION}).encode()
     api.post('register',{'id':job['id'],'leaseId':job['leaseId'],'nodeToken':config['nodeToken'],'policyKey':config['policyKey'],'publicKey':config['publicKey'],'shortId':config['shortId'],'sni':config['sni']})
@@ -137,7 +155,12 @@ def install(transport,job,api,check=lambda:None):
     check();transport.run(root_command(APPLY,job['id']),package(files),timeout=120);check()
     api.post('report',{'id':job['id'],'leaseId':job['leaseId'],'state':'verifying','safeCode':'VERIFYING'})
     transport.run('sudo -n systemctl is-active --quiet madar-sales-node.service madar-sales-watchdog.timer',timeout=10)
-    return {'installed':True}
+    return {'installed':True,
+            # Runner reports actual fresh-install intent to Worker. Worker
+            # still waits for signed node policy + live metered ACK to deliver.
+            'autoRealityPorts':auto_ports,
+            'freshInstall':not info['owned'],
+            'protocolVersion':config.get('protocolVersion',1)}
 
 ROLLBACK=r'''
 import json,pathlib,shutil,subprocess,sys

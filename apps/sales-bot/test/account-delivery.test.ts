@@ -8,6 +8,7 @@ import c from "../migrations/0003.sql?raw";
 import d from "../migrations/0004-reseller-accounts.sql?raw";
 import { queueAccountDelivery } from "../src/account-delivery";
 import { parseVlessRealityConfig } from "../src/connection-config";
+import { parseManagedVmessWsConfig } from "../src/alternate-transport";
 
 const accountUuid = "11111111-1111-4111-8111-111111111111";
 const publicKey = "A".repeat(43);
@@ -172,4 +173,193 @@ test("shared-443 capability cannot publish a non-443 port", async () => {
   ).run();
   await queueAccountDelivery(env, "a", 100);
   expect(await outboxCount()).toBe(0);
+});
+
+const fullWsCapabilities = "quota-v2,per-account-process,shared-443,ws-metered";
+const fallback = {
+  type: "vmess-ws-aead",
+  hostname: "edge.madar.example.com",
+  path: "/madar-" + "b".repeat(24),
+};
+
+async function prepareWsSettings(termsApproved = true, enabled = true) {
+  const rows = [
+    ["enabled", enabled ? "1" : "0"],
+    ["terms_approved", termsApproved ? "1" : "0"],
+    ["hostname", fallback.hostname],
+    ["path", fallback.path],
+  ];
+  for (const [suffix, value] of rows) {
+    await env.SALES_DB.prepare(
+      "INSERT INTO settings(key,value) VALUES(?,?)",
+    ).bind("managed_ws:n:" + suffix, value).run();
+  }
+}
+
+async function setSignedWsPolicy(candidate: unknown = fallback) {
+  const original = JSON.parse(
+    (await env.SALES_DB.prepare(
+      "SELECT policy_payload FROM nodes WHERE id='n'",
+    ).first<string>("policy_payload"))!,
+  );
+  original.wsFallback = candidate;
+  await env.SALES_DB.prepare(
+    "UPDATE nodes SET policy_payload=? WHERE id='n'",
+  ).bind(JSON.stringify(original)).run();
+}
+
+test("customer receives both paths only with ready, metered and approved WS route", async () => {
+  await fixture(fullWsCapabilities);
+  await setSignedWsPolicy();
+  await prepareWsSettings();
+  await queueAccountDelivery(env, "a", 100);
+  const body = await deliveredText();
+  const links = [...body.matchAll(/<pre>(.*?)<\/pre>/gs)].map((match) => match[1]!);
+  expect(links).toHaveLength(2);
+  expect(parseVlessRealityConfig(links[0]!.replace(/&amp;/g, "&")).port).toBe(443);
+  const ws = parseManagedVmessWsConfig(links[1]!);
+  expect(ws.uuid).toBe(accountUuid);
+  expect(ws.hostname).toBe(fallback.hostname);
+  expect(ws.path).toBe(fallback.path);
+});
+
+test("WS path does not appear if capability is missing (normal deployment)", async () => {
+  await fixture("quota-v2,per-account-process,shared-443");
+  await setSignedWsPolicy();
+  await prepareWsSettings();
+  await queueAccountDelivery(env, "a", 100);
+  expect((await deliveredText()).match(/<pre>/g)).toHaveLength(1);
+});
+
+test("disabled or unapproved WS path leaves normal REALITY delivery intact", async () => {
+  for (const [approved, enabled] of [[false, true], [true, false]] as const) {
+    await resetDb();
+    for (const s of [a, b, c, d, visionMigration]) await env.SALES_DB.exec(s);
+    await fixture(fullWsCapabilities);
+    await setSignedWsPolicy();
+    await prepareWsSettings(approved, enabled);
+    await queueAccountDelivery(env, "a", 100);
+    expect((await deliveredText()).match(/<pre>/g)).toHaveLength(1);
+  }
+});
+
+test("stale or mismatched WS endpoint cannot appear in delivered config", async () => {
+  await fixture(fullWsCapabilities);
+  await setSignedWsPolicy();
+  await prepareWsSettings();
+  await env.SALES_DB.prepare(
+    "UPDATE settings SET value=? WHERE key='managed_ws:n:path'",
+  ).bind("/madar-" + "a".repeat(24)).run();
+  await queueAccountDelivery(env, "a", 100);
+  expect((await deliveredText()).match(/<pre>/g)).toHaveLength(1);
+});
+
+test("Quick Tunnel is never delivered as a commercial WS path", async () => {
+  await fixture(fullWsCapabilities);
+  await setSignedWsPolicy({
+    ...fallback, hostname: "temporary.trycloudflare.com",
+  });
+  await prepareWsSettings();
+  await env.SALES_DB.prepare(
+    "UPDATE settings SET value='temporary.trycloudflare.com' WHERE key='managed_ws:n:hostname'",
+  ).run();
+  await queueAccountDelivery(env, "a", 100);
+  expect((await deliveredText()).match(/<pre>/g)).toHaveLength(1);
+});
+test("Telegram delivery offers a renewable subscription URL on the existing Worker host", async () => {
+  await fixture("quota-v2,per-account-process,shared-443");
+  const currentEnv = {
+    ...env,
+    SALES_DB: env.SALES_DB,
+    PUBLIC_BASE_URL: "https://madar-bot.example.com",
+    USAGE_LINK_SECRET: "secure-subscription-signing-secret-012345",
+  } as Env;
+  await queueAccountDelivery(currentEnv, "a", 100);
+  const raw = await env.SALES_DB.prepare(
+    "SELECT payload FROM outbox WHERE id='account:a'",
+  ).first<string>("payload");
+  expect(raw).toBeTruthy();
+  const reply = JSON.parse(raw!);
+  const buttons = (reply.reply_markup?.inline_keyboard || []).flat();
+  const subscription = buttons.find((button: {text:string;url?:string}) =>
+    button.text.includes("به‌روزشونده"));
+  expect(subscription?.url).toMatch(
+    /^https:\/\/madar-bot\.example\.com\/managed-subscription\/v1\/m1\./,
+  );
+  expect(buttons.some((button: {text:string}) =>
+    button.text.includes("مصرف و اعتبار"))).toBe(true);
+});
+
+async function setRealityPortPolicy(ports: number[], capabilities = "quota-v2,per-account-process,shared-443,reality-alt-metered") {
+  await env.SALES_DB.prepare(
+    "UPDATE nodes SET agent_capabilities=? WHERE id='n'",
+  ).bind(capabilities).run();
+  const raw = await env.SALES_DB.prepare(
+    "SELECT policy_payload FROM nodes WHERE id='n'",
+  ).first<string>("policy_payload");
+  const policy = JSON.parse(raw!);
+  policy.realityAltPorts = ports;
+  await env.SALES_DB.prepare(
+    "UPDATE nodes SET policy_payload=? WHERE id='n'",
+  ).bind(JSON.stringify(policy)).run();
+}
+
+async function approveRealityPorts(ports: number[]) {
+  for (const [suffix, value] of [
+    ["enabled", "1"], ["reachability_confirmed", "1"],
+    ["ports", JSON.stringify(ports)],
+  ]) {
+    await env.SALES_DB.prepare(
+      "INSERT INTO settings(key,value) VALUES(?,?)",
+    ).bind("managed_reality_alt:n:" + suffix, value).run();
+  }
+}
+
+test("one account supplies REALITY 443 and two independently ACKed alternate ports", async () => {
+  await fixture("quota-v2,per-account-process,shared-443");
+  await setRealityPortPolicy([2053, 8443]);
+  await approveRealityPorts([2053, 8443]);
+  await queueAccountDelivery(env, "a", 100);
+  const body = await deliveredText();
+  const configs = [...body.matchAll(/<pre>(.*?)<\/pre>/gs)].map(match =>
+    match[1]!.replace(/&amp;/g, "&"));
+  expect(configs).toHaveLength(3);
+  const parsed = configs.map(parseVlessRealityConfig);
+  expect(parsed.map(config => config.port)).toEqual([443, 2053, 8443]);
+  expect(parsed.map(config => config.uuid)).toEqual([accountUuid, accountUuid, accountUuid]);
+});
+
+test("no additional ports without live capability or signed exact policy", async () => {
+  await fixture("quota-v2,per-account-process,shared-443");
+  await setRealityPortPolicy([8443], "quota-v2,per-account-process,shared-443");
+  await approveRealityPorts([8443]);
+  await queueAccountDelivery(env, "a", 100);
+  expect((await deliveredText()).match(/<pre>/g)).toHaveLength(1);
+});
+
+test("mismatched reality settings and signed policy fail closed to 443", async () => {
+  await fixture("quota-v2,per-account-process,shared-443");
+  await setRealityPortPolicy([2053, 8443]);
+  await approveRealityPorts([8443]);
+  await queueAccountDelivery(env, "a", 100);
+  expect((await deliveredText()).match(/<pre>/g)).toHaveLength(1);
+});
+
+test("VMess WSS and both REALITY alternate ports share the same account identity", async () => {
+  await fixture("quota-v2,per-account-process,shared-443");
+  await setRealityPortPolicy(
+    [2053, 8443],
+    "quota-v2,per-account-process,shared-443,reality-alt-metered,ws-metered",
+  );
+  await approveRealityPorts([2053, 8443]);
+  await prepareWsSettings();
+  await setSignedWsPolicy();
+  await queueAccountDelivery(env, "a", 100);
+  const body = await deliveredText();
+  const configs = [...body.matchAll(/<pre>(.*?)<\/pre>/gs)].map(match =>
+    match[1]!.replace(/&amp;/g, "&"));
+  expect(configs).toHaveLength(4);
+  expect(configs.slice(0, 3).map(s => parseVlessRealityConfig(s).port))
+    .toEqual([443, 2053, 8443]);
+  expect(parseManagedVmessWsConfig(configs[3]!).uuid).toBe(accountUuid);
 });

@@ -1,6 +1,6 @@
 """Checksum-pinned owned-node upgrade. No SSH credentials, firewall or foreign services."""
 import argparse,hashlib,json,os,pathlib,re,subprocess,sys,tempfile,urllib.request
-FILES={'agent.py','policy.py','xray.py','guard.py','stats.py','quota.py','quota_runtime.py','shared443.py','update_owned.py'}
+FILES={'agent.py','policy.py','xray.py','guard.py','stats.py','quota.py','quota_runtime.py','shared443.py','ws_fallback.py','reality_alt.py','update_owned.py'}
 UNIT_SOURCES={
     'madar-sales-node.service':(
         'sales-runner/templates/madar-sales-node.service',

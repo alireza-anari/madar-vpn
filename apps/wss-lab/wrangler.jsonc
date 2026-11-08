@@ -1,0 +1,12 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "madar-wss-lab",
+  "main": "src/index.mjs",
+  "compatibility_date": "2026-11-08",
+  "workers_dev": true,
+  "preview_urls": false,
+  "keep_vars": true,
+  "vars": {
+    "RELAY_PATH": "/madar-2df6f8c9ae154b2381da7590"
+  }
+}
