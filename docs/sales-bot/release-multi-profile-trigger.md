@@ -61,3 +61,17 @@ ee397191-59f1-4bdf-ac81-404c1a61de2e.
 Important: this Worker release does not update the already running standalone
 Runner host. New-node automatic profile creation requires the Runner itself
 to run the new installer, which is pinned via sales-runner/bootstrap.sh.
+
+## 2026-11-08 experimental WSS Cloudflare lab admin view
+
+The independent `madar-wss-lab` Worker on workers.dev was deployed and passed
+a real WSS handshake from an isolated GitHub Action. Its test page is
+`https://madar-wss-lab.alirezaanari117.workers.dev/test`.
+
+This release changes ONLY the Madar sales-bot admin node UI: adds a "Cloudflare
+WSS test" button linking to the edge-only probe. It does NOT provision a VPN
+origin, alter quota settings, turn on WS customer delivery, or make any request
+to legacy servers. The existing node-capability and signed-policy gates remain.
+
+Source: `84cc483829a472454b605ffc0d1ca213e8391b14`.
+Rollback Worker version: `e4ab88c3-ea9f-49a3-86a8-2e0620b7113f`.
