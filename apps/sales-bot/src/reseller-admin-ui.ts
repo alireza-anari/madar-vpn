@@ -10,7 +10,7 @@ import { setNodeMaxAccounts, setNodeMaxAllocatedBytes, setNodeWsFallback, setNod
 import { readManagedWsRollout, validateManagedWsFallback, managedWsStatusReady, type ManagedWsNodeStatus } from "./alternate-transport";
 import { readApprovedRealityPorts, approvedRealityPortsForDelivery } from "./managed-reality-ports";
 import { readConfirmedSecondaryPorts } from "./managed-secondary";
-import { requestAdminManagedWsTrial } from "./managed-ws-trial";
+import { requestAdminManagedWsTrial, canPrepareManagedWsTrial } from "./managed-ws-trial";
 import {
   sellerLimits,
   sellerNodeStats,
@@ -612,16 +612,18 @@ export async function handleResellerAdminUi(
       const nodePolicy = await db.prepare("SELECT id,state,healthy,last_seen,revision,acked_revision,policy_payload,agent_capabilities FROM nodes WHERE id=?")
         .bind(nodeId).first<ManagedWsNodeStatus>();
       const ready = nodePolicy ? managedWsStatusReady(nodePolicy, enabled, now) : false;
+      const canTest = nodePolicy ? canPrepareManagedWsTrial(nodePolicy, enabled, now) : false;
       await ctx.reply(
         "📶 پروتکل VMess/WSS آزمایشی · " + node.name +
         "\n\nتنظیم دامنه: " + (enabled ? enabled.hostname : "غیرفعال") +
         "\nتأیید سهمیه مشترک توسط Agent: " + (metered ? "✅" : "⏳") +
         "\nتأیید داخلی صدور کانفیگ: " + (ready ? "✅ تأیید شده" : "⏸ هنوز تأیید نشده") +
-        "\n🧪 تست ۳۰ دقیقه‌ای فقط پس از ACK واقعی ws-metered برای همین نود فعال می‌شود." +
+        "\n🧪 آمادگی ایجاد حساب تست: " + (canTest ? "✅ ثبت تست مجاز" : "⏸ نیاز به سیاست و Agent سالم") +
+        "\nارسال خود کانفیگ فقط پس از ACK زنده ws-metered انجام می‌شود." +
         "\n⚠️ این وضعیت، اتصال واقعی TLS، مجوز ارائه‌دهنده یا کیفیت اینترنت ایرانسل را تأیید نمی‌کند." +
         "\n\nمسیر REALITY فعلی مستقل و فعال باقی می‌ماند.",
         [
-          ...(ready ? [[btn("🧪 صدور تست واقعی WSS همین سرور · ۳۰ دقیقه", "rs:ws:trial:" + nodeId)]] : []),
+          ...(canTest ? [[btn("🧪 صدور تست واقعی WSS همین سرور · ۳۰ دقیقه", "rs:ws:trial:" + nodeId)]] : []),
           [{ text: "☁️ آزمایش WSS کلادفلر", url: "https://madar-wss-lab.alirezaanari117.workers.dev/test" }],
           [btn("⚙️ ثبت / اصلاح دامنه", "rs:ws:setup:" + nodeId)],
           ...(enabled ? [[btn("⏸ غیرفعال کردن مسیر دوم", "rs:ws:disable:" + nodeId)]] : []),
