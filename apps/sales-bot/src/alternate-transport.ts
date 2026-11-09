@@ -180,12 +180,13 @@ export async function readManagedWsRollout(
 ): Promise<ManagedWsFallback | null> {
   const prefix = "managed_ws:" + nodeId + ":";
   const rows = await db.prepare(
-    "SELECT key,value FROM settings WHERE key IN (?,?,?,?)",
+    "SELECT key,value FROM settings WHERE key IN (?,?,?,?,?)",
   ).bind(
     prefix + "enabled",
     prefix + "terms_approved",
     prefix + "hostname",
     prefix + "path",
+    prefix + "port",
   ).all<{ key: string; value: string }>();
   const values = new Map(rows.results.map((row) => [row.key, row.value]));
   if (
@@ -193,10 +194,12 @@ export async function readManagedWsRollout(
     values.get(prefix + "terms_approved") !== "1"
   ) return null;
   try {
+    if (values.has(prefix + "port") && !["2087","443"].includes(values.get(prefix + "port")!)) return null;
     return validateManagedWsFallback({
       type: "vmess-ws-aead",
       hostname: values.get(prefix + "hostname"),
       path: values.get(prefix + "path"),
+      ...(values.get(prefix + "port") === "2087" ? { port: 2087 } : {}),
     });
   } catch {
     return null;
