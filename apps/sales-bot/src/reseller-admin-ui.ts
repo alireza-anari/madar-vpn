@@ -11,6 +11,8 @@ import { readManagedWsRollout, validateManagedWsFallback, managedWsStatusReady, 
 import { readApprovedRealityPorts, approvedRealityPortsForDelivery } from "./managed-reality-ports";
 import { readConfirmedSecondaryPorts } from "./managed-secondary";
 import { requestAdminManagedWsTrial, canPrepareManagedWsTrial } from "./managed-ws-trial";
+import { issueQuickProtocolTest, quickNodeStatus } from "./admin-quick-config";
+import { buildAccountDeliveryArtifact } from "./account-delivery";
 import {
   sellerLimits,
   sellerNodeStats,
@@ -49,6 +51,8 @@ function parseState(raw: string) {
 
 function isAdminCallback(data: string | undefined) {
   if (!data) return false;
+  if (data === "rs:quick:start" || /^rs:quick:(?:node|issue|get):/.test(data))
+    return true;
   if (data === "rs:nodes" || data === "rs:sellers" || data.startsWith("rs:nodeops:") ||
     /^rs:(?:nodes|sellers):(0|[1-9][0-9]{0,2})$/.test(data)) return true;
   return /^rs:(?:nodedetail|ws|multi|unlimit|capacity|allocation|seller|settle|settleok|settlements|limits|limitcount|limitbytes):/.test(
@@ -137,6 +141,7 @@ function nodeRows(n: Awaited<ReturnType<typeof nodeCapacities>>[number]) {
       btn("🧪 سرور تست","rs:node:trial:"+n.id),
     ]);
     rows.push([btn("🔢 سقف کانفیگ","rs:capacity:"+n.id),btn("📦 سقف حجم","rs:allocation:"+n.id)]);
+    rows.push([btn("➕ صدور کانفیگ تست این سرور", "rs:quick:node:" + n.id)]);
     rows.push([btn("🔀 پروتکل‌ها و پورت‌ها", "rs:multi:status:"+n.id)]);
     rows.push([btn("🧪 تست پروتکل VMess/WSS","rs:ws:status:"+n.id)]);
     rows.push([btn("☁️ آزمایش WSS کلادفلر", "rs:ws:lab:"+n.id)]);
@@ -406,6 +411,104 @@ export async function handleResellerAdminUi(
 
   const db = env.SALES_DB;
   try {
+    // Administrator's simple field-test flow:
+    // صدور کانفیگ → سرور → پروتکل → دریافت کانفیگ.
+    // Never rewrite the existing paid-sale or seller issuance workflow.
+    if (data === "rs:quick:start") {
+      ctx.set({});
+      const nodes = (await nodeCapacities(db, now))
+        .filter(n => n.operational_status !== "archived").slice(0, 40);
+      const status = await Promise.all(nodes.map(n => quickNodeStatus(db, n.id, now)));
+      const rows = nodes.map((node, i) => [
+        btn((status[i]?.eligible ? "🟢 " : "⏸ ") + node.name.slice(0, 38),
+          "rs:quick:node:" + node.id),
+      ]);
+      rows.push([btn("💼 صدور معمولی برای فروش", "rs:sale")]);
+      rows.push(home());
+      await ctx.reply(
+        "➕ صدور کانفیگ آزمایشی مدار" +
+        "\n\n۱) سرور را انتخاب کن. بعد پروتکل را بزن و کانفیگ تست بگیر." +
+        "\nهر تست: ۱ گیگابایت · ۳۰ دقیقه · مخصوص مدیر",
+        rows,
+      );
+      return true;
+    }
+    const quickNode = data?.match(/^rs:quick:node:([A-Za-z0-9-]{1,80})$/);
+    if (quickNode) {
+      ctx.set({});
+      const nodeId = quickNode[1]!;
+      const node = await quickNodeStatus(db, nodeId, now);
+      if (!node) throw Error("QUICK_TEST_NODE_UNAVAILABLE");
+      await ctx.reply(
+        "🌐 " + node.name + "\n\n۲) کدام پروتکل را تست کنیم؟" +
+        "\n🟢 آماده · ⏸ هنوز روی این نود آماده نیست",
+        [
+          [btn((node.realityReady ? "🟢" : "⏸") + " VLESS / REALITY",
+               "rs:quick:issue:reality:" + nodeId)],
+          [btn((node.wsReady ? "🟢" : "⏸") + " VMess / WSS",
+               "rs:quick:issue:ws:" + nodeId)],
+          [btn("🔙 تغییر سرور", "rs:quick:start")], home(),
+        ],
+      );
+      return true;
+    }
+    const quickIssue = data?.match(/^rs:quick:issue:(reality|ws):([A-Za-z0-9-]{1,80})$/);
+    if (quickIssue) {
+      const protocol = quickIssue[1] as "reality" | "ws";
+      const nodeId = quickIssue[2]!;
+      const created = await issueQuickProtocolTest(db, actor, nodeId, protocol, now);
+      ctx.set({});
+      await ctx.reply(
+        "✅ درخواست کانفیگ تست " + (protocol === "ws" ? "VMess/WSS" : "VLESS/REALITY") +
+        " ثبت شد." +
+        "\nحجم: ۱ گیگابایت · اعتبار: ۳۰ دقیقه پس از فعال‌شدن" +
+        "\n\n👇 «دریافت کانفیگ» را بزن. اگر Agent هنوز آماده نکرده باشد، پس از آماده‌شدن کانفیگ خودکار در همین ربات ارسال می‌شود.",
+        [
+          [btn("📥 دریافت کانفیگ", "rs:quick:get:" + created.id)],
+          [btn("🔄 انتخاب سرور دیگر", "rs:quick:start")], home(),
+        ],
+      );
+      return true;
+    }
+    const quickGet = data?.match(/^rs:quick:get:([a-fA-F0-9-]{36})$/);
+    if (quickGet) {
+      ctx.set({});
+      const accountId = quickGet[1]!;
+      const account = await db.prepare(
+        "SELECT id,seller_id,request_key,state FROM managed_accounts WHERE id=?",
+      ).bind(accountId).first<{
+        id: string; seller_id: string; request_key: string; state: string;
+      }>();
+      if (!account || account.seller_id !== actor.telegramId ||
+          (!account.request_key.startsWith("admin-reality-trial:") &&
+           !account.request_key.startsWith("admin-ws-trial:")))
+        throw Error("QUICK_TEST_UNAVAILABLE");
+      const artifact = await buildAccountDeliveryArtifact(env, accountId, now);
+      if (!artifact) {
+        await ctx.reply(
+          "⏳ کانفیگ هنوز آماده تحویل نیست." +
+          "\nاگر سرور پروتکل انتخابی را تأیید نکند، کانفیگ اشتباه یا بدون سهمیه صادر نمی‌شود.",
+          [[btn("🔄 بررسی دوباره", "rs:quick:get:" + accountId)],
+           [btn("🌐 سرور دیگر", "rs:quick:start")], home()],
+        );
+        return true;
+      }
+      const rows: Record<string,unknown>[][]=[];
+      if (artifact.config.length <= 256)
+        rows.push([{text:"📋 کپی کانفیگ",copy_text:{text:artifact.config}}]);
+      rows.push([btn("🌐 تست سرور دیگر", "rs:quick:start")]);
+      rows.push(home());
+      await ctx.reply(
+        "📥 کانفیگ آزمایشی " +
+        (artifact.config.startsWith("vmess://") ? "VMess/WSS" : "VLESS/REALITY") +
+        " · " + artifact.serverName +
+        "\n\n" + artifact.config +
+        "\n\n🔒 مخصوص تست، با حجم ۱ گیگ و اعتبار ۳۰ دقیقه.",
+        rows,
+      );
+      return true;
+    }
+
     const multiState = ctx.state as { step?: string; nodeId?: string; ports?: number[] };
     if (data === "rs:multi:confirm") {
       if (multiState.step !== "admin_multi_confirm" || !multiState.nodeId ||
@@ -948,6 +1051,12 @@ export async function handleResellerAdminUi(
           ? "سقف حجم باید عددی از ۱ تا ۱۰۰۰۰۰۰ گیگابایت باشد."
           : message === "INVALID_SELLER_LIMITS"
             ? "مقدار سقف فروشنده معتبر نیست."
+            : message === "QUICK_TEST_WS_UNAVAILABLE"
+              ? "⏸ VMess/WSS روی این سرور هنوز آماده نیست. می‌توانی REALITY را انتخاب کنی یا سرور دیگری را تست کنی."
+            : message === "QUICK_TEST_NODE_UNAVAILABLE"
+              ? "⏸ این سرور فعلاً ظرفیت یا اتصال تأییدشده برای تست ندارد."
+            : message === "QUICK_TEST_UNAVAILABLE"
+              ? "این تست در دسترس نیست."
             : message === "WS_TRIAL_NOT_METERED"
               ? "⏸ این سرور هنوز برای تست واقعی آماده نیست: مسیر WSS و ACK زنده ws-metered لازم است. هیچ کانفیگی صادر نشد."
             : message === "NODE_FULL" || message === "NODE_ALLOCATION_FULL" || message === "NODE_UNAVAILABLE"
