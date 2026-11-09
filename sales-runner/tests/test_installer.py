@@ -117,6 +117,7 @@ def test_fresh_bot_install_automatically_prepares_all_metered_reality_profiles(m
  result=installer.install(Transport(),job,Api())
  assert result == {
   'installed':True,'autoRealityPorts':[2053,8443],
+  'autoWssIp':None,'autoWssPort':None,'autoWssVerified':False,'autoWssPath':None,
   'freshInstall':True,'protocolVersion':2,
  }
  assert ('aws','8.8.8.8',22,[2053,8443]) in calls
@@ -142,3 +143,64 @@ def test_fresh_install_rejects_occupied_optional_port_before_any_change(monkeypa
       'targetIp':'8.8.8.8','port':22,'leaseId':'lease'}
  with pytest.raises(ValueError,match='PORT_CONFLICT'):
   installer.install(Transport(),job,Api())
+
+
+def test_fresh_install_auto_prepares_public_ip_wss_without_touching_reality(monkeypatch):
+ import aws_network
+ from wss_ipcert import ipcert_paths
+ calls=[]
+ class Api:
+  base='https://bot.example'
+  def post(self,path,body):calls.append(('api',path,body));return {}
+ class Transport:
+  def run(self,command,payload=None,timeout=None):
+   calls.append(('ssh',command,payload is not None,timeout))
+   if timeout==300:
+    return json.dumps({'verified':True,'ip':'8.8.8.8','port':2087})
+   return 'INSTALLED'
+ job={'id':'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      'nodeId':'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      'protocolVersion':2,'artifactVersion':installer.VERSION,
+      'targetIp':'8.8.8.8','port':22,'leaseId':'lease'}
+ monkeypatch.setattr(installer,'preflight',lambda *args: {
+  **info(),'owned':False,'arch':'x86_64','altPortsBusy':[],
+  'quotaPortsBusy':False,'wssPortsBusy':[],
+ })
+ monkeypatch.setattr(installer,'download',lambda *args:{'xray':b'pinned'})
+ monkeypatch.setattr(aws_network,'ensure_network',lambda ip,port,**kw:
+  calls.append(('aws',ip,port,kw['extra_tcp_ports'])) or True)
+ result=installer.install(Transport(),job,Api())
+ assert result['autoWssVerified'] is True
+ assert result['autoWssIp']=='8.8.8.8'
+ assert result['autoWssPort']==2087
+ assert result['autoWssPath'].startswith('/madar-')
+ assert len(result['autoWssPath'])==31
+ assert ('aws','8.8.8.8',22,[2053,8443,80,2087]) in calls
+ assert any(x[0]=='ssh' and x[3]==300 for x in calls)
+ pkg=next(x for x in calls if x[0]=='ssh' and x[2] is True)
+ assert pkg[3]==120
+
+
+def test_existing_node_or_occupied_acme_port_never_runs_certificate_install(monkeypatch):
+ import aws_network
+ calls=[]
+ class Api:
+  base='https://bot.example'
+  def post(self,path,body):return {}
+ class Transport:
+  def run(self,command,payload=None,timeout=None):
+   calls.append((command,timeout))
+   return 'INSTALLED'
+ job={'id':'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      'nodeId':'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      'protocolVersion':2,'artifactVersion':installer.VERSION,
+      'targetIp':'8.8.8.8','port':22,'leaseId':'lease'}
+ monkeypatch.setattr(installer,'preflight',lambda *args: {
+  **info(),'owned':False,'arch':'x86_64','altPortsBusy':[],
+  'quotaPortsBusy':False,'wssPortsBusy':[80],
+ })
+ monkeypatch.setattr(installer,'download',lambda *args:{'xray':b'pinned'})
+ monkeypatch.setattr(aws_network,'ensure_network',lambda *args,**kw:True)
+ outcome=installer.install(Transport(),job,Api())
+ assert outcome['autoWssVerified'] is False
+ assert all(timeout!=300 for command,timeout in calls)
