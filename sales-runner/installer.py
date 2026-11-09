@@ -3,6 +3,7 @@ import base64,io,json,pathlib,secrets,tarfile
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from cryptography.hazmat.primitives import serialization
 from artifacts import download,verify_artifact,VERSION
+from wss_ipcert import preparation_script,parse_preparation,ipcert_paths
 BASE=pathlib.Path(__file__).resolve().parent
 DEFAULT_REALITY_SNI='www.cloudflare.com'
 PREFLIGHT=r'''
@@ -35,12 +36,17 @@ for extra in (2053,8443):
  with socket.socket() as probe:
   try:probe.bind(('0.0.0.0',extra))
   except OSError:alt_ports_busy.append(extra)
+wss_ports_busy=[]
+for extra in (80,2087):
+ with socket.socket() as probe:
+  try:probe.bind(('0.0.0.0',extra))
+  except OSError:wss_ports_busy.append(extra)
 quota_busy=False
 for port in range(20000,22000):
  with socket.socket() as probe:
   try:probe.bind(('0.0.0.0' if port<21000 else '127.0.0.1',port))
   except OSError:quota_busy=True;break
-print(json.dumps({'quotaPortsBusy':quota_busy,'altPortsBusy':alt_ports_busy,'os':release.get('ID'),'version':release.get('VERSION_ID'),'arch':os.uname().machine,'root':os.getuid()==0,'disk':shutil.disk_usage('/opt').free,'conflict':conflict,'portBusy':busy,'portOwned':port_owned,'owner':owner}))
+print(json.dumps({'quotaPortsBusy':quota_busy,'altPortsBusy':alt_ports_busy,'wssPortsBusy':wss_ports_busy,'os':release.get('ID'),'version':release.get('VERSION_ID'),'arch':os.uname().machine,'root':os.getuid()==0,'disk':shutil.disk_usage('/opt').free,'conflict':conflict,'portBusy':busy,'portOwned':port_owned,'owner':owner}))
 '''
 APPLY=r'''
 import io,json,pathlib,sys,tarfile,os,subprocess
@@ -139,13 +145,31 @@ def install(transport,job,api,check=lambda:None):
     # claim that a port occupied by an unrelated process is usable.
     auto_ports=[2053,8443] if config.get('protocolVersion')==2 and not info['owned'] else []
     if auto_ports and info.get('altPortsBusy'):raise ValueError('PORT_CONFLICT')
+    fresh_wss_candidate = bool(
+        auto_ports and info.get('wssPortsBusy') == []
+        and not info['owned']
+    )
     if auto_ports:
-        # If this is an AWS-owned target, the runner's temporary IAM role
-        # opens ONLY the two allowlisted public VPN ports on its exact SG.
-        # Non-AWS targets are unchanged; provider firewalls need their API.
+        # IP certificate requires ACME HTTP-01 :80; the actual independent
+        # TLS WSS listener is :2087. Existing REALITY :443 is unchanged.
         from aws_network import ensure_network
-        ensure_network(job['targetIp'],job['port'],extra_tcp_ports=auto_ports)
+        network_ports = auto_ports + ([80,2087] if fresh_wss_candidate else [])
+        ensure_network(job['targetIp'],job['port'],extra_tcp_ports=network_ports)
         check()
+    wss_cert = None
+    if fresh_wss_candidate:
+        try:
+            remote = transport.run(
+                root_command(preparation_script(job['targetIp'])),
+                timeout=300,
+            )
+            check()
+            wss_cert = parse_preparation(remote, job['targetIp'])
+            config.update(wss_cert)
+        except Exception:
+            # Optional WSS must fail closed, leaving fresh REALITY usable.
+            # No unverified or expired certificate can enable a WSS policy.
+            wss_cert = None
     files=download(info['arch'],job['artifactVersion']);check()
     for name in ['agent.py','policy.py','xray.py','guard.py','stats.py','quota.py','quota_runtime.py','shared443.py','ws_fallback.py','reality_alt.py','update_owned.py']:files[name]=(BASE.parent/'sales-node'/name).read_bytes()
     for path in (BASE/'templates').iterdir():files[path.name]=path.read_bytes()
@@ -159,6 +183,10 @@ def install(transport,job,api,check=lambda:None):
             # Runner reports actual fresh-install intent to Worker. Worker
             # still waits for signed node policy + live metered ACK to deliver.
             'autoRealityPorts':auto_ports,
+            'autoWssIp':job['targetIp'] if wss_cert else None,
+            'autoWssPort':2087 if wss_cert else None,
+            'autoWssVerified':bool(wss_cert),
+            'autoWssPath':('/madar-'+secrets.token_hex(12)) if wss_cert else None,
             'freshInstall':not info['owned'],
             'protocolVersion':config.get('protocolVersion',1)}
 
