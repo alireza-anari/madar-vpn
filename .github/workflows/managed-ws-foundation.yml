@@ -38,7 +38,8 @@ jobs:
           python3 -m pytest -q \
             sales-node/tests \
             sales-runner/tests/test_source_manifest.py \
-            sales-runner/tests/test_installer.py
+            sales-runner/tests/test_installer.py \
+            sales-runner/tests/test_wss_ipcert.py
       - name: Fetch source-hash-verified pinned Xray binary (CI only)
         run: |
           python3 - <<'PY'
