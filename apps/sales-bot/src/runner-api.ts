@@ -69,7 +69,7 @@ export async function reportJob(
     "SELECT * FROM installation_jobs WHERE id=? AND lease_id=? AND lease_until>? AND state NOT IN ('ready','failed')",
   )
     .bind(id, leaseId, now)
-    .first<{ kind: string; node_id: string; user_id: string }>();
+    .first<{ kind: string; node_id: string; user_id: string; target_ip: string }>();
   if (!job) throw new Error("LEASE_EXPIRED");
   if (
     job.kind === "probe" &&
@@ -92,6 +92,14 @@ export async function reportJob(
     !(await env.SALES_DB.prepare(
       "SELECT id FROM managed_accounts WHERE node_id=? LIMIT 1",
     ).bind(job.node_id).first("id"));
+  const autoWss =
+    autoProfiles &&
+    details.autoWssVerified === true &&
+    details.autoWssIp === job.target_ip &&
+    details.autoWssPort === 2087 &&
+    typeof details.autoWssPath === "string" &&
+    /^\\/madar-[a-f0-9]{24}$/.test(details.autoWssPath);
+
   const update = env.SALES_DB.prepare(
     "UPDATE installation_jobs SET state=?,safe_code=?,lease_until=?,fingerprint=COALESCE(?,fingerprint),encrypted_credentials=CASE WHEN ? IN ('ready','failed') THEN NULL ELSE encrypted_credentials END WHERE id=? AND lease_id=? AND lease_until>? AND state NOT IN ('ready','failed')",
   ).bind(
@@ -117,6 +125,22 @@ export async function reportJob(
       ).bind(prefix + suffix, value, id, leaseId, job.node_id, job.node_id));
     }
   }
+  if (autoWss) {
+    const prefix = "managed_ws:" + job.node_id + ":";
+    const rows: [string,string][] = [
+      ["enabled","1"],
+      ["terms_approved","1"],
+      ["hostname",job.target_ip],
+      ["path",details.autoWssPath as string],
+      ["port","2087"],
+      ["auto_installed","1"],
+    ];
+    for (const [suffix, value] of rows) {
+      actions.push(env.SALES_DB.prepare(
+        "INSERT INTO settings(key,value) SELECT ?,? WHERE EXISTS(SELECT 1 FROM installation_jobs WHERE id=? AND lease_id=? AND state='ready' AND node_id=?) AND NOT EXISTS(SELECT 1 FROM managed_accounts WHERE node_id=?) ON CONFLICT(key) DO NOTHING",
+      ).bind(prefix + suffix, value, id, leaseId, job.node_id, job.node_id));
+    }
+  }
   const [r] = await env.SALES_DB.batch(actions);
   if (!r?.meta.changes) throw new Error("LEASE_EXPIRED");
   if (job.kind === "install" && state === "failed")
@@ -130,7 +154,9 @@ export async function reportJob(
       text:
         state === "ready"
           ? (autoProfiles
-              ? "✅ نصب سرور و آماده‌سازی خودکار REALITY روی پورت‌های ۴۴۳، ۲۰۵۳ و ۸۴۴۳ انجام شد. مسیرهای جایگزین پس از تأیید زنده Agent و حجم مشترک در لینک اشتراک ظاهر می‌شوند؛ کیفیت اپراتور هنوز تست نشده است."
+              ? (autoWss
+                ? "✅ نصب REALITY و آماده‌سازی خودکار VMess/WSS آزمایشی روی پورت ۲۰۸۷ انجام شد. از «صدور کانفیگ» سرور و پروتکل را انتخاب کن؛ ارسال WSS فقط پس از ACK واقعی Agent است."
+                : "✅ نصب REALITY انجام شد. نصب TLS/WSS آزمایشی ممکن نشد؛ REALITY فعال است و کانفیگ WSS جعلی صادر نمی‌شود.")
               : "نصب نود انجام شد؛ سلامت و دریافت سیاست در حال بررسی است.")
           : `نصب متوقف شد: ${safeCode}. اطلاعات اتصال موقت پاک شد.`,
     });
