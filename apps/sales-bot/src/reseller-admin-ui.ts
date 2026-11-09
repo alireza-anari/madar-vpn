@@ -613,7 +613,7 @@ export async function handleResellerAdminUi(
         .bind(nodeId).first<ManagedWsNodeStatus>();
       const ready = nodePolicy ? managedWsStatusReady(nodePolicy, enabled, now) : false;
       await ctx.reply(
-        "📶 مسیر جایگزین ایرانسل · " + node.name +
+        "📶 پروتکل VMess/WSS آزمایشی · " + node.name +
         "\n\nتنظیم دامنه: " + (enabled ? enabled.hostname : "غیرفعال") +
         "\nتأیید سهمیه مشترک توسط Agent: " + (metered ? "✅" : "⏳") +
         "\nتأیید داخلی صدور کانفیگ: " + (ready ? "✅ تأیید شده" : "⏸ هنوز تأیید نشده") +
