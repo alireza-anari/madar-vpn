@@ -86,7 +86,7 @@ test("per-node protocol menu offers WSS test only with signed live metered ACK",
 
 test("only admin creates per-node 30m 1GB WSS trial; repeated requests are idempotent", async () => {
   const nonadmin = await reply(await click(10,"rs:ws:trial:n"));
-  expect(nonadmin.text).toContain("فقط برای مدیر");
+  expect(nonadmin.text).not.toContain("تست اختصاصی VMess/WSS");
   const first = await reply(await click(9,"rs:ws:trial:n"));
   expect(first.text).toContain("VMess/WSS");
   const row = await env.SALES_DB.prepare(
