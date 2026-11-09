@@ -67,6 +67,7 @@ export async function buildAccountDeliveryArtifact(
   // signed and ACKed WSS route disappears, hide the profile entirely rather
   // than accidentally delivering a different REALITY config as a "WSS test".
   const wsTrial = a.request_key?.startsWith("admin-ws-trial:") === true;
+  const realityTrial = a.request_key?.startsWith("admin-reality-trial:") === true;
 
   const node = await db
     .prepare(
@@ -265,8 +266,9 @@ export async function buildAccountDeliveryArtifact(
     validUntil: a.valid_until,
     serverName: node.name,
     config: wsTrial ? alternateConfig! : config,
-    ...(alternateConfig ? { alternateConfig } : {}),
-    profiles: wsTrial ? profiles.filter(p => p.id === "vmess-wss") : profiles,
+    ...(alternateConfig && !realityTrial ? { alternateConfig } : {}),
+    profiles: wsTrial ? profiles.filter(p => p.id === "vmess-wss")
+      : realityTrial ? profiles.filter(p => p.id === "reality-443") : profiles,
     usageUrl,
   };
 }

@@ -185,7 +185,8 @@ async function rewriteHome(
     [btn("🛍️ مدیریت فروشگاه","adminstore:home"),btn("💳 رسیدهای مشتریان","cust:inbox:0")],
     [btn("🔁 رسیدهای تمدید و حجم","cust:up:list:0"),btn("💬 پشتیبانی مشتریان","support:admin:inbox:0")],
     [btn("🌐 سرورها","rs:nodes"),btn("👥 فروشندگان","rs:sellers")],
-    [btn("➕ صدور کانفیگ","rs:sale"),btn("🎁 تست","rs:trial")],
+    [btn("➕ صدور کانفیگ","rs:quick:start"),btn("🎁 تست معمولی","rs:trial")],
+    [btn("💼 صدور فروش", "rs:sale")],
     [btn("📋 کانفیگ‌ها","rs:list"),btn("📈 گزارش‌ها","rs:reports")],
     [btn("📖 راهنمای مدیریت","adminstore:guide"),btn("🔄 تازه‌سازی","rs:home")],
   ];
