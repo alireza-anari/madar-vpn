@@ -8,6 +8,7 @@ import json
 import os
 import pathlib
 import socket
+import ssl
 import subprocess
 import time
 
@@ -163,3 +164,61 @@ def test_real_xray_accepts_metered_vmess_ws_user_and_revokes_it(tmp_path):
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait(timeout=5)
+
+
+def test_real_xray_public_ip_san_2087_wss_config_and_tls_socket(tmp_path, monkeypatch):
+    """Validate actual pinned Xray core with real TLS 2087 and IP SAN."""
+    import ws_fallback
+    ip = "8.8.8.8"
+    path_cert = tmp_path / "fullchain.pem"
+    path_key = tmp_path / "privkey.pem"
+    subprocess.run([
+        "openssl", "req", "-x509", "-nodes", "-newkey", "rsa:2048",
+        "-days", "2", "-subj", "/CN=8.8.8.8",
+        "-addext", "subjectAltName=IP:8.8.8.8",
+        "-keyout", str(path_key), "-out", str(path_cert),
+    ], check=True, timeout=20, capture_output=True)
+    settings = {
+        "bridgeKey": "c" * 64,
+        "shared443": True, "frontendManaged": True,
+        "wssIpAddress": ip,
+        "wssTlsCert": "/etc/letsencrypt/live/" + ip + "/fullchain.pem",
+        "wssTlsKey": "/etc/letsencrypt/live/" + ip + "/privkey.pem",
+    }
+    endpoint = {
+        "type": "vmess-ws-aead", "hostname": ip,
+        "path": "/madar-" + "b" * 24, "port": 2087,
+    }
+    original = pathlib.Path.is_file
+    def mock_is_file(self):
+        if str(self) in (settings["wssTlsCert"], settings["wssTlsKey"]):
+            return True
+        return original(self)
+    monkeypatch.setattr(pathlib.Path, "is_file", mock_is_file)
+    conf = ws_fallback.render_ws_frontend(settings, endpoint, ports=[20000])
+    inbound = conf["inbounds"][0]
+    assert inbound["listen"] == "0.0.0.0"
+    assert inbound["port"] == 2087
+    assert conf["outbounds"][0]["protocol"] == "blackhole"
+    inbound["listen"] = "127.0.0.1"
+    inbound["streamSettings"]["tlsSettings"]["certificates"] = [{
+        "certificateFile": str(path_cert),
+        "keyFile": str(path_key),
+    }]
+    config = tmp_path / "wss-ip-tls.json"
+    config.write_text(json.dumps(conf))
+    subprocess.run([XRAY, "run", "-test", "-c", str(config)],
+                   check=True, timeout=20, capture_output=True, text=True)
+    proc = subprocess.Popen([XRAY,"run","-c",str(config)],
+                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL)
+    try:
+        wait_port(2087,proc)
+        ctx = ssl.create_default_context(cafile=str(path_cert))
+        with socket.create_connection(("127.0.0.1",2087), timeout=3) as conn:
+            with ctx.wrap_socket(conn,server_hostname=ip) as sock:
+                assert sock.version() in ("TLSv1.2","TLSv1.3")
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(timeout=5)
