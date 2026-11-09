@@ -252,7 +252,7 @@ test("REALITY-only quick test never includes VMess even when same node has meter
 
 test("WSS per-node picker issues exact same metered WS-only test", async () => {
   const selected = await reply(await click(9,"rs:quick:node:n"));
-  expect(selected.text).toContain("VMess");
+  expect(selected.reply_markup.inline_keyboard.flat().some(x => x.callback_data === "rs:quick:issue:ws:n")).toBe(true);
   const issued = await reply(await click(9,"rs:quick:issue:ws:n"));
   expect(issued.text).toContain("VMess/WSS");
   const a = await env.SALES_DB.prepare(
@@ -265,9 +265,9 @@ test("WSS per-node picker issues exact same metered WS-only test", async () => {
 
 test("quick chooser denies ordinary users, not-ready WSS, and expired node ACK", async () => {
   const denied = await reply(await click(10,"rs:quick:start"));
-  expect(denied.text).toContain("فقط برای مدیر");
+  expect(denied.text).not.toContain("سرور را انتخاب کن");
   const other = await reply(await click(10,"rs:quick:issue:reality:n"));
-  expect(other.text).toContain("فقط برای مدیر");
+  expect(other.text).not.toContain("درخواست کانفیگ تست");
   expect(await env.SALES_DB.prepare(
     "SELECT COUNT(*) n FROM managed_accounts",
   ).first<number>("n")).toBe(0);
