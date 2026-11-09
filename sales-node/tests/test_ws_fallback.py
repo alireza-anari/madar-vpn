@@ -209,3 +209,61 @@ def test_ws_revocation_api_timeout_stops_only_secondary_frontend(tmp_path, monke
         router.detach({"accountId": "account", "uuid": UUID, "listenPort": 20000})
     assert stopped == ["ws-frontend"]
     assert "account" not in router.clients
+
+
+def test_public_ip_san_frontend_uses_independent_tls_listener_and_shared_quota(tmp_path):
+    ip = "8.8.8.8"
+    cert = tmp_path / "fullchain.pem"
+    key = tmp_path / "privkey.pem"
+    cert.write_text("test-only")
+    key.write_text("test-only")
+    endpoint = {**ENDPOINT, "hostname": ip, "port": 2087}
+    settings = {**SETTINGS,
+        "wssIpAddress": ip,
+        "wssTlsCert": "/etc/letsencrypt/live/" + ip + "/fullchain.pem",
+        "wssTlsKey": "/etc/letsencrypt/live/" + ip + "/privkey.pem",
+    }
+    from unittest.mock import patch
+    original_is_file = pathlib.Path.is_file
+    def owned_cert_only(path):
+        if str(path) in (settings["wssTlsCert"],settings["wssTlsKey"]):
+            return True
+        return original_is_file(path)
+    with patch.object(pathlib.Path, "is_file", owned_cert_only):
+        conf = render_ws_frontend(settings, endpoint, ports=range(20000,20001))
+    inbound = conf["inbounds"][0]
+    assert inbound["port"] == 2087
+    assert inbound["listen"] == "0.0.0.0"
+    assert inbound["streamSettings"]["network"] == "ws"
+    assert inbound["streamSettings"]["security"] == "tls"
+    assert inbound["streamSettings"]["tlsSettings"]["certificates"] == [{
+        "certificateFile": settings["wssTlsCert"],
+        "keyFile": settings["wssTlsKey"],
+    }]
+    assert conf["inbounds"][1]["listen"] == "127.0.0.1"
+    assert conf["outbounds"][0]["protocol"] == "blackhole"
+    assert conf["outbounds"][1]["settings"]["vnext"][0]["address"] == "127.0.0.1"
+    with pytest.raises(ValueError,match="WS_IP_CERT_NOT_OWNED"):
+        render_ws_frontend({**SETTINGS,"wssIpAddress":ip},endpoint)
+    with pytest.raises(ValueError,match="INVALID_WS_IP"):
+        validate_endpoint({**endpoint, "hostname":"10.0.0.1"})
+    with pytest.raises(ValueError,match="INVALID_WS_PORT"):
+        validate_endpoint({**endpoint,"port":8443})
+
+
+def test_2087_ready_fails_closed_when_tls_identity_unverified(monkeypatch):
+    from ws_fallback import ManagedWsFrontend
+    router = object.__new__(ManagedWsFrontend)
+    router.endpoint = {**ENDPOINT, "port":2087,"hostname":"8.8.8.8"}
+    router.last_tls_check = 0
+    router.process = SimpleNamespace(poll=lambda:None)
+    class BadCtx:
+        def wrap_socket(self,*args,**kwargs):
+            raise RuntimeError("cert invalid")
+    class Socket:
+        def __enter__(self):return self
+        def __exit__(self,*a):return False
+    monkeypatch.setattr("ws_fallback.ssl.create_default_context",lambda:BadCtx())
+    monkeypatch.setattr("ws_fallback.socket.create_connection",lambda *args,**kw:Socket())
+    with pytest.raises(ValueError,match="WS_PUBLIC_IP_TLS_UNVERIFIED"):
+        router.check()
