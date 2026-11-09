@@ -49,11 +49,11 @@ def call(region,credentials,params):
 def ensure_network(target,ssh_port,api=call,load_identity=identity,extra_tcp_ports=()):
  """Only modify a security group attached to the exact running target IP.
 
- Extra public VPN ports are used exclusively after fresh v2 installer preflight.
+ Extra public VPN and ACME IP-certificate ports are used exclusively after fresh v2 installer preflight.
  Existing servers, probes and legacy installs keep the original 443 behavior.
  """
  if (not isinstance(extra_tcp_ports,(tuple,list)) or
-     any(type(p) is not int or p not in (2053,8443) for p in extra_tcp_ports) or
+     any(type(p) is not int or p not in (80,2053,2087,8443) for p in extra_tcp_ports) or
      len(set(extra_tcp_ports))!=len(extra_tcp_ports)):
   raise AwsNetworkError('INVALID_EXTRA_PORTS')
  ip=str(ipaddress.IPv4Address(target)) if ':' not in target else None

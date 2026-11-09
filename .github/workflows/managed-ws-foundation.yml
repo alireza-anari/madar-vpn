@@ -38,14 +38,23 @@ jobs:
           python3 -m pytest -q \
             sales-node/tests \
             sales-runner/tests/test_source_manifest.py \
-            sales-runner/tests/test_installer.py
+            sales-runner/tests/test_installer.py \
+            sales-runner/tests/test_wss_ipcert.py
       - name: Fetch source-hash-verified pinned Xray binary (CI only)
         run: |
           python3 - <<'PY'
           import pathlib, sys
           sys.path.insert(0, 'sales-runner')
           from artifacts import VERSION, download
-          binary = download('x86_64', VERSION)['xray']
+          import time
+          for attempt in range(4):
+              try:
+                  binary = download('x86_64', VERSION)['xray']
+                  break
+              except Exception:
+                  if attempt == 3:
+                      raise
+                  time.sleep((attempt + 1) * 5)
           target = pathlib.Path('/tmp/madar-ci-xray')
           target.write_bytes(binary)
           target.chmod(0o755)

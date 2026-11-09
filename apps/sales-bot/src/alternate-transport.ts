@@ -1,4 +1,5 @@
 import { isValidSni } from "./connection-config";
+import { publicTarget } from "./targets";
 
 /**
  * Production delivery contract for an additional, quota-metered VMess over WSS
@@ -12,6 +13,8 @@ export interface ManagedWsFallback {
   type: "vmess-ws-aead";
   hostname: string;
   path: string;
+  /** Port 2087 is permitted only for a verified public-IP TLS certificate. */
+  port?: 2087;
 }
 
 export interface VmessWsInput extends ManagedWsFallback {
@@ -23,6 +26,7 @@ export interface ParsedVmessWs {
   uuid: string;
   hostname: string;
   path: string;
+  port: 443 | 2087;
   label: string;
 }
 
@@ -43,20 +47,28 @@ export function validateManagedWsFallback(
   if (!value || typeof value !== "object") fail();
   const item = value as Partial<ManagedWsFallback>;
   const hostname = item.hostname;
+  const port = item.port;
+  const ipTransport = port === 2087;
+  let isPublicIpv4 = false;
+  if (ipTransport && typeof hostname === "string") {
+    try { isPublicIpv4 = publicTarget(hostname) === hostname && hostname.includes("."); }
+    catch { isPublicIpv4 = false; }
+  }
   if (
     item.type !== "vmess-ws-aead" ||
     typeof hostname !== "string" ||
-    !isValidSni(hostname) ||
+    !(ipTransport ? isPublicIpv4 : isValidSni(hostname)) ||
     hostname !== hostname.toLowerCase() ||
     hostname === "localhost" ||
     hostname.endsWith(".localhost") ||
     hostname === "trycloudflare.com" ||
     hostname.endsWith(".trycloudflare.com") ||
     hostname.endsWith(".cfargotunnel.com") ||
+    (port !== undefined && port !== 2087) ||
     typeof item.path !== "string" ||
     !PATH.test(item.path)
   ) fail();
-  return { type: "vmess-ws-aead", hostname, path: item.path };
+  return { type: "vmess-ws-aead", hostname, path: item.path, ...(ipTransport ? { port: 2087 as const } : {}) };
 }
 
 /** Canonical VMess import URI, with encrypted payload end-to-end to the node. */
@@ -67,7 +79,7 @@ export function buildManagedVmessWsConfig(input: VmessWsInput): string {
     v: "2",
     ps: input.label,
     add: endpoint.hostname,
-    port: "443",
+    port: String(endpoint.port || 443),
     id: input.uuid,
     aid: "0",
     scy: "aes-128-gcm",
@@ -84,7 +96,8 @@ export function buildManagedVmessWsConfig(input: VmessWsInput): string {
     parsed.uuid !== input.uuid ||
     parsed.hostname !== endpoint.hostname ||
     parsed.path !== endpoint.path ||
-    parsed.label !== input.label
+    parsed.label !== input.label ||
+    parsed.port !== (endpoint.port || 443)
   ) fail();
   return uri;
 }
@@ -103,7 +116,7 @@ export function parseManagedVmessWsConfig(uri: string): ParsedVmessWs {
       Object.keys(parsed).length !== KEYS.length ||
       Object.keys(parsed).some((key) => !KEYS.includes(key as typeof KEYS[number])) ||
       parsed.v !== "2" ||
-      parsed.port !== "443" ||
+      !["443","2087"].includes(String(parsed.port)) ||
       parsed.aid !== "0" ||
       parsed.scy !== "aes-128-gcm" ||
       parsed.net !== "ws" ||
@@ -120,11 +133,13 @@ export function parseManagedVmessWsConfig(uri: string): ParsedVmessWs {
     type: "vmess-ws-aead",
     hostname: parsed.add,
     path: parsed.path,
+    ...(parsed.port === "2087" ? { port: 2087 } : {}),
   });
   return {
     uuid: parsed.id,
     hostname: endpoint.hostname,
     path: endpoint.path,
+    port: endpoint.port || 443,
     label: parsed.ps,
   };
 }
@@ -165,12 +180,13 @@ export async function readManagedWsRollout(
 ): Promise<ManagedWsFallback | null> {
   const prefix = "managed_ws:" + nodeId + ":";
   const rows = await db.prepare(
-    "SELECT key,value FROM settings WHERE key IN (?,?,?,?)",
+    "SELECT key,value FROM settings WHERE key IN (?,?,?,?,?)",
   ).bind(
     prefix + "enabled",
     prefix + "terms_approved",
     prefix + "hostname",
     prefix + "path",
+    prefix + "port",
   ).all<{ key: string; value: string }>();
   const values = new Map(rows.results.map((row) => [row.key, row.value]));
   if (
@@ -178,10 +194,12 @@ export async function readManagedWsRollout(
     values.get(prefix + "terms_approved") !== "1"
   ) return null;
   try {
+    if (values.has(prefix + "port") && !["2087","443"].includes(values.get(prefix + "port")!)) return null;
     return validateManagedWsFallback({
       type: "vmess-ws-aead",
       hostname: values.get(prefix + "hostname"),
       path: values.get(prefix + "path"),
+      ...(values.get(prefix + "port") === "2087" ? { port: 2087 } : {}),
     });
   } catch {
     return null;

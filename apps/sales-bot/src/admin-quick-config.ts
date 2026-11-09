@@ -1,7 +1,7 @@
 import { createAccount } from "./accounts";
-import { readManagedWsRollout, managedWsStatusReady, type ManagedWsNodeStatus } from "./alternate-transport";
+import { readManagedWsRollout, type ManagedWsNodeStatus } from "./alternate-transport";
 import { canAllocate, nodeCapacities, remainingSlots } from "./node-capacity";
-import { requestAdminManagedWsTrial } from "./managed-ws-trial";
+import { requestAdminManagedWsTrial,canPrepareManagedWsTrial } from "./managed-ws-trial";
 import { requireSalesAdmin, type SalesActor } from "./resellers";
 
 export const QUICK_TEST_BYTES = 1_000_000_000;
@@ -52,7 +52,7 @@ export async function quickNodeStatus(
     name: row.name,
     eligible,
     realityReady: eligible,
-    wsReady: eligible && managedWsStatusReady(node, wsApproved, now),
+    wsReady: eligible && canPrepareManagedWsTrial(node, wsApproved, now),
   };
 }
 
@@ -73,8 +73,8 @@ export async function issueQuickProtocolTest(
     throw Error("QUICK_TEST_NODE_UNAVAILABLE");
   if (protocol === "ws") {
     if (!status.wsReady) throw Error("QUICK_TEST_WS_UNAVAILABLE");
-    // The VMess delivery is strictly WSS-only, gated on the exact signed
-    // endpoint and a genuine live per-account shared-quota Agent ACK.
+    // First-account provisioning can begin before ws-metered exists;
+    // actual credential delivery still requires a genuine live Agent ACK.
     return requestAdminManagedWsTrial(db, actor, nodeId, now);
   }
 

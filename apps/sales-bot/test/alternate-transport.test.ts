@@ -38,6 +38,7 @@ test("builds canonical VMess AES-128-GCM WSS config with encrypted origin payloa
     uuid: input.uuid,
     hostname: endpoint.hostname,
     path: endpoint.path,
+    port: 443,
     label: input.label,
   });
 });
@@ -134,4 +135,27 @@ test("admin readiness requires current ACK and the exact approved signed endpoin
   ]) {
     expect(managedWsStatusReady({...node, ...bad}, endpoint, now)).toBe(false);
   }
+});
+
+test("valid trusted-IP field WSS transport is bound to same node on 2087, never on port 443", () => {
+  const ip = { ...endpoint, hostname: "8.8.8.8", port: 2087 as const };
+  const uri = buildManagedVmessWsConfig({
+    ...ip, uuid: input.uuid, label: "Madar-IP-WSS",
+  });
+  const decoded = JSON.parse(atob(uri.slice("vmess://".length)));
+  expect(decoded).toMatchObject({
+    add: "8.8.8.8", host: "8.8.8.8", sni: "8.8.8.8",
+    port: "2087", tls: "tls", net: "ws",
+  });
+  expect(parseManagedVmessWsConfig(uri)).toMatchObject({
+    uuid: input.uuid, hostname: "8.8.8.8", port: 2087, path: endpoint.path,
+  });
+  for (const hostname of ["127.0.0.1","10.0.0.2","192.168.1.1","169.254.1.1","0.0.0.0"]) {
+    expect(() => validateManagedWsFallback({ ...ip, hostname })).toThrow();
+  }
+  for (const port of [80, 443, 8443, "2087", null]) {
+    expect(() => validateManagedWsFallback({ ...ip, port })).toThrow();
+  }
+  expect(() => validateManagedWsFallback({ ...endpoint, hostname: "8.8.8.8" })).toThrow();
+  expect(() => validateManagedWsFallback({ ...endpoint, port: 2087 })).toThrow();
 });

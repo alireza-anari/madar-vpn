@@ -8,6 +8,7 @@ import resellerMigration from "../migrations/0004-reseller-accounts.sql?raw";
 import { readApprovedRealityPorts, approvedRealityPortsForDelivery } from "../src/managed-reality-ports";
 import { buildQuotaPolicy } from "../src/quota-policies";
 import { leaseJob, reportJob } from "../src/runner-api";
+import { readManagedWsRollout } from "../src/alternate-transport";
 import { cleanupCredentials } from "../src/enrollment";
 beforeEach(async () => {
   await resetDb();
@@ -124,4 +125,50 @@ test("no automatic listeners when sales quota mode is disabled", async () => {
   await env.SALES_DB.prepare("UPDATE settings SET value='legacy' WHERE key='app_mode'").run();
   await reportJob(env,"i","lease","ready","INSTALLED",100,installed);
   expect(await readApprovedRealityPorts(env.SALES_DB,"n")).toBeNull();
+});
+
+test("fresh real IP-cert install auto publishes precisely its own metered WSS 2087 endpoint", async () => {
+  await freshInstallFixture();
+  await reportJob(env,"i","lease","ready","INSTALLED",100,{
+    ...installed,
+    autoWssVerified:true,autoWssIp:"8.8.8.8",
+    autoWssPort:2087,autoWssPath:"/madar-"+"a".repeat(24),
+  });
+  const approved = await readManagedWsRollout(env.SALES_DB,"n");
+  expect(approved).toEqual({
+    type:"vmess-ws-aead", hostname:"8.8.8.8",
+    port:2087,path:"/madar-"+"a".repeat(24),
+  });
+  const policy = await buildQuotaPolicy(env.SALES_DB,"n",101);
+  expect(policy.wsFallback).toEqual(approved);
+  const auto = await env.SALES_DB.prepare(
+    "SELECT value FROM settings WHERE key='managed_ws:n:auto_installed'",
+  ).first<string>("value");
+  expect(auto).toBe("1");
+});
+
+test("forged/mismatched IP-cert report cannot enable WSS on any node", async () => {
+  const good = {
+    ...installed, autoWssVerified:true,
+    autoWssIp:"8.8.8.8",autoWssPort:2087,
+    autoWssPath:"/madar-"+"b".repeat(24),
+  };
+  const variants = [
+    {...good,autoWssVerified:false},
+    {...good,autoWssIp:"1.1.1.1"},
+    {...good,autoWssPort:443},
+    {...good,autoWssPath:"/"},
+    {...good,autoWssPath:"/madar-"+"b".repeat(23)},
+    {...good,protocolVersion:1},
+    {...good,freshInstall:false},
+  ];
+  for(const v of variants) {
+    await resetDb();
+    for(const sql of [b,s,n,resellerMigration]) await env.SALES_DB.exec(sql);
+    await freshInstallFixture();
+    await reportJob(env,"i","lease","ready","INSTALLED",100,v);
+    expect(await readManagedWsRollout(env.SALES_DB,"n")).toBeNull();
+    const policy = await buildQuotaPolicy(env.SALES_DB,"n",101);
+    expect(policy.wsFallback).toBeUndefined();
+  }
 });
