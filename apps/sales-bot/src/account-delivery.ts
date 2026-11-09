@@ -61,8 +61,12 @@ export async function buildAccountDeliveryArtifact(
       "SELECT * FROM managed_accounts WHERE id=? AND state='active' AND valid_until>?",
     )
     .bind(accountId, now)
-    .first<ManagedAccount & { listen_port: number | null }>();
+    .first<ManagedAccount & { listen_port: number | null; request_key: string }>();
   if (!a) return null;
+  // Admin-created WSS field trials are transport-specific. If the approved,
+  // signed and ACKed WSS route disappears, hide the profile entirely rather
+  // than accidentally delivering a different REALITY config as a "WSS test".
+  const wsTrial = a.request_key?.startsWith("admin-ws-trial:") === true;
 
   const node = await db
     .prepare(
@@ -239,6 +243,11 @@ export async function buildAccountDeliveryArtifact(
     }
   }
 
+  if (wsTrial) {
+    if (!alternateConfig || !profiles.some(p => p.id === "vmess-wss"))
+      return null;
+  }
+
   let usageUrl = "";
   try {
     usageUrl = createUsageUrl(env, a.id);
@@ -255,9 +264,9 @@ export async function buildAccountDeliveryArtifact(
     durationSeconds: a.duration_seconds,
     validUntil: a.valid_until,
     serverName: node.name,
-    config,
+    config: wsTrial ? alternateConfig! : config,
     ...(alternateConfig ? { alternateConfig } : {}),
-    profiles,
+    profiles: wsTrial ? profiles.filter(p => p.id === "vmess-wss") : profiles,
     usageUrl,
   };
 }
