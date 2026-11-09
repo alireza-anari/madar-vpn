@@ -71,7 +71,7 @@ test("per-node protocol menu offers WSS test only with signed live metered ACK",
     b=>b.callback_data === "rs:ws:trial:n",
   )).toBe(true);
   await env.SALES_DB.exec(
-    "UPDATE nodes SET agent_capabilities='quota-v2,per-account-process,shared-443'",
+    "UPDATE nodes SET agent_capabilities='quota-v2,per-account-process'",
   );
   const after = await reply(await click(9,"rs:ws:status:n"));
   expect(after.reply_markup.inline_keyboard.flat().some(
@@ -82,6 +82,27 @@ test("per-node protocol menu offers WSS test only with signed live metered ACK",
   expect(await env.SALES_DB.prepare(
     "SELECT COUNT(*) FROM managed_accounts",
   ).first<number>("COUNT(*)")).toBe(0);
+});
+
+test("first-account WSS can provision without ws-metered, but no premature delivery", async () => {
+  await env.SALES_DB.exec(
+    "UPDATE nodes SET agent_capabilities='quota-v2,per-account-process,shared-443'",
+  );
+  const status = await reply(await click(9,"rs:ws:status:n"));
+  expect(status.reply_markup.inline_keyboard.flat().some(
+    b=>b.callback_data === "rs:ws:trial:n",
+  )).toBe(true);
+  const created = await reply(await click(9,"rs:ws:trial:n"));
+  expect(created.text).toContain("تست اختصاصی VMess/WSS");
+  const account = await env.SALES_DB.prepare(
+    "SELECT id FROM managed_accounts",
+  ).first<string>("id");
+  expect(account).toBeTruthy();
+  expect(await buildAccountDeliveryArtifact(E,account!,now)).toBeNull();
+  await queueAccountDelivery(E,account!,now);
+  expect(await env.SALES_DB.prepare(
+    "SELECT COUNT(*) FROM outbox WHERE id=?",
+  ).bind("account:"+account).first<number>("COUNT(*)")).toBe(0);
 });
 
 test("only admin creates per-node 30m 1GB WSS trial; repeated requests are idempotent", async () => {
