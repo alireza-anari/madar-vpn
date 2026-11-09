@@ -55,15 +55,23 @@ def verify():
           and key.stat().st_mode & 0o077==0)
  except Exception:return False
 if not verify():
- version=subprocess.run(['sh','-c','command -v certbot'],capture_output=True,text=True,timeout=5)
- if version.returncode!=0:
-  subprocess.run(['snap','install','certbot','--classic'],check=True,timeout=160,
-                 capture_output=True)
- result=subprocess.run(['certbot','--version'],capture_output=True,text=True,check=True,timeout=6)
+ import shutil
+ binary=shutil.which('certbot')
+ if not binary:
+  if not pathlib.Path('/snap/bin/certbot').exists():
+   subprocess.run(['snap','install','certbot','--classic'],check=True,timeout=160,
+                  capture_output=True)
+  binary='/snap/bin/certbot'
+ result=subprocess.run([binary,'--version'],capture_output=True,text=True,check=True,timeout=6)
  match=re.search(r'certbot (\d+)\.(\d+)',result.stdout+' '+result.stderr)
  if not match or tuple(map(int,match.groups()))<(5,4):
-  raise SystemExit('WSS_CERTBOT_TOO_OLD')
- subprocess.run(['certbot','certonly','--standalone','--non-interactive',
+  if pathlib.Path('/snap/bin/certbot').exists():
+   binary='/snap/bin/certbot'
+   result=subprocess.run([binary,'--version'],capture_output=True,text=True,check=True,timeout=6)
+   match=re.search(r'certbot (\d+)\.(\d+)',result.stdout+' '+result.stderr)
+  if not match or tuple(map(int,match.groups()))<(5,4):
+   raise SystemExit('WSS_CERTBOT_TOO_OLD')
+ subprocess.run([binary,'certonly','--standalone','--non-interactive',
                  '--agree-tos','--register-unsafely-without-email',
                  '--preferred-profile','shortlived','--ip-address',ip],
                 check=True,timeout=180,capture_output=True)
