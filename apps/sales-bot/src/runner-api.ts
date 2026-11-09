@@ -98,7 +98,7 @@ export async function reportJob(
     details.autoWssIp === job.target_ip &&
     details.autoWssPort === 2087 &&
     typeof details.autoWssPath === "string" &&
-    /^\\/madar-[a-f0-9]{24}$/.test(details.autoWssPath);
+    /^\/madar-[a-f0-9]{24}$/.test(details.autoWssPath);
 
   const update = env.SALES_DB.prepare(
     "UPDATE installation_jobs SET state=?,safe_code=?,lease_until=?,fingerprint=COALESCE(?,fingerprint),encrypted_credentials=CASE WHEN ? IN ('ready','failed') THEN NULL ELSE encrypted_credentials END WHERE id=? AND lease_id=? AND lease_until>? AND state NOT IN ('ready','failed')",
