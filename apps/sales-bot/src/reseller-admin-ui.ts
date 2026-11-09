@@ -10,6 +10,7 @@ import { setNodeMaxAccounts, setNodeMaxAllocatedBytes, setNodeWsFallback, setNod
 import { readManagedWsRollout, validateManagedWsFallback, managedWsStatusReady, type ManagedWsNodeStatus } from "./alternate-transport";
 import { readApprovedRealityPorts, approvedRealityPortsForDelivery } from "./managed-reality-ports";
 import { readConfirmedSecondaryPorts } from "./managed-secondary";
+import { requestAdminManagedWsTrial, canPrepareManagedWsTrial } from "./managed-ws-trial";
 import {
   sellerLimits,
   sellerNodeStats,
@@ -137,7 +138,7 @@ function nodeRows(n: Awaited<ReturnType<typeof nodeCapacities>>[number]) {
     ]);
     rows.push([btn("🔢 سقف کانفیگ","rs:capacity:"+n.id),btn("📦 سقف حجم","rs:allocation:"+n.id)]);
     rows.push([btn("🔀 پروتکل‌ها و پورت‌ها", "rs:multi:status:"+n.id)]);
-    rows.push([btn("📶 مسیر WSS آزمایشی","rs:ws:status:"+n.id)]);
+    rows.push([btn("🧪 تست پروتکل VMess/WSS","rs:ws:status:"+n.id)]);
     rows.push([btn("☁️ آزمایش WSS کلادفلر", "rs:ws:lab:"+n.id)]);
     if(n.max_allocated_bytes!==null)rows.push([btn("♾ نامحدود کردن حجم","rs:unlimit:"+n.id)]);
     rows.push([btn("🗑 حذف از فهرست (بایگانی امن)","rs:nodeops:archive:"+n.id)]);
@@ -550,7 +551,7 @@ export async function handleResellerAdminUi(
       );
       return true;
     }
-    const wsAction = data?.match(/^rs:ws:(status|setup|disable|lab):([a-zA-Z0-9-]{1,80})$/);
+    const wsAction = data?.match(/^rs:ws:(status|setup|disable|lab|trial):([a-zA-Z0-9-]{1,80})$/);
     if (wsAction) {
       const action = wsAction[1]!;
       const nodeId = wsAction[2]!;
@@ -569,6 +570,21 @@ export async function handleResellerAdminUi(
           [[{ text: "🌐 اجرای تست WSS در مرورگر", url: labUrl }],
            [btn("📶 وضعیت مسیر WSS", "rs:ws:status:" + nodeId)],
            [btn("🔎 بازگشت به سرور", "rs:nodedetail:" + nodeId)], home()],
+        );
+        return true;
+      }
+      if (action === "trial") {
+        // A test is a real quota-v2 account on this exact node, never a
+        // fake local canary or REALITY-only fallback.
+        const account = await requestAdminManagedWsTrial(db, actor, nodeId, now);
+        ctx.set({});
+        await ctx.reply(
+          "🧪 تست اختصاصی VMess/WSS برای «" + node.name + "» ثبت شد." +
+          "\nحجم تحت کنترل Agent: ۱ گیگابایت · اعتبار پس از فعال‌شدن: ۳۰ دقیقه." +
+          "\n\nربات کانفیگ VMess/WSS را فقط پس از تأیید سهمیه و اتصال Agent همین سرور می‌فرستد." +
+          "\nشناسه تست: " + account.id.slice(0, 8),
+          [[btn("📶 بررسی وضعیت WSS", "rs:ws:status:" + nodeId)],
+           [btn("🔎 سرور", "rs:nodedetail:" + nodeId)], home()],
         );
         return true;
       }
@@ -596,14 +612,18 @@ export async function handleResellerAdminUi(
       const nodePolicy = await db.prepare("SELECT id,state,healthy,last_seen,revision,acked_revision,policy_payload,agent_capabilities FROM nodes WHERE id=?")
         .bind(nodeId).first<ManagedWsNodeStatus>();
       const ready = nodePolicy ? managedWsStatusReady(nodePolicy, enabled, now) : false;
+      const canTest = nodePolicy ? canPrepareManagedWsTrial(nodePolicy, enabled, now) : false;
       await ctx.reply(
-        "📶 مسیر جایگزین ایرانسل · " + node.name +
+        "📶 پروتکل VMess/WSS آزمایشی · " + node.name +
         "\n\nتنظیم دامنه: " + (enabled ? enabled.hostname : "غیرفعال") +
         "\nتأیید سهمیه مشترک توسط Agent: " + (metered ? "✅" : "⏳") +
         "\nتأیید داخلی صدور کانفیگ: " + (ready ? "✅ تأیید شده" : "⏸ هنوز تأیید نشده") +
+        "\n🧪 آمادگی ایجاد حساب تست: " + (canTest ? "✅ ثبت تست مجاز" : "⏸ نیاز به سیاست و Agent سالم") +
+        "\nارسال خود کانفیگ فقط پس از ACK زنده ws-metered انجام می‌شود." +
         "\n⚠️ این وضعیت، اتصال واقعی TLS، مجوز ارائه‌دهنده یا کیفیت اینترنت ایرانسل را تأیید نمی‌کند." +
         "\n\nمسیر REALITY فعلی مستقل و فعال باقی می‌ماند.",
         [
+          ...(canTest ? [[btn("🧪 صدور تست واقعی WSS همین سرور · ۳۰ دقیقه", "rs:ws:trial:" + nodeId)]] : []),
           [{ text: "☁️ آزمایش WSS کلادفلر", url: "https://madar-wss-lab.alirezaanari117.workers.dev/test" }],
           [btn("⚙️ ثبت / اصلاح دامنه", "rs:ws:setup:" + nodeId)],
           ...(enabled ? [[btn("⏸ غیرفعال کردن مسیر دوم", "rs:ws:disable:" + nodeId)]] : []),
@@ -928,6 +948,10 @@ export async function handleResellerAdminUi(
           ? "سقف حجم باید عددی از ۱ تا ۱۰۰۰۰۰۰ گیگابایت باشد."
           : message === "INVALID_SELLER_LIMITS"
             ? "مقدار سقف فروشنده معتبر نیست."
+            : message === "WS_TRIAL_NOT_METERED"
+              ? "⏸ این سرور هنوز برای تست واقعی آماده نیست: مسیر WSS و ACK زنده ws-metered لازم است. هیچ کانفیگی صادر نشد."
+            : message === "NODE_FULL" || message === "NODE_ALLOCATION_FULL" || message === "NODE_UNAVAILABLE"
+              ? "⏸ ظرفیت یا سلامت این سرور برای صدور تست کافی نیست."
             : message === "SETTLEMENT_CONFLICT" ||
                 message === "SETTLEMENT_CONFIRMATION_REQUIRED"
               ? "این تسویه دیگر قابل اجرا نیست. صفحهٔ فروشنده را تازه کن و دوباره تأیید کن."
