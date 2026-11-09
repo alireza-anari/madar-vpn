@@ -275,17 +275,21 @@ test("quick chooser denies ordinary users, not-ready WSS, and expired node ACK",
   await env.SALES_DB.exec(
     "UPDATE nodes SET agent_capabilities='quota-v2,per-account-process,shared-443'",
   );
-  const notReady = await reply(await click(9,"rs:quick:issue:ws:n"));
-  expect(notReady.text).toContain("هنوز آماده نیست");
-  expect(await env.SALES_DB.prepare(
-    "SELECT COUNT(*) n FROM managed_accounts",
-  ).first<number>("n")).toBe(0);
+  // First WSS test may bootstrap a new metered account; *delivery* is
+  // still blocked until the Agent reports per-account ws-metered.
+  const prepared = await reply(await click(9,"rs:quick:issue:ws:n"));
+  expect(prepared.text).toContain("درخواست کانفیگ تست VMess/WSS");
+  const accountId = await env.SALES_DB.prepare(
+    "SELECT id FROM managed_accounts",
+  ).first<string>("id");
+  expect(accountId).toBeTruthy();
+  expect(await buildAccountDeliveryArtifact(E,accountId!,now)).toBeNull();
   await env.SALES_DB.exec("UPDATE nodes SET acked_revision=4");
   const stale = await reply(await click(9,"rs:quick:issue:reality:n"));
   expect(stale.text).toContain("ظرفیت یا اتصال");
   expect(await env.SALES_DB.prepare(
     "SELECT COUNT(*) n FROM managed_accounts",
-  ).first<number>("n")).toBe(0);
+  ).first<number>("n")).toBe(1);
 });
 
 test("chooser offers several nodes while never misrouting a test account", async () => {
