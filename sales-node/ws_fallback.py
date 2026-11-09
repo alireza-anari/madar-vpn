@@ -5,10 +5,12 @@ backend is the sole quota enforcement and accounting boundary. No commercial
 traffic can use this unless BOTH the node opts in and a signed QuotaPolicy v2
 advertises a valid, approved permanent endpoint.
 """
+import ipaddress
 import json
 import pathlib
 import re
 import socket
+import ssl
 import subprocess
 import time
 from shared443 import bridge_uuid
@@ -31,19 +33,30 @@ def validate_endpoint(value):
         raise ValueError("INVALID_WS_ENDPOINT")
     hostname = value.get("hostname")
     path = value.get("path")
+    port = value.get("port", 443)
+    if type(port) is not int or port not in (443, 2087):
+        raise ValueError("INVALID_WS_PORT")
+    if port == 2087:
+        try:
+            address = ipaddress.IPv4Address(hostname)
+            if not address.is_global or str(address) != hostname:
+                raise ValueError("INVALID_WS_IP")
+        except (ipaddress.AddressValueError, TypeError):
+            raise ValueError("INVALID_WS_IP") from None
     if not isinstance(hostname, str) or not 4 <= len(hostname) <= 253:
         raise ValueError("INVALID_WS_HOST")
     if hostname != hostname.lower() or hostname.endswith((".trycloudflare.com", ".cfargotunnel.com", ".localhost")):
         raise ValueError("INVALID_WS_HOST")
     labels = hostname.split(".")
-    if (
+    if port == 443 and (
         len(labels) < 2 or not re.fullmatch(r"[a-z]{2,63}", labels[-1]) or
         any(not HOST_LABEL.fullmatch(label) for label in labels)
     ):
         raise ValueError("INVALID_WS_HOST")
     if not isinstance(path, str) or not PATH.fullmatch(path):
         raise ValueError("INVALID_WS_PATH")
-    return {"type": "vmess-ws-aead", "hostname": hostname, "path": path}
+    return {"type": "vmess-ws-aead", "hostname": hostname, "path": path,
+            **({"port": 2087} if port == 2087 else {})}
 
 
 def render_ws_frontend(settings, endpoint, *, ports=range(20000, 21000)):
@@ -55,18 +68,32 @@ def render_ws_frontend(settings, endpoint, *, ports=range(20000, 21000)):
         not isinstance(key, str)
     ):
         raise ValueError("WS_NOT_OPTED_IN")
+    # Public-IP TLS stays on its own port; no changes to REALITY :443.
+    direct_ip_tls = endpoint.get("port") == 2087
+    if direct_ip_tls:
+        if (settings.get("wssIpAddress") != endpoint["hostname"] or
+                settings.get("wssTlsCert") != "/etc/letsencrypt/live/" + endpoint["hostname"] + "/fullchain.pem" or
+                settings.get("wssTlsKey") != "/etc/letsencrypt/live/" + endpoint["hostname"] + "/privkey.pem"):
+            raise ValueError("WS_IP_CERT_NOT_OWNED")
+        if not pathlib.Path(settings["wssTlsCert"]).is_file() or not pathlib.Path(settings["wssTlsKey"]).is_file():
+            raise ValueError("WS_IP_CERT_MISSING")
     conf = {
         "log": {"loglevel": "warning"},
         "api": {"tag": API_TAG, "services": ["HandlerService"]},
         "inbounds": [
             {
                 "tag": TAG,
-                "listen": "127.0.0.1", "port": WS_PORT,
+                "listen": "0.0.0.0" if direct_ip_tls else "127.0.0.1",
+                "port": 2087 if direct_ip_tls else WS_PORT,
                 "protocol": "vmess",
                 "settings": {"clients": [], "disableInsecureEncryption": True},
                 "streamSettings": {
-                    "network": "ws", "security": "none",
+                    "network": "ws", "security": "tls" if direct_ip_tls else "none",
                     "wsSettings": {"path": endpoint["path"]},
+                    **({"tlsSettings": {"certificates": [{
+                        "certificateFile": settings["wssTlsCert"],
+                        "keyFile": settings["wssTlsKey"],
+                    }]}} if direct_ip_tls else {}),
                 },
             },
             {
@@ -139,6 +166,7 @@ class ManagedWsFrontend:
         self.clients = {}
         self.process = None
         self.path = self.base / "secondary-ws.json"
+        self.last_tls_check = 0
         config = render_ws_frontend(settings, self.endpoint)
         # A failed Xray test MUST occur before a listener starts.
         atomic_write(self.path, config)
@@ -154,14 +182,30 @@ class ManagedWsFrontend:
                 stderr=subprocess.DEVNULL,
             )
             wait_for_local(API_PORT, self.process)
-            wait_for_local(WS_PORT, self.process)
+            wait_for_local(2087 if self.endpoint.get("port") == 2087 else WS_PORT, self.process)
+            self.check_tls(force=True)
         except Exception:
             self.stop()
             raise
 
+    def check_tls(self, *, force=False):
+        if self.endpoint.get("port") != 2087:
+            return
+        if not force and time.monotonic() - self.last_tls_check < 20:
+            return
+        try:
+            ctx = ssl.create_default_context()
+            with socket.create_connection(("127.0.0.1", 2087), timeout=2) as raw:
+                with ctx.wrap_socket(raw, server_hostname=self.endpoint["hostname"]) as tls:
+                    tls.do_handshake()
+            self.last_tls_check = time.monotonic()
+        except Exception as e:
+            raise ValueError("WS_PUBLIC_IP_TLS_UNVERIFIED") from e
+
     def check(self):
         if self.process is None or self.process.poll() is not None:
             raise ValueError("WS_FRONTEND_DOWN")
+        self.check_tls()
         return True
 
     def attach(self, client):
@@ -183,7 +227,7 @@ class ManagedWsFrontend:
         atomic_write(path, {
             "inbounds": [{
                 "tag": TAG,
-                "port": WS_PORT,
+                "port": 2087 if self.endpoint.get("port") == 2087 else WS_PORT,
                 "protocol": "vmess",
                 "settings": {
                     "clients": [{
