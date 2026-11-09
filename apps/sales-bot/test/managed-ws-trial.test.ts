@@ -169,3 +169,151 @@ test("no WSS config when approved endpoint differs from signed policy", async ()
   expect(await env.SALES_DB.prepare("SELECT COUNT(*) FROM managed_accounts")
     .first<number>("COUNT(*)")).toBe(0);
 });
+
+test("admin home: Issue Config → server → protocol → one tap trial, not paid-sale wizard", async () => {
+  const home = await reply(await click(9,"rs:home"));
+  expect(home.reply_markup.inline_keyboard.flat().some(
+    b => b.callback_data === "rs:quick:start",
+  )).toBe(true);
+  expect(home.reply_markup.inline_keyboard.flat().some(
+    b => b.callback_data === "rs:sale",
+  )).toBe(true);  // paid-sale workflow remains accessible
+
+  const nodes = await reply(await click(9,"rs:quick:start"));
+  expect(nodes.text).toContain("سرور را انتخاب کن");
+  expect(nodes.reply_markup.inline_keyboard.flat().some(
+    b=>b.callback_data === "rs:quick:node:n",
+  )).toBe(true);
+  const protocol = await reply(await click(9,"rs:quick:node:n"));
+  expect(protocol.text).toContain("پروتکل");
+  expect(protocol.reply_markup.inline_keyboard.flat().some(
+    b=>b.callback_data === "rs:quick:issue:reality:n",
+  )).toBe(true);
+  expect(protocol.reply_markup.inline_keyboard.flat().some(
+    b=>b.callback_data === "rs:quick:issue:ws:n",
+  )).toBe(true);
+
+  const issued = await reply(await click(9,"rs:quick:issue:reality:n"));
+  expect(issued.text).toContain("VLESS/REALITY");
+  const account = await env.SALES_DB.prepare(
+    "SELECT id,request_key,kind,quota_bytes,duration_seconds,state FROM managed_accounts",
+  ).first<{
+    id:string;request_key:string;kind:string;quota_bytes:number;duration_seconds:number;state:string;
+  }>();
+  expect(account).toBeTruthy();
+  expect(account?.request_key).toBe("admin-reality-trial:n:0");
+  expect(account?.kind).toBe("trial");
+  expect(account?.quota_bytes).toBe(1_000_000_000);
+  expect(account?.duration_seconds).toBe(1800);
+  expect(account?.state).toBe("preparing");
+  expect(issued.reply_markup.inline_keyboard.flat().some(
+    b=>b.callback_data === "rs:quick:get:" + account?.id,
+  )).toBe(true);
+  const pending = await reply(await click(9,"rs:quick:get:" + account!.id));
+  expect(pending.text).toContain("هنوز آماده تحویل نیست");
+  await click(9,"rs:quick:issue:reality:n");
+  expect(await env.SALES_DB.prepare(
+    "SELECT COUNT(*) n FROM managed_accounts",
+  ).first<number>("n")).toBe(1);
+});
+
+test("REALITY-only quick test never includes VMess even when same node has metered WS", async () => {
+  await click(9,"rs:quick:issue:reality:n");
+  const a = await env.SALES_DB.prepare(
+    "SELECT id,uuid,quota_epoch,quota_bytes,connection_flow FROM managed_accounts",
+  ).first<{id:string;uuid:string;quota_epoch:number;quota_bytes:number;connection_flow:string}>();
+  expect(a).toBeTruthy();
+  await env.SALES_DB.prepare(
+    "UPDATE managed_accounts SET state='active',started_at=100,valid_until=250,listen_port=20000,activation_revision=5 WHERE id=?",
+  ).bind(a!.id).run();
+  const policy = JSON.stringify({
+    version:2,nodeId:"n",revision:5,expiresAt:400,wsFallback:endpoint,
+    clients:[{
+      accountId:a!.id,uuid:a!.uuid,quotaEpoch:a!.quota_epoch,
+      quotaBytes:a!.quota_bytes,usedBytes:0,validUntil:250,
+      generation:a!.id+":"+a!.quota_epoch,listenPort:20000,flow:a!.connection_flow,
+    }],
+  });
+  await env.SALES_DB.prepare("UPDATE nodes SET policy_payload=? WHERE id='n'")
+    .bind(policy).run();
+  const artifact = await buildAccountDeliveryArtifact(E,a!.id,now);
+  expect(artifact?.profiles.map(p=>p.id)).toEqual(["reality-443"]);
+  expect(artifact?.config.startsWith("vless://")).toBe(true);
+  expect(artifact?.alternateConfig).toBeUndefined();
+  const shown = await reply(await click(9,"rs:quick:get:" + a!.id));
+  expect(shown.text).toContain("vless://");
+  expect(shown.text).not.toContain("vmess://");
+  await queueAccountDelivery(E,a!.id,now);
+  const text = (await env.SALES_DB.prepare(
+    "SELECT payload FROM outbox WHERE id=?",
+  ).bind("account:" + a!.id).first<string>("payload"))!;
+  expect(JSON.parse(text).text).not.toContain("vmess://");
+});
+
+test("WSS per-node picker issues exact same metered WS-only test", async () => {
+  const selected = await reply(await click(9,"rs:quick:node:n"));
+  expect(selected.text).toContain("VMess");
+  const issued = await reply(await click(9,"rs:quick:issue:ws:n"));
+  expect(issued.text).toContain("VMess/WSS");
+  const a = await env.SALES_DB.prepare(
+    "SELECT id,request_key FROM managed_accounts",
+  ).first<{id:string;request_key:string}>();
+  expect(a?.request_key).toBe("admin-ws-trial:n:0");
+  const blocked = await reply(await click(9,"rs:quick:get:"+a!.id));
+  expect(blocked.text).toContain("هنوز آماده تحویل نیست");
+});
+
+test("quick chooser denies ordinary users, not-ready WSS, and expired node ACK", async () => {
+  const denied = await reply(await click(10,"rs:quick:start"));
+  expect(denied.text).toContain("فقط برای مدیر");
+  const other = await reply(await click(10,"rs:quick:issue:reality:n"));
+  expect(other.text).toContain("فقط برای مدیر");
+  expect(await env.SALES_DB.prepare(
+    "SELECT COUNT(*) n FROM managed_accounts",
+  ).first<number>("n")).toBe(0);
+
+  await env.SALES_DB.exec(
+    "UPDATE nodes SET agent_capabilities='quota-v2,per-account-process,shared-443'",
+  );
+  const notReady = await reply(await click(9,"rs:quick:issue:ws:n"));
+  expect(notReady.text).toContain("هنوز آماده نیست");
+  expect(await env.SALES_DB.prepare(
+    "SELECT COUNT(*) n FROM managed_accounts",
+  ).first<number>("n")).toBe(0);
+  await env.SALES_DB.exec("UPDATE nodes SET acked_revision=4");
+  const stale = await reply(await click(9,"rs:quick:issue:reality:n"));
+  expect(stale.text).toContain("ظرفیت یا اتصال");
+  expect(await env.SALES_DB.prepare(
+    "SELECT COUNT(*) n FROM managed_accounts",
+  ).first<number>("n")).toBe(0);
+});
+
+test("chooser offers several nodes while never misrouting a test account", async () => {
+  await env.SALES_DB.exec(
+    "INSERT INTO nodes(id,name,target_ip,vpn_port,state,revision,acked_revision,last_seen,healthy,public_key,short_id,sni,policy_payload,agent_capabilities,max_accounts,max_allocated_bytes) " +
+    "VALUES('other','Second VPS','1.1.1.1',443,'ready',5,5,100,1,'" +
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA','1234567890abcdef','www.cloudflare.com','{}'," +
+    "'quota-v2,per-account-process,shared-443',20,2000000000)",
+  );
+  const secondPolicy = JSON.stringify({
+    version:2,nodeId:"other",revision:5,expiresAt:400,clients:[],
+  });
+  await env.SALES_DB.prepare(
+    "UPDATE nodes SET policy_payload=? WHERE id='other'",
+  ).bind(secondPolicy).run();
+
+  const nodes = await reply(await click(9,"rs:quick:start"));
+  const buttons = nodes.reply_markup.inline_keyboard.flat().map(b=>b.callback_data);
+  expect(buttons).toContain("rs:quick:node:n");
+  expect(buttons).toContain("rs:quick:node:other");
+  await click(9,"rs:quick:node:other");
+  const wsNotReady = await reply(await click(9,"rs:quick:issue:ws:other"));
+  expect(wsNotReady.text).toContain("هنوز آماده نیست");
+  await click(9,"rs:quick:issue:reality:other");
+  const row = await env.SALES_DB.prepare(
+    "SELECT node_id,quota_bytes,kind FROM managed_accounts",
+  ).first<{node_id:string;quota_bytes:number;kind:string}>();
+  expect(row?.node_id).toBe("other");
+  expect(row?.quota_bytes).toBe(1e9);
+  expect(row?.kind).toBe("trial");
+});
