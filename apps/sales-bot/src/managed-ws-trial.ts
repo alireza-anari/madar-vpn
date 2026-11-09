@@ -1,6 +1,45 @@
 import { createAccount } from "./accounts";
-import { readManagedWsRollout, managedWsStatusReady, type ManagedWsNodeStatus } from "./alternate-transport";
+import { readManagedWsRollout, type ManagedWsFallback, type ManagedWsNodeStatus } from "./alternate-transport";
 import { requireSalesAdmin, type SalesActor } from "./resellers";
+
+/**
+ * Bootstrapping readiness is DIFFERENT from customer delivery readiness:
+ * the first test account must be allowed to provision a loopback backend
+ * before the Agent can report ws-metered for its attached account.
+ * Customer-facing delivery is still strictly gated by ws-metered.
+ */
+export function canPrepareManagedWsTrial(
+  node: ManagedWsNodeStatus,
+  approved: ManagedWsFallback | null,
+  now: number,
+): boolean {
+  if (!approved || node.state !== "ready" || node.healthy !== 1 ||
+      !Number.isSafeInteger(node.last_seen) || node.last_seen <= now - 90 ||
+      !Number.isSafeInteger(node.revision) || node.revision < 1 ||
+      node.revision !== node.acked_revision || !node.policy_payload)
+    return false;
+  const capabilities = new Set(
+    (node.agent_capabilities || "").split(",").map(v => v.trim()).filter(Boolean),
+  );
+  if (!["quota-v2","per-account-process","shared-443"].every(
+    cap => capabilities.has(cap)
+  )) return false;
+  try {
+    const policy = JSON.parse(node.policy_payload) as {
+      version?: number; nodeId?: string; revision?: number;
+      expiresAt?: number; wsFallback?: unknown;
+    };
+    return policy.version === 2 &&
+      policy.nodeId === node.id &&
+      policy.revision === node.revision &&
+      Number.isSafeInteger(policy.expiresAt) &&
+      (policy.expiresAt as number) > now &&
+      (policy.expiresAt as number) <= now + 330 &&
+      JSON.stringify(policy.wsFallback) === JSON.stringify(approved);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Test the actual per-node, shared-quota VMess/WSS transport — never the
@@ -33,7 +72,7 @@ export async function requestAdminManagedWsTrial(
     "SELECT id,state,healthy,last_seen,revision,acked_revision,policy_payload,agent_capabilities FROM nodes WHERE id=?",
   ).bind(nodeId).first<ManagedWsNodeStatus>();
   const endpoint = await readManagedWsRollout(db, nodeId);
-  if (!node || !managedWsStatusReady(node, endpoint, now))
+  if (!node || !canPrepareManagedWsTrial(node, endpoint, now))
     throw Error("WS_TRIAL_NOT_METERED");
 
   return createAccount(db, actor, {
