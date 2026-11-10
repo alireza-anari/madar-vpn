@@ -279,11 +279,94 @@ async function adminDecision(db,e,action,id) {
 
 async function supportInbox(db,e) {
   const queue=(await db.prepare(
-    "SELECT id,customer_telegram_id,subject FROM support_tickets WHERE state='open' ORDER BY created_at LIMIT 8"
+    "SELECT id,customer_telegram_id,subject,state FROM support_tickets " +
+    "WHERE state IN ('open','waiting') ORDER BY created_at LIMIT 8"
   ).all()).results??[];
-  if (!queue.length) return response('No open tickets',e.locale);
-  return response(line('Open support tickets',...queue.map(x=>
-    x.id+' / '+x.customer_telegram_id+' / '+x.subject.slice(0,80))),e.locale);
+  if (!queue.length) return response('✅ No open support tickets',e.locale);
+  return response(line('💬 Support inbox',...queue.map(x=>
+    x.id+' / '+x.customer_telegram_id+' / '+x.subject.slice(0,80)+' / '+x.state)),
+    e.locale,queue.map(x=>[
+      {text:'✉ Reply '+x.id.slice(0,8),callback_data:'v2:ticket:reply:'+x.id},
+      {text:'✓ Close',callback_data:'v2:ticket:close:'+x.id},
+    ]));
+}
+
+async function staffCanReply(db,e,env) {
+  return adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId) || await isStaff(db,e,'support');
+}
+
+async function startTicketReply(db,e,id,nowMs) {
+  const ticket=await db.prepare(
+    "SELECT id,customer_telegram_id,subject,state FROM support_tickets WHERE id=?"
+  ).bind(id).first();
+  if (!ticket || ticket.state==='closed') return response('Ticket unavailable',e.locale);
+  await db.prepare(
+    "INSERT INTO support_staff_sessions(telegram_id,ticket_id,expires_ms) VALUES(?,?,?) " +
+    "ON CONFLICT(telegram_id) DO UPDATE SET ticket_id=excluded.ticket_id,expires_ms=excluded.expires_ms"
+  ).bind(e.actorId,id,nowMs+10*60*1000).run();
+  return response('✉ Reply to '+id+'\n'+ticket.subject.slice(0,140)+
+    '\n\nSend one message within 10 minutes. Never request passwords or secret keys.',e.locale);
+}
+
+async function staffReply(db,e,env,nowMs) {
+  const text=e.inputText;
+  if(typeof text!=='string' || !text.trim() || text.startsWith('/') ||
+     text.startsWith('v2:') || !await staffCanReply(db,e,env)) return null;
+  const session=await db.prepare(
+    'SELECT ticket_id,expires_ms FROM support_staff_sessions WHERE telegram_id=?'
+  ).bind(e.actorId).first();
+  if(!session || session.expires_ms<nowMs) return null;
+  const ticket=await db.prepare(
+    "SELECT id,customer_telegram_id,state FROM support_tickets WHERE id=?"
+  ).bind(session.ticket_id).first();
+  if (!ticket || ticket.state==='closed') {
+    await db.prepare('DELETE FROM support_staff_sessions WHERE telegram_id=?')
+      .bind(e.actorId).run();
+    return response('Ticket closed; no message sent.',e.locale);
+  }
+  const body=text.trim().slice(0,1000);
+  await db.batch([
+    db.prepare(
+      "INSERT OR IGNORE INTO support_messages(id,ticket_id,sender_telegram_id,body,role) " +
+      "VALUES(?,?,?,?,'support')"
+    ).bind('message:'+e.updateId,ticket.id,e.actorId,body),
+    db.prepare(
+      "INSERT OR IGNORE INTO telegram_notifications(id,chat_id,body,state,due_ms) " +
+      "VALUES(?,?,?,'pending',?)"
+    ).bind('support:'+e.updateId,ticket.customer_telegram_id,
+      '💬 پاسخ پشتیبانی مدار به درخواست '+ticket.id+':\n\n'+body,nowMs),
+    db.prepare(
+      "UPDATE support_tickets SET state='waiting' WHERE id=? AND state='open'"
+    ).bind(ticket.id),
+    db.prepare('DELETE FROM support_staff_sessions WHERE telegram_id=?')
+      .bind(e.actorId),
+    db.prepare(
+      'INSERT OR IGNORE INTO audit_events(event_id,actor_id,object_type,object_id,verb) VALUES(?,?,?,?,?)'
+    ).bind('support:reply:'+e.updateId,e.actorId,'support_ticket',ticket.id,'reply'),
+  ]);
+  return response('✅ Reply queued for '+ticket.id,e.locale);
+}
+
+async function closeSupport(db,e,id,nowMs) {
+  const ticket=await db.prepare(
+    'SELECT id,state,customer_telegram_id FROM support_tickets WHERE id=?'
+  ).bind(id).first();
+  if (!ticket) return response('Ticket not found',e.locale);
+  if (ticket.state==='closed') return response('Ticket already closed',e.locale);
+  await db.batch([
+    db.prepare(
+      "UPDATE support_tickets SET state='closed' WHERE id=? AND state IN ('open','waiting')"
+    ).bind(id),
+    db.prepare(
+      "INSERT OR IGNORE INTO telegram_notifications(id,chat_id,body,state,due_ms) " +
+      "VALUES(?,?,?,'pending',?)"
+    ).bind('support:closed:'+id,ticket.customer_telegram_id,
+      '✅ درخواست پشتیبانی '+id+' بسته شد. در صورت نیاز درخواست جدید ثبت کنید.',nowMs),
+    db.prepare(
+      'INSERT OR IGNORE INTO audit_events(event_id,actor_id,object_type,object_id,verb) VALUES(?,?,?,?,?)'
+    ).bind('support:close:'+id,e.actorId,'support_ticket',id,'close'),
+  ]);
+  return response('✅ Ticket closed: '+id,e.locale);
 }
 
 /** The caller must already validate the Telegram webhook and sender identity. */
@@ -386,11 +469,20 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
       !await isStaff(db,e,'support')) return response('Access denied',e.locale);
     return supportInbox(db,e);
   }
+  if (key.startsWith('ticket:reply:') || key.startsWith('ticket:close:')) {
+    if(!await staffCanReply(db,e,env)) return response('Access denied',e.locale);
+    const action=key.startsWith('ticket:reply:')?'reply':'close';
+    const id=key.slice(action==='reply'?'ticket:reply:'.length:'ticket:close:'.length);
+    if(!/^tg-[0-9]{1,20}$/.test(id)) return response('Invalid ticket ID',e.locale);
+    return action==='reply' ? startTicketReply(db,e,id,nowMs) : closeSupport(db,e,id,nowMs);
+  }
   if (key.startsWith('approve:') || key.startsWith('reject:')) {
     if (!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) return response('Access denied',e.locale);
     const [action,id]=key.split(':');
     return adminDecision(db,e,action,id);
   }
+  const reply=await staffReply(db,e,env,nowMs);
+  if(reply) return reply;
   const support=await maybeRecordSupport(db,e,nowMs);
   return support??botPage('unknown',e.locale);
 }

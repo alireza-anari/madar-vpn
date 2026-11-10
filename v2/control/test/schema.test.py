@@ -127,5 +127,11 @@ class SchemaTests(unittest.TestCase):
         with self.assertRaises(sqlite3.IntegrityError):
             self.db.execute("UPDATE subscriptions SET order_id='order-1' WHERE id='sub-1'")
 
+    def test_closed_support_ticket_cannot_reopen(self):
+        self.db.execute("INSERT INTO customers(telegram_id) VALUES('101')")
+        self.db.execute("INSERT INTO support_tickets(id,customer_telegram_id,state,subject) VALUES('tg-1','101','closed','Help')")
+        with self.assertRaisesRegex(sqlite3.IntegrityError,'SUPPORT_TICKET_CLOSED'):
+            self.db.execute("UPDATE support_tickets SET state='open' WHERE id='tg-1'")
+
 if __name__=='__main__':
     unittest.main()
