@@ -128,26 +128,40 @@ async function purchase(db,env,e,planId,nowMs) {
   ),e.locale);
 }
 
-async function storeReceipt(db,e) {
+export function validAdminIds(ids,customerId='') {
+  if(typeof ids!=='string') return [];
+  return [...new Set(ids.split(',').map(s=>s.trim()).filter(x=>
+    /^[0-9]{1,20}$/.test(x) && x!==customerId))].slice(0,20);
+}
+
+async function storeReceipt(db,e,env) {
   const order=await db.prepare(
-    "SELECT id FROM orders WHERE customer_telegram_id=? AND state='pending' ORDER BY created_at DESC LIMIT 1"
+    "SELECT id,state FROM orders WHERE customer_telegram_id=? " +
+    "AND state IN ('pending','receipt_submitted') ORDER BY created_at DESC LIMIT 1"
   ).bind(e.actorId).first();
-  if (!order) return response(t('سفارش در انتظار رسید ندارید. از بخش پلن‌ها شروع کنید.',
+  if(!order) return response(t('سفارش در انتظار رسید ندارید. از بخش پلن‌ها شروع کنید.',
     'No order is awaiting a receipt.',e.locale),e.locale);
-  if (typeof e.photoId !== 'string' || e.photoId.length > 512 || e.photoId.length < 5)
+  if(typeof e.photoId!=='string' || e.photoId.length>512 || e.photoId.length<5)
     return response(t('رسید معتبر نیست؛ لطفاً تصویر رسید را ارسال کنید.','Please send a valid receipt image.',e.locale),e.locale);
-  try {
-    const statements=[
+  if(order.state==='pending') {
+    await db.batch([
       db.prepare(
         "INSERT OR IGNORE INTO receipts(id,order_id,telegram_file_id,upload_by_telegram_id) VALUES(?,?,?,?)"
       ).bind(crypto.randomUUID(),order.id,e.photoId,e.actorId),
       db.prepare(
         "UPDATE orders SET state='receipt_submitted',updated_at=CURRENT_TIMESTAMP WHERE id=? AND state='pending'"
       ).bind(order.id),
-    ];
-    await db.batch(statements);
-  } catch {
-    throw new Error('receipt_storage_failed');
+    ]);
+  }
+  // An administrative notice uses a deterministic key, so a retried event
+  // cannot spam admins even when acknowledgement is lost.
+  for(const adminId of validAdminIds(env.ADMIN_TELEGRAM_IDS,e.actorId)) {
+    await db.prepare(
+      "INSERT OR IGNORE INTO telegram_notifications(id,chat_id,body,state,due_ms) " +
+      "VALUES(?,?,?,'pending',?)"
+    ).bind('receipt-review:'+order.id+':'+adminId,adminId,
+      '🧾 رسید تازه برای بررسی\nسفارش: '+order.id+
+      '\nمشتری: '+e.actorId+'\n/admin را باز کنید.',Date.now()).run();
   }
   return response(t('✅ رسید ثبت شد و منتظر بررسی مدیر است. تا تأیید سرویس، کانفیگی صادر نمی‌شود.',
     '✅ Receipt received for manual review. No VPN configuration has been issued.',e.locale),e.locale);
@@ -379,7 +393,7 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
       'Account suspended. Contact support.',e.locale),e.locale);
 
   const key=e.key??'';
-  if (e.photoId) return storeReceipt(db,e);
+  if (e.photoId) return storeReceipt(db,e,env);
   if (key==='/start') {
     const referral=await linkSellerOnStart(db,e,nowMs);
     const home=botPage('home',e.locale);

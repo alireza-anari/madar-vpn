@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { adminAllowed, salesConfigured, availableForSale } from '../src/shop.mjs';
+import { adminAllowed, salesConfigured, availableForSale, validAdminIds } from '../src/shop.mjs';
 
 test('admin role fail closed for absent or malformed identifiers',()=>{
   assert.equal(adminAllowed(undefined,'123'),false);
@@ -33,4 +33,9 @@ test('nonprovisioning checkout never opens even if a bank destination exists',()
   assert.equal(salesConfigured({
     SHOP_ENABLED:'true',PAYMENT_INSTRUCTIONS:'Confirmed official payment instructions'
   }),false);
+});
+
+test('receipt alerts go only to explicitly configured distinct admin IDs',()=>{
+  assert.deepEqual(validAdminIds(' 200,200,garbage,300,400 ', '300'),['200','400']);
+  assert.deepEqual(validAdminIds(undefined),[]);
 });
