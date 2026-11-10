@@ -211,7 +211,7 @@ export default {
     await env.DB.prepare(
       "DELETE FROM support_messages WHERE ticket_id IN " +
       "(SELECT id FROM support_tickets WHERE state='closed' " +
-      "AND created_at<datetime(?,'unixepoch'))"
+      "AND closed_at<datetime(?,'unixepoch'))"
     ).bind(oldDays(90)).run();
   }
 };

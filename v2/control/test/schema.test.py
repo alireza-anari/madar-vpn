@@ -133,5 +133,12 @@ class SchemaTests(unittest.TestCase):
         with self.assertRaisesRegex(sqlite3.IntegrityError,'SUPPORT_TICKET_CLOSED'):
             self.db.execute("UPDATE support_tickets SET state='open' WHERE id='tg-1'")
 
+    def test_support_retention_is_based_on_actual_closure_date(self):
+        self.db.execute("INSERT INTO customers(telegram_id) VALUES('101')")
+        self.db.execute("INSERT INTO support_tickets(id,customer_telegram_id,state,subject) VALUES('tg-77','101','open','Network help')")
+        self.db.execute("UPDATE support_tickets SET state='closed' WHERE id='tg-77'")
+        row=self.db.execute("SELECT closed_at FROM support_tickets WHERE id='tg-77'").fetchone()
+        self.assertTrue(row[0], 'closure date must be stamped')
+
 if __name__=='__main__':
     unittest.main()
