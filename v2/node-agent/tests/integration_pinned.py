@@ -5,6 +5,10 @@ No systemd, VPS, firewall, Telegram, or production mutations in CI.
 import hashlib
 import json
 import os
+import socket
+import ssl
+import time
+import base64
 import pathlib
 import subprocess
 import tempfile
@@ -47,4 +51,62 @@ def main():
         run([paths["caddy"],"validate","--config",str(caddyfile),
              "--adapter","caddyfile"])
         print("VERIFIED: pinned Xray REALITY+WS and Caddy HTTPS syntax; no service launched")
+        # An additional isolated transport test uses Caddy's INTERNAL CA and a
+        # high unprivileged HTTPS port. Never treat it as a public certificate.
+        testsite=compile_caddy_site(
+            domain="vpn.example.com",ws_path="/madar-ws",loopback_port=10443
+        ).replace("vpn.example.com {", "vpn.example.com:18443 {\\n    tls internal",1)
+        testsite=testsite.replace("\\n", "\n")
+        local_site=directory/"LocalCaddyfile"
+        local_site.write_text(testsite,encoding="utf-8")
+        run([paths["caddy"],"validate","--config",str(local_site),"--adapter","caddyfile"])
+        env=dict(os.environ)
+        env["XDG_DATA_HOME"]=str(directory/"caddy-data")
+        env["XDG_CONFIG_HOME"]=str(directory/"caddy-config")
+        processes=[]
+        try:
+            processes.append(subprocess.Popen([paths["xray"],"run","-config",str(config_path)],
+                stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL))
+            processes.append(subprocess.Popen([paths["caddy"],"run","--config",str(local_site),
+                "--adapter","caddyfile"],env=env,
+                stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL))
+            cert=directory/"caddy-data"/"caddy"/"pki"/"authorities"/"local"/"root.crt"
+            successful=False
+            last_error=None
+            for _ in range(70):
+                if any(p.poll() is not None for p in processes):
+                    raise AssertionError("isolated Xray or Caddy exited before TLS upgrade")
+                if not cert.exists():
+                    time.sleep(0.2)
+                    continue
+                try:
+                    context=ssl.create_default_context(cafile=str(cert))
+                    with socket.create_connection(("127.0.0.1",18443),timeout=2) as plain:
+                        with context.wrap_socket(plain,server_hostname="vpn.example.com") as tls:
+                            tls.settimeout(2)
+                            key=base64.b64encode(os.urandom(16)).decode("ascii")
+                            request=("GET /madar-ws HTTP/1.1\\r\\n"
+                                "Host: vpn.example.com\\r\\n"
+                                "Connection: Upgrade\\r\\nUpgrade: websocket\\r\\n"
+                                "Sec-WebSocket-Version: 13\\r\\n"
+                                "Sec-WebSocket-Key: "+key+"\\r\\n\\r\\n")
+                            tls.sendall(request.replace("\\r\\n","\r\n").encode("ascii"))
+                            answer=tls.recv(2048)
+                    if b" 101 " in answer.split(b"\\r\\n",1)[0]:
+                        successful=True
+                        break
+                    last_error="unexpected HTTP response"
+                except (OSError,ssl.SSLError) as e:
+                    last_error=type(e).__name__
+                time.sleep(0.2)
+            if not successful:
+                raise AssertionError("local TLS-verified WebSocket upgrade failed: "+str(last_error))
+            print("VERIFIED: CA-trusted local TLS -> Caddy -> Xray WSS HTTP 101 upgrade (not carrier tested)")
+        finally:
+            for process in reversed(processes):
+                if process.poll() is None:
+                    process.terminate()
+                    try: process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill();process.wait(timeout=5)
 if __name__=="__main__":main()
