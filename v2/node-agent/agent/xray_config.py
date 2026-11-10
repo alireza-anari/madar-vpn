@@ -126,7 +126,7 @@ def compile_caddy_site(*, domain, ws_path, loopback_port):
         f"{domain} {{\n"
         f"    @madar_ws path {ws_path}\n"
         f"    reverse_proxy @madar_ws 127.0.0.1:{loopback_port}\n"
-        f"    respond \"OK\" 200\n"
+
         f"}}\n"
     )
 

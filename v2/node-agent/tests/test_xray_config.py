@@ -51,6 +51,7 @@ class XrayCompilerTests(unittest.TestCase):
         site=compile_caddy_site(domain="vpn.example.com",ws_path="/madar-bridge",
                                 loopback_port=10443)
         self.assertIn("reverse_proxy @madar_ws 127.0.0.1:10443",site)
+        self.assertNotIn('respond "OK" 200',site)
         self.assertNotIn("0.0.0.0:10443",site)
         with self.assertRaises(ValueError):
             compile_caddy_site(domain="*.example.com",ws_path="/ws",loopback_port=10443)
