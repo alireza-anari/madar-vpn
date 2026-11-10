@@ -1,8 +1,8 @@
 package io.madar.v2
 
 import android.net.VpnService
-import go.libXray.DialerController
-import go.libXray.LibXray
+import libXray.DialerController
+import libXray.LibXray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -11,7 +11,7 @@ private object MadarSocketProtector : DialerController {
     @Volatile private var service: java.lang.ref.WeakReference<VpnService>? = null
     fun attach(value: VpnService) { service = java.lang.ref.WeakReference(value) }
     fun detach() { service = null }
-    override fun protectFd(fd: Int): Boolean = service?.get()?.protect(fd) == true
+    override fun protectFd(fd: Long): Boolean = service?.get()?.protect(fd.toInt()) == true
 }
 
 class LibXrayNativeEngine(private val vpnService: VpnService) : NativeTunnelEngine {
