@@ -30,4 +30,20 @@
     <string name="help_error_answer">مدار خطا را تفکیک کرده و مسیر سالم جایگزین را آزمایش خواهد کرد. خطا نباید باعث کسر اشتباه حجم شما شود.</string>
     <string name="help_privacy_question">چه اطلاعاتی ذخیره خواهد شد؟</string>
     <string name="help_privacy_answer">فقط داده‌های ضروری حساب، اشتراک و گزارش‌های ناشناس برای ارائه امن سرویس. هیچ رمز یا کلید خصوصی را در گفت‌وگوهای پشتیبانی ارسال نکنید.</string>
+
+    <string name="token_label">توکن دسترسی اشتراک</string>
+    <string name="token_placeholder">توکن ۴۳ کاراکتری را وارد کنید</string>
+    <string name="save_token">ذخیره امن</string>
+    <string name="verify_subscription">بررسی اشتراک</string>
+    <string name="remove_token">حذف توکن ذخیره‌شده</string>
+    <string name="token_saved">توکن با رمزگذاری روی این دستگاه ذخیره شد.</string>
+    <string name="token_removed">توکن ذخیره‌شده حذف شد.</string>
+    <string name="token_invalid">توکن دسترسی معتبر نیست.</string>
+    <string name="account_verified">اشتراک تأیید شد؛ در نسخه آزمایشی موتور VPN هنوز متصل نیست.</string>
+    <string name="subscription_not_ready">اشتراک هنوز فعال نیست یا منقضی شده است.</string>
+    <string name="server_not_ready">سرور اشتراک آماده نیست. بعداً دوباره بررسی کنید.</string>
+    <string name="subscription_check_failed">بررسی اشتراک انجام نشد. اتصال اینترنت را بررسی کنید.</string>
+    <string name="usage_summary">مصرف: %1$.2f از %2$.2f گیگابایت</string>
+    <string name="routes_summary">مسیرهای تأییدشده: %1$d</string>
+
 </resources>

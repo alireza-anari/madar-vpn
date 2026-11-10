@@ -30,4 +30,20 @@
     <string name="help_error_answer">Madar will classify the failed layer and try an eligible alternative. Connection errors must not silently consume your plan.</string>
     <string name="help_privacy_question">What data will be collected?</string>
     <string name="help_privacy_answer">Only minimal account, subscription and anonymized diagnostic data required to provide and secure the service. Never share passwords or private keys in support chats.</string>
+
+    <string name="token_label">Subscription access token</string>
+    <string name="token_placeholder">Paste a 43-character token</string>
+    <string name="save_token">Save securely</string>
+    <string name="verify_subscription">Check subscription</string>
+    <string name="remove_token">Remove saved token</string>
+    <string name="token_saved">Access token saved securely on this device.</string>
+    <string name="token_removed">Access token removed.</string>
+    <string name="token_invalid">The access token is invalid.</string>
+    <string name="account_verified">Subscription verified. VPN engine is not connected in this preview.</string>
+    <string name="subscription_not_ready">This subscription is not yet active or has expired.</string>
+    <string name="server_not_ready">The subscription server is not ready. Please try again later.</string>
+    <string name="subscription_check_failed">Could not verify the subscription. Check your connection.</string>
+    <string name="usage_summary">Usage: %1$.2f / %2$.2f GB</string>
+    <string name="routes_summary">Verified routes: %1$d</string>
+
 </resources>

@@ -149,12 +149,6 @@ private fun ServersScreen() {
     Text(stringResource(R.string.servers_disclaimer), style = MaterialTheme.typography.bodySmall)
 }
 
-@Composable
-private fun AccountScreen() {
-    Text(stringResource(R.string.account_title), style = MaterialTheme.typography.headlineSmall)
-    StatusCard(stringResource(R.string.account_preview_title), stringResource(R.string.account_preview_details))
-    Text(stringResource(R.string.account_disclaimer))
-}
 
 @Composable
 private fun HelpScreen() {
