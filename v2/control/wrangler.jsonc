@@ -1,0 +1,11 @@
+{
+  "$schema": "../../apps/sales-bot/node_modules/wrangler/config-schema.json",
+  "name": "madar-v2-staging",
+  "main": "src/index.mjs",
+  "compatibility_date": "2026-11-10",
+  "triggers": { "crons": ["* * * * *"] },
+  "observability": { "enabled": true },
+  "secrets": { "required": ["BOT_TOKEN", "TELEGRAM_WEBHOOK_SECRET"] }
+  // Add the NEW V2_DB binding via a staging-only configuration after its
+  // database is provisioned. Never bind the production sales database.
+}

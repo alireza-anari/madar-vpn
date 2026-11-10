@@ -1,0 +1,32 @@
+name: Madar V2 isolated checks
+
+on:
+  push:
+    branches: ['rewrite/**']
+    paths: ['v2/**', '.github/workflows/v2-checks.yml']
+  pull_request:
+    paths: ['v2/**', '.github/workflows/v2-checks.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  v2-control-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax & behavior tests, no production secrets
+        working-directory: v2/control
+        run: |
+          npm run check
+          npm test
+      - name: Verify no production DB in V2 config
+        run: |
+          ! grep -q 'f59e160f-89ab-4a90-a4dc-f257883d5a61' v2/control/wrangler.jsonc
+          ! grep -q '"name": "madar-sales-bot"' v2/control/wrangler.jsonc

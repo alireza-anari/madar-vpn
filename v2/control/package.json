@@ -1,0 +1,9 @@
+{
+  "name": "@madar/v2-control",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check src/index.mjs && node --check src/diagnostics.mjs && node --check src/routes.mjs && node --check src/telegram.mjs"
+  }
+}
