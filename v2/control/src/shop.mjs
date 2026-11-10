@@ -1,3 +1,4 @@
+import {beginNodeWizard,cancelNodeWizard,consumeNodeWizard} from './node-wizard.mjs';
 import { nodeAdminAction } from './node-admin.mjs';
 import { handleSeller, linkSellerOnStart, grantStaffRole } from './referrals.mjs';
 /**
@@ -400,6 +401,18 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
     const home=botPage('home',e.locale);
     return referral?{...home,text:home.text+'\n\n'+referral}:home;
   }
+  if (key==='admin:node:new' || key==='admin:node:cancel') {
+    if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
+      return response('Access denied',e.locale);
+    const panel=key==='admin:node:new'
+      ? await beginNodeWizard(db,e.actorId,nowMs)
+      : await cancelNodeWizard(db,e.actorId);
+    return response(panel.text,e.locale,panel.replyMarkup?.inline_keyboard??[]);
+  }
+  if(adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) {
+    const wizard=await consumeNodeWizard(db,e.actorId,e.inputText,nowMs);
+    if(wizard)return response(wizard.text,e.locale);
+  }
   const sellerAction=await handleSeller(env,e,nowMs);
   if (sellerAction) return sellerAction;
   if (key==='/seller_grant' || key==='/support_grant') {
@@ -416,6 +429,7 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
       [{text:'💬 Support inbox',callback_data:'v2:admin:tickets'}],
       [{text:'🛍 Plans',callback_data:'v2:admin:plans'}],
       [{text:'🖥 Nodes',callback_data:'v2:admin:nodes'}],
+      [{text:'➕ افزودن سرور',callback_data:'v2:admin:node:new'}],
     ]);
   }
   if (key==='admin:plans') {
@@ -429,7 +443,11 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
   if (key==='/node_add' || key==='/node_route' || key==='/nodes' || key==='admin:nodes') {
     if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
       return response('Access denied',e.locale);
-    return nodeAdminAction(db,e.actorId,key==='admin:nodes'?'/nodes':key,e.inputText);
+    const panel=await nodeAdminAction(db,e.actorId,key==='admin:nodes'?'/nodes':key,e.inputText);
+    if(key==='admin:nodes')return response(panel.text,e.locale,[
+      [{text:'➕ افزودن سرور',callback_data:'v2:admin:node:new'}],
+    ]);
+    return panel;
   }
   if (key==='/plan_add') {
     if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) return response('Access denied',e.locale);
