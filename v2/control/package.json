@@ -4,6 +4,6 @@
   "type": "module",
   "scripts": {
     "test": "node --test",
-    "check": "node --check src/index.mjs && node --check src/diagnostics.mjs && node --check src/routes.mjs && node --check src/telegram.mjs && node --check src/shop.mjs && node --check src/referrals.mjs && node --check src/node-control.mjs && node --check src/subscription.mjs"
+    "check": "node --check src/index.mjs && node --check src/diagnostics.mjs && node --check src/routes.mjs && node --check src/telegram.mjs && node --check src/shop.mjs && node --check src/referrals.mjs && node --check src/node-control.mjs && node --check src/subscription.mjs && node --check src/node-admin.mjs"
   }
 }

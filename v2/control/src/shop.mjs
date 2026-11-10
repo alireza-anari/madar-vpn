@@ -1,3 +1,4 @@
+import { nodeAdminAction } from './node-admin.mjs';
 import { handleSeller, linkSellerOnStart, grantStaffRole } from './referrals.mjs';
 /**
  * Madar V2 business UI. Every mutable action is idempotent by the Telegram
@@ -414,6 +415,7 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
       [{text:'🧾 Pending receipts',callback_data:'v2:admin:queue'}],
       [{text:'💬 Support inbox',callback_data:'v2:admin:tickets'}],
       [{text:'🛍 Plans',callback_data:'v2:admin:plans'}],
+      [{text:'🖥 Nodes',callback_data:'v2:admin:nodes'}],
     ]);
   }
   if (key==='admin:plans') {
@@ -423,6 +425,11 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
       'Use /plan_add id|نام|English|price|IRT|quotaGB|days to create a disabled plan.'),e.locale,
       plans.map(x=>[{text:(x.active?'🔴 Disable ':'🟢 Enable ')+x.id,
         callback_data:'v2:plan:'+(x.active?'off:':'on:')+x.id}]));
+  }
+  if (key==='/node_add' || key==='/node_route' || key==='/nodes' || key==='admin:nodes') {
+    if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
+      return response('Access denied',e.locale);
+    return nodeAdminAction(db,e.actorId,key==='admin:nodes'?'/nodes':key,e.inputText);
   }
   if (key==='/plan_add') {
     if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) return response('Access denied',e.locale);
