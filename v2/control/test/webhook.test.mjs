@@ -14,42 +14,49 @@ function mockEnv() {
       };
     },async first(){return {ok:1};}};
   }};
-  return {DB,TELEGRAM_WEBHOOK_SECRET:'one-time-secret',calls};
+  return {DB,BOT_TOKEN:'test-bot-token-not-used',TELEGRAM_WEBHOOK_SECRET:'one-time-secret',calls};
 }
-function post(env, value, headers={}) {
+function post(env,value,headers={}) {
   return worker.fetch(new Request(endpoint,{
-    method:'POST',
-    headers:{'x-telegram-bot-api-secret-token':env.TELEGRAM_WEBHOOK_SECRET,
-      'content-type':'application/json',...headers},
-    body: typeof value==='string'?value:JSON.stringify(value),
+    method:'POST',headers:{
+      'x-telegram-bot-api-secret-token':env.TELEGRAM_WEBHOOK_SECRET,
+      'content-type':'application/json',...headers,
+    },
+    body:typeof value==='string'?value:JSON.stringify(value),
   }),env,{waitUntil() {}});
 }
-test('authenticated webhook stores localized Telegram message and menu',async()=>{
+test('authenticated update enters durable inbox (not directly delivered)',async()=>{
   const env=mockEnv();
   const reply=await post(env,{update_id:101,message:{
     chat:{id:202,type:'private'},from:{id:202,language_code:'fa'},text:'/start'}});
   assert.equal(reply.status,200);
-  const insert=env.calls.find(x=>/INSERT OR IGNORE/.test(x.sql));
+  const insert=env.calls.find(x=>/INSERT OR IGNORE INTO telegram_inbox/.test(x.sql));
   assert.ok(insert);
   assert.equal(insert.params[0],101);
   assert.equal(insert.params[1],'202');
-  assert.equal(JSON.parse(insert.params[3]).inline_keyboard.length,4);
+  const event=JSON.parse(insert.params[2]);
+  assert.equal(event.key,'/start');
+  assert.equal(event.actorId,'202');
+  assert.equal(env.calls.filter(x=>/INSERT OR IGNORE INTO orders/.test(x.sql)).length,0);
 });
-test('invalid JSON and unsupported content type are rejected',async()=>{
+test('malformed input rejected without database writes',async()=>{
   const env=mockEnv();
   assert.equal((await post(env,'{bad')).status,400);
   assert.equal((await post(env,'{}',{'content-type':'text/plain'})).status,415);
+  assert.equal((await post(env,JSON.stringify({big:'x'.repeat(50000)}))).status,413);
   assert.equal(env.calls.length,0);
 });
-test('oversized body rejected even without content-length header',async()=>{
+test('unauthorized and unconfigured bot are fail-closed',async()=>{
   const env=mockEnv();
-  const reply=await post(env,JSON.stringify({huge:'x'.repeat(50_000)}));
-  assert.equal(reply.status,413);
+  assert.equal((await post(env,{}, {'x-telegram-bot-api-secret-token':'invalid'})).status,401);
+  delete env.BOT_TOKEN;
+  assert.equal((await post(env,{})).status,503);
   assert.equal(env.calls.length,0);
 });
-test('untrusted webhook secret rejected without database writes',async()=>{
+test('no private identity, no persisted update',async()=>{
   const env=mockEnv();
-  const reply=await post(env,{}, {'x-telegram-bot-api-secret-token':'invalid'});
-  assert.equal(reply.status,401);
+  const r=await post(env,{update_id:7,message:{
+    chat:{id:-100,type:'group'},from:{id:200},text:'/start'}});
+  assert.equal(r.status,200);
   assert.equal(env.calls.length,0);
 });
