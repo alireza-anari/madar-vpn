@@ -86,7 +86,13 @@ def verify(payload, signature, secret, *, expected_node_id, now=None):
                 raise RejectedManifest("WSS requires safe absolute path")
         elif "ws_path" in route or "tls_hostname" in route:
             raise RejectedManifest("protocol-incompatible route fields")
-    return hashlib.sha256(canonical(payload)).hexdigest()
+    # Short-lived issued_at/expires_at/nonce are part of the signed envelope,
+    # NOT the desired configuration revision. Otherwise every poll generates
+    # a conflicting digest for the same revision.
+    desired={key:payload[key] for key in (
+        "node_id","revision","routes","user_limit","byte_limit"
+    )}
+    return hashlib.sha256(canonical(desired)).hexdigest()
 
 
 class AgentStore:
