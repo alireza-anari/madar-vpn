@@ -58,3 +58,10 @@ jobs:
       - name: Build isolated Android shell and run state machine unit tests
         working-directory: v2/android
         run: gradle :app:testDebugUnitTest :app:assembleDebug --no-daemon --stacktrace
+      - name: Retain debug UX preview APK (no VPN engine)
+        uses: actions/upload-artifact@v4
+        with:
+          name: madar-v2-ux-preview-debug-apk
+          path: v2/android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 7
+          if-no-files-found: error

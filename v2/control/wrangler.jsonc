@@ -5,7 +5,13 @@
   "compatibility_date": "2026-11-10",
   "triggers": { "crons": ["* * * * *"] },
   "observability": { "enabled": true },
-  "secrets": { "required": ["BOT_TOKEN", "TELEGRAM_WEBHOOK_SECRET"] }
-  // Add the NEW V2_DB binding via a staging-only configuration after its
-  // database is provisioned. Never bind the production sales database.
+  "secrets": { "required": ["BOT_TOKEN", "TELEGRAM_WEBHOOK_SECRET"] },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "madar-v2-staging-db",
+      "database_id": "81e78af9-9740-45da-9e80-9b2d498f4f54",
+      "migrations_dir": "migrations"
+    }
+  ]
 }

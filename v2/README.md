@@ -13,7 +13,7 @@ migration reference until acceptance tests and a controlled cutover pass.
   Carrier field acceptance is **not yet performed**.
 - Android: new Kotlin/Compose project with a safety-first connection
   state machine. No tunnel engine is integrated; it must not claim a VPN connection.
-- V2 D1: migration file only; **not applied** to the production D1.
+- V2 D1: **a new isolated staging D1** was provisioned and migrations 0001/0002\n  applied on 2026-11-10; V1 production D1 was not touched.
 - V2 Worker: **not deployed**, no production webhook changed.
 
 ## Structural boundaries
@@ -25,8 +25,8 @@ v2/
   architecture/    architecture, release, field testing and migration gates
 ```
 
-Run V2 control tests with `cd v2/control && npm test && npm run check`.
+Run V2 control tests with `cd v2/control && npm test && npm run check`.\nAn Android **debug UX preview APK** is retained as a CI artifact when its build\npasses; it has no VPN tunnel and must never be distributed as a usable VPN.
 
 Do not reuse the production BOT_TOKEN webhook or D1 for staging. For live
-testing use a second Telegram bot token, a new D1 database and a distinct
+testing use a second Telegram bot token, the isolated V2 staging D1 and a distinct
 Cloudflare Worker name. Credentials must be stored only in runtime secrets.

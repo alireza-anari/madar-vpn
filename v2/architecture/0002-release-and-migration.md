@@ -42,10 +42,14 @@ deploy-on-push from a feature branch.
 
 `cd v2/control && npm run check && npm test`.
 
-The current `wrangler.jsonc` intentionally does not specify a D1 ID:
-deployment is blocked until a *new* dedicated DB is created and bound as
-`DB`. `wrangler d1 migrations apply` must target the V2 DB, never V1.
-Provision secrets for a **different** Telegram test bot first.
+A new `madar-v2-staging-db` was created on 2026-11-10 with UUID
+`81e78af9-9740-45da-9e80-9b2d498f4f54`. The two V2 migrations were
+applied only to that database via Cloudflare's D1 API and their filenames
+registered in the standard `d1_migrations` table. The V1 D1 database was
+neither queried for customer content nor modified. Verify this recorded
+baseline before applying any future Wrangler migration.
+Staging Worker deployment and Telegram webhook wiring remain separate;
+provision secrets for a **different** Telegram test bot before enabling it.
 
 ## Explicit rollback criteria
 
