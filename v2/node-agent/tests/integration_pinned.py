@@ -57,6 +57,7 @@ def main():
             domain="vpn.example.com",ws_path="/madar-ws",loopback_port=10443
         ).replace("vpn.example.com {", "vpn.example.com:18443 {\\n    tls internal",1)
         testsite=testsite.replace("\\n", "\n")
+        testsite="{\n    admin off\n    auto_https disable_redirects\n}\n"+testsite
         local_site=directory/"LocalCaddyfile"
         local_site.write_text(testsite,encoding="utf-8")
         run([paths["caddy"],"validate","--config",str(local_site),"--adapter","caddyfile"])
@@ -74,8 +75,9 @@ def main():
             successful=False
             last_error=None
             for _ in range(70):
-                if any(p.poll() is not None for p in processes):
-                    raise AssertionError("isolated Xray or Caddy exited before TLS upgrade")
+                exited=[name+":"+str(p.returncode) for name,p in zip(("xray","caddy"),processes) if p.poll() is not None]
+                if exited:
+                    raise AssertionError("isolated process exited before TLS upgrade: "+",".join(exited))
                 if not cert.exists():
                     time.sleep(0.2)
                     continue
