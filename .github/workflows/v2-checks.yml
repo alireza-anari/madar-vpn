@@ -138,7 +138,7 @@ jobs:
           arch: x86_64
           profile: pixel_2
           disable-animations: true
-          script: gradle :app:connectedDebugAndroidTest --no-daemon --stacktrace
+          script: cd v2/android && gradle :app:connectedDebugAndroidTest --no-daemon --stacktrace
       - name: Retain Madar V2 staging debug APK
         uses: actions/upload-artifact@v4
         with:
