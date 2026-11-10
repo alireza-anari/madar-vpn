@@ -81,3 +81,14 @@ References:
 - https://xtls.github.io/en/config/transports/reality.html
 - https://xtls.github.io/en/config/transports/websocket.html
 - https://caddyserver.com/docs/automatic-https
+
+## Compatibility of first install and future rollback
+
+The fresh-VPS bootstrap (`agent.bootstrap --apply --test-only`) is the
+recommended initial path on a truly empty disposable host. It now writes the
+mode-0600 `STAGING-ONLY` marker and a bounded local secrets file, which
+allows subsequent **WSS-enabled** configuration revisions through
+`agent.stage_cli` without creating another systemd unit or copying private
+keys into Telegram. The initial Caddy service uses systemd `LoadCredential`
+so the 0600 Caddyfile remains readable by its unprivileged service account.
+For a host already bootstrapped this way, do NOT pass `--install-units` again.

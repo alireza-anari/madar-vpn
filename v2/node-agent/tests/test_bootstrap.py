@@ -61,6 +61,8 @@ class BootstrapTests(unittest.TestCase):
         unit=caddy_unit()
         self.assertIn("AmbientCapabilities=CAP_NET_BIND_SERVICE",unit)
         self.assertIn("User=madar-v2-caddy",unit)
+        self.assertIn("LoadCredential=Caddyfile:/etc/madar-v2/Caddyfile",unit)
+        self.assertIn("--config %d/Caddyfile",unit)
         self.assertIn("ProtectSystem=strict",unit)
 
     def test_cli_fails_closed_without_test_acknowledgment(self):

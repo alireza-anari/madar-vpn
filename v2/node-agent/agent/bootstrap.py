@@ -19,6 +19,7 @@ import uuid
 from pathlib import Path
 
 from . import releases
+from .installer import MARKER_TEXT
 from .xray_config import compile_config,compile_caddy_site,encode,DOMAIN
 
 NODE_RE=re.compile(r"^test-[A-Za-z0-9_-]{2,55}$")
@@ -136,11 +137,12 @@ Type=notify
 User=madar-v2-caddy
 Group=madar-v2-caddy
 StateDirectory=madar-v2-caddy
+LoadCredential=Caddyfile:/etc/madar-v2/Caddyfile
 Environment=HOME=/var/lib/madar-v2-caddy
 Environment=XDG_DATA_HOME=/var/lib/madar-v2-caddy/data
 Environment=XDG_CONFIG_HOME=/var/lib/madar-v2-caddy/config
-ExecStart=/opt/madar-v2/bin/caddy run --config /etc/madar-v2/Caddyfile --adapter caddyfile
-ExecReload=/opt/madar-v2/bin/caddy reload --config /etc/madar-v2/Caddyfile --adapter caddyfile
+ExecStart=/opt/madar-v2/bin/caddy run --config %d/Caddyfile --adapter caddyfile
+ExecReload=/opt/madar-v2/bin/caddy reload --config %d/Caddyfile --adapter caddyfile
 Restart=on-failure
 RestartSec=3s
 AmbientCapabilities=CAP_NET_BIND_SERVICE
@@ -247,8 +249,10 @@ def install_test_node(plan,*,downloader=None):
                          if plan["wss_domain"] else None),
         }
         compiled=compile_config(**private_input)
+        private_input['wss_hostname']=plan['wss_domain']
         BASE.mkdir(mode=0o755,exist_ok=False)
         created.append(BASE)
+        _write_exclusive(BASE/'STAGING-ONLY',MARKER_TEXT,0o600)
         _write_exclusive(BASE/"config.json",encode(compiled),0o600)
         _write_exclusive(BASE/"local-secrets.json",json.dumps(private_input),0o600)
         public_info={"node_id":plan["node_id"],"public_ip":plan["ip"],
@@ -260,7 +264,7 @@ def install_test_node(plan,*,downloader=None):
         if caddy:
             site=compile_caddy_site(domain=plan["wss_domain"],ws_path=plan["ws_path"],
                                     loopback_port=plan["local_ws_port"])
-            _write_exclusive(BASE/"Caddyfile",site,0o644)
+            _write_exclusive(BASE/"Caddyfile",site,0o600)
             command([str(BIN/"caddy"),"validate","--config",str(BASE/"Caddyfile"),
                      "--adapter","caddyfile"],timeout=20)
         _make_user("madar-v2-xray")
