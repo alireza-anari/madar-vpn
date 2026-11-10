@@ -29,7 +29,8 @@ export function toBotMessage(update) {
   const photoId=typeof lastPhoto?.file_id==='string' ? lastPhoto.file_id :
     (/^image\/(jpeg|png|webp)$/.test(document?.mime_type??'') &&
      typeof document.file_id==='string' ? document.file_id : null);
-  const page=botPage(key || 'unknown',locale);
+  const initialPage=key==='/start'?'home':key.startsWith('/')?key.slice(1):key;
+  const page=botPage(initialPage || 'unknown',locale);
   return {
     updateId:update.update_id,
     actorId:String(sender.id),
