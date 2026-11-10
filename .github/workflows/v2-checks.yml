@@ -65,6 +65,9 @@ jobs:
       - name: Verify REALITY and WSS against pinned official Xray and Caddy binaries
         working-directory: v2/node-agent
         run: python3 -m tests.integration_pinned
+      - name: Exercise isolated REALITY systemd on disposable CI Ubuntu
+        working-directory: v2/node-agent
+        run: bash tests/ci_bootstrap_smoke.sh
 
   libxray-android:
     runs-on: ubuntu-24.04
