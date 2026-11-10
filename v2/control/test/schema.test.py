@@ -112,5 +112,20 @@ class SchemaTests(unittest.TestCase):
         with self.assertRaisesRegex(sqlite3.IntegrityError,'SELF_REFERRAL_REJECTED'):
             self.db.execute("UPDATE customers SET seller_telegram_id='202' WHERE telegram_id='202'")
 
+    def test_subscription_usage_never_exceeds_quota(self):
+        self.db.execute("UPDATE subscriptions SET max_bytes=1000,used_bytes=800 WHERE id='sub-0'")
+        with self.assertRaisesRegex(sqlite3.IntegrityError,'SUBSCRIPTION_QUOTA_EXCEEDED'):
+            self.db.execute("UPDATE subscriptions SET used_bytes=1100 WHERE id='sub-0'")
+
+    def test_order_link_is_unique_when_present(self):
+        self.db.execute("INSERT INTO customers(telegram_id) VALUES('101')")
+        self.db.execute("""INSERT INTO plans(id,title_fa,title_en,price_amount,price_currency,quota_bytes,duration_days)
+            VALUES('trial','آزمایشی','Trial',0,'IRT',100,1)""")
+        self.db.execute("""INSERT INTO orders(id,customer_telegram_id,plan_id,idempotency_key,quoted_amount,quoted_currency)
+            VALUES('order-1','101','trial','req-1',0,'IRT')""")
+        self.db.execute("UPDATE subscriptions SET order_id='order-1' WHERE id='sub-0'")
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute("UPDATE subscriptions SET order_id='order-1' WHERE id='sub-1'")
+
 if __name__=='__main__':
     unittest.main()

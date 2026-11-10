@@ -1,6 +1,7 @@
 -- V2 subscription delivery: credentials remain encrypted at rest.
 -- No route is exposed without active subscription, quota, node and field readiness.
-ALTER TABLE subscriptions ADD COLUMN order_id TEXT UNIQUE REFERENCES orders(id);
+ALTER TABLE subscriptions ADD COLUMN order_id TEXT REFERENCES orders(id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_v2_subscription_order ON subscriptions(order_id) WHERE order_id IS NOT NULL;
 ALTER TABLE subscriptions ADD COLUMN max_bytes INTEGER NOT NULL DEFAULT 0 CHECK(max_bytes>=0);
 ALTER TABLE subscriptions ADD COLUMN used_bytes INTEGER NOT NULL DEFAULT 0 CHECK(used_bytes>=0);
 
