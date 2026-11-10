@@ -1,11 +1,9 @@
 import pathlib
 import sqlite3
 import unittest
-import uuid
 
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 MIGRATIONS=sorted((ROOT/'migrations').glob('*.sql'))
-
 
 class SchemaTests(unittest.TestCase):
     def setUp(self):
