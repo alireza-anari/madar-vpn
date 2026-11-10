@@ -145,8 +145,20 @@ jobs:
           arch: x86_64
           profile: pixel_2
           disable-animations: true
-          script: cd v2/android && gradle :app:connectedDebugAndroidTest --no-daemon --stacktrace
+          script: bash v2/android/scripts/run-emulator-smoke.sh
+      - name: Upload emulator crash diagnostics and instrumentation reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: madar-v2-android-emulator-diagnostics
+          path: |
+            v2/android/emulator-diagnostics/
+            v2/android/app/build/reports/androidTests/
+            v2/android/app/build/outputs/androidTest-results/
+          retention-days: 7
+          if-no-files-found: warn
       - name: Retain Madar V2 staging debug APK
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: madar-v2-ux-preview-debug-apk
