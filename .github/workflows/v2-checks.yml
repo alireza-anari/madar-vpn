@@ -11,6 +11,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: madar-v2-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   v2-control-tests:
     runs-on: ubuntu-latest
@@ -127,7 +131,15 @@ jobs:
       - name: Build isolated Android shell and run state machine unit tests
         working-directory: v2/android
         run: gradle :app:testDebugUnitTest :app:assembleDebug --no-daemon --stacktrace
-      - name: Retain debug UX preview APK (no VPN engine)
+      - name: Run libXray JNI smoke test on Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          script: gradle :app:connectedDebugAndroidTest --no-daemon --stacktrace
+      - name: Retain Madar V2 staging debug APK
         uses: actions/upload-artifact@v4
         with:
           name: madar-v2-ux-preview-debug-apk
