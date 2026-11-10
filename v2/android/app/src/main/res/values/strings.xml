@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Madar Preview</string>
+    <string name="app_name_short">Madar</string>
+    <string name="preview_label">VERSION 2 · PRIVATE PREVIEW</string>
+    <string name="nav_home">Home</string>
+    <string name="nav_servers">Servers</string>
+    <string name="nav_account">Account</string>
+    <string name="nav_help">Help</string>
+    <string name="home_headline">A more reliable connection, by design</string>
+    <string name="home_desc">Madar selects verified routes based on real network health. This preview is not a working VPN yet.</string>
+    <string name="preview_status_title">Connection unavailable</string>
+    <string name="preview_status_body">The VPN engine and real-world carrier tests are not complete. No background VPN session is active.</string>
+    <string name="connect_disabled">Connect (coming after field tests)</string>
+    <string name="not_connected_disclaimer">No traffic is routed through Madar at this time.</string>
+    <string name="action_help">How Madar will work</string>
+    <string name="servers_title">Connection routes</string>
+    <string name="servers_desc">A route will only appear as available after its own authentication and tunneled traffic checks have passed.</string>
+    <string name="servers_check_title">Server inventory in preparation</string>
+    <string name="servers_check_details">We separately verify DNS, IP reachability, TLS, WebSocket, proxy handshake and traffic. We do not treat a successful ping as proof of VPN access.</string>
+    <string name="servers_disclaimer">Carrier performance depends on your network and region. Universal connectivity cannot be guaranteed.</string>
+    <string name="account_title">My account</string>
+    <string name="account_preview_title">Subscriptions not yet migrated</string>
+    <string name="account_preview_details">Purchases, usage, renewal and support will become available after secure account migration and payment acceptance tests.</string>
+    <string name="account_disclaimer">Your existing subscription remains managed by the current bot.</string>
+    <string name="help_title">Help and security</string>
+    <string name="help_connect_question">Why is Connect disabled?</string>
+    <string name="help_connect_answer">A VPN is never reported as connected without a verified tunnel and successful traffic test.</string>
+    <string name="help_error_question">What if a route fails?</string>
+    <string name="help_error_answer">Madar will classify the failed layer and try an eligible alternative. Connection errors must not silently consume your plan.</string>
+    <string name="help_privacy_question">What data will be collected?</string>
+    <string name="help_privacy_answer">Only minimal account, subscription and anonymized diagnostic data required to provide and secure the service. Never share passwords or private keys in support chats.</string>
+</resources>
