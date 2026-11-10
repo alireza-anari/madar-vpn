@@ -14,7 +14,11 @@ migration reference until acceptance tests and a controlled cutover pass.
 - Android: new Kotlin/Compose project with a safety-first connection
   state machine. No tunnel engine is integrated; it must not claim a VPN connection.
 - V2 D1: **a new isolated staging D1** was provisioned and migrations 0001/0002\n  applied on 2026-11-10; V1 production D1 was not touched.
-- V2 Worker: **not deployed**, no production webhook changed.
+- V2 Worker: isolated `madar-v2-staging` deployed 2026-11-10, live probe
+  succeeds; readiness intentionally fails until separate staging bot secrets
+  are set. Production Telegram webhook was not changed.
+- Node agent: signed and replay-protected desired state exists, but no live
+  Xray installer, reconciliation or field validation yet.
 
 ## Structural boundaries
 

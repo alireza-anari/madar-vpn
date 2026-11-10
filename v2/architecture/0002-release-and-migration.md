@@ -48,8 +48,11 @@ applied only to that database via Cloudflare's D1 API and their filenames
 registered in the standard `d1_migrations` table. The V1 D1 database was
 neither queried for customer content nor modified. Verify this recorded
 baseline before applying any future Wrangler migration.
-Staging Worker deployment and Telegram webhook wiring remain separate;
-provision secrets for a **different** Telegram test bot before enabling it.
+The isolated `madar-v2-staging` Worker was deployed 2026-11-10 using only
+the V2 D1 binding. Live probe succeeded, readiness returned 503 because
+staging Telegram credentials have not been set. The production webhook was
+not modified. Future changes must use the gated staging release pipeline;
+use a **different** Telegram test bot before live chatbot testing.
 
 ## Explicit rollback criteria
 

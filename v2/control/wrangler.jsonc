@@ -5,6 +5,7 @@
   "compatibility_date": "2026-11-10",
   "triggers": { "crons": ["* * * * *"] },
   "observability": { "enabled": true },
+  "keep_vars": true,
   "secrets": { "required": ["BOT_TOKEN", "TELEGRAM_WEBHOOK_SECRET"] },
   "d1_databases": [
     {

@@ -31,6 +31,9 @@ jobs:
         run: python3 v2/control/test/schema.test.py
       - name: Check read-only network diagnostic probe
         run: python3 -m unittest discover -s v2/diagnostics -p 'test_*.py'
+      - name: Verify node-agent manifest signing and replay protection
+        working-directory: v2/node-agent
+        run: python3 -m unittest discover -s tests -p 'test_*.py'
       - name: Verify no production DB bound to V2
         run: |
           ! grep -q 'f59e160f-89ab-4a90-a4dc-f257883d5a61' v2/control/wrangler.jsonc
