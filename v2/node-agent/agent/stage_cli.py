@@ -18,6 +18,8 @@ import stat
 from pathlib import Path
 
 from .installer import apply_staging_pair
+from .systemd_units import install_staging_units
+from .reconciler import verify_xray_binary
 from .reconciler import ReconcileError
 from .xray_config import compile_config,compile_caddy_site
 
@@ -47,11 +49,18 @@ def main(argv=None):
     for name in ("root","secrets","hostname","public-ip","xray-binary",
                  "xray-sha256","caddy-binary","caddy-sha256"):
         parser.add_argument("--"+name,required=True)
+    parser.add_argument('--install-units',action='store_true',help='install isolated V2 unit files (root and staging marker required)')
     args=parser.parse_args(argv)
     xray,site=read_local_spec(args.secrets)
     spec=json.loads(Path(args.secrets).read_text(encoding="utf-8"))
     if spec["wss_hostname"]!=args.hostname:
         raise ReconcileError("WSS hostname differs from trusted local spec")
+    if args.install_units:
+        # Prove pinned supply chain BEFORE creating any unit files.
+        verify_xray_binary(args.xray_binary,args.xray_sha256)
+        verify_xray_binary(args.caddy_binary,args.caddy_sha256)
+        install_staging_units(args.root,xray_path=args.xray_binary,
+                              caddy_path=args.caddy_binary)
     outcome=apply_staging_pair(args.root,xray,site,
         xray_binary=args.xray_binary,xray_sha=args.xray_sha256,
         caddy_binary=args.caddy_binary,caddy_sha=args.caddy_sha256,

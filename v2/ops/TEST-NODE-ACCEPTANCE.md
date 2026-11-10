@@ -59,9 +59,9 @@ The private key must be generated on the disposable VPS and kept there.
 
 ## Mandatory before enabled/ready status
 
-- Apply a pinned, secure systemd service/user setup and a firewall rule review
-  on the disposable VPS only. The current installer does **not** install
-  systemd units or modify firewall settings.
+- Review the firewall and permitted service ports on the disposable VPS only.
+  The `--install-units` option can create isolated systemd units, but does
+  **not** modify firewall settings, install packages, or provision VPS resources.
 - DNS A record, external TLS certificate chain and hostname validation.
 - Confirm active local port and WebSocket 101 upgrade, then a REALITY
   handshake, authenticated VLESS tunnel and tunneled HTTPS response from a
