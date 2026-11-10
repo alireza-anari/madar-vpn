@@ -14,6 +14,7 @@ permissions:
 jobs:
   v2-control-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -21,12 +22,33 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Syntax & behavior tests, no production secrets
+      - name: Syntax & behavior tests without production secrets
         working-directory: v2/control
         run: |
           npm run check
           npm test
-      - name: Verify no production DB in V2 config
+      - name: Verify no production DB bound to V2
         run: |
           ! grep -q 'f59e160f-89ab-4a90-a4dc-f257883d5a61' v2/control/wrangler.jsonc
           ! grep -q '"name": "madar-sales-bot"' v2/control/wrangler.jsonc
+
+  v2-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Install Android SDK 35
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Build isolated Android shell and run state machine unit tests
+        working-directory: v2/android
+        run: gradle :app:testDebugUnitTest :app:assembleDebug --no-daemon --stacktrace
