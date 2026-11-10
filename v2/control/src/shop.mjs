@@ -180,10 +180,10 @@ async function beginSupport(db,e,nowMs) {
 }
 
 async function maybeRecordSupport(db,e,nowMs) {
-  if (!e.text || e.text.startsWith('/') || e.text.startsWith('v2:')) return null;
+  if (!e.inputText || e.inputText.startsWith('/') || e.inputText.startsWith('v2:')) return null;
   const s=await db.prepare('SELECT mode,expires_ms FROM customer_sessions WHERE telegram_id=?').bind(e.actorId).first();
   if (!s || s.mode!=='support' || s.expires_ms<nowMs) return null;
-  const subject=e.text.trim().slice(0,140);
+  const subject=e.inputText.trim().slice(0,140);
   if (!subject) return response(t('پیام خالی است.','The message is empty.',e.locale),e.locale);
   const ticketId='tg-'+e.updateId;
   await db.batch([
@@ -212,37 +212,66 @@ async function adminQueue(db,e) {
   return response(line(t('🧑‍💼 رسیدهای در انتظار بررسی','🧑‍💼 Pending receipts',e.locale),
     ...queue.map(x=>x.id.slice(0,8)+'… · '+money(x.quoted_amount,x.quoted_currency)+' · '+x.customer_telegram_id)),
     e.locale, queue.map(x=>[
+      {text:'👁 '+x.id.slice(0,8),callback_data:'v2:admin:receipt:'+x.id},
       {text:'✅ '+x.id.slice(0,8),callback_data:'v2:approve:'+x.id},
       {text:'❌ '+x.id.slice(0,8),callback_data:'v2:reject:'+x.id},
     ]));
 }
 
+async function adminReceipt(db,e,id) {
+  if (!ORDER_ID.test(id)) return response('Invalid order ID',e.locale);
+  const receipt=await db.prepare(
+    "SELECT r.telegram_file_id,o.id,o.state,o.quoted_amount,o.quoted_currency " +
+    "FROM receipts r JOIN orders o ON o.id=r.order_id WHERE o.id=? AND r.state='pending' " +
+    "AND o.state='receipt_submitted' LIMIT 1"
+  ).bind(id).first();
+  if (!receipt) return response('Receipt not available for review',e.locale);
+  return {
+    text:'Receipt for order ' + id + '\nAmount: ' +
+      money(receipt.quoted_amount,receipt.quoted_currency) + '\nReview the image before approval.',
+    photoId:receipt.telegram_file_id,
+    replyMarkup:{inline_keyboard:[
+      [{text:'✅ Approve',callback_data:'v2:approve:'+id},
+       {text:'❌ Reject',callback_data:'v2:reject:'+id}],
+      ...botMenu(e.locale).inline_keyboard,
+    ]},
+  };
+}
+
 async function adminDecision(db,e,action,id) {
   if (!ORDER_ID.test(id)) return response('Invalid order ID',e.locale);
   const desired=action==='approve'?'approved':'rejected';
-  const previous=await db.prepare(
+  const old=await db.prepare(
     "SELECT id,customer_telegram_id,state FROM orders WHERE id=?"
   ).bind(id).first();
-  if (!previous) return response('Order not found',e.locale);
-  if (previous.state===desired) return response('Already reviewed: '+id,e.locale);
-  if (previous.state!=='receipt_submitted') return response('Not reviewable: '+previous.state,e.locale);
-  const result=await db.prepare(
-    "UPDATE orders SET state=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND state='receipt_submitted' " +
-    "AND EXISTS(SELECT 1 FROM receipts WHERE order_id=? AND state='pending')"
-  ).bind(desired,id,id).run();
-  if (result.meta?.changes!==1) return response('Order changed; refresh review queue.',e.locale);
-  const eventId='review:'+id;
-  await db.batch([
-    db.prepare("UPDATE receipts SET state=? WHERE order_id=? AND state='pending'")
-      .bind(action==='approve'?'accepted':'rejected',id),
-    db.prepare('INSERT OR IGNORE INTO audit_events(event_id,actor_id,object_type,object_id,verb) VALUES(?,?,?,?,?)')
-      .bind(eventId,e.actorId,'order',id,action),
+  if (!old) return response('Order not found',e.locale);
+  if (old.state===desired) return response('Already reviewed: '+id,e.locale);
+  if (old.state!=='receipt_submitted') return response('Not reviewable: '+old.state,e.locale);
+  // One atomic transaction covers the state, receipt decision, audit event
+  // and customer notification. If any part fails, the whole batch rolls back.
+  const idKey='review:'+id;
+  const message=action==='approve'
+    ? '✅ رسید سفارش '+id+' تأیید شد. صدور کانفیگ پس از آماده‌سازی و تأیید سرور انجام می‌شود.'
+    : '❌ رسید سفارش '+id+' تأیید نشد. از پشتیبانی پیگیری کنید.';
+  const results=await db.batch([
     db.prepare(
-      "INSERT OR IGNORE INTO telegram_notifications(id,chat_id,body,state,due_ms) VALUES(?,?,?,'pending',?)"
-    ).bind(eventId,previous.customer_telegram_id,action==='approve'
-        ?'✅ رسید سفارش '+id+' تأیید شد. صدور کانفیگ پس از آماده‌سازی و تأیید سرور انجام می‌شود.'
-        :'❌ رسید سفارش '+id+' تأیید نشد. از پشتیبانی پیگیری کنید.', Date.now()),
+      "UPDATE orders SET state=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND state='receipt_submitted' " +
+      "AND EXISTS(SELECT 1 FROM receipts WHERE order_id=? AND state='pending')"
+    ).bind(desired,id,id),
+    db.prepare(
+      "UPDATE receipts SET state=? WHERE order_id=? AND state='pending' " +
+      "AND EXISTS(SELECT 1 FROM orders WHERE id=? AND state=?)"
+    ).bind(action==='approve'?'accepted':'rejected',id,id,desired),
+    db.prepare(
+      "INSERT OR IGNORE INTO audit_events(event_id,actor_id,object_type,object_id,verb) " +
+      "SELECT ?,?,'order',?,? WHERE EXISTS(SELECT 1 FROM orders WHERE id=? AND state=?)"
+    ).bind(idKey,e.actorId,id,action,id,desired),
+    db.prepare(
+      "INSERT OR IGNORE INTO telegram_notifications(id,chat_id,body,state,due_ms) " +
+      "SELECT ?,?,?,'pending',? WHERE EXISTS(SELECT 1 FROM orders WHERE id=? AND state=?)"
+    ).bind(idKey,old.customer_telegram_id,message,Date.now(),id,desired),
   ]);
+  if (results[0]?.meta?.changes!==1) return response('Order changed; refresh review queue.',e.locale);
   return response('Recorded '+action+' for '+id+'. No configuration issued.',e.locale);
 }
 
@@ -278,6 +307,10 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
   if (key==='/admin' || key==='admin:queue') {
     if (!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) return response('Access denied',e.locale);
     return adminQueue(db,e);
+  }
+  if (key.startsWith('admin:receipt:')) {
+    if (!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) return response('Access denied',e.locale);
+    return adminReceipt(db,e,key.slice('admin:receipt:'.length));
   }
   if (key==='admin:tickets') {
     if (!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId) &&

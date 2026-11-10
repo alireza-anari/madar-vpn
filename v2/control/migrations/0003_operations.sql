@@ -66,3 +66,7 @@ BEGIN
     ELSE RAISE(ABORT,'ORDER_STATE_TRANSITION_REJECTED')
   END;
 END;
+
+-- Telegram outbox can send a customer-uploaded file_id to a privileged
+-- reviewer without downloading or logging the original image.
+ALTER TABLE telegram_outbox ADD COLUMN media_file_id TEXT;
