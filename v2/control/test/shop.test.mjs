@@ -14,7 +14,7 @@ test('sales require explicit opt-in and valid payment instructions',()=>{
   assert.equal(salesConfigured({SHOP_ENABLED:'true'}),false);
   assert.equal(salesConfigured({SHOP_ENABLED:'true',PAYMENT_INSTRUCTIONS:'short'}),false);
   assert.equal(salesConfigured({
-    SHOP_ENABLED:'true',PAYMENT_INSTRUCTIONS:'Confirmed official payment instructions',
+    SHOP_ENABLED:'true',PROVISIONING_ENABLED:'true',PAYMENT_INSTRUCTIONS:'Confirmed official payment instructions',
   }),true);
 });
 test('route availability never guesses capacity from missing evidence', async()=>{
@@ -27,4 +27,10 @@ test('route availability never guesses capacity from missing evidence', async()=
   }};
   assert.equal(await availableForSale(db,{quota_bytes:1234},Date.now()),false);
   assert.equal(await availableForSale(db,null,Date.now()),false);
+});
+
+test('nonprovisioning checkout never opens even if a bank destination exists',()=>{
+  assert.equal(salesConfigured({
+    SHOP_ENABLED:'true',PAYMENT_INSTRUCTIONS:'Confirmed official payment instructions'
+  }),false);
 });

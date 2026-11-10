@@ -1,3 +1,4 @@
+import { handleSeller, linkSellerOnStart, grantStaffRole } from './referrals.mjs';
 /**
  * Madar V2 business UI. Every mutable action is idempotent by the Telegram
  * update ID or by a state-qualified SQL transition. No unattended payment or
@@ -24,7 +25,7 @@ export function adminAllowed(ids, userId) {
 }
 
 export function salesConfigured(env) {
-  return env.SHOP_ENABLED === 'true' &&
+  return env.SHOP_ENABLED === 'true' && env.PROVISIONING_ENABLED === 'true' &&
     typeof env.PAYMENT_INSTRUCTIONS === 'string' &&
     env.PAYMENT_INSTRUCTIONS.trim().length >= 12 &&
     env.PAYMENT_INSTRUCTIONS.length <= 700;
@@ -106,9 +107,10 @@ async function purchase(db,env,e,planId,nowMs) {
   const idempotency='telegram-update:' + e.updateId;
   try {
     await db.prepare(
-      "INSERT INTO orders(id,customer_telegram_id,plan_id,idempotency_key,quoted_amount,quoted_currency) " +
-      "SELECT ?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM plans WHERE id=? AND active=1)"
-    ).bind(id,e.actorId,planId,idempotency,p.price_amount,p.price_currency,planId).run();
+      "INSERT INTO orders(id,customer_telegram_id,seller_telegram_id,plan_id,idempotency_key,quoted_amount,quoted_currency) " +
+      "SELECT ?,?,(SELECT seller_telegram_id FROM customers WHERE telegram_id=?),?,?,?,? " +
+      "WHERE EXISTS(SELECT 1 FROM plans WHERE id=? AND active=1)"
+    ).bind(id,e.actorId,e.actorId,planId,idempotency,p.price_amount,p.price_currency,planId).run();
   } catch {
     const current=await pendingOrder(db,e.actorId);
     if (current) return response(t('سفارش باز شما: ','Your open order: ',e.locale) + current.id,e.locale);
@@ -295,7 +297,74 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
 
   const key=e.key??'';
   if (e.photoId) return storeReceipt(db,e);
-  if (key==='home' || key==='/start') return botPage('home',e.locale);
+  if (key==='/start') {
+    const referral=await linkSellerOnStart(db,e,nowMs);
+    const home=botPage('home',e.locale);
+    return referral?{...home,text:home.text+'\n\n'+referral}:home;
+  }
+  const sellerAction=await handleSeller(env,e,nowMs);
+  if (sellerAction) return sellerAction;
+  if (key==='/seller_grant' || key==='/support_grant') {
+    if (!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) return response('Access denied',e.locale);
+    const id=e.inputText?.trim().split(/\s+/)[1]??'';
+    const role=key==='/seller_grant'?'seller':'support';
+    if(!await grantStaffRole(db,e,role,id)) return response('Use '+key+' <telegram numeric ID>',e.locale);
+    return response('Role '+role+' granted to '+id,e.locale);
+  }
+  if (key==='/admin') {
+    if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) return response('Access denied',e.locale);
+    return response('🧑‍💼 Admin · Madar V2\n\nActions require authorization and are audited.',e.locale,[
+      [{text:'🧾 Pending receipts',callback_data:'v2:admin:queue'}],
+      [{text:'💬 Support inbox',callback_data:'v2:admin:tickets'}],
+      [{text:'🛍 Plans',callback_data:'v2:admin:plans'}],
+    ]);
+  }
+  if (key==='admin:plans') {
+    if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) return response('Access denied',e.locale);
+    const plans=(await db.prepare('SELECT id,title_fa,active,price_amount,price_currency FROM plans ORDER BY id LIMIT 12').all()).results??[];
+    return response(line('🛍 Plans',...plans.map(x=>x.id+' · '+x.title_fa+' · '+(x.active?'active':'disabled')+' · '+money(x.price_amount,x.price_currency)),
+      'Use /plan_add id|نام|English|price|IRT|quotaGB|days to create a disabled plan.'),e.locale,
+      plans.map(x=>[{text:(x.active?'🔴 Disable ':'🟢 Enable ')+x.id,
+        callback_data:'v2:plan:'+(x.active?'off:':'on:')+x.id}]));
+  }
+  if (key==='/plan_add') {
+    if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) return response('Access denied',e.locale);
+    const raw=(e.inputText??'').replace(/^\/plan_add\s*/,'').trim();
+    const parts=raw.split('|').map(x=>x.trim());
+    if(parts.length!==7) return response('Format: /plan_add id|فارسی|English|price|IRT|quotaGB|days',e.locale);
+    const [id,fa,en,priceRaw,currency,gbRaw,daysRaw]=parts;
+    const numeric=/^(0|[1-9]\d*)$/;
+    if(!PLAN_ID.test(id)||!fa||!en||fa.length>64||en.length>64||
+      !numeric.test(priceRaw)||!numeric.test(gbRaw)||!numeric.test(daysRaw)||
+      !['IRT','IRR','USD'].includes(currency))
+      return response('Invalid plan fields; no changes made.',e.locale);
+    const price=Number(priceRaw),gb=Number(gbRaw),days=Number(daysRaw);
+    if(!Number.isSafeInteger(price)||price>100000000000||gb<1||gb>2000||days<1||days>366)
+      return response('Plan price/quota/duration outside safe bounds.',e.locale);
+    const result=await db.batch([
+      db.prepare('INSERT OR IGNORE INTO plans(id,title_fa,title_en,price_amount,price_currency,quota_bytes,duration_days,active) VALUES(?,?,?,?,?,?,?,0)')
+        .bind(id,fa,en,price,currency,gb*1073741824,days),
+      db.prepare('INSERT OR IGNORE INTO audit_events(event_id,actor_id,object_type,object_id,verb) VALUES(?,?,?,?,?)')
+        .bind('plan:create:'+id,e.actorId,'plan',id,'create:disabled'),
+    ]);
+    return response(result[0]?.meta?.changes===1?'Plan created, disabled by default.':'Plan already exists; unchanged.',e.locale);
+  }
+  if (key.startsWith('plan:on:') || key.startsWith('plan:off:')) {
+    if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) return response('Access denied',e.locale);
+    const [,mode,id]=key.split(':');
+    if(!PLAN_ID.test(id)) return response('Invalid plan ID',e.locale);
+    const plan=await db.prepare('SELECT * FROM plans WHERE id=?').bind(id).first();
+    if(!plan) return response('Plan not found',e.locale);
+    if(mode==='on' && (!salesConfigured(env)||!await availableForSale(db,plan,nowMs)))
+      return response('Cannot enable plan: provisioning, payments, or verified capacity not ready.',e.locale);
+    await db.batch([
+      db.prepare('UPDATE plans SET active=? WHERE id=?').bind(mode==='on'?1:0,id),
+      db.prepare('INSERT OR IGNORE INTO audit_events(event_id,actor_id,object_type,object_id,verb) VALUES(?,?,?,?,?)')
+        .bind('plan:toggle:'+e.updateId,e.actorId,'plan',id,'toggle:'+mode),
+    ]);
+    return response('Plan '+id+' is now '+(mode==='on'?'active':'disabled'),e.locale);
+  }
+  if (key==='home') return botPage('home',e.locale);
   if (key==='plans' || key==='/plans') return listPlans(db,env,e.locale,nowMs);
   if (key==='my' || key==='/my') return mySubscriptions(db,e);
   if (key==='orders' || key==='/orders') return myOrders(db,e);
@@ -304,7 +373,7 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
   if (key==='help' || key==='/help') return botPage('help',e.locale);
   if (key==='support' || key==='/support') return beginSupport(db,e,nowMs);
   if (key.startsWith('buy:')) return purchase(db,env,e,key.slice(4),nowMs);
-  if (key==='/admin' || key==='admin:queue') {
+  if (key==='admin:queue') {
     if (!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) return response('Access denied',e.locale);
     return adminQueue(db,e);
   }

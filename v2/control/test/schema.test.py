@@ -101,5 +101,16 @@ class SchemaTests(unittest.TestCase):
         with self.assertRaises(sqlite3.IntegrityError):
             self.db.execute(sql,(300,'100','{}',0))
 
+    def test_referral_requires_active_seller_and_is_immutable(self):
+        self.db.execute("INSERT INTO customers(telegram_id) VALUES ('101'),('202'),('303')")
+        with self.assertRaisesRegex(sqlite3.IntegrityError,'SELLER_NOT_ACTIVE'):
+            self.db.execute("UPDATE customers SET seller_telegram_id='202' WHERE telegram_id='101'")
+        self.db.execute("INSERT INTO staff_roles(telegram_id,role,granted_by) VALUES('202','seller','owner')")
+        self.db.execute("UPDATE customers SET seller_telegram_id='202' WHERE telegram_id='101'")
+        with self.assertRaisesRegex(sqlite3.IntegrityError,'REFERRAL_LINK_IMMUTABLE'):
+            self.db.execute("UPDATE customers SET seller_telegram_id='303' WHERE telegram_id='101'")
+        with self.assertRaisesRegex(sqlite3.IntegrityError,'SELF_REFERRAL_REJECTED'):
+            self.db.execute("UPDATE customers SET seller_telegram_id='202' WHERE telegram_id='202'")
+
 if __name__=='__main__':
     unittest.main()
