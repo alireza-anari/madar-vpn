@@ -82,7 +82,7 @@ def compile_config(*, clients, reality=None, websocket=None):
                 {"id":v,"flow":"xtls-rprx-vision","email":"v2-"+v} for v in ids
             ]},
             "streamSettings":{
-                "method":"raw","security":"reality",
+                "network":"raw","security":"reality",
                 "realitySettings":{
                     "show":False,"target":target+":443",
                     "xver":0,"serverNames":[server_name],
@@ -103,8 +103,8 @@ def compile_config(*, clients, reality=None, websocket=None):
             "port":loopback,
             "protocol":"vless",
             "settings":{"decryption":"none","users":[{"id":v,"email":"v2-"+v} for v in ids]},
-            "streamSettings":{"method":"websocket","security":"none",
-                              "wsSettings":{"path":path,"acceptProxyProtocol":False}},
+            "streamSettings":{"network":"ws","security":"none",
+                              "wsSettings":{"path":path}},
         })
     return {
         "log":{"loglevel":"warning"},

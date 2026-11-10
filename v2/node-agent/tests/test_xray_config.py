@@ -14,10 +14,12 @@ class XrayCompilerTests(unittest.TestCase):
         reality,websocket=config["inbounds"]
         self.assertEqual(reality["listen"],"0.0.0.0")
         self.assertEqual(reality["streamSettings"]["security"],"reality")
-        self.assertEqual(reality["streamSettings"]["method"],"raw")
+        self.assertEqual(reality["streamSettings"]["network"],"raw")
         self.assertEqual(websocket["listen"],"127.0.0.1")
-        self.assertEqual(websocket["streamSettings"]["method"],"websocket")
+        self.assertEqual(websocket["streamSettings"]["network"],"ws")
         self.assertEqual(websocket["streamSettings"]["security"],"none")
+        self.assertNotIn("method",reality["streamSettings"])
+        self.assertNotIn("method",websocket["streamSettings"])
         self.assertEqual(len(websocket["settings"]["users"]),1)
 
     def test_wss_only_never_exposes_plain_vless_to_internet(self):
