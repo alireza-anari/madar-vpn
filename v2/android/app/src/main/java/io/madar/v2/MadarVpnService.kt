@@ -15,6 +15,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -42,55 +44,89 @@ class MadarVpnService : VpnService() {
 
     private suspend fun connect() {
         try {
-            VpnStatus.update(ConnectionState.Failed("SUBSCRIPTION_CHECKING"))
+            currentCoroutineContext().ensureActive()
+            VpnStatus.update(ConnectionState.Dialing("subscription"))
             val origin = BuildConfig.SUBSCRIPTION_API_ORIGIN
             require(origin.startsWith("https://")) { "VPN_SERVICE_NOT_CONFIGURED" }
             val token = SubscriptionTokenStore(this).read()
                 ?: throw IllegalStateException("NO_SUBSCRIPTION_TOKEN")
             val result = SubscriptionApi(origin).fetch(token)
+            currentCoroutineContext().ensureActive()
             val snapshot = (result as? SubscriptionResult.Available)?.snapshot
                 ?: throw IllegalStateException("SUBSCRIPTION_UNAVAILABLE")
+
             val descriptor = establishTunnel()
                 ?: throw IllegalStateException("VPN_PERMISSION_OR_TUN_FAILED")
             tunnel = descriptor
             val native = LibXrayNativeEngine(this)
             engine = native
-
-            var connected = false
+            var activeIndex = -1
             var lastFailure = "ALL_ROUTES_FAILED"
-            for (route in snapshot.routes) {
+
+            suspend fun tryRoute(index: Int): Boolean {
+                currentCoroutineContext().ensureActive()
                 if (!snapshot.hasUsablePlan(System.currentTimeMillis())) {
                     lastFailure = "SUBSCRIPTION_EXPIRED_OR_EMPTY"
-                    break
+                    return false
                 }
+                val route = snapshot.routes[index]
                 VpnStatus.update(ConnectionState.Dialing(route.id))
-                val config = XrayConfigBuilder.build(snapshot, route.id, descriptor.fd)
+                val config = try {
+                    XrayConfigBuilder.build(snapshot, route.id, descriptor.fd)
+                } catch (_: Exception) {
+                    lastFailure = "INVALID_ROUTE_CONFIG"
+                    return false
+                }
                 val started = native.start(descriptor.fd, config)
+                currentCoroutineContext().ensureActive()
                 if (started !is TunnelEngineOutcome.Started) {
                     lastFailure = "XRAY_START_FAILED"
                     native.stop()
-                    continue
+                    return false
                 }
                 VpnStatus.update(ConnectionState.TestingTraffic(route.id))
-                val traffic = withContext(Dispatchers.IO) { native.verifyTraffic() }
+                val traffic = native.verifyTraffic()
+                currentCoroutineContext().ensureActive()
                 if (traffic) {
+                    activeIndex = index
                     VpnStatus.update(ConnectionState.Connected(route.id))
                     updateNotification("Connected · " + route.transport.uppercase())
-                    connected = true
-                    break
+                    return true
                 }
                 lastFailure = "TUNNELED_TRAFFIC_UNVERIFIED"
                 native.stop()
+                return false
             }
-            if (!connected) throw IllegalStateException(lastFailure)
-            while (connectJob?.isActive == true) {
-                delay(30_000)
-                if (engine?.verifyTraffic() != true) {
-                    VpnStatus.update(ConnectionState.Failed("TUNNEL_LOST"))
-                    throw IllegalStateException("TUNNEL_LOST")
+
+            var connected = false
+            for (index in snapshot.routes.indices) {
+                if (tryRoute(index)) {
+                    connected = true
+                    break
                 }
             }
+            if (!connected) throw IllegalStateException(lastFailure)
+
+            // Monitor the real data path. On loss, rotate through the other
+            // server-verified routes before disconnecting the user.
+            while (currentCoroutineContext().isActive) {
+                delay(30_000)
+                currentCoroutineContext().ensureActive()
+                if (native.verifyTraffic()) continue
+                native.stop()
+                VpnStatus.update(ConnectionState.Failed("TUNNEL_LOST"))
+                var recovered = false
+                for (offset in 1 until snapshot.routes.size) {
+                    val index = (activeIndex + offset) % snapshot.routes.size
+                    if (index != activeIndex && tryRoute(index)) {
+                        recovered = true
+                        break
+                    }
+                }
+                if (!recovered) throw IllegalStateException("TUNNEL_LOST")
+            }
         } catch (cancelled: CancellationException) {
+            stopTunnelResources()
             throw cancelled
         } catch (error: Exception) {
             val code = error.message?.takeIf { it.matches(Regex("[A-Z0-9_]{3,64}")) }
