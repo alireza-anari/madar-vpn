@@ -61,8 +61,45 @@ class SchemaTests(unittest.TestCase):
             VALUES ('trial','آزمایشی','Trial',0,'IRT',100,1)""")
         self.db.execute("""INSERT INTO orders(id,customer_telegram_id,plan_id,idempotency_key,quoted_amount,quoted_currency)
             VALUES ('order-1','101','trial','key',0,'IRT')""")
-        with self.assertRaisesRegex(sqlite3.IntegrityError,'FULFILLMENT_REQUIRES_PROVISIONING'):
+        with self.assertRaisesRegex(sqlite3.IntegrityError,'ORDER_STATE_TRANSITION_REJECTED'):
             self.db.execute("UPDATE orders SET state='fulfilled' WHERE id='order-1'")
+
+    def test_one_open_checkout_prevents_ambiguous_receipts(self):
+        self.db.execute("INSERT INTO customers(telegram_id) VALUES('101')")
+        self.db.execute("""INSERT INTO plans(id,title_fa,title_en,price_amount,price_currency,quota_bytes,duration_days)
+            VALUES ('trial','آزمایشی','Trial',1000,'IRT',100,1)""")
+        statement=("INSERT INTO orders(id,customer_telegram_id,plan_id,idempotency_key,quoted_amount,quoted_currency)"
+                   " VALUES(?,?,?,?,?,?)")
+        self.db.execute(statement,('o1','101','trial','req1',1000,'IRT'))
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute(statement,('o2','101','trial','req2',1000,'IRT'))
+
+    def test_receipt_is_owned_and_requires_pending_order(self):
+        self.db.execute("INSERT INTO customers(telegram_id) VALUES('101'),('202')")
+        self.db.execute("""INSERT INTO plans(id,title_fa,title_en,price_amount,price_currency,quota_bytes,duration_days)
+            VALUES ('trial','آزمایشی','Trial',1000,'IRT',100,1)""")
+        self.db.execute("""INSERT INTO orders(id,customer_telegram_id,plan_id,idempotency_key,quoted_amount,quoted_currency)
+            VALUES('o1','101','trial','req1',1000,'IRT')""")
+        sql=("INSERT INTO receipts(id,order_id,telegram_file_id,upload_by_telegram_id)"
+             " VALUES(?,?,?,?)")
+        with self.assertRaisesRegex(sqlite3.IntegrityError,'RECEIPT_REQUIRES_OWN_PENDING_ORDER'):
+            self.db.execute(sql,('r0','o1','image-file','202'))
+        self.db.execute(sql,('r1','o1','image-file','101'))
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute(sql,('r2','o1','another-file','101'))
+        self.db.execute("UPDATE orders SET state='receipt_submitted' WHERE id='o1'")
+        with self.assertRaisesRegex(sqlite3.IntegrityError,'RECEIPT_REQUIRES_OWN_PENDING_ORDER'):
+            self.db.execute(sql,('r3','o1','third-file','101'))
+        self.db.execute("UPDATE orders SET state='approved' WHERE id='o1'")
+        with self.assertRaisesRegex(sqlite3.IntegrityError,'ORDER_STATE_TRANSITION_REJECTED'):
+            self.db.execute("UPDATE orders SET state='pending' WHERE id='o1'")
+
+    def test_inbox_deduplicates_telegram_updates(self):
+        sql=("INSERT INTO telegram_inbox(update_id,chat_id,event_json,due_ms)"
+             " VALUES(?,?,?,?)")
+        self.db.execute(sql,(300,'100','{}',0))
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute(sql,(300,'100','{}',0))
 
 if __name__=='__main__':
     unittest.main()
