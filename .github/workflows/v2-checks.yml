@@ -34,6 +34,15 @@ jobs:
       - name: Verify node-agent manifest signing and replay protection
         working-directory: v2/node-agent
         run: python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Ban accidental native binaries or private keys from V2 source
+        run: |
+          set -euo pipefail
+          if git ls-files 'v2/**/*.aar' 'v2/**/*.jks' 'v2/**/*.keystore' 'v2/**/.env' | grep -q .; then
+            echo 'Secret, signing key or unapproved AAR detected'; exit 1
+          fi
+          if grep -RIlE --include='*.pem' --include='*.key' 'BEGIN (RSA|OPENSSH|EC) PRIVATE KEY' v2/; then
+            echo 'Committed private key detected'; exit 1
+          fi
       - name: Verify no production DB bound to V2
         run: |
           ! grep -q 'f59e160f-89ab-4a90-a4dc-f257883d5a61' v2/control/wrangler.jsonc

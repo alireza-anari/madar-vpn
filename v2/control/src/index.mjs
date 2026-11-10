@@ -189,7 +189,29 @@ export default {
   },
   async scheduled(_event,env) {
     await poll(env);
-    if(env.DB) await env.DB.prepare('DELETE FROM node_nonces WHERE created_ms<?')
-      .bind(Date.now()-10*60*1000).run();
+    if(!env.DB) return;
+    const now=Date.now();
+    // Minimize stored Telegram content. Orders, receipts and subscriptions
+    // are deliberately excluded: they require a separate accounting policy.
+    const oldDays=(n)=>Math.floor((now-n*86400000)/1000);
+    await env.DB.prepare('DELETE FROM node_nonces WHERE created_ms<?')
+      .bind(now-10*60*1000).run();
+    await env.DB.prepare(
+      "DELETE FROM telegram_inbox WHERE state IN ('done','dead') " +
+      "AND created_at<datetime(?,'unixepoch')"
+    ).bind(oldDays(14)).run();
+    await env.DB.prepare(
+      "DELETE FROM telegram_outbox WHERE state IN ('sent','dead') " +
+      "AND created_at<datetime(?,'unixepoch')"
+    ).bind(oldDays(30)).run();
+    await env.DB.prepare(
+      "DELETE FROM telegram_notifications WHERE state IN ('sent','dead') " +
+      "AND created_at<datetime(?,'unixepoch')"
+    ).bind(oldDays(30)).run();
+    await env.DB.prepare(
+      "DELETE FROM support_messages WHERE ticket_id IN " +
+      "(SELECT id FROM support_tickets WHERE state='closed' " +
+      "AND created_at<datetime(?,'unixepoch'))"
+    ).bind(oldDays(90)).run();
   }
 };
