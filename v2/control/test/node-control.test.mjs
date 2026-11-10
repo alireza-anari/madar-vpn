@@ -10,6 +10,9 @@ test('per-node keys differ even under the same master key',async()=>{
   const a=await deriveNodeKey(master,'node_01');
   const b=await deriveNodeKey(master,'node_02');
   assert.equal(a.length,32); assert.notDeepEqual(a,b);
+  const expected='V_0jBHeY1k48nlTMDSlzNDU_BiVYTZwlA0RWvY6KC7s';
+  const value=btoa(String.fromCharCode(...a)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  assert.equal(value,expected);
   await assert.rejects(deriveNodeKey(master,'../escape'));
 });
 test('unsigned node requests and missing server secrets are denied',async()=>{
