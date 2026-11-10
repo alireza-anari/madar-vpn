@@ -11,7 +11,7 @@ test('rejects missing and mismatched webhook credentials', async () => {
   assert.equal(response.status,401);
 });
 test('bounded bot parsing does not fake paid VPN issuance', () => {
-  const msg=toBotMessage({update_id:123,message:{chat:{id:456},text:'/start'}});
+  const msg=toBotMessage({update_id:123,message:{chat:{id:456,type:'private'},from:{id:456},text:'/start'}});
   assert.equal(msg.chatId,'456');
   assert.match(msg.text,/آماده‌سازی/);
   assert.equal(toBotMessage({update_id:-1}),null);

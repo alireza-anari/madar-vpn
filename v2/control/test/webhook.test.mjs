@@ -27,7 +27,7 @@ function post(env, value, headers={}) {
 test('authenticated webhook stores localized Telegram message and menu',async()=>{
   const env=mockEnv();
   const reply=await post(env,{update_id:101,message:{
-    chat:{id:202},from:{language_code:'fa'},text:'/start'}});
+    chat:{id:202,type:'private'},from:{id:202,language_code:'fa'},text:'/start'}});
   assert.equal(reply.status,200);
   const insert=env.calls.find(x=>/INSERT OR IGNORE/.test(x.sql));
   assert.ok(insert);

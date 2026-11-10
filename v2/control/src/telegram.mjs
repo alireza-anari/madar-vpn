@@ -19,16 +19,23 @@ export function toBotMessage(update) {
   if (!Number.isSafeInteger(update?.update_id) || update.update_id < 0) return null;
   const event = update.message ?? update.callback_query?.message;
   const chatId = event?.chat?.id;
-  if (!Number.isSafeInteger(chatId)) return null;
+  const sender = update.message?.from ?? update.callback_query?.from;
+  // Subscription, identity and admin actions must never appear in group chats.
+  if (event?.chat?.type !== 'private' ||
+      !Number.isSafeInteger(chatId) ||
+      !Number.isSafeInteger(sender?.id) ||
+      sender.id !== chatId ||
+      sender.is_bot === true) return null;
   const input = update.callback_query?.data ?? update.message?.text ?? '';
   if (typeof input !== 'string' || input.length > 256) return null;
   const key = input.startsWith('v2:') ? input.slice(3) : input.split(' ')[0].split('@')[0];
   const language = update.message?.from?.language_code ?? update.callback_query?.from?.language_code ?? 'fa';
-  const locale = language.startsWith('en') ? 'en' : 'fa';
+  const locale = typeof language === 'string' && language.startsWith('en') ? 'en' : 'fa';
   const result=botPage(commands[key] ?? key,locale);
   return {
     updateId: update.update_id,
     chatId: String(chatId),
+    actorId: String(sender.id),
     text:result.text,
     replyMarkup:result.replyMarkup,
     callbackId: typeof update.callback_query?.id==='string' ? update.callback_query.id.slice(0,128) : null,
