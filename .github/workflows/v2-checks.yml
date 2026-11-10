@@ -48,7 +48,56 @@ jobs:
           ! grep -q 'f59e160f-89ab-4a90-a4dc-f257883d5a61' v2/control/wrangler.jsonc
           ! grep -q '"name": "madar-sales-bot"' v2/control/wrangler.jsonc
 
+  libxray-android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: XTLS/libXray
+          ref: 5a0f7d8d1c28b34afb5727b04b26a10f6dbac7e3
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.3'
+          check-latest: true
+      - uses: android-actions/setup-android@v4
+      - name: Install pinned Android NDK
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r30
+          add-to-path: true
+      - name: Build pinned official libXray AAR
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+          LIBXRAY_ANDROID_API: '26'
+          LIBXRAY_GOMOBILE_VERSION: 'v0.0.0-20261011034528-197770444867'
+        run: |
+          set -euo pipefail
+          python3 build/main.py android
+          test -s libXray.aar
+          test -s libXray-sources.jar
+          mkdir -p dist
+          cp libXray.aar dist/
+          cp libXray-sources.jar dist/
+          sha256sum dist/libXray.aar | tee dist/libXray.aar.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: madar-v2-libxray-android
+          path: dist/
+          retention-days: 7
+          if-no-files-found: error
+
   v2-android:
+    needs: libxray-android
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -62,6 +111,14 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
+      - name: Download pinned libXray AAR
+        uses: actions/download-artifact@v4
+        with:
+          name: madar-v2-libxray-android
+          path: app/libs
+      - name: Verify libXray artifact
+        working-directory: v2/android/app/libs
+        run: sha256sum --check libXray.aar.sha256
       - name: Install Android SDK 35
         run: |
           SDKMANAGER="$(find "${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools" -type f -name sdkmanager | head -n 1)"
