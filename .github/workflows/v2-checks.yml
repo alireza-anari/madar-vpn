@@ -47,7 +47,10 @@ jobs:
         with:
           gradle-version: '8.11.1'
       - name: Install Android SDK 35
-        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+        run: |
+          SDKMANAGER="$(find \"${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools\" -type f -name sdkmanager | head -n 1)"
+          test -n "$SDKMANAGER"
+          "$SDKMANAGER" 'platforms;android-35' 'build-tools;35.0.0'
       - name: Build isolated Android shell and run state machine unit tests
         working-directory: v2/android
         run: gradle :app:testDebugUnitTest :app:assembleDebug --no-daemon --stacktrace
