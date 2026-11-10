@@ -28,3 +28,47 @@ test('HMAC signature binds request to method, path, timestamp and body',async()=
   assert.match(a,/^[a-zA-Z0-9_-]{43}$/);
   assert.notEqual(a,b);
 });
+
+test('a signed node request verifies once and replay is rejected',async()=>{
+  const nowMs=1800000000000,ts=1800000000,nonce='a'.repeat(32),id='node_01';
+  const key=await deriveNodeKey(master,id);
+  const signature=await signNodeRequest(key,'GET','/api/node/v1/manifest',ts,nonce);
+  const request=()=>new Request('https://example.test/api/node/v1/manifest',{
+    headers:{
+      'x-madar-node-id':id,
+      'x-madar-node-timestamp':String(ts),
+      'x-madar-node-nonce':nonce,
+      'x-madar-node-signature':signature,
+    },
+  });
+  const seen=new Set();
+  const db={
+    prepare(sql) {
+      return {bind(...args){
+        return {
+          async first(){
+            assert.match(sql,/FROM nodes/);
+            return {id,lifecycle:'provisioning',desired_revision:1,acked_revision:0,user_limit:20,byte_limit:1000};
+          },
+          async run(){
+            assert.match(sql,/node_nonces/);
+            if(seen.has(args[1]))return {meta:{changes:0}};
+            seen.add(args[1]);return {meta:{changes:1}};
+          },
+        };
+      }};
+    },
+  };
+  const env={DB:db,NODE_MASTER_KEY:master};
+  const accepted=await authenticatedNode(request(),env,nowMs);
+  assert.equal(accepted.id,id);
+  const again=await authenticatedNode(request(),env,nowMs);
+  assert.equal(again.error.status,409);
+  const wrongPath=new Request('https://example.test/api/node/v1/ack',{method:'POST',
+    headers:{
+      'x-madar-node-id':id,'x-madar-node-timestamp':String(ts),
+      'x-madar-node-nonce':'b'.repeat(32),'x-madar-node-signature':signature,
+    },
+    body:'{}'});
+  assert.equal((await authenticatedNode(wrongPath,env,nowMs)).error.status,401);
+});

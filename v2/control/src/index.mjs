@@ -1,3 +1,4 @@
+import { nodeRoute } from './node-control.mjs';
 import { toBotMessage, verifyTelegramSecret } from './telegram.mjs';
 import { resolveBotAction } from './shop.mjs';
 
@@ -170,11 +171,19 @@ export default {
         return json({status:'ready'});
       } catch {return json({status:'not_ready'},503);}
     }
+    if(path.startsWith('/api/node/v1/')) {
+      try {return await nodeRoute(request,env);}
+      catch {return json({error:'node_temporary_failure'},503);}
+    }
     if(request.method==='POST' && path==='/telegram/webhook') {
       try{return await receive(request,env,ctx);}
       catch{return json({error:'temporary_failure'},503);}
     }
     return json({error:'not_found'},404);
   },
-  async scheduled(_event,env) {await poll(env);}
+  async scheduled(_event,env) {
+    await poll(env);
+    if(env.DB) await env.DB.prepare('DELETE FROM node_nonces WHERE created_ms<?')
+      .bind(Date.now()-10*60*1000).run();
+  }
 };
