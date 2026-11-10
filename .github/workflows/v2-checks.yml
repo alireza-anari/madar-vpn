@@ -138,6 +138,13 @@ jobs:
       - name: Build isolated Android shell and run state machine unit tests
         working-directory: v2/android
         run: gradle :app:testDebugUnitTest :app:assembleDebug --no-daemon --stacktrace
+      - name: Enable KVM for stable x86_64 Android emulator
+        run: |
+          set -euo pipefail
+          test -c /dev/kvm
+          sudo chmod 666 /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm
+          ls -l /dev/kvm
       - name: Run libXray JNI smoke test on Android emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
