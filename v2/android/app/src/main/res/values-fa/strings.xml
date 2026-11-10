@@ -12,7 +12,7 @@
     <string name="preview_status_title">اتصال فعلاً در دسترس نیست</string>
     <string name="preview_status_body">موتور VPN و تست واقعی اپراتورها هنوز تکمیل نشده‌اند. هیچ اتصال VPN در پس‌زمینه فعال نیست.</string>
     <string name="connect_disabled">اتصال پس از تأیید تست‌ها</string>
-    <string name="not_connected_disclaimer">در حال حاضر هیچ ترافیکی از مدار عبور نمی‌کند.</string>
+    <string name="not_connected_disclaimer">ترافیک فقط هنگام فعال بودن اتصال تأییدشده از مدار عبور می‌کند.</string>
     <string name="action_help">مدار چطور کار خواهد کرد؟</string>
     <string name="servers_title">مسیرهای اتصال</string>
     <string name="servers_desc">هر مسیر فقط بعد از تأیید احراز هویت و انتقال واقعی داده در دسترس قرار می‌گیرد.</string>
@@ -39,11 +39,24 @@
     <string name="token_saved">توکن با رمزگذاری روی این دستگاه ذخیره شد.</string>
     <string name="token_removed">توکن ذخیره‌شده حذف شد.</string>
     <string name="token_invalid">توکن دسترسی معتبر نیست.</string>
-    <string name="account_verified">اشتراک تأیید شد؛ در نسخه آزمایشی موتور VPN هنوز متصل نیست.</string>
+    <string name="account_verified">اشتراک تأیید شد. می‌توانید اتصال VPN را آغاز کنید.</string>
     <string name="subscription_not_ready">اشتراک هنوز فعال نیست یا منقضی شده است.</string>
     <string name="server_not_ready">سرور اشتراک آماده نیست. بعداً دوباره بررسی کنید.</string>
     <string name="subscription_check_failed">بررسی اشتراک انجام نشد. اتصال اینترنت را بررسی کنید.</string>
     <string name="usage_summary">مصرف: %1$.2f از %2$.2f گیگابایت</string>
     <string name="routes_summary">مسیرهای تأییدشده: %1$d</string>
+
+
+    <string name="connect_button">اتصال امن</string>
+    <string name="disconnect_button">قطع اتصال</string>
+    <string name="cancel_connection">لغو اتصال</string>
+    <string name="add_token_first">ابتدا توکن اشتراک را وارد کنید</string>
+    <string name="connection_status">وضعیت اتصال</string>
+    <string name="vpn_disconnected">قطع است</string>
+    <string name="vpn_connecting">در حال اتصال به مسیر تأییدشده…</string>
+    <string name="vpn_testing">در حال بررسی عبور واقعی ترافیک…</string>
+    <string name="vpn_connected">متصل · آزمون ترافیک موفق</string>
+    <string name="vpn_failed">متصل نیست · آزمون اتصال ناموفق بود</string>
+    <string name="connection_safety_note">مدار فقط پس از اجرای موتور VPN و عبور موفق ترافیک HTTPS از پراکسی، وضعیت اتصال را موفق اعلام می‌کند.</string>
 
 </resources>

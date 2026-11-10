@@ -3,7 +3,6 @@ package io.madar.v2
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -11,6 +10,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -22,18 +22,17 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** Stores only an encrypted token. No VPN is connected from this screen. */
 @Composable
-fun AccountScreen() {
+fun AccountScreen(onConnect: () -> Unit, onDisconnect: () -> Unit) {
     val context = LocalContext.current
     val store = remember(context) { SubscriptionTokenStore(context) }
     val scope = rememberCoroutineScope()
-    var tokenInput by remember { mutableStateOf("") }  // deliberately not rememberSaveable
+    val vpnState by VpnStatus.state.collectAsState()
+    var tokenInput by remember { mutableStateOf("") }
     var hasToken by remember { mutableStateOf(store.read() != null) }
     var checking by remember { mutableStateOf(false) }
     var statusCode by remember { mutableStateOf<String?>(null) }
@@ -76,15 +75,10 @@ fun AccountScreen() {
                     scope.launch {
                         val result = withContext(Dispatchers.IO) {
                             val key = store.read()
-                            if (key == null) {
-                                SubscriptionResult.Unavailable("INVALID_TOKEN")
-                            } else if (BuildConfig.DEBUG) {
-                                SubscriptionApi(
-                                    "https://madar-v2-staging.alirezaanari117.workers.dev"
-                                ).fetch(key)
-                            } else {
-                                SubscriptionResult.Unavailable("NOT_CONFIGURED")
-                            }
+                            val origin = BuildConfig.SUBSCRIPTION_API_ORIGIN
+                            if (key == null) SubscriptionResult.Unavailable("INVALID_TOKEN")
+                            else if (origin.isBlank()) SubscriptionResult.Unavailable("NOT_CONFIGURED")
+                            else SubscriptionApi(origin).fetch(key)
                         }
                         when (result) {
                             is SubscriptionResult.Available -> {
@@ -109,7 +103,7 @@ fun AccountScreen() {
                     statusCode = "TOKEN_REMOVED"
                     snapshot = null
                 },
-                enabled = !checking,
+                enabled = !checking && vpnState !is ConnectionState.Connected,
                 modifier = Modifier.fillMaxWidth()
             ) { Text(stringResource(R.string.remove_token)) }
         }
@@ -134,9 +128,28 @@ fun AccountScreen() {
             Text(stringResource(R.string.usage_summary,
                 sub.usedBytes / 1073741824.0, sub.quotaBytes / 1073741824.0))
             Text(stringResource(R.string.routes_summary, sub.routes.size))
+            when (vpnState) {
+                is ConnectionState.Connected -> OutlinedButton(
+                    onClick = onDisconnect, modifier = Modifier.fillMaxWidth()
+                ) { Text(stringResource(R.string.disconnect_button)) }
+                is ConnectionState.Dialing, is ConnectionState.TestingTraffic -> OutlinedButton(
+                    onClick = onDisconnect, modifier = Modifier.fillMaxWidth()
+                ) { Text(stringResource(R.string.cancel_connection)) }
+                else -> Button(
+                    enabled = !checking, onClick = onConnect, modifier = Modifier.fillMaxWidth()
+                ) { Text(stringResource(R.string.connect_button)) }
+            }
         }
+        Text(
+            when (vpnState) {
+                ConnectionState.Idle -> stringResource(R.string.vpn_disconnected)
+                is ConnectionState.Dialing -> stringResource(R.string.vpn_connecting)
+                is ConnectionState.TestingTraffic -> stringResource(R.string.vpn_testing)
+                is ConnectionState.Connected -> stringResource(R.string.vpn_connected)
+                is ConnectionState.Failed -> stringResource(R.string.vpn_failed)
+            },
+            style = MaterialTheme.typography.bodyMedium
+        )
         Text(stringResource(R.string.account_disclaimer), style = MaterialTheme.typography.bodySmall)
-        Text(stringResource(R.string.not_connected_disclaimer),
-            style = MaterialTheme.typography.bodySmall)
     }
 }
