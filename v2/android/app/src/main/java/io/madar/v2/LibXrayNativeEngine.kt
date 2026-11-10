@@ -23,6 +23,9 @@ class LibXrayNativeEngine(private val vpnService: VpnService) : NativeTunnelEngi
         return try {
             MadarSocketProtector.attach(vpnService)
             LibXray.registerDialerController(MadarSocketProtector)
+            // Xray-core reads xray.tun.fd from the Go process environment.
+            // A JSON "env" key is ignored; the binder writes it via os.Setenv.
+            LibXray.setTunFd(tunFd.toLong())
             LibXray.setDNS(MadarSocketProtector, "1.1.1.1:53")
             val response = invoke("runXray", JSONObject().put("xrayJson", configJson))
             if (!response.optBoolean("success", false)) {
@@ -81,9 +84,7 @@ class LibXrayNativeEngine(private val vpnService: VpnService) : NativeTunnelEngi
                     } finally { connection.disconnect() }
                 }.getOrNull()
                 if (metrics != null) {
-                    val up = metrics.optLong("outbound>>>madar-proxy>>>traffic>>>uplink", 0L)
-                    val down = metrics.optLong("outbound>>>madar-proxy>>>traffic>>>downlink", 0L)
-                    if (up > 0L && down > 0L) observed = true
+                    if (XrayTrafficMetrics.hasBidirectionalProxyTraffic(metrics)) observed = true
                 }
                 if (!observed) Thread.sleep(250)
             }
@@ -107,6 +108,7 @@ class LibXrayNativeEngine(private val vpnService: VpnService) : NativeTunnelEngi
 
     private fun reset() {
         runCatching { LibXray.resetDNS() }
+        runCatching { LibXray.resetTunFd() }
         MadarSocketProtector.detach()
     }
 }

@@ -81,7 +81,6 @@ object XrayConfigBuilder {
 
         return JSONObject()
             .put("log", JSONObject().put("loglevel", "warning"))
-            .put("env", JSONObject().put("xray.tun.fd", tunFd.toString()))
             .put("inbounds", JSONArray().put(tunInbound))
             .put("outbounds", JSONArray()
                 .put(outbound)

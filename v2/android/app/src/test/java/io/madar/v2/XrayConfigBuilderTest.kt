@@ -19,7 +19,8 @@ class XrayConfigBuilderTest {
 
     @Test fun realityBuildUsesRawRealityAndTunFd() {
         val root=JSONObject(XrayConfigBuilder.build(snapshot(reality),"r1",42))
-        assertEquals("42",root.getJSONObject("env").getString("xray.tun.fd"))
+        // Go's os.LookupEnv is not configured by an arbitrary top-level JSON field.
+        assertFalse(root.has("env"))
         assertEquals("tun",root.getJSONArray("inbounds").getJSONObject(0).getString("protocol"))
         val out=root.getJSONArray("outbounds").getJSONObject(0)
         assertEquals("vless",out.getString("protocol"))

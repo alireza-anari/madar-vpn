@@ -58,8 +58,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
           repository: XTLS/libXray
           ref: 5a0f7d8d1c28b34afb5727b04b26a10f6dbac7e3
+          path: libxray
           persist-credentials: false
       - uses: actions/setup-java@v4
         with:
@@ -79,13 +83,16 @@ jobs:
         with:
           ndk-version: r30
           add-to-path: true
-      - name: Build pinned official libXray AAR
+      - name: Build pinned libXray AAR with Madar Android TUN FD binding
+        working-directory: libxray
         env:
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
           LIBXRAY_ANDROID_API: '26'
           LIBXRAY_GOMOBILE_VERSION: 'v0.0.0-20261011034528-197770444867'
         run: |
           set -euo pipefail
+          cp ../v2/android/native-overlay/madar_tun_fd_android.go ./madar_tun_fd_android.go
+          test -s madar_tun_fd_android.go
           python3 build/main.py android
           test -s libXray.aar
           test -s libXray-sources.jar
@@ -96,7 +103,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: madar-v2-libxray-android
-          path: dist/
+          path: libxray/dist/
           retention-days: 7
           if-no-files-found: error
 

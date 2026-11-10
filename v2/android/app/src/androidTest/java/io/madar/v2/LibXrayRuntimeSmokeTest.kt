@@ -18,6 +18,9 @@ class LibXrayRuntimeSmokeTest {
 
     @Test
     fun bundledNativeXrayLoadsStartsAndStops() {
+        // The two methods must be exported in the JNI interface before VPN TUN wiring.
+        LibXray.setTunFd(42L)
+        LibXray.resetTunFd()
         val version = invoke("xrayVersion")
         assertTrue(version.optString("error"), version.optBoolean("success"))
         assertTrue(version.optJSONObject("data")?.optString("version").orEmpty().isNotBlank())
