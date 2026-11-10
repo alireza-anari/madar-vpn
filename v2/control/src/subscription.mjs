@@ -109,3 +109,41 @@ export async function getSubscription(request,env,nowMs=Date.now()) {
     })),
   });
 }
+
+
+export async function wrapClientUuid(uuid,keyText) {
+  if(!UUID.test(uuid??'')) throw new TypeError('invalid_client_uuid');
+  const raw=base64Decode(keyText);
+  if(raw.length!==32) throw new TypeError('credential_key_length');
+  const key=await crypto.subtle.importKey('raw',raw,{name:'AES-GCM'},false,['encrypt']);
+  const nonce=crypto.getRandomValues(new Uint8Array(12));
+  const encrypted=new Uint8Array(await crypto.subtle.encrypt({
+    name:'AES-GCM',iv:nonce,
+  },key,ascii.encode(uuid)));
+  const encode=data=>btoa(String.fromCharCode(...data)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  return {nonce_b64:encode(nonce),ciphertext_b64:encode(encrypted),key_version:1};
+}
+
+/** Issue tokens only for *already active* and field-tested subscriptions.
+ * The token is returned once and never persisted in plaintext.
+ */
+export async function issueActiveToken(env,subId,nowMs=Date.now()) {
+  if(!env.DB || env.SUBSCRIPTION_API_ENABLED!=='true' ||
+     !env.SUBSCRIPTION_CREDENTIAL_KEY || typeof subId!=='string' || subId.length>80)
+    return null;
+  const row=await env.DB.prepare(
+    "SELECT s.id,s.expires_at FROM subscriptions s " +
+    "JOIN subscription_credentials c ON c.subscription_id=s.id " +
+    "WHERE s.id=? AND s.state='active' AND s.expires_at>? " +
+    "AND s.max_bytes>0 AND s.used_bytes<s.max_bytes " +
+    "AND EXISTS(SELECT 1 FROM node_allocations a WHERE a.subscription_id=s.id AND a.state='active')"
+  ).bind(subId,nowMs).first();
+  if(!row || !(await activeRoutes(env.DB,subId,nowMs)).length) return null;
+  const entropy=crypto.getRandomValues(new Uint8Array(32));
+  const token=btoa(String.fromCharCode(...entropy)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  const hash=await tokenDigest(token);
+  await env.DB.prepare(
+    'INSERT INTO subscription_tokens(token_hash,subscription_id,expires_at) VALUES(?,?,?)'
+  ).bind(hash,subId,row.expires_at).run();
+  return {token,expires_at:row.expires_at};
+}

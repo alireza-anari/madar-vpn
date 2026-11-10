@@ -30,3 +30,18 @@ test('credential decryption refuses incorrect key size and invalid ciphertext',a
   await assert.rejects(unwrapClientUuid({nonce_b64:'AAAAAAAAAAAAAAAA',
     ciphertext_b64:'AAAAAAAAAAAAAAAAAAAAAA'},'short'));
 });
+
+test('AES-GCM credentials encrypt/decrypt without exposing plaintext at rest',async()=>{
+  const {wrapClientUuid}=await import('../src/subscription.mjs');
+  const id='123e4567-e89b-42d3-a456-426614174000';
+  const encrypted=await wrapClientUuid(id,key);
+  assert.notEqual(encrypted.ciphertext_b64,id);
+  assert.equal(await unwrapClientUuid(encrypted,key),id);
+});
+test('no token may be issued for pending or unverified subscriptions',async()=>{
+  const {issueActiveToken}=await import('../src/subscription.mjs');
+  assert.equal(await issueActiveToken({DB:{}},'sub-1'),null);
+  const env={DB:{prepare(){return {bind(){return {first:async()=>null};}}}},
+    SUBSCRIPTION_API_ENABLED:'true',SUBSCRIPTION_CREDENTIAL_KEY:key};
+  assert.equal(await issueActiveToken(env,'sub-1'),null);
+});

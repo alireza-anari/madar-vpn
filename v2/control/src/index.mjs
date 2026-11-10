@@ -1,3 +1,4 @@
+import { getSubscription } from './subscription.mjs';
 import { nodeRoute } from './node-control.mjs';
 import { toBotMessage, verifyTelegramSecret } from './telegram.mjs';
 import { resolveBotAction } from './shop.mjs';
@@ -170,6 +171,11 @@ export default {
         await env.DB.prepare('SELECT event_json FROM telegram_inbox LIMIT 1').first();
         return json({status:'ready'});
       } catch {return json({status:'not_ready'},503);}
+    }
+    if(path==='/api/v2/subscription') {
+      if(new URL(request.url).search) return json({error:'query_not_allowed'},400);
+      try{return await getSubscription(request,env);}
+      catch {return json({error:'temporary_failure'},503);}
     }
     if(path.startsWith('/api/node/v1/')) {
       try {return await nodeRoute(request,env);}
