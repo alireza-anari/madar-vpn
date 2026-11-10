@@ -50,12 +50,12 @@ class BootstrapTests(unittest.TestCase):
         priv="A"*43
         pub="B"*43
         self.assertEqual(parse_reality_keypair("PrivateKey: "+priv+"\nPassword: "+pub),(priv,pub))
+        self.assertEqual(parse_reality_keypair("PrivateKey: "+priv+"\nPassword (PublicKey): "+pub+"\nHash32: "+"C"*43),(priv,pub))
         with self.assertRaises(BootstrapError):
             parse_reality_keypair("PrivateKey: "+priv)
         self.assertIn("LoadCredential=config.json:",xray_unit())
         self.assertIn("User=madar-v2-xray",xray_unit())
         self.assertNotIn(priv,xray_unit())
-        self.assertIn("reverse", "reverse proxy provided by Caddy" if True else "")
 
     def test_caddy_https_uses_bounded_ambient_capabilities(self):
         unit=caddy_unit()

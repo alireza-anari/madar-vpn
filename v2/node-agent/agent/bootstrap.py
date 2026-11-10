@@ -58,7 +58,7 @@ def command(args,timeout=30,output=False):
 
 def parse_reality_keypair(output):
     private=re.search(r"(?im)^\s*(?:PrivateKey|Private key)\s*:\s*([A-Za-z0-9_-]{43})\s*$",output)
-    public=re.search(r"(?im)^\s*(?:Password|PublicKey|Public key)\s*:\s*([A-Za-z0-9_-]{43})\s*$",output)
+    public=re.search(r"(?im)^\s*(?:Password(?:\s*\(PublicKey\))?|PublicKey|Public key)\s*:\s*([A-Za-z0-9_-]{43})\s*$",output)
     if not private or not public or private.group(1)==public.group(1):
         raise BootstrapError("pinned Xray did not provide a valid REALITY keypair")
     return private.group(1),public.group(1)
@@ -139,7 +139,7 @@ StateDirectory=madar-v2-caddy
 Environment=HOME=/var/lib/madar-v2-caddy
 Environment=XDG_DATA_HOME=/var/lib/madar-v2-caddy/data
 Environment=XDG_CONFIG_HOME=/var/lib/madar-v2-caddy/config
-ExecStart=/opt/madar-v2/bin/caddy run --environ --config /etc/madar-v2/Caddyfile --adapter caddyfile
+ExecStart=/opt/madar-v2/bin/caddy run --config /etc/madar-v2/Caddyfile --adapter caddyfile
 ExecReload=/opt/madar-v2/bin/caddy reload --config /etc/madar-v2/Caddyfile --adapter caddyfile
 Restart=on-failure
 RestartSec=3s
