@@ -115,7 +115,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: madar-v2-libxray-android
-          path: app/libs
+          path: v2/android/app/libs
       - name: Verify libXray artifact
         working-directory: v2/android/app/libs
         run: sha256sum --check libXray.aar.sha256
