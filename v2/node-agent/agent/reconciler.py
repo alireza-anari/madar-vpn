@@ -116,8 +116,15 @@ def apply_config(root,config,*,binary,sha256,runner=subprocess_runner):
                 previous.unlink()
             if had_current:
                 os.replace(current,previous)
-            os.replace(staged,current)
-            staged=None
+            try:
+                os.replace(staged,current)
+                staged=None
+            except OSError:
+                # Restore a previous known-good config if the new atomic
+                # move fails. Never leave a node without its old config.
+                if had_current and previous.exists() and not current.exists():
+                    os.replace(previous,current)
+                raise ReconcileError("atomic config replacement failed") from None
             try:
                 if not runner(["/usr/bin/systemctl","restart",UNIT_NAME],timeout=30):
                     raise ReconcileError("service restart failed")
@@ -136,7 +143,7 @@ def apply_config(root,config,*,binary,sha256,runner=subprocess_runner):
     finally:
         if staged is not None:
             staged.unlink(missing_ok=True)
-        os.close(lock_fd) if False else None
+        # os.fdopen() above owns and closes lock_fd after releasing the flock.
 
 
 def compile_trusted_local_secrets(path):
