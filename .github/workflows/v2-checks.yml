@@ -31,6 +31,8 @@ jobs:
         run: |
           npm run check
           npm test
+      - name: Test dedicated WSS-only Cloudflare relay failure isolation
+        run: node --test v2/edge-wss-probe/test/*.test.mjs
       - name: Check new D1 schema invariants and quota constraints
         run: python3 v2/control/test/schema.test.py
       - name: Check read-only network diagnostic probe
