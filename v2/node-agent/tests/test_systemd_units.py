@@ -32,7 +32,7 @@ class UnitTests(unittest.TestCase):
             root.mkdir()
             units=Path(td)/"systemd"
             units.mkdir()
-            with patch("agent.systemd_units.os.geteuid",return_value=0):
+            with patch("agent.systemd_units.current_euid",return_value=0):
                 with self.assertRaisesRegex(ReconcileError,"marker"):
                     install_staging_units(root,unit_dir=units,
                         xray_path="/opt/madar-v2/bin/xray",
@@ -47,7 +47,7 @@ class UnitTests(unittest.TestCase):
             os.chmod(root/"STAGING-ONLY",0o600)
             units=Path(td)/"systemd"
             units.mkdir()
-            with patch("agent.systemd_units.os.geteuid",return_value=0):
+            with patch("agent.systemd_units.current_euid",return_value=0):
                 with self.assertRaisesRegex(ReconcileError,"systemd refused"):
                     install_staging_units(root,unit_dir=units,
                         xray_path="/opt/madar-v2/bin/xray",

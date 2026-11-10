@@ -4,6 +4,7 @@ Root-owned 0600 configuration is provided to DynamicUser services via
 systemd LoadCredential; never weaken file permissions for private Xray keys.
 """
 import os
+from os import geteuid as current_euid
 import re
 import stat
 from pathlib import Path
@@ -75,7 +76,7 @@ def install_staging_units(config_dir,*,unit_dir="/etc/systemd/system",
     # Never install any system unit without explicit disposable marker.
     root=_safe_config_root(config_dir)
     require_staging_marker(root)
-    if os.geteuid()!=0:
+    if current_euid()!=0:
         raise ReconcileError("installing system units requires root")
     units=render_units(xray_path,caddy_path,root)
     dest=Path(unit_dir)
