@@ -16,6 +16,14 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true; buildConfig = true }
+    buildTypes {
+        getByName("debug") {
+            buildConfigField("String", "SUBSCRIPTION_API_ORIGIN", "\"https://madar-v2-staging.alirezaanari117.workers.dev\"")
+        }
+        getByName("release") {
+            buildConfigField("String", "SUBSCRIPTION_API_ORIGIN", "\"\"")
+        }
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
