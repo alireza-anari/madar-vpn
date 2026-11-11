@@ -54,9 +54,9 @@ export function eligibleEndpoint(row) {
   return false; // UDP outbounds require a separately audited client adapter
 }
 
-async function activeRoutes(db,subId,nowMs) {
+export async function activeRoutes(db,subId,nowMs) {
   const rows=(await db.prepare(
-    "SELECT r.id AS route_id,r.transport,re.host,re.port,re.server_name,re.ws_path," +
+    "SELECT r.id AS route_id,r.transport,r.operator_hint,re.host,re.port,re.server_name,re.ws_path," +
     "re.reality_public_key,re.reality_short_id FROM node_allocations a " +
     "JOIN nodes n ON n.id=a.node_id JOIN routes r ON r.node_id=n.id " +
     "JOIN route_endpoints re ON re.route_id=r.id " +
@@ -100,7 +100,7 @@ export async function getSubscription(request,env,nowMs=Date.now()) {
     quota_bytes:active.max_bytes,used_bytes:active.used_bytes,
     client:{protocol:'vless',uuid:id},
     routes:routes.map(x=>({
-      id:x.route_id,protocol:'vless',transport:x.transport,
+      id:x.route_id,protocol:'vless',transport:x.transport,operator_hint:x.operator_hint??null,
       endpoint:{host:x.host,port:x.port},
       tls:{server_name:x.server_name,
         ...(x.transport==='reality'?{reality_public_key:x.reality_public_key,

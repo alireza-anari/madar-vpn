@@ -38,11 +38,14 @@ export function parseRouteAdd(input) {
   const port=Number(portRaw);
   if(!Number.isSafeInteger(port)||port<1||port>65535) return null;
   if(transport==='reality' && parts.length===3)
-    return {nodeId,transport,port,hostname:null,path:null,id:nodeId+'_reality'};
+    return {nodeId,transport,port,hostname:null,path:null,id:nodeId+'_reality',operatorHint:null};
+  if(transport==='reality' && parts.length===4 && ['mci','irancell'].includes(hostname))
+    return {nodeId,transport,port,hostname:null,path:null,
+      id:nodeId+'_reality_'+hostname,operatorHint:hostname};
   if(transport==='wss' && parts.length===5 && HOST.test(hostname??'') &&
      typeof path==='string' && path.startsWith('/') && path.length<=256 &&
      !/[\r\n?&#]/.test(path))
-    return {nodeId,transport,port,hostname,path,id:nodeId+'_wss'};
+    return {nodeId,transport,port,hostname,path,id:nodeId+'_wss',operatorHint:null};
   return null;
 }
 
@@ -70,7 +73,7 @@ export async function enrollNode(db,actor,input) {
 export async function addRoute(db,actor,input) {
   const data=parseRouteAdd(input);
   if(!data) return panel(
-    'Usage:\n/node_route NODE_ID|reality|443\n/node_route NODE_ID|wss|8443|vpn.example.com|/ws');
+    'Usage:\n/node_route NODE_ID|reality|443|mci\n/node_route NODE_ID|reality|8443|irancell\n/node_route NODE_ID|wss|8443|vpn.example.com|/ws');
   const node=await db.prepare(
     "SELECT id,lifecycle,desired_revision FROM nodes WHERE id=?"
   ).bind(data.nodeId).first();
@@ -80,9 +83,9 @@ export async function addRoute(db,actor,input) {
   try {
     await db.batch([
       db.prepare(
-        "INSERT INTO routes(id,node_id,transport,state,listen_port,tls_hostname,ws_path) " +
-        "VALUES(?,?,?,'draft',?,?,?)"
-      ).bind(data.id,data.nodeId,data.transport,data.port,data.hostname,data.path),
+        "INSERT INTO routes(id,node_id,transport,state,listen_port,tls_hostname,ws_path,operator_hint) " +
+        "VALUES(?,?,?,'draft',?,?,?,?)"
+      ).bind(data.id,data.nodeId,data.transport,data.port,data.hostname,data.path,data.operatorHint),
       db.prepare(
         "UPDATE nodes SET desired_revision=desired_revision+1, lifecycle='provisioning' " +
         "WHERE id=? AND desired_revision=? AND lifecycle IN ('enrolling','provisioning','degraded')"

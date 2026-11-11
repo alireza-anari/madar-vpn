@@ -1,4 +1,5 @@
 import { getSubscription } from './subscription.mjs';
+import { getCarrierFeed } from './carrier-subscription.mjs';
 import { nodeRoute } from './node-control.mjs';
 import { toBotMessage, verifyTelegramSecret } from './telegram.mjs';
 import { resolveBotAction } from './shop.mjs';
@@ -171,6 +172,13 @@ export default {
         await env.DB.prepare('SELECT event_json FROM telegram_inbox LIMIT 1').first();
         return json({status:'ready'});
       } catch {return json({status:'not_ready'},503);}
+    }
+    if(path.startsWith('/s/')) {
+      try{return await getCarrierFeed(request,env);}
+      catch{return new Response('Not ready',{status:503,headers:{
+        'content-type':'text/plain; charset=utf-8','cache-control':'private, no-store',
+        'referrer-policy':'no-referrer','x-content-type-options':'nosniff',
+      }});}
     }
     if(path==='/api/v2/subscription') {
       if(new URL(request.url).search) return json({error:'query_not_allowed'},400);
