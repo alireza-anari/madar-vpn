@@ -70,6 +70,8 @@ def apply_staging_pair(
     """
     directory=_safe_config_root(root)
     require_staging_marker(directory)
+    if (directory/"config.pre-carrier443.json").exists():
+        raise ReconcileError("dual REALITY migration active: WSS pair changes blocked")
     require_public_dns(hostname,public_ip,resolver)
     xb=verify_xray_binary(xray_binary,xray_sha)
     cb=verify_xray_binary(caddy_binary,caddy_sha)

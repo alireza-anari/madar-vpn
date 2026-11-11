@@ -51,6 +51,9 @@ def main(argv=None):
         parser.add_argument("--"+name,required=True)
     parser.add_argument('--install-units',action='store_true',help='install isolated V2 unit files (root and staging marker required)')
     args=parser.parse_args(argv)
+    # Never replace an active dual-REALITY port migration with legacy WSS:443.
+    if (Path(args.root)/"config.pre-carrier443.json").exists():
+        raise ReconcileError("dual REALITY:443 active; use dual_reality --rollback first")
     xray,site=read_local_spec(args.secrets)
     spec=json.loads(Path(args.secrets).read_text(encoding="utf-8"))
     if spec["wss_hostname"]!=args.hostname:

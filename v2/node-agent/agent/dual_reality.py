@@ -137,7 +137,7 @@ def migrate(node,ip,*,apply=False,rollback=False,root=ROOT,
     root=_safe_config_root(root)
     require_staging_marker(root)
     authorize(root,node,ip)
-    fd=os.open(root/"carrier443.lock",os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW,0o600)
+    fd=os.open(root/"installer.lock",os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW,0o600)
     with os.fdopen(fd,"r+") as f:
         os.fchmod(f.fileno(),0o600)
         fcntl.flock(f.fileno(),fcntl.LOCK_EX)
