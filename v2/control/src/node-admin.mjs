@@ -80,6 +80,44 @@ export async function addRoute(db,actor,input) {
   if(!node || !['enrolling','provisioning','degraded'].includes(node.lifecycle))
     return panel('Node not found or may have live allocations; route unchanged.');
   if(node.desired_revision>=2147483647) return panel('Revision limit reached.');
+  if(data.operatorHint) {
+    // The legacy routes table has UNIQUE(node_id,transport). A second
+    // carrier is a draft variant of the *same* parent REALITY route,
+    // never an extra billed node allocation or an overlapping route.
+    const parent=await db.prepare(
+      "SELECT r.id,re.host,re.server_name,re.reality_public_key,re.reality_short_id " +
+      "FROM routes r JOIN route_endpoints re ON re.route_id=r.id " +
+      "WHERE r.node_id=? AND r.transport='reality' LIMIT 1"
+    ).bind(data.nodeId).first();
+    if(!parent || !HOST.test(parent.host??'') ||
+       !HOST.test(parent.server_name??'') ||
+       !/^[A-Za-z0-9_-]{43}$/.test(parent.reality_public_key??'') ||
+       !/^[a-fA-F0-9]{0,16}$/.test(parent.reality_short_id??''))
+      return panel('Parent REALITY route has no complete public metadata; no carrier variant created.');
+    try {
+      await db.batch([
+        db.prepare(
+          "INSERT INTO route_carrier_variants(" +
+          "route_id,operator,host,port,server_name,reality_public_key,reality_short_id,published,verified_ms) " +
+          "VALUES(?,?,?,?,?,?,?,0,NULL)"
+        ).bind(parent.id,data.operatorHint,parent.host,data.port,parent.server_name,
+          parent.reality_public_key,parent.reality_short_id),
+        db.prepare(
+          "UPDATE nodes SET desired_revision=desired_revision+1,lifecycle='provisioning' " +
+          "WHERE id=? AND desired_revision=? AND lifecycle IN ('enrolling','provisioning','degraded')"
+        ).bind(data.nodeId,node.desired_revision),
+        db.prepare(
+          "INSERT INTO audit_events(event_id,actor_id,object_type,object_id,verb) VALUES(?,?,?,?,?)"
+        ).bind('node:carrier:'+parent.id+':'+data.operatorHint,actor,'route',parent.id,
+          'stage:carrier:'+data.operatorHint),
+      ]);
+    } catch {
+      return panel('Carrier variant already staged or update rejected; no changes made.');
+    }
+    return panel('✅ '+data.operatorHint.toUpperCase()+' port '+data.port+
+      ' staged as unpublished variant. VPS listeners are NOT changed. '+
+      'Signed agent support and independent external authenticated carrier acceptance required.');
+  }
   try {
     await db.batch([
       db.prepare(
