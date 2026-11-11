@@ -1,3 +1,4 @@
+import {issueCarrierLink} from './carrier-subscription.mjs';
 import {beginNodeWizard,cancelNodeWizard,consumeNodeWizard} from './node-wizard.mjs';
 import { nodeAdminAction } from './node-admin.mjs';
 import { handleSeller, linkSellerOnStart, grantStaffRole } from './referrals.mjs';
@@ -178,14 +179,19 @@ async function myOrders(db,e) {
     ...orders.map(o=>o.id.slice(0,8)+'… | '+money(o.quoted_amount,o.quoted_currency)+' | '+o.state)),e.locale);
 }
 
-async function mySubscriptions(db,e) {
+async function mySubscriptions(db,e,env) {
   const rows=(await db.prepare(
     'SELECT id,state,expires_at FROM subscriptions WHERE owner_telegram_id=? ORDER BY expires_at DESC LIMIT 5'
   ).bind(e.actorId).all()).results??[];
   if (!rows.length) return response(t('هنوز اشتراک فعال نسخه جدید ندارید. اشتراک قبلی شما مستقل باقی مانده است.',
     'No V2 subscription yet; your existing V1 subscription is unaffected.',e.locale),e.locale);
+  const buttons=env.SUBSCRIPTION_LINKS_ENABLED==='true'?
+    rows.filter(x=>x.state==='active').map(x=>[{
+      text:t('🔗 دریافت یک لینک با دو مسیر','🔗 Get one link with two routes',e.locale),
+      callback_data:'v2:my:link:'+x.id,
+    }]):[];
   return response(line(t('👤 اشتراک‌های من','👤 My subscriptions',e.locale),
-    ...rows.map(x=>x.id.slice(0,8)+'… | '+x.state+' | '+new Date(x.expires_at).toISOString().slice(0,10))),e.locale);
+    ...rows.map(x=>x.id.slice(0,8)+'… | '+x.state+' | '+new Date(x.expires_at).toISOString().slice(0,10))),e.locale,buttons);
 }
 
 async function beginSupport(db,e,nowMs) {
@@ -488,7 +494,31 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
   }
   if (key==='home') return botPage('home',e.locale);
   if (key==='plans' || key==='/plans') return listPlans(db,env,e.locale,nowMs);
-  if (key==='my' || key==='/my') return mySubscriptions(db,e);
+  if (key==='my' || key==='/my') return mySubscriptions(db,e,env);
+  if (key.startsWith('my:link:')) {
+    const subId=key.slice('my:link:'.length);
+    if(!/^[A-Za-z0-9][A-Za-z0-9_-]{1,79}$/.test(subId))
+      return response(t('اشتراک نامعتبر است.','Invalid subscription.',e.locale),e.locale);
+    // Sender identity was verified as a private Telegram conversation.
+    // Never issue someone else's URL, even if a callback is forged.
+    const owned=await db.prepare(
+      "SELECT id FROM subscriptions WHERE id=? AND owner_telegram_id=? AND state='active'"
+    ).bind(subId,e.actorId).first();
+    if(!owned)return response(t('اشتراک فعال شما پیدا نشد.','Active subscription not found.',e.locale),e.locale);
+    const link=await issueCarrierLink(env,subId,nowMs);
+    if(!link)return response(t(
+      'هر دو مسیر تأییدشده هنوز آماده نیستند؛ لینکی صادر نشد.',
+      'Both verified carrier routes are not yet ready; no link was issued.',e.locale),e.locale);
+    return response(line(
+      t('🔗 لینک اشتراک مدار — شامل دو مسیر همراه اول و ایرانسل',
+        '🔗 Madar subscription — contains MCI and Irancell routes',e.locale),
+      link.url,'',
+      t('در v2rayNG از Subscription settings لینک را اضافه و سپس Update subscription را بزنید. لینک را خصوصی نگه دارید.',
+        'Add this URL under v2rayNG Subscription settings, then Update subscription. Keep the link private.',e.locale),
+      t('یک اشتراک، یک حجم و یک تاریخ انقضا برای هر دو مسیر.',
+        'One subscription, shared quota and shared expiration for both routes.',e.locale)
+    ),e.locale);
+  }
   if (key==='orders' || key==='/orders') return myOrders(db,e);
   if (key==='status' || key==='/status') return botPage('status',e.locale);
   if (key==='privacy' || key==='/privacy') return botPage('privacy',e.locale);

@@ -9,6 +9,7 @@
     "SHOP_ENABLED": "false",
     "PROVISIONING_ENABLED": "false",
     "SUBSCRIPTION_API_ENABLED": "false",
+    "SUBSCRIPTION_LINKS_ENABLED": "false",
     "ADMIN_TELEGRAM_IDS": ""
   },
   "keep_vars": true,

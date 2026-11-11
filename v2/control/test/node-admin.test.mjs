@@ -14,12 +14,21 @@ test('node enroll input rejects shell, oversized and missing capacities',()=>{
 test('only explicit Reality or valid TLS/WSS route configurations pass',()=>{
   assert.deepEqual(parseRouteAdd('/node_route eu_01|reality|443'),{
     nodeId:'eu_01',transport:'reality',port:443,
-    hostname:null,path:null,id:'eu_01_reality'
+    hostname:null,path:null,id:'eu_01_reality',operatorHint:null
   });
   assert.deepEqual(parseRouteAdd('/node_route eu_01|wss|8443|vpn.example.com|/ws'),{
     nodeId:'eu_01',transport:'wss',port:8443,
-    hostname:'vpn.example.com',path:'/ws',id:'eu_01_wss'
+    hostname:'vpn.example.com',path:'/ws',id:'eu_01_wss',operatorHint:null
   });
+  assert.deepEqual(parseRouteAdd('/node_route eu_01|reality|443|mci'),{
+    nodeId:'eu_01',transport:'reality',port:443,
+    hostname:null,path:null,id:'eu_01_reality_mci',operatorHint:'mci',
+  });
+  assert.deepEqual(parseRouteAdd('/node_route eu_01|reality|8443|irancell'),{
+    nodeId:'eu_01',transport:'reality',port:8443,
+    hostname:null,path:null,id:'eu_01_reality_irancell',operatorHint:'irancell',
+  });
+  assert.equal(parseRouteAdd('/node_route eu_01|reality|443|unknown'),null);
   assert.equal(parseRouteAdd('/node_route eu_01|wss|443|not valid|/ws'),null);
   assert.equal(parseRouteAdd('/node_route eu_01|wss|443|vpn.example.com|/a?b'),null);
   assert.equal(parseRouteAdd('/node_route eu_01|hysteria2|443'),null);

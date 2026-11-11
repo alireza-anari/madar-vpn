@@ -112,6 +112,22 @@ class SchemaTests(unittest.TestCase):
         with self.assertRaisesRegex(sqlite3.IntegrityError,'SELF_REFERRAL_REJECTED'):
             self.db.execute("UPDATE customers SET seller_telegram_id='202' WHERE telegram_id='202'")
 
+    def test_two_carrier_routes_share_one_node_allocation(self):
+        self.db.execute("""INSERT INTO routes(id,node_id,transport,state,operator_hint)
+            VALUES('r-mci','node-1','reality','draft','mci')""")
+        self.db.execute("""INSERT INTO routes(id,node_id,transport,state,operator_hint)
+            VALUES('r-irancell','node-1','reality','draft','irancell')""")
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute("""INSERT INTO routes(id,node_id,transport,state,operator_hint)
+                VALUES('duplicate','node-1','reality','draft','irancell')""")
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute("""INSERT INTO routes(id,node_id,transport,state,operator_hint)
+                VALUES('unknown','node-1','reality','draft','unspecified')""")
+        # A plan is allocated to a node once, regardless of two route entries.
+        self.reserve(0,300)
+        used=self.db.execute("SELECT COUNT(*) FROM node_allocations WHERE node_id='node-1'").fetchone()[0]
+        self.assertEqual(used,1)
+
     def test_subscription_usage_never_exceeds_quota(self):
         self.db.execute("UPDATE subscriptions SET max_bytes=1000,used_bytes=800 WHERE id='sub-0'")
         with self.assertRaisesRegex(sqlite3.IntegrityError,'SUBSCRIPTION_QUOTA_EXCEEDED'):
