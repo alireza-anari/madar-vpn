@@ -25,6 +25,7 @@ jobs:
       MODE: ${{ inputs.mode }}
       PINNED_SHA: ${{ inputs.pinned_sha }}
       SSH_PRIVATE_KEY: ${{ secrets.MADAR_V2_SSH_PRIVATE_KEY }}
+      SSH_PASSWORD: ${{ secrets.MADAR_V2_SSH_PASSWORD }}
       SSH_KNOWN_HOSTS: ${{ secrets.MADAR_V2_KNOWN_HOSTS }}
       CALLBACK_SECRET: ${{ secrets.MADAR_V2_CALLBACK_SECRET }}
       CALLBACK_URL: https://madar-v2-staging.alirezaanari117.workers.dev/api/v2/node-bootstrap/report
@@ -48,10 +49,20 @@ jobs:
           assert (ip,node,os.environ['MODE'])==('86.54.42.66','test-aria01','aria-cutover') or (
             ip!='86.54.42.66' and os.environ['MODE']=='fresh')
           PY
-          test -n "$SSH_PRIVATE_KEY" && test -n "$SSH_KNOWN_HOSTS" && test -n "$CALLBACK_SECRET"
+          test -n "$SSH_KNOWN_HOSTS" && test -n "$CALLBACK_SECRET"
+          if [ -z "$SSH_PRIVATE_KEY" ]; then
+            test "$MODE" = aria-cutover
+            test -n "$SSH_PASSWORD"
+            if ! command -v sshpass >/dev/null; then
+              sudo apt-get update -qq >/dev/null
+              sudo apt-get install -qq -y sshpass >/dev/null
+            fi
+          fi
           install -d -m 700 "$HOME/.ssh"
-          printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/madar_node"
-          chmod 600 "$HOME/.ssh/madar_node"
+          if [ -n "$SSH_PRIVATE_KEY" ]; then
+            printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/madar_node"
+            chmod 600 "$HOME/.ssh/madar_node"
+          fi
           printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
           ssh-keygen -F "$SERVER_IP" -f "$HOME/.ssh/known_hosts" >/dev/null
@@ -60,11 +71,19 @@ jobs:
         run: |
           set -euo pipefail
           remote() {
-            ssh -i "$HOME/.ssh/madar_node" -o BatchMode=yes \
-              -o StrictHostKeyChecking=yes \
-              -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
-              -o PasswordAuthentication=no -o IdentitiesOnly=yes \
-              -o ConnectTimeout=15 "root@$SERVER_IP" "$@"
+            if [ -n "$SSH_PRIVATE_KEY" ]; then
+              ssh -i "$HOME/.ssh/madar_node" -o BatchMode=yes \
+                -o StrictHostKeyChecking=yes \
+                -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+                -o PasswordAuthentication=no -o IdentitiesOnly=yes \
+                -o ConnectTimeout=15 "root@$SERVER_IP" "$@"
+            else
+              SSHPASS="$SSH_PASSWORD" sshpass -e ssh \
+                -o StrictHostKeyChecking=yes \
+                -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+                -o PreferredAuthentications=password -o PubkeyAuthentication=no \
+                -o ConnectTimeout=15 "root@$SERVER_IP" "$@"
+            fi
           }
           DEST="/root/madar-v2-job-$JOB_ID"
           remote "install -d -m 700 '$DEST'"
@@ -79,10 +98,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          DETAILS="$(ssh -i "$HOME/.ssh/madar_node" -o BatchMode=yes \
-            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
-            -o PasswordAuthentication=no -o IdentitiesOnly=yes "root@$SERVER_IP" \
-            "python3 -c 'import json,pathlib; p=pathlib.Path(\"/etc/madar-v2\"); m=json.loads((p/\"public-route-metadata.json\").read_text()); s=json.loads((p/\"local-secrets.json\").read_text()); print(json.dumps(dict(public_key=m[\"reality_public_key\"],short_id=m[\"short_id\"],server_name=m[\"reality_server_name\"],uuid=s[\"clients\"][0])))'")"
+          remote() {
+            if [ -n "$SSH_PRIVATE_KEY" ]; then
+              ssh -i "$HOME/.ssh/madar_node" -o BatchMode=yes \
+                -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+                -o PasswordAuthentication=no -o IdentitiesOnly=yes \
+                -o ConnectTimeout=15 "root@$SERVER_IP" "$@"
+            else
+              SSHPASS="$SSH_PASSWORD" sshpass -e ssh \
+                -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+                -o PreferredAuthentications=password -o PubkeyAuthentication=no \
+                -o ConnectTimeout=15 "root@$SERVER_IP" "$@"
+            fi
+          }
+          DETAILS="$(remote "python3 -c 'import json,pathlib; p=pathlib.Path(\"/etc/madar-v2\"); m=json.loads((p/\"public-route-metadata.json\").read_text()); s=json.loads((p/\"local-secrets.json\").read_text()); print(json.dumps(dict(public_key=m[\"reality_public_key\"],short_id=m[\"short_id\"],server_name=m[\"reality_server_name\"],uuid=s[\"clients\"][0])))'")"
           export DETAILS
           python3 - <<'PY' | curl --fail --silent --show-error --max-time 20 \
             -X POST "$CALLBACK_URL" -H "Content-Type: application/json" \
