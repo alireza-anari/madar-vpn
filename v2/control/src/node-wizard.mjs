@@ -1,16 +1,17 @@
+import {enqueueAutoNode,parseAutoNode} from './node-auto.mjs';
 /** Phone-friendly, owner-only node enrollment via Telegram without shell commands.
  * A node is always recorded as enrolling, NEVER activated for paid issuance.
  */
 import { parseNodeAdd, enrollNode } from './node-admin.mjs';
 
-const prompt='🖥 افزودن سرور آزمایشی مدار\n\n' +
-  'مشخصات را در یک پیام بفرستید:\n' +
-  'شناسه | ارائه‌دهنده | منطقه | سقف کاربر | سقف حجم (GB)\n\n' +
-  'نمونه:\n' +
-  'test_eu01|provider|eu|20|500\n\n' +
-  'این کار فقط سرور را ثبت می‌کند؛ نصب و تست واقعی مرحله جداگانه دارد.\n' +
-  'برای لغو دکمه «انصراف» را بزنید.';
-
+const prompt='🖥 افزودن خودکار سرور در مدار V2\n\n' +
+  'این ۶ مقدار را با | جدا کن:\n' +
+  'شناسه | ارائه‌دهنده | منطقه | سقف کاربر | سقف حجم گیگ | IP\n\n' +
+  'مثال برای سرور آزمایشی فعلی:\n' +
+  'test-aria01|arianet|eu|20|500|86.54.42.66\n\n' +
+  'پس از ثبت، ربات نصب خودکار را به اجراکننده امن واگذار می‌کند.\n' +
+  'رمز SSH یا کلید خصوصی را در تلگرام ارسال نکن.\n' +
+  'برای لغو «انصراف» را بزن.';
 export function newNodePrompt() {
   return {text:prompt,replyMarkup:{inline_keyboard:[
     [{text:'❌ انصراف',callback_data:'v2:admin:node:cancel'}],
@@ -31,7 +32,7 @@ export async function cancelNodeWizard(db,actor) {
   return {text:'✅ ثبت سرور لغو شد.'};
 }
 
-export async function consumeNodeWizard(db,actor,input,nowMs) {
+export async function consumeNodeWizard(db,actor,input,nowMs,env=null) {
   if(typeof input!=='string'||!input.trim()||input.startsWith('/')||
      input.startsWith('v2:'))return null;
   const session=await db.prepare(
@@ -42,10 +43,19 @@ export async function consumeNodeWizard(db,actor,input,nowMs) {
     await db.prepare('DELETE FROM admin_node_sessions WHERE telegram_id=?').bind(actor).run();
     return {text:'⌛ مهلت ثبت سرور تمام شد. از پنل مدیریت دوباره شروع کنید.'};
   }
-  const valid=parseNodeAdd('/node_add '+input.trim());
-  if(!valid) return {text:'⚠️ اطلاعات معتبر نیست. لطفاً پنج مقدار را با | جدا کنید.\n\n'+prompt};
-  const outcome=await enrollNode(db,actor,'/node_add '+input.trim());
+  const parsed=parseAutoNode(input.trim());
+  if(!parsed)
+    return {text:'⚠️ اطلاعات معتبر نیست. شش مقدار را طبق نمونه ارسال کن.\n\n'+prompt};
+  if(!env)
+    return {text:'⚠️ اجرای خودکار تنظیم نشده است؛ هیچ سروری ثبت نشد.'};
+  const result=await enqueueAutoNode(env,actor,input.trim(),nowMs);
+  if(result.error)
+    return {text:'⚠️ ثبت سرور انجام نشد: '+result.error+'. وضعیت سرورهای موجود را بررسی کن.'};
   await db.prepare('DELETE FROM admin_node_sessions WHERE telegram_id=?')
     .bind(actor).run();
-  return {text:outcome.text+'\n\n🔒 تا نصب آزمایشی و تأیید اتصال واقعی، این سرور قابل فروش نیست.'};
+  const status=result.dispatched
+    ?'🚀 دستور نصب امن به اجراکننده ارسال شد. از بخش سرورها وضعیت را بررسی کن.'
+    :'⏸ سرور ثبت شد ولی مجوز اجرای امن هنوز تنظیم نشده است؛ نصب اجرا نشد.';
+  return {text:'✅ سرور '+parsed.id+' ثبت شد.\n'+status+
+    '\n\n🔒 تا تأیید واقعی مسیرها، صدور کانفیگ برای فروش بسته است.'};
 }

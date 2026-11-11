@@ -1,3 +1,4 @@
+import {getTrialFeed,reportInstall,retryPending} from './node-auto.mjs';
 import { getSubscription } from './subscription.mjs';
 import { getCarrierFeed } from './carrier-subscription.mjs';
 import { nodeRoute } from './node-control.mjs';
@@ -173,6 +174,14 @@ export default {
         return json({status:'ready'});
       } catch {return json({status:'not_ready'},503);}
     }
+    if(path.startsWith('/t/')) {
+      try{return await getTrialFeed(request,env);}
+      catch{return json({error:'not_ready'},503);}
+    }
+    if(path==='/api/v2/node-bootstrap/report') {
+      try{return await reportInstall(request,env);}
+      catch{return json({error:'not_ready'},503);}
+    }
     if(path.startsWith('/s/')) {
       try{return await getCarrierFeed(request,env);}
       catch{return new Response('Not ready',{status:503,headers:{
@@ -197,6 +206,7 @@ export default {
   },
   async scheduled(_event,env) {
     await poll(env);
+    await retryPending(env);
     if(!env.DB) return;
     const now=Date.now();
     // Minimize stored Telegram content. Orders, receipts and subscriptions

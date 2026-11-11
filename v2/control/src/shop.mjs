@@ -1,3 +1,4 @@
+import {issueTrialLink} from './node-auto.mjs';
 import {issueCarrierLink} from './carrier-subscription.mjs';
 import {beginNodeWizard,cancelNodeWizard,consumeNodeWizard} from './node-wizard.mjs';
 import { nodeAdminAction } from './node-admin.mjs';
@@ -416,7 +417,7 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
     return response(panel.text,e.locale,panel.replyMarkup?.inline_keyboard??[]);
   }
   if(adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) {
-    const wizard=await consumeNodeWizard(db,e.actorId,e.inputText,nowMs);
+    const wizard=await consumeNodeWizard(db,e.actorId,e.inputText,nowMs,env);
     if(wizard)return response(wizard.text,e.locale);
   }
   const sellerAction=await handleSeller(env,e,nowMs);
@@ -428,6 +429,15 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
     if(!await grantStaffRole(db,e,role,id)) return response('Use '+key+' <telegram numeric ID>',e.locale);
     return response('Role '+role+' granted to '+id,e.locale);
   }
+  if (key.startsWith('admin:node:trial:')) {
+    if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
+      return response('Access denied',e.locale);
+    const id=key.slice('admin:node:trial:'.length);
+    const url=await issueTrialLink(env,e.actorId,id,nowMs);
+    return url?response('🔗 لینک آزمایشی یک‌ساعته مدار\n'+url+
+      '\n\nاین لینک دو مسیر REALITY را فقط برای آزمون نشان می‌دهد؛ سرور هنوز برای فروش تأیید نشده است.',e.locale)
+      :response('⏸ نصب کامل نشده یا لینک آزمایشی آماده نیست. وضعیت سرور و دسترسی اجراکننده را بررسی کن.',e.locale);
+  }
   if (key==='/admin') {
     if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) return response('Access denied',e.locale);
     return response('🧑‍💼 Admin · Madar V2\n\nActions require authorization and are audited.',e.locale,[
@@ -436,7 +446,21 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
       [{text:'🛍 Plans',callback_data:'v2:admin:plans'}],
       [{text:'🖥 Nodes',callback_data:'v2:admin:nodes'}],
       [{text:'➕ افزودن سرور',callback_data:'v2:admin:node:new'}],
+      [{text:'🧪 صدور کانفیگ تست',callback_data:'v2:admin:node:trials'}],
     ]);
+  }
+  if (key==='admin:node:trials') {
+    if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
+      return response('Access denied',e.locale);
+    const rows=(await db.prepare(
+      "SELECT node_id,state FROM node_bootstrap_jobs ORDER BY created_ms DESC LIMIT 12"
+    ).all()).results??[];
+    if(!rows.length)return response('هنوز سرور آزمایشی اضافه نشده است.',e.locale);
+    return response('🧪 صدور لینک اشتراک آزمایشی\n'+rows.map(x=>
+      x.node_id+' · '+x.state).join('\n'),e.locale,
+      rows.filter(x=>x.state==='installed').map(x=>[{
+        text:'🔗 '+x.node_id,callback_data:'v2:admin:node:trial:'+x.node_id
+      }]));
   }
   if (key==='admin:plans') {
     if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) return response('Access denied',e.locale);
@@ -445,6 +469,14 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
       'Use /plan_add id|نام|English|price|IRT|quotaGB|days to create a disabled plan.'),e.locale,
       plans.map(x=>[{text:(x.active?'🔴 Disable ':'🟢 Enable ')+x.id,
         callback_data:'v2:plan:'+(x.active?'off:':'on:')+x.id}]));
+  }
+  if (key==='/node_add_auto') {
+    if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))return response('Access denied',e.locale);
+    const data=(e.inputText??'').replace(/^\/node_add_auto(?:@\w+)?\s*/,'').trim();
+    const result=await (await import('./node-auto.mjs')).enqueueAutoNode(env,e.actorId,data,nowMs);
+    if(result.error)return response('⚠️ ثبت انجام نشد: '+result.error,e.locale);
+    return response(result.dispatched?'🚀 نصب خودکار برای '+result.id+' درخواست شد.':
+      '⏸ سرور '+result.id+' ثبت شد اما دسترسی امن اجرای خودکار هنوز متصل نیست.',e.locale);
   }
   if (key==='/node_add' || key==='/node_route' || key==='/nodes' || key==='admin:nodes') {
     if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
