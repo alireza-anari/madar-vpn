@@ -55,6 +55,11 @@ class MadarVpnService : VpnService() {
             currentCoroutineContext().ensureActive()
             val snapshot = (result as? SubscriptionResult.Available)?.snapshot
                 ?: throw IllegalStateException("SUBSCRIPTION_UNAVAILABLE")
+            val carrier = CarrierSelectionStore(this).read()
+                ?: throw IllegalStateException("CARRIER_NOT_SELECTED")
+            val carrierRoutes = CarrierRoutes.select(snapshot, carrier)
+            if (carrierRoutes.isEmpty())
+                throw IllegalStateException("CARRIER_ROUTE_UNAVAILABLE")
 
             val descriptor = establishTunnel()
                 ?: throw IllegalStateException("VPN_PERMISSION_OR_TUN_FAILED")
@@ -70,7 +75,7 @@ class MadarVpnService : VpnService() {
                     lastFailure = "SUBSCRIPTION_EXPIRED_OR_EMPTY"
                     return false
                 }
-                val route = snapshot.routes[index]
+                val route = carrierRoutes[index]
                 VpnStatus.update(ConnectionState.Dialing(route.id))
                 val config = try {
                     XrayConfigBuilder.build(snapshot, route.id, descriptor.fd)
@@ -100,7 +105,7 @@ class MadarVpnService : VpnService() {
             }
 
             var connected = false
-            for (index in snapshot.routes.indices) {
+            for (index in carrierRoutes.indices) {
                 if (tryRoute(index)) {
                     connected = true
                     break
@@ -117,8 +122,8 @@ class MadarVpnService : VpnService() {
                 native.stop()
                 VpnStatus.update(ConnectionState.Failed("TUNNEL_LOST"))
                 var recovered = false
-                for (offset in 1 until snapshot.routes.size) {
-                    val index = (activeIndex + offset) % snapshot.routes.size
+                for (offset in 1 until carrierRoutes.size) {
+                    val index = (activeIndex + offset) % carrierRoutes.size
                     if (index != activeIndex && tryRoute(index)) {
                         recovered = true
                         break

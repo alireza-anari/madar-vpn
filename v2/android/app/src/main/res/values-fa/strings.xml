@@ -31,14 +31,14 @@
     <string name="help_privacy_question">چه اطلاعاتی ذخیره خواهد شد؟</string>
     <string name="help_privacy_answer">فقط داده‌های ضروری حساب، اشتراک و گزارش‌های ناشناس برای ارائه امن سرویس. هیچ رمز یا کلید خصوصی را در گفت‌وگوهای پشتیبانی ارسال نکنید.</string>
 
-    <string name="token_label">توکن دسترسی اشتراک</string>
-    <string name="token_placeholder">توکن ۴۳ کاراکتری را وارد کنید</string>
+    <string name="token_label">لینک اشتراک شما</string>
+    <string name="token_placeholder">یک لینک اشتراک دریافتی از ربات را وارد کنید</string>
     <string name="save_token">ذخیره امن</string>
     <string name="verify_subscription">بررسی اشتراک</string>
     <string name="remove_token">حذف توکن ذخیره‌شده</string>
     <string name="token_saved">توکن با رمزگذاری روی این دستگاه ذخیره شد.</string>
     <string name="token_removed">توکن ذخیره‌شده حذف شد.</string>
-    <string name="token_invalid">توکن دسترسی معتبر نیست.</string>
+    <string name="token_invalid">لینک اشتراک معتبر نیست.</string>
     <string name="account_verified">اشتراک تأیید شد. می‌توانید اتصال VPN را آغاز کنید.</string>
     <string name="subscription_not_ready">اشتراک هنوز فعال نیست یا منقضی شده است.</string>
     <string name="server_not_ready">سرور اشتراک آماده نیست. بعداً دوباره بررسی کنید.</string>
@@ -50,7 +50,12 @@
     <string name="connect_button">اتصال امن</string>
     <string name="disconnect_button">قطع اتصال</string>
     <string name="cancel_connection">لغو اتصال</string>
-    <string name="add_token_first">ابتدا توکن اشتراک را وارد کنید</string>
+    <string name="add_token_first">ابتدا لینک اشتراک را وارد کنید</string>
+    <string name="select_carrier_first">ابتدا اپراتور را انتخاب کنید</string>
+    <string name="select_carrier_title">انتخاب اپراتور اینترنت</string>
+    <string name="carrier_mci">همراه اول</string>
+    <string name="carrier_irancell">ایرانسل</string>
+    <string name="carrier_hint">هر دو مسیر یک اشتراک و حجم مشترک دارند. مسیری را انتخاب کنید که در منطقه شما بهتر کار می‌کند؛ اتصال روی همه شبکه‌ها تضمینی نیست.</string>
     <string name="connection_status">وضعیت اتصال</string>
     <string name="vpn_disconnected">قطع است</string>
     <string name="vpn_connecting">در حال اتصال به مسیر تأییدشده…</string>

@@ -44,7 +44,7 @@ fun AccountScreen(onConnect: () -> Unit, onDisconnect: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         OutlinedTextField(
             value = tokenInput,
-            onValueChange = { tokenInput = it.take(128) },
+            onValueChange = { tokenInput = it.take(512) },
             singleLine = true,
             label = { Text(stringResource(R.string.token_label)) },
             placeholder = { Text(stringResource(R.string.token_placeholder)) },
@@ -55,9 +55,11 @@ fun AccountScreen(onConnect: () -> Unit, onDisconnect: () -> Unit) {
             modifier = Modifier.fillMaxWidth()
         )
         Button(
-            enabled = SubscriptionTokenFormat.isValid(tokenInput.trim()) && !checking,
+            enabled = SubscriptionTokenFormat.fromInput(tokenInput, BuildConfig.SUBSCRIPTION_API_ORIGIN) != null && !checking,
             onClick = {
-                val saved = store.save(tokenInput.trim())
+                val extracted = SubscriptionTokenFormat.fromInput(
+                    tokenInput, BuildConfig.SUBSCRIPTION_API_ORIGIN)
+                val saved = extracted != null && store.save(extracted)
                 if (saved) {
                     tokenInput = ""
                     hasToken = true

@@ -11,6 +11,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -34,6 +35,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -103,6 +105,17 @@ fun MadarHome(onConnect: () -> Unit, onDisconnect: () -> Unit) {
         Tab(R.string.nav_help, "?"),
     )
     var selected by rememberSaveable { mutableIntStateOf(0) }
+    val context = LocalContext.current
+    val carrierStore = remember(context) { CarrierSelectionStore(context) }
+    var carrierCode by rememberSaveable { mutableStateOf(carrierStore.read()?.code ?: "") }
+    val carrier = CarrierOperator.fromCode(carrierCode)
+    val vpnState by VpnStatus.state.collectAsState()
+    val canSelectCarrier = vpnState !is ConnectionState.Connected &&
+        vpnState !is ConnectionState.Dialing &&
+        vpnState !is ConnectionState.TestingTraffic
+    val changeCarrier: (CarrierOperator) -> Unit = { selected ->
+        if (canSelectCarrier && carrierStore.save(selected)) carrierCode = selected.code
+    }
 
     MaterialTheme(colorScheme = if (isSystemInDarkTheme()) DarkMadar else LightMadar) {
         Scaffold(
@@ -139,8 +152,10 @@ fun MadarHome(onConnect: () -> Unit, onDisconnect: () -> Unit) {
                 )
                 HorizontalDivider()
                 when (selected) {
-                    0 -> HomeScreen(onHelp = { selected = 3 }, onConnect = onConnect, onDisconnect = onDisconnect)
-                    1 -> ServersScreen()
+                    0 -> HomeScreen(onHelp = { selected = 3 }, onConnect = onConnect,
+                        onDisconnect = onDisconnect, carrier = carrier,
+                        canSelectCarrier = canSelectCarrier, onSelectCarrier = changeCarrier)
+                    1 -> ServersScreen(carrier, canSelectCarrier, changeCarrier)
                     2 -> AccountScreen(onConnect = onConnect, onDisconnect = onDisconnect)
                     3 -> HelpScreen()
                 }
@@ -151,7 +166,14 @@ fun MadarHome(onConnect: () -> Unit, onDisconnect: () -> Unit) {
 }
 
 @Composable
-private fun HomeScreen(onHelp: () -> Unit, onConnect: () -> Unit, onDisconnect: () -> Unit) {
+private fun HomeScreen(
+    onHelp: () -> Unit,
+    onConnect: () -> Unit,
+    onDisconnect: () -> Unit,
+    carrier: CarrierOperator?,
+    canSelectCarrier: Boolean,
+    onSelectCarrier: (CarrierOperator) -> Unit
+) {
     val context = LocalContext.current
     val state by VpnStatus.state.collectAsState()
     val hasToken = remember(context) { SubscriptionTokenStore(context).read() != null }
@@ -165,6 +187,7 @@ private fun HomeScreen(onHelp: () -> Unit, onConnect: () -> Unit, onDisconnect: 
         is ConnectionState.Failed -> stringResource(R.string.vpn_failed)
     }
     StatusCard(stringResource(R.string.connection_status), stateText)
+    CarrierPicker(carrier, canSelectCarrier, onSelectCarrier)
     when (state) {
         is ConnectionState.Connected -> OutlinedButton(onClick = onDisconnect, modifier = Modifier.fillMaxWidth()) {
             Text(stringResource(R.string.disconnect_button))
@@ -173,10 +196,16 @@ private fun HomeScreen(onHelp: () -> Unit, onConnect: () -> Unit, onDisconnect: 
             onClick = onDisconnect, modifier = Modifier.fillMaxWidth()
         ) { Text(stringResource(R.string.cancel_connection)) }
         else -> Button(
-            enabled = hasToken,
+            enabled = hasToken && carrier != null,
             onClick = onConnect,
             modifier = Modifier.fillMaxWidth()
-        ) { Text(if (hasToken) stringResource(R.string.connect_button) else stringResource(R.string.add_token_first)) }
+        ) {
+            Text(when {
+                !hasToken -> stringResource(R.string.add_token_first)
+                carrier == null -> stringResource(R.string.select_carrier_first)
+                else -> stringResource(R.string.connect_button)
+            })
+        }
     }
     Text(stringResource(R.string.connection_safety_note), style = MaterialTheme.typography.bodySmall,
         textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
@@ -186,9 +215,43 @@ private fun HomeScreen(onHelp: () -> Unit, onConnect: () -> Unit, onDisconnect: 
 }
 
 @Composable
-private fun ServersScreen() {
+private fun CarrierPicker(
+    selected: CarrierOperator?,
+    enabled: Boolean,
+    onSelect: (CarrierOperator) -> Unit
+) {
+    Text(stringResource(R.string.select_carrier_title),
+        style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxWidth()) {
+        listOf(CarrierOperator.MCI, CarrierOperator.IRANCELL).forEach { carrier ->
+            val label = stringResource(when (carrier) {
+                CarrierOperator.MCI -> R.string.carrier_mci
+                CarrierOperator.IRANCELL -> R.string.carrier_irancell
+            })
+            if (selected == carrier) Button(
+                onClick = { onSelect(carrier) }, enabled = enabled,
+                modifier = Modifier.weight(1f)
+            ) { Text("✓ " + label) }
+            else OutlinedButton(
+                onClick = { onSelect(carrier) }, enabled = enabled,
+                modifier = Modifier.weight(1f)
+            ) { Text(label) }
+        }
+    }
+    Text(stringResource(R.string.carrier_hint),
+        style = MaterialTheme.typography.bodySmall)
+}
+
+@Composable
+private fun ServersScreen(
+    carrier: CarrierOperator?,
+    canSelectCarrier: Boolean,
+    onSelectCarrier: (CarrierOperator) -> Unit
+) {
     Text(stringResource(R.string.servers_title), style = MaterialTheme.typography.headlineSmall)
     Text(stringResource(R.string.servers_desc))
+    CarrierPicker(carrier, canSelectCarrier, onSelectCarrier)
     StatusCard(stringResource(R.string.servers_check_title), stringResource(R.string.servers_check_details))
     Text(stringResource(R.string.servers_disclaimer), style = MaterialTheme.typography.bodySmall)
 }

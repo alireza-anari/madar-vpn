@@ -15,7 +15,8 @@ data class VerifiedRoute(
     val serverName: String,
     val websocketPath: String?,
     val realityPublicKey: String?,
-    val realityShortId: String?
+    val realityShortId: String?,
+    val operatorHint: String? = null
 )
 
 data class SubscriptionSnapshot(
@@ -38,6 +39,34 @@ sealed interface SubscriptionResult {
 object SubscriptionTokenFormat {
     private val token = Regex("^[A-Za-z0-9_-]{43}$")
     fun isValid(value: String?): Boolean = value != null && token.matches(value)
+
+    /** A single HTTPS subscription URL works in both v2rayNG and Madar.
+     * Parse only our configured API origin: never fetch a pasted foreign URL
+     * and never accept query-based or userinfo-based credentials.
+     */
+    fun fromInput(value: String?, configuredOrigin: String): String? {
+        val trimmed = value?.trim() ?: return null
+        if (isValid(trimmed)) return trimmed // Legacy private preview support.
+        return try {
+            val expected = URI(configuredOrigin)
+            val supplied = URI(trimmed)
+            if (expected.scheme != "https" || expected.host.isNullOrBlank() ||
+                expected.rawQuery != null || expected.rawFragment != null ||
+                expected.userInfo != null ||
+                (expected.path.isNotBlank() && expected.path != "/") ||
+                supplied.scheme != "https" || supplied.userInfo != null ||
+                supplied.rawQuery != null || supplied.rawFragment != null ||
+                supplied.host == null ||
+                !supplied.host.equals(expected.host, ignoreCase = true) ||
+                supplied.port != expected.port)
+                null
+            else {
+                val path = supplied.rawPath
+                val part = if (path.startsWith("/s/")) path.removePrefix("/s/") else ""
+                if (isValid(part)) part else null
+            }
+        } catch (_: Exception) { null }
+    }
 }
 
 /**
@@ -128,6 +157,8 @@ class SubscriptionApi(baseUrl: String) {
             require(transport == "reality" || transport == "wss")
             val wsPath = if (transport == "wss")
                 route.getJSONObject("websocket").getString("path") else null
+            val hint = if (route.isNull("operator_hint")) null else route.getString("operator_hint")
+            require(hint == null || CarrierOperator.fromCode(hint) != null)
             val pubKey = if (transport == "reality")
                 tls.getString("reality_public_key") else null
             val shortId = if (transport == "reality")
@@ -142,7 +173,8 @@ class SubscriptionApi(baseUrl: String) {
                 serverName = sni,
                 websocketPath = wsPath,
                 realityPublicKey = pubKey,
-                realityShortId = shortId
+                realityShortId = shortId,
+                operatorHint = hint
             )
         }
         val id = json.getString("subscription_id")
