@@ -268,7 +268,7 @@ export async function buildAccountDeliveryArtifact(
     config: wsTrial ? alternateConfig! : config,
     ...(alternateConfig && !realityTrial ? { alternateConfig } : {}),
     profiles: wsTrial ? profiles.filter(p => p.id === "vmess-wss")
-      : realityTrial ? profiles.filter(p => p.id === "reality-443") : profiles,
+      : realityTrial ? profiles.filter(p => p.id === "reality-443" || p.id === "reality-alt") : profiles,
     usageUrl,
   };
 }

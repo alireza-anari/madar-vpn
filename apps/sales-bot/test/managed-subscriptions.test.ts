@@ -9,9 +9,10 @@ import m19 from "../migrations/0019-managed-vision-optin.sql?raw";
 import {
   createManagedSubscriptionToken,
   managedSubscriptionUrl,
+  managedCarrierSubscriptionUrl,
   verifyManagedSubscriptionToken,
 } from "../src/managed-subscription-tokens";
-import { managedSubscriptionResponse } from "../src/managed-subscriptions";
+import { managedSubscriptionResponse,managedCarrierSubscriptionResponse } from "../src/managed-subscriptions";
 import { acceptSecondaryAck } from "../src/managed-secondary";
 import { parseVlessRealityConfig } from "../src/connection-config";
 import { parseManagedVmessWsConfig } from "../src/alternate-transport";
@@ -207,4 +208,40 @@ test("primary agent stays on 443 while independent sidecar publishes and withdra
   links = (await response.text()).trim().split("\n");
   expect(links).toHaveLength(1);
   expect(parseVlessRealityConfig(links[0]!).port).toBe(443);
+});
+
+test("new opt-in carrier URL emits two base64 profiles for one approved metered trial", async () => {
+  await env.SALES_DB.exec(
+    "UPDATE managed_accounts SET kind='trial',request_key='admin-reality-trial:n:0' WHERE id='a'"
+  );
+  const carrierLink = managedCarrierSubscriptionUrl(testEnv(),"a");
+  const request = new Request(carrierLink);
+  let response = await managedCarrierSubscriptionResponse(request,testEnv(),now);
+  expect(response.status).toBe(503);
+
+  const p = {...signedPolicy(),realityAltPorts:[8443]};
+  await env.SALES_DB.prepare(
+    "UPDATE nodes SET agent_capabilities='quota-v2,per-account-process,shared-443,reality-alt-metered',policy_payload=? WHERE id='n'"
+  ).bind(JSON.stringify(p)).run();
+  for (const [suffix,value] of [
+    ["enabled","1"],["reachability_confirmed","1"],["ports","[8443]"]
+  ]) await env.SALES_DB.prepare(
+    "INSERT INTO settings(key,value) VALUES(?,?)"
+  ).bind("managed_reality_alt:n:"+suffix,value).run();
+
+  await acceptSecondaryAck(env.SALES_DB,"n",{revision:5,ports:[8443],healthy:true},now);
+  response = await managedCarrierSubscriptionResponse(request,testEnv(),now+1);
+  expect(response.status).toBe(200);
+  const lines=Buffer.from(await response.text(),"base64").toString("utf8").trim().split("\n");
+  expect(lines).toHaveLength(2);
+  expect(lines.map(x=>parseVlessRealityConfig(x).port)).toEqual([443,8443]);
+  expect(lines.map(x=>parseVlessRealityConfig(x).uuid)).toEqual([UUID,UUID]);
+  expect(lines.map(x=>decodeURIComponent(new URL(x).hash.slice(1)))).toEqual([
+    "مدار | همراه اول","مدار | ایرانسل"
+  ]);
+  expect(response.headers.get("Subscription-Userinfo")).toBe("expire=300");
+
+  response = await managedCarrierSubscriptionResponse(request,testEnv(),now+22);
+  expect(response.status).toBe(503);
+  expect((await managedSubscriptionResponse(requestFor(),testEnv(),now+22)).status).toBe(200);
 });

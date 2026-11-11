@@ -64,6 +64,15 @@ export function managedSubscriptionUrl(
   return `${base.origin}/managed-subscription/v1/${createManagedSubscriptionToken(secretFrom(env), accountId)}`;
 }
 
+/** Distinct, base64 VLESS feed for v2rayNG. Old v1 URLs remain untouched. */
+export function managedCarrierSubscriptionUrl(
+  env: ManagedSubscriptionEnv,
+  accountId: string,
+): string {
+  return managedSubscriptionUrl(env,accountId).replace(
+    "/managed-subscription/v1/","/managed-subscription/v2/");
+}
+
 export function verifyManagedSubscriptionForEnv(
   env: ManagedSubscriptionEnv,
   token: string,
