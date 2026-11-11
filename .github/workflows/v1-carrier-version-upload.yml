@@ -24,7 +24,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = "a6afc263d5795a758e9c7e99499c35d378dc9aec"
+          test "$(git rev-parse HEAD^)" = "ce48dc763266910ca40ee5b551e915d6b930b146"
           test "$(git diff --name-only HEAD^ HEAD)" = ".github/workflows/v1-carrier-version-upload.yml"
           test -n "$CLOUDFLARE_API_TOKEN"
           test "$(grep -c '"keep_vars": true' apps/sales-bot/wrangler.jsonc)" = 1
@@ -37,8 +37,12 @@ jobs:
             "$api/settings" |
             jq -e '.success and
               ([.result.bindings[]|select(.name=="SALES_DB" and .id=="f59e160f-89ab-4a90-a4dc-f257883d5a61")]|length)==1 and
-              (["BOT_TOKEN","RUNNER_SERVICE_SECRET","POLICY_SIGNING_SECRET","TELEGRAM_WEBHOOK_SECRET","USAGE_LINK_SECRET"]|
-               all(. as $k | any(input;.name==$k)))' >/dev/null
+              ([.result.bindings[].name] |
+                index("BOT_TOKEN") != null and
+                index("RUNNER_SERVICE_SECRET") != null and
+                index("POLICY_SIGNING_SECRET") != null and
+                index("TELEGRAM_WEBHOOK_SECRET") != null and
+                index("USAGE_LINK_SECRET") != null)' >/dev/null
       - uses: pnpm/action-setup@v4
         with:
           version: 12.9.1
