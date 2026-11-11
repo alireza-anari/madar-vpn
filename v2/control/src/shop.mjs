@@ -1,4 +1,4 @@
-import {issueTrialLink} from './node-auto.mjs';
+import {issueTrialLink,enqueueAutoNode} from './node-auto.mjs';
 import {issueCarrierLink} from './carrier-subscription.mjs';
 import {beginNodeWizard,cancelNodeWizard,consumeNodeWizard} from './node-wizard.mjs';
 import { nodeAdminAction } from './node-admin.mjs';
@@ -473,7 +473,7 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
   if (key==='/node_add_auto') {
     if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))return response('Access denied',e.locale);
     const data=(e.inputText??'').replace(/^\/node_add_auto(?:@\w+)?\s*/,'').trim();
-    const result=await (await import('./node-auto.mjs')).enqueueAutoNode(env,e.actorId,data,nowMs);
+    const result=await enqueueAutoNode(env,e.actorId,data,nowMs);
     if(result.error)return response('⚠️ ثبت انجام نشد: '+result.error,e.locale);
     return response(result.dispatched?'🚀 نصب خودکار برای '+result.id+' درخواست شد.':
       '⏸ سرور '+result.id+' ثبت شد اما دسترسی امن اجرای خودکار هنوز متصل نیست.',e.locale);

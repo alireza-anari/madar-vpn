@@ -11,7 +11,7 @@ const ERROR=/^[A-Z0-9_]{3,64}$/;
 const PUB=/^[A-Za-z0-9_-]{43}$/;
 const SID=/^[a-f0-9]{2,16}$/;
 const TOKEN=/^[A-Za-z0-9_-]{43}$/;
-const EXACT_COMMIT='25a0fe727996024b8d48f9ef5f62c1a8d2b48f27';
+const EXACT_COMMIT='ec9a19f5cf1925e2ab7b114c35f29345d508f4ba';
 const WFLOW='madar-v2-node-provision.yml';
 
 export function publicV4(input) {

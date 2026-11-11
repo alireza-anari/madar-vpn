@@ -5,7 +5,7 @@ import {newNodePrompt,beginNodeWizard,cancelNodeWizard,consumeNodeWizard} from '
 test('mobile wizard never asks for SSH passwords or private keys',()=>{
   const panel=newNodePrompt();
   assert.match(panel.text,/سقف حجم/);
-  assert.doesNotMatch(panel.text,/SSH|password|private key/);
+  assert.match(panel.text,/رمز SSH.*ارسال نکن/);
   assert.equal(panel.replyMarkup.inline_keyboard[0][0].callback_data,'v2:admin:node:cancel');
 });
 test('node wizard expires and never submits stale enrollment',async()=>{

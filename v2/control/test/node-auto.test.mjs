@@ -17,7 +17,7 @@ test('no root shell / provisioning when secrets absent',async()=>{
     id:'x',node_id:'test-aria01',ip:'86.54.42.66',mode:'aria-cutover'}),false);
 });
 test('only exact authenticated callback can register test route metadata',async()=>{
-  const env={NODE_AUTO_ENABLED:'true',NODE_PROVISION_CALLBACK_SECRET:'Z'.repeat(48),DB:{}};
+  const env={NODE_AUTO_ENABLED:'true',NODE_PROVISION_CALLBACK_SECRET:'Z'.repeat(48),SUBSCRIPTION_CREDENTIAL_KEY:'K'.repeat(43),DB:{}};
   const req=new Request('https://api.madar.test/api/v2/node-bootstrap/report',{
     method:'POST',headers:{'content-type':'application/json'},
     body:JSON.stringify({status:'installed',node_id:'test-aria01',
