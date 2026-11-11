@@ -1,0 +1,109 @@
+name: Madar V2 isolated node provisioning
+run-name: V2 node ${{ inputs.node_id }} job ${{ inputs.job_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      job_id: {required: true, type: string}
+      node_id: {required: true, type: string}
+      ip: {required: true, type: string}
+      mode: {required: true, type: choice, options: [fresh, aria-cutover]}
+      pinned_sha: {required: true, type: string}
+permissions:
+  contents: read
+concurrency:
+  group: v2-node-${{ inputs.node_id }}
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    environment: madar-v2-test-nodes
+    timeout-minutes: 18
+    env:
+      JOB_ID: ${{ inputs.job_id }}
+      NODE_ID: ${{ inputs.node_id }}
+      SERVER_IP: ${{ inputs.ip }}
+      MODE: ${{ inputs.mode }}
+      PINNED_SHA: ${{ inputs.pinned_sha }}
+      SSH_PRIVATE_KEY: ${{ secrets.MADAR_V2_SSH_PRIVATE_KEY }}
+      SSH_KNOWN_HOSTS: ${{ secrets.MADAR_V2_KNOWN_HOSTS }}
+      CALLBACK_SECRET: ${{ secrets.MADAR_V2_CALLBACK_SECRET }}
+      CALLBACK_URL: https://madar-v2-staging.alirezaanari117.workers.dev/api/v2/node-bootstrap/report
+    steps:
+      - name: Checkout fixed audit-approved V2 installer
+        uses: actions/checkout@v4
+        with:
+          ref: ec9a19f5cf1925e2ab7b114c35f29345d508f4ba
+          persist-credentials: false
+      - name: Validate isolated target, pinned commit and SSH trust
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$PINNED_SHA" = ec9a19f5cf1925e2ab7b114c35f29345d508f4ba
+          python3 - <<'PY'
+          import os,ipaddress,re
+          ip=os.environ['SERVER_IP'];node=os.environ['NODE_ID']
+          assert ipaddress.ip_address(ip).is_global
+          assert re.fullmatch(r'test-[A-Za-z0-9_-]{2,55}',node)
+          assert re.fullmatch(r'[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}',os.environ['JOB_ID'])
+          assert (ip,node,os.environ['MODE'])==('86.54.42.66','test-aria01','aria-cutover') or (
+            ip!='86.54.42.66' and os.environ['MODE']=='fresh')
+          PY
+          test -n "$SSH_PRIVATE_KEY" && test -n "$SSH_KNOWN_HOSTS" && test -n "$CALLBACK_SECRET"
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/madar_node"
+          chmod 600 "$HOME/.ssh/madar_node"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+          ssh-keygen -F "$SERVER_IP" -f "$HOME/.ssh/known_hosts" >/dev/null
+      - name: Install REALITY 443 and 8443 using trusted SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote() {
+            ssh -i "$HOME/.ssh/madar_node" -o BatchMode=yes \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+              -o PasswordAuthentication=no -o IdentitiesOnly=yes \
+              -o ConnectTimeout=15 "root@$SERVER_IP" "$@"
+          }
+          DEST="/root/madar-v2-job-$JOB_ID"
+          remote "install -d -m 700 '$DEST'"
+          tar -C v2/node-agent -czf - agent | remote "umask 077; tar -xz -C '$DEST'"
+          if [ "$MODE" = aria-cutover ]; then
+            remote "cd '$DEST' && python3 -m agent.dual_reality --test-only --apply --node-id '$NODE_ID' --public-ip '$SERVER_IP' >/dev/null"
+          else
+            remote "cd '$DEST' && python3 -m agent.bootstrap --test-only --apply --node-id '$NODE_ID' --public-ip '$SERVER_IP' --reality-port 8443 >/dev/null && python3 -m agent.fresh_dual --test-only --node-id '$NODE_ID' --public-ip '$SERVER_IP' >/dev/null"
+          fi
+          remote "systemctl is-active --quiet madar-v2-xray.service && ss -lnt | grep -q ':443 ' && ss -lnt | grep -q ':8443 '"
+      - name: Send test-only metadata to V2 staging over authenticated HTTPS
+        shell: bash
+        run: |
+          set -euo pipefail
+          DETAILS="$(ssh -i "$HOME/.ssh/madar_node" -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -o PasswordAuthentication=no -o IdentitiesOnly=yes "root@$SERVER_IP" \
+            "python3 -c 'import json,pathlib; p=pathlib.Path(\"/etc/madar-v2\"); m=json.loads((p/\"public-route-metadata.json\").read_text()); s=json.loads((p/\"local-secrets.json\").read_text()); print(json.dumps(dict(public_key=m[\"reality_public_key\"],short_id=m[\"short_id\"],server_name=m[\"reality_server_name\"],uuid=s[\"clients\"][0])))'")"
+          export DETAILS
+          python3 - <<'PY' | curl --fail --silent --show-error --max-time 20 \
+            -X POST "$CALLBACK_URL" -H "Content-Type: application/json" \
+            -H "x-madar-deploy-auth: $CALLBACK_SECRET" --data-binary @- >/dev/null
+          import os,json
+          d=json.loads(os.environ['DETAILS'])
+          d.update(dict(job_id=os.environ['JOB_ID'],node_id=os.environ['NODE_ID'],
+                        ip=os.environ['SERVER_IP'],status='installed'))
+          print(json.dumps(d,separators=(',',':')))
+          PY
+      - name: Report sanitized provisioning failure
+        if: failure()
+        shell: bash
+        run: |
+          if [ -n "$CALLBACK_SECRET" ]; then
+            python3 - <<'PY' | curl --silent --max-time 15 \
+              -X POST "$CALLBACK_URL" -H "Content-Type: application/json" \
+              -H "x-madar-deploy-auth: $CALLBACK_SECRET" --data-binary @- >/dev/null || true
+          import os,json
+          print(json.dumps(dict(job_id=os.environ['JOB_ID'],node_id=os.environ['NODE_ID'],
+                                ip=os.environ['SERVER_IP'],status='failed',error_code='DEPLOY_FAILED')))
+          PY
+          fi
+          echo "V2 installation failed; no commercial route has been activated."
