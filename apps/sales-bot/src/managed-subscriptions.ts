@@ -1,5 +1,6 @@
 import { buildAccountDeliveryArtifact } from "./account-delivery";
 import { verifyManagedSubscriptionForEnv } from "./managed-subscription-tokens";
+import { readConfirmedSecondaryPorts } from "./managed-secondary";
 
 /**
  * A stable multi-profile subscription URL from Madar's EXISTING Worker hostname.
@@ -70,6 +71,16 @@ export async function managedCarrierSubscriptionResponse(
   if (!accountId) return new Response("Not found",{status:404,headers});
   const artifact = await buildAccountDeliveryArtifact(env,accountId,now);
   if (!artifact) return new Response("Unavailable",{status:503,headers});
+  // This opt-in feed demands a fresh independent sidecar acknowledgment,
+  // even when the primary node still advertises an old alt-port capability.
+  const node = await env.SALES_DB.prepare(
+    "SELECT n.id,n.revision FROM managed_accounts a JOIN nodes n ON n.id=a.node_id WHERE a.id=?"
+  ).bind(accountId).first<{id:string;revision:number}>();
+  const confirmed = node
+    ? await readConfirmedSecondaryPorts(env.SALES_DB,node.id,node.revision,now)
+    : null;
+  if (!confirmed?.includes(8443))
+    return new Response("Operator routes unavailable",{status:503,headers});
   const reality = artifact.profiles.filter(
     profile => profile.config.startsWith("vless://") && (profile.port===443 || profile.port===8443)
   );
