@@ -33,7 +33,12 @@ export function carrierPair(routes) {
   if(selected[0].id===selected[1].id) return null;
   // Two paths really must be distinct; never display duplicate links as
   // operator-specific paths and never turn WSS into an unverified substitute.
-  if(selected[0].host===selected[1].host&&selected[0].port===selected[1].port)
+  const address=route=>({
+    host:route.endpoint?.host??route.host,
+    port:route.endpoint?.port??route.port,
+  });
+  const first=address(selected[0]), second=address(selected[1]);
+  if(first.host===second.host && first.port===second.port)
     return null;
   return selected;
 }

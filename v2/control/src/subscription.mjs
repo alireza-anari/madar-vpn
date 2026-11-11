@@ -54,16 +54,30 @@ export function eligibleEndpoint(row) {
   return false; // UDP outbounds require a separately audited client adapter
 }
 
+/** Two independently verified port variants share the same parent node allocation.
+ * Historical single-endpoint routes remain supported until variants are staged.
+ * A partially published carrier group never leaks its untested legacy endpoint.
+ */
 export async function activeRoutes(db,subId,nowMs) {
   const rows=(await db.prepare(
-    "SELECT r.id AS route_id,r.transport,r.operator_hint,re.host,re.port,re.server_name,re.ws_path," +
-    "re.reality_public_key,re.reality_short_id FROM node_allocations a " +
-    "JOIN nodes n ON n.id=a.node_id JOIN routes r ON r.node_id=n.id " +
-    "JOIN route_endpoints re ON re.route_id=r.id " +
+    "SELECT r.id || ':' || rv.operator AS route_id,r.transport,rv.operator AS operator_hint," +
+    "rv.host,rv.port,rv.server_name,rv.ws_path,rv.reality_public_key,rv.reality_short_id " +
+    "FROM node_allocations a JOIN nodes n ON n.id=a.node_id " +
+    "JOIN routes r ON r.node_id=n.id JOIN route_carrier_variants rv ON rv.route_id=r.id " +
+    "WHERE a.subscription_id=? AND a.state='active' AND n.lifecycle='ready' " +
+    "AND r.transport='reality' AND r.state='ready' AND r.verified_ms BETWEEN ? AND ? " +
+    "AND rv.published=1 AND rv.verified_ms BETWEEN ? AND ? " +
+    "UNION ALL " +
+    "SELECT r.id AS route_id,r.transport,r.operator_hint,re.host,re.port,re.server_name," +
+    "re.ws_path,re.reality_public_key,re.reality_short_id " +
+    "FROM node_allocations a JOIN nodes n ON n.id=a.node_id " +
+    "JOIN routes r ON r.node_id=n.id JOIN route_endpoints re ON re.route_id=r.id " +
     "WHERE a.subscription_id=? AND a.state='active' AND n.lifecycle='ready' " +
     "AND r.state='ready' AND r.verified_ms BETWEEN ? AND ? AND re.published=1 " +
-    "ORDER BY r.id LIMIT 8"
-  ).bind(subId,nowMs-600000,nowMs).all()).results??[];
+    "AND NOT EXISTS(SELECT 1 FROM route_carrier_variants rv WHERE rv.route_id=r.id) " +
+    "ORDER BY route_id LIMIT 8"
+  ).bind(subId,nowMs-600000,nowMs,nowMs-600000,nowMs,
+         subId,nowMs-600000,nowMs).all()).results??[];
   return rows.filter(eligibleEndpoint);
 }
 

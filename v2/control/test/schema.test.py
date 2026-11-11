@@ -112,21 +112,30 @@ class SchemaTests(unittest.TestCase):
         with self.assertRaisesRegex(sqlite3.IntegrityError,'SELF_REFERRAL_REJECTED'):
             self.db.execute("UPDATE customers SET seller_telegram_id='202' WHERE telegram_id='202'")
 
-    def test_two_carrier_routes_share_one_node_allocation(self):
+    def test_two_carrier_ports_share_one_parent_route_and_allocation(self):
+        # Original UNIQUE(node_id, transport) is retained for backwards
+        # compatibility. Two REALITY ports belong to one route, not two nodes.
         self.db.execute("""INSERT INTO routes(id,node_id,transport,state,operator_hint)
-            VALUES('r-mci','node-1','reality','draft','mci')""")
-        self.db.execute("""INSERT INTO routes(id,node_id,transport,state,operator_hint)
-            VALUES('r-irancell','node-1','reality','draft','irancell')""")
+            VALUES('r-main','node-1','reality','draft',NULL)""")
+        values=("r-main", "mci","vpn.example.com",443,"www.cloudflare.com","A"*43,"abcd")
+        sql=("INSERT INTO route_carrier_variants(route_id,operator,host,port,server_name,"
+             "reality_public_key,reality_short_id) VALUES(?,?,?,?,?,?,?)")
+        self.db.execute(sql,values)
+        self.db.execute(sql,("r-main","irancell","vpn.example.com",8443,
+                             "www.cloudflare.com","A"*43,"abcd"))
         with self.assertRaises(sqlite3.IntegrityError):
-            self.db.execute("""INSERT INTO routes(id,node_id,transport,state,operator_hint)
-                VALUES('duplicate','node-1','reality','draft','irancell')""")
+            self.db.execute(sql,values)
         with self.assertRaises(sqlite3.IntegrityError):
-            self.db.execute("""INSERT INTO routes(id,node_id,transport,state,operator_hint)
-                VALUES('unknown','node-1','reality','draft','unspecified')""")
-        # A plan is allocated to a node once, regardless of two route entries.
+            self.db.execute(sql,("r-main","unknown","vpn.example.com",9443,
+                                 "www.cloudflare.com","A"*43,"abcd"))
         self.reserve(0,300)
-        used=self.db.execute("SELECT COUNT(*) FROM node_allocations WHERE node_id='node-1'").fetchone()[0]
-        self.assertEqual(used,1)
+        count=self.db.execute(
+            "SELECT COUNT(*) FROM node_allocations WHERE node_id='node-1'"
+        ).fetchone()[0]
+        self.assertEqual(count,1)
+        self.assertEqual(self.db.execute(
+            "SELECT COUNT(*) FROM route_carrier_variants WHERE route_id='r-main'"
+        ).fetchone()[0],2)
 
     def test_subscription_usage_never_exceeds_quota(self):
         self.db.execute("UPDATE subscriptions SET max_bytes=1000,used_bytes=800 WHERE id='sub-0'")
