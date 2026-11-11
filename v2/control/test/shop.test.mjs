@@ -39,3 +39,28 @@ test('receipt alerts go only to explicitly configured distinct admin IDs',()=>{
   assert.deepEqual(validAdminIds(' 200,200,garbage,300,400 ', '300'),['200','400']);
   assert.deepEqual(validAdminIds(undefined),[]);
 });
+
+test('private Telegram user cannot mint another user subscription link',async()=>{
+  const {resolveBotAction}=await import('../src/shop.mjs');
+  let issuedLookups=0;
+  const db={prepare(sql) {
+    return {bind(){return {
+      run:async()=>({meta:{changes:1}}),
+      first:async()=>{
+        if(sql.includes('SELECT state FROM customers'))return {state:'active'};
+        if(sql.includes('FROM subscriptions WHERE id=? AND owner_telegram_id=?')) {
+          issuedLookups++;
+          return null;
+        }
+        return null;
+      },
+    }}};
+  }};
+  const response=await resolveBotAction({DB:db,SUBSCRIPTION_LINKS_ENABLED:'true'},{
+    actorId:'123',chatId:'123',locale:'fa',
+    updateId:501,key:'my:link:sub-other-owner',inputText:null,photoId:null,
+  });
+  assert.equal(issuedLookups,1);
+  assert.match(response.text,/اشتراک فعال شما پیدا نشد/);
+  assert.doesNotMatch(response.text,/https:\/\/.*\/s\//);
+});

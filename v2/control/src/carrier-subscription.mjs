@@ -1,7 +1,9 @@
 /** One revocable, password-grade HTTPS subscription URL for two operator choices.
  * 
- * URL capability tokens are SHA256-only at rest and are never stored or logged
- * in plaintext. v2rayNG cannot attach an Authorization header to an ordinary
+ * URL capability tokens are SHA256-only in the application's D1 table.
+ * Request paths can still appear in Cloudflare/provider access logs unless
+ * logging is disabled or sanitized at the platform level. v2rayNG cannot
+ * attach an Authorization header to an ordinary
  * subscription URL, so this intentionally differs from the bearer-only JSON
  * API. Keep URL private, do not put it in a query string, HTML or referrer.
  */
