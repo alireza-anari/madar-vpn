@@ -160,9 +160,47 @@ async function receive(request,env,ctx) {
   return json({ok:true});
 }
 
+
+/** Public-safe diagnostic: never returns webhook URL or bot bearer token.
+ * Inspect a pre-existing bot binding before attempting setWebhook, so a
+ * shared V1 token cannot be redirected to a V2 endpoint accidentally.
+ */
+export async function telegramBindingStatus(env,transport=fetch) {
+  if(!env.BOT_TOKEN)return json({status:'unconfigured',bot:'missing',webhook:'unknown'},503);
+  try {
+    const base='https://api.telegram.org/bot'+env.BOT_TOKEN+'/';
+    const [me,hook]=await Promise.all(['getMe','getWebhookInfo'].map(async method=>{
+      const r=await transport(base+method,{signal:AbortSignal.timeout(7000)});
+      if(!r.ok)throw Error('telegram_api_error');
+      const data=await r.json();
+      if(data?.ok!==true)throw Error('telegram_api_error');
+      return data.result;
+    }));
+    const url=typeof hook?.url==='string'?hook.url:'';
+    let webhook='unknown';
+    if(url==='')webhook='unset';
+    else {
+      try {
+        const parsed=new URL(url);
+        if(parsed.protocol==='https:' && parsed.pathname==='/telegram/webhook') {
+          if(parsed.hostname==='madar-v2-staging.alirezaanari117.workers.dev')
+            webhook='v2';
+          else if(parsed.hostname==='madar-sales-bot.alirezaanari117.workers.dev')
+            webhook='legacy_v1';
+          else webhook='another_bot_or_app';
+        } else webhook='another_bot_or_app';
+      }catch{webhook='another_bot_or_app';}
+    }
+    return json({status:'ok',bot_id:me?.id,bot_username:me?.username,
+      webhook,webhook_pending:Math.min(100000,Math.max(0,hook?.pending_update_count??0)),
+      is_dedicated_v2:webhook==='v2'});
+  }catch{return json({status:'telegram_check_unavailable'},503);}
+}
+
 export default {
   async fetch(request,env,ctx) {
     const path=new URL(request.url).pathname;
+    if(request.method==='GET' && path==='/health/bot')return telegramBindingStatus(env);
     if(request.method==='GET' && path==='/health/live')
       return json({status:'alive',service:'madar-v2'});
     if(request.method==='GET' && path==='/health/ready') {
