@@ -406,7 +406,12 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
   if (key==='/start') {
     const referral=await linkSellerOnStart(db,e,nowMs);
     const home=botPage('home',e.locale);
-    return referral?{...home,text:home.text+'\n\n'+referral}:home;
+    const isAdmin=adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId);
+    const menu=isAdmin ? {inline_keyboard:[
+      [{text:'🛠 پنل مدیریت و تست مدار V2',callback_data:'v2:admin:home'}],
+      ...home.replyMarkup.inline_keyboard,
+    ]}:home.replyMarkup;
+    return {...home,replyMarkup:menu,...(referral?{text:home.text+'\n\n'+referral}:{})};
   }
   if (key==='admin:node:new' || key==='admin:node:cancel') {
     if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
@@ -438,15 +443,15 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
       '\n\nاین لینک دو مسیر REALITY را فقط برای آزمون نشان می‌دهد؛ سرور هنوز برای فروش تأیید نشده است.',e.locale)
       :response('⏸ نصب کامل نشده یا لینک آزمایشی آماده نیست. وضعیت سرور و دسترسی اجراکننده را بررسی کن.',e.locale);
   }
-  if (key==='/admin') {
+  if (key==='/admin' || key==='admin:home') {
     if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) return response('Access denied',e.locale);
-    return response('🧑‍💼 Admin · Madar V2\n\nActions require authorization and are audited.',e.locale,[
-      [{text:'🧾 Pending receipts',callback_data:'v2:admin:queue'}],
-      [{text:'💬 Support inbox',callback_data:'v2:admin:tickets'}],
-      [{text:'🛍 Plans',callback_data:'v2:admin:plans'}],
-      [{text:'🖥 Nodes',callback_data:'v2:admin:nodes'}],
-      [{text:'➕ افزودن سرور',callback_data:'v2:admin:node:new'}],
-      [{text:'🧪 صدور کانفیگ تست',callback_data:'v2:admin:node:trials'}],
+    return response('🛠 مدیریت مدار V2\n\nاز همین‌جا سرور آزمایشی را ثبت و پس از نصب موفق، یک لینک شامل دو مسیر REALITY دریافت کن.\nفروش تا تأیید واقعی اتصال غیرفعال است.',e.locale,[
+      [{text:'➕ افزودن خودکار سرور',callback_data:'v2:admin:node:new'}],
+      [{text:'🧪 صدور لینک دو‌اپراتوری تست',callback_data:'v2:admin:node:trials'}],
+      [{text:'🖥 سرورها و وضعیت نصب',callback_data:'v2:admin:nodes'}],
+      [{text:'🛍 مدیریت پلن‌ها',callback_data:'v2:admin:plans'}],
+      [{text:'🧾 رسیدهای در انتظار',callback_data:'v2:admin:queue'}],
+      [{text:'💬 پشتیبانی',callback_data:'v2:admin:tickets'}],
     ]);
   }
   if (key==='admin:node:trials') {

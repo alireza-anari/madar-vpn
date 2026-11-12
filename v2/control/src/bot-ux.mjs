@@ -1,7 +1,7 @@
 /** Telegram Bot v2 UX: localized, predictable, no false sales/connection claims. */
 const messages = {
   fa: {
-    home: '🌐 مدار ۲.۰\n\nخوش آمدید! همه‌چیز در یک منوی ساده در دسترس است. این نسخه آزمایشی در حال آماده‌سازی است؛ فروش و صدور کانفیگ هنوز فعال نشده‌اند.',
+    home: '🌐 مدار ۲.۰\n\nخوش آمدید! همه‌چیز در یک منوی ساده در دسترس است. این محیط آزمایشی V2 است. فروش غیرفعال است. مدیر می‌تواند از دکمه مدیریت، سرورها و لینک‌های تست را بررسی کند.',
     plans: '🛍 پلن‌های مدار\n\nتا تأیید امنیت پرداخت، ظرفیت سرورها و اتصال واقعی، فروش در این نسخه غیرفعال است. اشتراک‌های فعلی در ربات قبلی محفوظ می‌مانند.',
     my: '👤 اشتراک من\n\nنمایش اشتراک‌های نسخه ۲ پس از تکمیل مهاجرت فعال می‌شود. فعلاً اشتراک قبلی خود را از ربات فعلی مدیریت کنید.',
     status: '📶 وضعیت سرویس\n\nمدار ۲.۰ در حال آزمایش است. اتصال و فعال بودن نودهای جدید هنوز تأیید نشده است.',
@@ -14,7 +14,7 @@ const messages = {
     helpBtn: '❓ راهنما', privacyBtn: '🔐 حریم خصوصی',
   },
   en: {
-    home: '🌐 Madar 2.0\n\nWelcome! This is an isolated preview. Payments and VPN configuration issuance are not enabled.',
+    home: '🌐 Madar 2.0\n\nWelcome! This is the isolated V2 test environment. Sales are disabled; admins can manage server enrollment and trial links.',
     plans: '🛍 Plans\n\nSales remain disabled until payments, node capacity and live connectivity have passed their acceptance tests.',
     my: '👤 My subscription\n\nV2 subscriptions are not enabled. Continue managing any existing plan through the current bot.',
     status: '📶 Service status\n\nMadar 2.0 is under testing. New VPN nodes have not passed live field acceptance.',
