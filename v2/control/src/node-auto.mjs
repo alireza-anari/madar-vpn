@@ -59,6 +59,11 @@ export async function enqueueAutoNode(env,actor,input,nowMs=Date.now()){
   const spec=parseAutoNode(input);
   if(!spec)return {error:'bad_input'};
   if(!env.DB)return {error:'not_ready'};
+  // Never record an unusable enrollment or tell the admin installation has
+  // started when an SSH runner or callback cannot actually be dispatched.
+  if(env.NODE_AUTO_ENABLED!=='true'||!env.NODE_AUTO_GH_TOKEN ||
+     !env.NODE_PROVISION_CALLBACK_SECRET||!env.SUBSCRIPTION_CREDENTIAL_KEY)
+    return {error:'automation_not_configured'};
   const id=crypto.randomUUID();
   try{
     await env.DB.batch([

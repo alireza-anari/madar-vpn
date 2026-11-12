@@ -1,4 +1,5 @@
 import {getTrialFeed,reportInstall,retryPending} from './node-auto.mjs';
+import {activateIsolatedBotWebhook} from './telegram-activation.mjs';
 import { getSubscription } from './subscription.mjs';
 import { getCarrierFeed } from './carrier-subscription.mjs';
 import { nodeRoute } from './node-control.mjs';
@@ -205,11 +206,15 @@ export default {
     if(request.method==='GET' && path==='/health/live')
       return json({status:'alive',service:'madar-v2'});
     if(request.method==='GET' && path==='/health/ready') {
-      if(!env.DB || !env.BOT_TOKEN || !env.TELEGRAM_WEBHOOK_SECRET)
+      if(!env.DB || !env.BOT_TOKEN || !env.TELEGRAM_WEBHOOK_SECRET ||
+         !/^\d{5,20}(?:,\d{5,20})*$/.test(env.ADMIN_TELEGRAM_IDS??''))
         return json({status:'not_ready'},503);
       try {
         await env.DB.prepare('SELECT media_file_id FROM telegram_outbox LIMIT 1').first();
         await env.DB.prepare('SELECT event_json FROM telegram_inbox LIMIT 1').first();
+        const bot=await telegramBindingStatus(env);
+        if(bot.status!==200 || (await bot.json()).is_dedicated_v2!==true)
+          return json({status:'not_ready',reason:'independent_telegram_bot_required'},503);
         return json({status:'ready'});
       } catch {return json({status:'not_ready'},503);}
     }
@@ -244,6 +249,7 @@ export default {
     return json({error:'not_found'},404);
   },
   async scheduled(_event,env) {
+    await activateIsolatedBotWebhook(env);
     await poll(env);
     await retryPending(env);
     if(!env.DB) return;
