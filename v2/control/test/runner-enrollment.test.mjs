@@ -80,6 +80,25 @@ test('real enrollment queue binds owner, fingerprint and ciphertext, signs lease
   assert.equal(row.state,'failed');assert.equal(row.encrypted_credentials,null);
   DB.close();
 });
+test('successful install metadata and queue completion are atomic and a repeated report is acknowledged',async()=>{
+  const DB=database(),now=1000000;
+  const env={DB,BOT_TOKEN:'t',ADMIN_TELEGRAM_IDS:'123',RUNNER_ENROLLMENT_ENABLED:'true',RUNNER_SERVICE_SECRET:'s'.repeat(48),SUBSCRIPTION_CREDENTIAL_KEY:'A'.repeat(43)};
+  const id='12345678-1234-4123-8123-123456789012',spec={nodeId:'test-new01',ip:'8.8.8.8',mode:'fresh'};
+  await DB.prepare("INSERT INTO nodes(id,provider,region,lifecycle,user_limit,byte_limit) VALUES('test-new01','aria','eu','enrolling',20,500)").run();
+  await DB.prepare("INSERT INTO node_bootstrap_jobs(id,node_id,ip,owner_id,mode,state,created_ms,updated_ms) VALUES(?,'test-new01','8.8.8.8','123','fresh','dispatching',?,?)").bind(id,now,now).run();
+  await DB.prepare("INSERT INTO v2_runner_jobs(id,owner_id,kind,spec_json,state,lease_id,lease_until_ms,created_ms,expires_ms,encrypted_credentials) VALUES(?,'123','v2-install',?,'leased','lease',?,?,?,'ciphertext')").bind(id,JSON.stringify(spec),now+90000,now,now+900000).run();
+  const b={id,leaseId:'lease',state:'ready',details:{public_key:'a'.repeat(43),short_id:'aabb',server_name:'www.cloudflare.com',uuid:'12345678-1234-4123-8123-123456789012'}};
+  const req=()=>new Request('https://v2/api/runner/report',{method:'POST',headers:{authorization:'Bearer '+env.RUNNER_SERVICE_SECRET,'content-type':'application/json'},body:JSON.stringify(b)});
+  const originalBatch=DB.batch.bind(DB);let includesCompletion=false;
+  DB.batch=async statements=>{includesCompletion=statements.some(s=>s.sql.includes('UPDATE v2_runner_jobs'));return originalBatch(statements);};
+  assert.equal((await runnerApi(req(),env,now)).status,200);
+  assert.equal(includesCompletion,true);
+  assert.equal((await runnerApi(req(),env,now+1000)).status,200);
+  assert.equal((await DB.prepare('SELECT state FROM v2_runner_jobs WHERE id=?').bind(id).first()).state,'ready');
+  assert.equal((await DB.prepare('SELECT encrypted_credentials FROM v2_runner_jobs WHERE id=?').bind(id).first()).encrypted_credentials,null);
+  assert.equal((await DB.prepare('SELECT COUNT(*) AS n FROM routes').first()).n,1);
+  DB.close();
+});
 test('Worker serves the secure form and denies unauthenticated enrollment and runner requests',async()=>{
   const page=await worker.fetch(new Request('https://v2/enroll'),{},{});
   assert.equal(page.status,200);assert.match(page.headers.get('content-type'),/text\/html/);

@@ -27,12 +27,12 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(api.reports[-1][1]['state'],'failed')
     def test_probe_never_decrypts_or_authenticates(self):
         job=self.job('probe');api=Api()
-        with patch.object(consumer,'probe',return_value='SHA256:'+'a'*43),patch.object(consumer,'decrypt_credentials',side_effect=AssertionError('No decrypt')):
+        with patch.object(consumer,'ensure_network',return_value=False),patch.object(consumer,'probe',return_value='SHA256:'+'a'*43),patch.object(consumer,'decrypt_credentials',side_effect=AssertionError('No decrypt')):
             self.assertEqual(consumer.run_job(job,api,None,clock=lambda:100),'ready')
         self.assertEqual(api.reports[-1][1]['details']['fingerprint'],'SHA256:'+'a'*43)
     def test_install_uses_shared_transport_and_sanitizes_failures(self):
         job=self.job();api=Api();secret={'method':'password','password':'canary'}
-        with patch.object(consumer,'decrypt_credentials',return_value=secret),patch.object(consumer,'SshTransport') as ssh,patch.object(consumer,'install',side_effect=RuntimeError('canary')):
+        with patch.object(consumer,'ensure_network',return_value=False),patch.object(consumer,'decrypt_credentials',return_value=secret),patch.object(consumer,'SshTransport') as ssh,patch.object(consumer,'install',side_effect=RuntimeError('canary')):
             self.assertEqual(consumer.run_job(job,api,None,clock=lambda:100),'failed')
             self.assertEqual(ssh.call_args.args[:4],('8.8.8.8',22,'root','SHA256:'+'a'*43))
         self.assertEqual(secret,{})

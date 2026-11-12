@@ -23,6 +23,7 @@ sys.path.insert(0,str(REPO/'sales-runner'))
 from runner import Api
 from credential_envelope import decrypt_credentials
 from ssh_transport import SshTransport,probe,assert_public_target
+from aws_network import ensure_network
 from cryptography.hazmat.primitives import serialization
 
 ORIGIN='https://madar-v2-staging.alirezaanari117.workers.dev'
@@ -99,6 +100,8 @@ def run_job(job,api,private_key,clock=time.time):
     try:
         validate_job(job)
         if job['credentialsExpireAt']<=int(clock()):raise ValueError('EXPIRED')
+        ensure_network(job['targetIp'],job['port'])
+        check()
         if job['kind']=='probe':
             fp=probe(job['targetIp'],job['port']);check()
             post('report',state='ready',details={'fingerprint':fp});return 'ready'
@@ -106,6 +109,9 @@ def run_job(job,api,private_key,clock=time.time):
         job['encryptedCredentials']=None
         with SshTransport(job['targetIp'],job['port'],job['username'],job['hostFingerprint'],credentials) as transport:
             details=install(transport,job,check);check()
+        # Additional VPN exposure is allowed only after fresh-host preflight and installation.
+        if job['mode']=='fresh':ensure_network(job['targetIp'],job['port'],extra_tcp_ports=(8443,))
+        check()
         post('report',state='ready',details=details);return 'ready'
     except Exception:
         try:post('report',state='failed',safeCode='INSTALLATION_FAILED')

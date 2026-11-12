@@ -137,7 +137,13 @@ export async function runnerApi(req,env,now=Date.now()){
   }
   const row=await env.DB.prepare("SELECT * FROM v2_runner_jobs WHERE id=? AND lease_id=? AND state='leased' AND lease_until_ms>? AND expires_ms>?")
     .bind(b.id,b.leaseId,now,now).first();
-  if(!row)return reply({error:'LEASE_EXPIRED'},409);
+  if(!row){
+    // The sender may have lost the first acknowledgement after a committed transaction.
+    const done=action==='report'&&['ready','failed'].includes(b.state)?await env.DB.prepare(
+      "SELECT id FROM v2_runner_jobs WHERE id=? AND lease_id=? AND state=?"
+    ).bind(b.id,b.leaseId,b.state).first():null;
+    return done?reply({ok:true}):reply({error:'LEASE_EXPIRED'},409);
+  }
   if(action==='renew'){
     await env.DB.prepare("UPDATE v2_runner_jobs SET lease_until_ms=? WHERE id=? AND lease_id=? AND state='leased' AND lease_until_ms>?")
       .bind(now+90000,row.id,b.leaseId,now).run();return reply({ok:true});
@@ -145,15 +151,15 @@ export async function runnerApi(req,env,now=Date.now()){
   if(action!=='report'||!['ready','failed'].includes(b.state))return reply({error:'BAD_REPORT'},400);
   const fingerprint=b.details?.fingerprint;
   if(b.state==='ready'&&row.kind==='probe'&&!/^SHA256:[A-Za-z0-9+/]{43}$/.test(fingerprint??''))return reply({error:'BAD_FINGERPRINT'},400);
+  const code=b.state==='ready'?'OK':'INSTALLATION_FAILED';
+  const completion=env.DB.prepare("UPDATE v2_runner_jobs SET state=?,safe_code=?,fingerprint=COALESCE(?,fingerprint),encrypted_credentials=NULL,lease_until_ms=0 WHERE id=? AND lease_id=? AND state='leased'")
+    .bind(b.state,code,row.kind==='probe'?fingerprint??null:null,row.id,b.leaseId);
   if(row.kind==='v2-install'){
     const spec=JSON.parse(row.spec_json);
     const result=await reportInstall(new Request('https://internal/report',{method:'POST',headers:{'x-madar-deploy-auth':env.RUNNER_SERVICE_SECRET},body:JSON.stringify({
       ...b.details,job_id:row.id,node_id:spec.nodeId,ip:spec.ip,status:b.state==='ready'?'installed':'failed',error_code:'INSTALLATION_FAILED'
-    })}),{...env,NODE_AUTO_ENABLED:'true',NODE_PROVISION_CALLBACK_SECRET:env.RUNNER_SERVICE_SECRET},now);
+    })}),{...env,NODE_AUTO_ENABLED:'true',NODE_PROVISION_CALLBACK_SECRET:env.RUNNER_SERVICE_SECRET},now,[completion]);
     if(!result.ok)return reply({error:'METADATA_REJECTED'},409);
-  }
-  const code=b.state==='ready'?'OK':'INSTALLATION_FAILED';
-  await env.DB.prepare("UPDATE v2_runner_jobs SET state=?,safe_code=?,fingerprint=COALESCE(?,fingerprint),encrypted_credentials=NULL,lease_until_ms=0 WHERE id=? AND lease_id=? AND state='leased'")
-    .bind(b.state,code,row.kind==='probe'?fingerprint??null:null,row.id,b.leaseId).run();
+  }else await completion.run();
   return reply({ok:true});
 }

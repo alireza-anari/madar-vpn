@@ -141,7 +141,7 @@ function validReport(b){
     /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(b.uuid??'');
 }
 
-export async function reportInstall(req,env,nowMs=Date.now()){
+export async function reportInstall(req,env,nowMs=Date.now(),completionStatements=[]){
   if(req.method!=='POST'||env.NODE_AUTO_ENABLED!=='true'||!env.DB||
      !env.NODE_PROVISION_CALLBACK_SECRET||!env.SUBSCRIPTION_CREDENTIAL_KEY)
     return response({error:'not_found'},404);
@@ -162,9 +162,9 @@ export async function reportInstall(req,env,nowMs=Date.now()){
   if(!job||!['dispatched','dispatching'].includes(job.state))
     return response({error:'not_pending'},409);
   if(data.status==='failed'){
-    await env.DB.prepare(
+    await env.DB.batch([env.DB.prepare(
       "UPDATE node_bootstrap_jobs SET state='failed',error_code=?,updated_ms=? WHERE id=? AND state IN ('dispatched','dispatching')"
-    ).bind(data.error_code,nowMs,job.id).run();
+    ).bind(data.error_code,nowMs,job.id),...completionStatements]);
     return response({accepted:true,installed:false});
   }
   const encoded=await wrapClientUuid(data.uuid,env.SUBSCRIPTION_CREDENTIAL_KEY);
@@ -188,6 +188,7 @@ export async function reportInstall(req,env,nowMs=Date.now()){
     env.DB.prepare(
       "UPDATE node_bootstrap_jobs SET state='installed',updated_ms=? WHERE id=? AND state IN ('dispatched','dispatching')"
     ).bind(nowMs,job.id),
+    ...completionStatements,
   ];
   try{await env.DB.batch(statements);}
   catch{return response({error:'write_failed'},503);}
