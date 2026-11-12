@@ -10,6 +10,7 @@
     "PROVISIONING_ENABLED": "false",
     "SUBSCRIPTION_API_ENABLED": "false",
     "SUBSCRIPTION_LINKS_ENABLED": "false",
+    "V2_BOT_AUTO_ACTIVATE": "true",
     "ADMIN_TELEGRAM_IDS": ""
   },
   "keep_vars": true,
