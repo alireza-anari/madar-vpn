@@ -182,8 +182,9 @@ export async function telegramBindingStatus(env,transport=fetch) {
     else {
       try {
         const parsed=new URL(url);
-        if(parsed.protocol==='https:' && parsed.pathname==='/telegram/webhook') {
-          if(parsed.hostname==='madar-v2-staging.alirezaanari117.workers.dev')
+        if(parsed.protocol==='https:') {
+          if(parsed.hostname==='madar-v2-staging.alirezaanari117.workers.dev' &&
+             parsed.pathname==='/telegram/webhook')
             webhook='v2';
           else if(parsed.hostname==='madar-sales-bot.alirezaanari117.workers.dev')
             webhook='legacy_v1';
