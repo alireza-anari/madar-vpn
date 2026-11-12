@@ -18,7 +18,11 @@ export function newNodePrompt() {
   ]}};
 }
 
-export async function beginNodeWizard(db,actor,nowMs) {
+export async function beginNodeWizard(db,actor,nowMs,env=null) {
+  if(env?.RUNNER_ENROLLMENT_ENABLED==='true')return {
+    text:'🖥 افزودن خودکار سرور مدار V2\nفرم امن را باز کن؛ اتصال و نصب توسط اجراکننده انجام می‌شود. رمز یا کلید را در پیام تلگرام نفرست.',
+    replyMarkup:{inline_keyboard:[[{text:'🔒 افزودن سرور',web_app:{url:'https://madar-v2-staging.alirezaanari117.workers.dev/enroll'}}]]}
+  };
   await db.prepare(
     "INSERT INTO admin_node_sessions(telegram_id,mode,expires_ms) VALUES(?,'add',?) " +
     "ON CONFLICT(telegram_id) DO UPDATE SET mode='add',expires_ms=excluded.expires_ms"

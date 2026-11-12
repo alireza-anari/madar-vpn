@@ -1,4 +1,6 @@
 import {getTrialFeed,reportInstall,retryPending} from './node-auto.mjs';
+import {enrollmentApi,runnerApi,cleanupRunnerJobs} from './runner-enrollment.mjs';
+import {enrollmentPage} from './enrollment-page.mjs';
 import {activateIsolatedBotWebhook} from './telegram-activation.mjs';
 import { getSubscription } from './subscription.mjs';
 import { getCarrierFeed } from './carrier-subscription.mjs';
@@ -202,6 +204,17 @@ export async function telegramBindingStatus(env,transport=fetch) {
 export default {
   async fetch(request,env,ctx) {
     const path=new URL(request.url).pathname;
+    if(request.method==='GET'&&path==='/enroll')return new Response(enrollmentPage,{headers:{
+      'content-type':'text/html; charset=utf-8','cache-control':'no-store','referrer-policy':'no-referrer',
+      'x-content-type-options':'nosniff','permissions-policy':'camera=(), microphone=(), geolocation=()',
+      'content-security-policy':"default-src 'none'; script-src 'unsafe-inline' https://telegram.org; style-src 'unsafe-inline'; connect-src 'self'; frame-src https://oauth.telegram.org; base-uri 'none'; form-action 'self'"
+    }});
+    if(path.startsWith('/api/enrollment/')){
+      try{return await enrollmentApi(request,env);}catch{return json({error:'TEMPORARY_FAILURE'},503);}
+    }
+    if(path.startsWith('/api/runner/')){
+      try{return await runnerApi(request,env);}catch{return json({error:'TEMPORARY_FAILURE'},503);}
+    }
     if(request.method==='GET' && path==='/health/bot')return telegramBindingStatus(env);
     if(request.method==='GET' && path==='/health/live')
       return json({status:'alive',service:'madar-v2'});
@@ -255,6 +268,7 @@ export default {
     if(!env.DB) return;
     const now=Date.now();
     // Minimize stored Telegram content. Orders, receipts and subscriptions
+    if(env.RUNNER_ENROLLMENT_ENABLED==='true')await cleanupRunnerJobs(env.DB,now);
     // are deliberately excluded: they require a separate accounting policy.
     const oldDays=(n)=>Math.floor((now-n*86400000)/1000);
     await env.DB.prepare('DELETE FROM node_nonces WHERE created_ms<?')

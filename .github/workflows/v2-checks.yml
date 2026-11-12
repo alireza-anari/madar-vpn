@@ -35,6 +35,13 @@ jobs:
         run: node --test v2/edge-wss-probe/test/*.test.mjs
       - name: Check new D1 schema invariants and quota constraints
         run: python3 v2/control/test/schema.test.py
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify V2 reuses the runner transport without V1 installation jobs
+        run: |
+          python3 -m pip install paramiko==5.0.0 cryptography==50.0.2
+          python3 -B -m unittest discover -s v2/runner
       - name: Check read-only network diagnostic probe
         run: python3 -m unittest discover -s v2/diagnostics -p 'test_*.py'
       - name: Verify node-agent manifest signing and replay protection

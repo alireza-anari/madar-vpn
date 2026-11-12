@@ -1,0 +1,47 @@
+import importlib.util
+import pathlib
+import sys
+import unittest
+from unittest.mock import patch
+
+HERE=pathlib.Path(__file__).resolve().parent
+sys.path.insert(0,str(HERE.parents[1]/'sales-runner'))
+spec=importlib.util.spec_from_file_location('v2_runner',HERE/'consumer.py')
+consumer=importlib.util.module_from_spec(spec)
+spec.loader.exec_module(consumer)
+
+class Api:
+    def __init__(self):self.reports=[]
+    def post(self,path,payload):self.reports.append((path,payload));return {'ok':True}
+
+class RunnerTests(unittest.TestCase):
+    def job(self,kind='v2-install'):
+        return dict(id='12345678-1234-4123-8123-123456789012',leaseId='lease',kind=kind,
+                    nodeId='test-node01',targetIp='8.8.8.8',mode='fresh',port=22,username='root',
+                    hostFingerprint='SHA256:'+'a'*43,credentialsExpireAt=200,encryptedCredentials='ciphertext')
+    def test_expired_credentials_never_connect_and_clear_envelope(self):
+        job=self.job();api=Api()
+        with patch.object(consumer,'SshTransport',side_effect=AssertionError('SSH must not run')):
+            self.assertEqual(consumer.run_job(job,api,None,clock=lambda:201),'failed')
+        self.assertIsNone(job['encryptedCredentials'])
+        self.assertEqual(api.reports[-1][1]['state'],'failed')
+    def test_probe_never_decrypts_or_authenticates(self):
+        job=self.job('probe');api=Api()
+        with patch.object(consumer,'probe',return_value='SHA256:'+'a'*43),patch.object(consumer,'decrypt_credentials',side_effect=AssertionError('No decrypt')):
+            self.assertEqual(consumer.run_job(job,api,None,clock=lambda:100),'ready')
+        self.assertEqual(api.reports[-1][1]['details']['fingerprint'],'SHA256:'+'a'*43)
+    def test_install_uses_shared_transport_and_sanitizes_failures(self):
+        job=self.job();api=Api();secret={'method':'password','password':'canary'}
+        with patch.object(consumer,'decrypt_credentials',return_value=secret),patch.object(consumer,'SshTransport') as ssh,patch.object(consumer,'install',side_effect=RuntimeError('canary')):
+            self.assertEqual(consumer.run_job(job,api,None,clock=lambda:100),'failed')
+            self.assertEqual(ssh.call_args.args[:4],('8.8.8.8',22,'root','SHA256:'+'a'*43))
+        self.assertEqual(secret,{})
+        self.assertNotIn('canary',str(api.reports))
+    def test_refuses_v1_job_and_nonisolated_configuration(self):
+        job=self.job('install');api=Api()
+        with patch.object(consumer,'SshTransport',side_effect=AssertionError('No SSH')):
+            self.assertEqual(consumer.run_job(job,api,None,clock=lambda:100),'failed')
+        for base in ['https://madar-sales-bot.alirezaanari117.workers.dev','http://localhost']:
+            with self.assertRaises(ValueError):consumer.validate_config({'baseUrl':base})
+
+if __name__=='__main__':unittest.main()

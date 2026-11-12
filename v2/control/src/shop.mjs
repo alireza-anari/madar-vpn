@@ -417,7 +417,7 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
     if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
       return response('Access denied',e.locale);
     const panel=key==='admin:node:new'
-      ? await beginNodeWizard(db,e.actorId,nowMs)
+      ? await beginNodeWizard(db,e.actorId,nowMs,env)
       : await cancelNodeWizard(db,e.actorId);
     return response(panel.text,e.locale,panel.replyMarkup?.inline_keyboard??[]);
   }
