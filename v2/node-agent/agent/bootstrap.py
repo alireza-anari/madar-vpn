@@ -199,8 +199,11 @@ def _port_available(address,port):
 
 def _probe_ports(plan):
     _port_available("0.0.0.0",plan["reality_port"])
+    # Never stage a fresh 8443 installation when an existing V1 HTTPS/REALITY
+    # listener already owns 443: reject BEFORE writing any files.
+    _port_available("0.0.0.0",443)
     if plan["wss_domain"] is not None:
-        for port in (80,443): _port_available("0.0.0.0",port)
+        _port_available("0.0.0.0",80)
         _port_available("127.0.0.1",plan["local_ws_port"])
 
 

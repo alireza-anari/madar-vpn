@@ -1,6 +1,37 @@
 import {publicV4,reportInstall} from './node-auto.mjs';
 import {verifyTelegramSecret} from './telegram.mjs';
 
+// Optional short-lived GitHub-hosted executor. No GitHub token is exposed to Telegram.
+const GITHUB_RUNNER_ID='v2-github-actions';
+const JOB_ID=/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/;
+export function githubExecutorReady(env) {
+  return env.V2_EXECUTOR_BACKEND==='github-actions' &&
+    typeof env.GITHUB_ACTIONS_DISPATCH_TOKEN==='string' &&
+    env.GITHUB_ACTIONS_DISPATCH_TOKEN.length>=20 &&
+    typeof env.RUNNER_SERVICE_SECRET==='string' &&
+    env.RUNNER_SERVICE_SECRET.length>=32 &&
+    typeof env.RUNNER_PUBLIC_KEY==='string' &&
+    env.RUNNER_PUBLIC_KEY.includes('"kid":"madar-v2-github-actions"');
+}
+export async function dispatchGithubJob(env,jobId,send=fetch) {
+  if(!githubExecutorReady(env)||!JOB_ID.test(jobId))return false;
+  try {
+    const r=await send('https://api.github.com/repos/alireza-anari/madar-vpn/actions/workflows/v2-on-demand-executor.yml/dispatches',{
+      method:'POST',
+      headers:{'authorization':'Bearer '+env.GITHUB_ACTIONS_DISPATCH_TOKEN,
+        'accept':'application/vnd.github+json','content-type':'application/json',
+        'x-github-api-version':'2022-11-28','user-agent':'madar-v2-staging'},
+      body:JSON.stringify({ref:'rewrite/madar-v2-20261110',inputs:{job_id:jobId}}),
+      signal:AbortSignal.timeout(10000),
+    });
+    return r.status===204;
+  }catch{return false;}
+}
+async function executorReady(env,now) {
+  if(env.V2_EXECUTOR_BACKEND==='github-actions')return githubExecutorReady(env);
+  const presence=await env.DB.prepare('SELECT MAX(last_seen_ms) AS seen FROM v2_runner_presence').first();
+  return !!presence?.seen&&presence.seen>=now-60000;
+}
 const enc=new TextEncoder();
 const hex=bytes=>Array.from(new Uint8Array(bytes),x=>x.toString(16).padStart(2,'0')).join('');
 export async function hmac(key,value){
@@ -57,17 +88,16 @@ export async function cleanupRunnerJobs(db,now){
   // Leased expired jobs are terminal, never retried while an old installer may still run.
   await db.prepare("UPDATE v2_runner_jobs SET state='failed',safe_code='EXPIRED',encrypted_credentials=NULL WHERE state IN ('queued','leased') AND (expires_ms<=? OR (state='leased' AND lease_until_ms<=?))").bind(now,now).run();
 }
-export async function enrollmentApi(req,env,now=Date.now()){
+export async function enrollmentApi(req,env,now=Date.now(),dispatch=dispatchGithubJob){
   if(!env.DB||env.RUNNER_ENROLLMENT_ENABLED!=='true')return reply({error:'RUNNER_NOT_CONFIGURED'},503);
   const actor=await authenticateOwner(req.headers.get('x-telegram-init-data'),env,now);
   if(!actor)return reply({error:'AUTH_EXPIRED'},401);
   const path=new URL(req.url).pathname;
   await cleanupRunnerJobs(env.DB,now);
   if(path==='/api/enrollment/session'&&req.method==='GET'){
-    const presence=await env.DB.prepare('SELECT MAX(last_seen_ms) AS seen FROM v2_runner_presence').first();
     let publicKey;try{publicKey=JSON.parse(env.RUNNER_PUBLIC_KEY);}catch{}
-    if(!publicKey||!env.RUNNER_SERVICE_SECRET||!presence?.seen||presence.seen<now-60000)
-      return reply({error:'RUNNER_OFFLINE'},503);
+    if(!publicKey||!env.RUNNER_SERVICE_SECRET||!(await executorReady(env,now)))
+      return reply({error:env.V2_EXECUTOR_BACKEND==='github-actions'?'EXECUTOR_NOT_CONFIGURED':'RUNNER_OFFLINE'},503);
     return reply({publicKey});
   }
   if(path.startsWith('/api/enrollment/jobs/')&&req.method==='GET'){
@@ -79,13 +109,18 @@ export async function enrollmentApi(req,env,now=Date.now()){
   let b;try{b=await body(req);}catch{return reply({error:'BAD_BODY'},400);}
   if(path==='/api/enrollment/probe'){
     const spec=validateConnection(b);if(!spec)return reply({error:'INVALID_TARGET'},400);
-    const presence=await env.DB.prepare('SELECT MAX(last_seen_ms) AS seen FROM v2_runner_presence').first();
-    if(!presence?.seen||presence.seen<now-60000)return reply({error:'RUNNER_OFFLINE'},503);
+    if(!(await executorReady(env,now)))
+      return reply({error:env.V2_EXECUTOR_BACKEND==='github-actions'?'EXECUTOR_NOT_CONFIGURED':'RUNNER_OFFLINE'},503);
     const active=await env.DB.prepare("SELECT id FROM v2_runner_jobs WHERE owner_id=? AND state IN ('queued','leased') LIMIT 1").bind(actor).first();
     if(active)return reply({error:'JOB_ALREADY_PENDING',id:active.id},409);
     const id=crypto.randomUUID();
     await env.DB.prepare("INSERT INTO v2_runner_jobs(id,owner_id,kind,spec_json,state,created_ms,expires_ms) VALUES(?,?,'probe',?,'queued',?,?)")
-      .bind(id,actor,JSON.stringify(spec),now,now+600000).run();return reply({id});
+      .bind(id,actor,JSON.stringify(spec),now,now+600000).run();
+    if(env.V2_EXECUTOR_BACKEND==='github-actions'&&!(await dispatch(env,id))){
+      await env.DB.prepare("UPDATE v2_runner_jobs SET state='failed',safe_code='EXECUTOR_DISPATCH_FAILED' WHERE id=? AND state='queued'").bind(id).run();
+      return reply({error:'EXECUTOR_DISPATCH_FAILED'},503);
+    }
+    return reply({id});
   }
   if(path==='/api/enrollment/install'){
     if(!validEnvelope(b.envelope)||b.trust!==true||!/^SHA256:[A-Za-z0-9+/]{43}$/.test(b.fingerprint??''))
@@ -104,6 +139,14 @@ export async function enrollmentApi(req,env,now=Date.now()){
       env.DB.prepare("INSERT INTO v2_runner_jobs(id,owner_id,kind,spec_json,probe_id,fingerprint,encrypted_credentials,state,created_ms,expires_ms) VALUES(?,?,'v2-install',?,?,?,?,'queued',?,?)")
         .bind(id,actor,probe.spec_json,probe.id,probe.fingerprint,JSON.stringify(b.envelope),now,now+900000),
     ]);}catch{return reply({error:'NODE_ALREADY_EXISTS'},409);}
+    if(env.V2_EXECUTOR_BACKEND==='github-actions'&&!(await dispatch(env,id))){
+      await env.DB.batch([
+        env.DB.prepare("UPDATE v2_runner_jobs SET state='failed',safe_code='EXECUTOR_DISPATCH_FAILED',encrypted_credentials=NULL WHERE id=? AND state='queued'").bind(id),
+        env.DB.prepare("UPDATE node_bootstrap_jobs SET state='failed',error_code='EXECUTOR_DISPATCH_FAILED',updated_ms=? WHERE id=?").bind(now,id),
+        env.DB.prepare("UPDATE nodes SET lifecycle='quarantined' WHERE id=? AND lifecycle='enrolling'").bind(spec.nodeId),
+      ]);
+      return reply({error:'EXECUTOR_DISPATCH_FAILED'},503);
+    }
     return reply({id});
   }
   return reply({error:'NOT_FOUND'},404);
@@ -123,11 +166,20 @@ export async function runnerApi(req,env,now=Date.now()){
   await cleanupRunnerJobs(env.DB,now);
   if(action==='lease'){
     if(!/^[A-Za-z0-9_-]{3,64}$/.test(b.runnerId??''))return reply({error:'BAD_RUNNER'},400);
-    await env.DB.prepare('INSERT INTO v2_runner_presence(id,last_seen_ms) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET last_seen_ms=excluded.last_seen_ms').bind(b.runnerId,now).run();
-    await env.DB.prepare("DELETE FROM v2_runner_pairing WHERE id='existing-runner'").run();
+    const github=env.V2_EXECUTOR_BACKEND==='github-actions';
+    if(github&&(b.runnerId!==GITHUB_RUNNER_ID||!JOB_ID.test(b.jobId??'')))
+      return reply({error:'INVALID_EXECUTOR_JOB'},403);
+    if(!github&&b.runnerId===GITHUB_RUNNER_ID)return reply({error:'INVALID_EXECUTOR_JOB'},403);
+    if(!github){
+      await env.DB.prepare('INSERT INTO v2_runner_presence(id,last_seen_ms) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET last_seen_ms=excluded.last_seen_ms').bind(b.runnerId,now).run();
+      await env.DB.prepare("DELETE FROM v2_runner_pairing WHERE id='existing-runner'").run();
+    }
     const lease=crypto.randomUUID();
-    const row=await env.DB.prepare("UPDATE v2_runner_jobs SET state='leased',lease_id=?,lease_until_ms=? WHERE id=(SELECT id FROM v2_runner_jobs WHERE state='queued' AND expires_ms>? ORDER BY created_ms LIMIT 1) AND state='queued' RETURNING *")
-      .bind(lease,now+90000,now).first();
+    const sql=github
+      ?"UPDATE v2_runner_jobs SET state='leased',lease_id=?,lease_until_ms=? WHERE id=? AND state='queued' AND expires_ms>? RETURNING *"
+      :"UPDATE v2_runner_jobs SET state='leased',lease_id=?,lease_until_ms=? WHERE id=(SELECT id FROM v2_runner_jobs WHERE state='queued' AND expires_ms>? ORDER BY created_ms LIMIT 1) AND state='queued' RETURNING *";
+    const query=env.DB.prepare(sql);
+    const row=await (github?query.bind(lease,now+90000,b.jobId,now):query.bind(lease,now+90000,now)).first();
     let job=null;
     if(row){const s=JSON.parse(row.spec_json);job={id:row.id,leaseId:lease,kind:row.kind,
       nodeId:s.nodeId,targetIp:s.ip,port:s.port,username:s.username,mode:s.mode,

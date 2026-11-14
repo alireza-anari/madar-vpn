@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {authenticateOwner,validateConnection,validEnvelope,enrollmentApi,runnerApi} from '../src/runner-enrollment.mjs';
+import {authenticateOwner,validateConnection,validEnvelope,enrollmentApi,runnerApi,githubExecutorReady,dispatchGithubJob} from '../src/runner-enrollment.mjs';
 import worker from '../src/index.mjs';
 import {DatabaseSync} from 'node:sqlite';
 import {readdirSync,readFileSync} from 'node:fs';
@@ -107,4 +107,55 @@ test('Worker serves the secure form and denies unauthenticated enrollment and ru
   assert.equal((await worker.fetch(new Request('https://v2/api/enrollment/session'),env,{})).status,401);
   assert.equal((await worker.fetch(new Request('https://v2/api/runner/lease',{method:'POST'}),env,{})).status,401);
   env.DB.close();
+});
+
+// GitHub workflow dispatch is fixed to this repository/branch and requires a
+// separately configured V2 public key. V1 transport remains the default.
+test('on-demand executor fails closed, dispatches only a specific signed job and does not need presence',async()=>{
+  const DB=database(),now=1000000;
+  const env={DB,BOT_TOKEN:'test-token',ADMIN_TELEGRAM_IDS:'123',
+    RUNNER_ENROLLMENT_ENABLED:'true',V2_EXECUTOR_BACKEND:'github-actions',
+    RUNNER_SERVICE_SECRET:'s'.repeat(48),
+    GITHUB_ACTIONS_DISPATCH_TOKEN:'g'.repeat(48),
+    RUNNER_PUBLIC_KEY:JSON.stringify({kty:'RSA',kid:'madar-v2-github-actions'})};
+  const owner=await initData(env.BOT_TOKEN,123,1000);
+  const req=(path,b)=>new Request('https://v2/api/enrollment/'+path,{method:b?'POST':'GET',
+    headers:{'x-telegram-init-data':owner,'content-type':'application/json'},
+    ...(b?{body:JSON.stringify(b)}:{})});
+  assert.equal(githubExecutorReady(env),true);
+  assert.equal((await enrollmentApi(req('session'),env,now)).status,200);
+  assert.equal(githubExecutorReady({...env,GITHUB_ACTIONS_DISPATCH_TOKEN:''}),false);
+  assert.equal(githubExecutorReady({...env,RUNNER_PUBLIC_KEY:'{}'}),false);
+  assert.equal((await enrollmentApi(req('session'),{...env,GITHUB_ACTIONS_DISPATCH_TOKEN:''},now)).status,503);
+  let dispatched=[];
+  const dispatch=async(_env,id)=>{dispatched.push(id);return true};
+  const spec={nodeId:'test-aws01',provider:'aws',region:'eu-north-1',userLimit:20,capacityGb:50,ip:'8.8.8.8',port:22,username:'root'};
+  const probe=await enrollmentApi(req('probe',spec),env,now,dispatch);
+  assert.equal(probe.status,200);
+  const {id}=await probe.json();
+  assert.deepEqual(dispatched,[id]);
+  const runner=b=>runnerApi(new Request('https://v2/api/runner/lease',{method:'POST',
+    headers:{'authorization':'Bearer '+env.RUNNER_SERVICE_SECRET,'content-type':'application/json'},
+    body:JSON.stringify(b)}),env,now);
+  assert.equal((await runner({runnerId:'old-runner',jobId:id})).status,403);
+  assert.equal((await runner({runnerId:'v2-github-actions'})).status,403);
+  const wrong=JSON.parse((await (await runner({runnerId:'v2-github-actions',jobId:crypto.randomUUID()})).json()).payload);
+  assert.equal(wrong,null);
+  const job=JSON.parse((await (await runner({runnerId:'v2-github-actions',jobId:id})).json()).payload);
+  assert.equal(job.id,id);
+  DB.close();
+});
+test('on-demand dispatcher uses only the fixed V2 workflow and reports rejection',async()=>{
+  const env={V2_EXECUTOR_BACKEND:'github-actions',GITHUB_ACTIONS_DISPATCH_TOKEN:'g'.repeat(48),
+    RUNNER_SERVICE_SECRET:'s'.repeat(48),RUNNER_PUBLIC_KEY:'{"kid":"madar-v2-github-actions"}'};
+  const id='12345678-1234-4123-8123-123456789012';
+  const calls=[];
+  const success=await dispatchGithubJob(env,id,async(url,opts)=>{calls.push({url,opts});return {status:204}});
+  assert.equal(success,true);
+  assert.equal(calls.length,1);
+  assert.match(calls[0].url,/v2-on-demand-executor\.yml\/dispatches$/);
+  assert.deepEqual(JSON.parse(calls[0].opts.body).inputs,{job_id:id});
+  assert.equal(calls[0].opts.headers.authorization,'Bearer '+env.GITHUB_ACTIONS_DISPATCH_TOKEN);
+  assert.equal(await dispatchGithubJob(env,'bad-job-id',async()=>{throw Error('called')}),false);
+  assert.equal(await dispatchGithubJob(env,id,async()=>({status:403})),false);
 });

@@ -87,7 +87,7 @@ def install(transport,job,check):
     if set(result)!={'public_key','short_id','server_name','uuid'}:raise ValueError('INVALID_METADATA')
     return result
 
-def run_job(job,api,private_key,clock=time.time):
+def run_job(job,api,private_key,clock=time.time,network_mode='aws'):
     stop=threading.Event();lost=threading.Event();credentials={}
     def post(path,**extra):return api.post(path,dict(id=job['id'],leaseId=job['leaseId'],**extra))
     def check():
@@ -100,7 +100,7 @@ def run_job(job,api,private_key,clock=time.time):
     try:
         validate_job(job)
         if job['credentialsExpireAt']<=int(clock()):raise ValueError('EXPIRED')
-        ensure_network(job['targetIp'],job['port'])
+        if network_mode=='aws':ensure_network(job['targetIp'],job['port'])
         check()
         if job['kind']=='probe':
             fp=probe(job['targetIp'],job['port']);check()
@@ -110,7 +110,7 @@ def run_job(job,api,private_key,clock=time.time):
         with SshTransport(job['targetIp'],job['port'],job['username'],job['hostFingerprint'],credentials) as transport:
             details=install(transport,job,check);check()
         # Additional VPN exposure is allowed only after fresh-host preflight and installation.
-        if job['mode']=='fresh':ensure_network(job['targetIp'],job['port'],extra_tcp_ports=(8443,))
+        if job['mode']=='fresh' and network_mode=='aws':ensure_network(job['targetIp'],job['port'],extra_tcp_ports=(8443,))
         check()
         post('report',state='ready',details=details);return 'ready'
     except Exception:
