@@ -20,7 +20,8 @@ CONFIG=pathlib.Path('/etc/madar-v2-runner')
 V2_KEY=CONFIG/'runner-private.pem'
 UNIT=pathlib.Path('/etc/systemd/system/madar-v2-runner.service')
 
-def render_service(repo=REPO):
+def render_service(repo=REPO,python=sys.executable):
+    if not pathlib.Path(python).is_file() or '\n' in python or ' ' in python:raise ValueError('INVALID_PYTHON_PATH')
     return f'''[Unit]
 Description=Madar V2 queue on existing provisioning runner
 After=network-online.target
@@ -29,7 +30,7 @@ Wants=network-online.target
 User=madar-sales-runner
 Group=madar-sales-runner
 WorkingDirectory={repo}
-ExecStart=/opt/madar-sales-runner/venv/bin/python {repo}/v2/runner/consumer.py --config /etc/madar-v2-runner/runner.json
+ExecStart={python} {repo}/v2/runner/consumer.py --config /etc/madar-v2-runner/runner.json
 Restart=always
 RestartSec=5
 UMask=0077
