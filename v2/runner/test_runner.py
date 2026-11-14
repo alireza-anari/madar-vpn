@@ -131,3 +131,34 @@ class SafeInstallFailureTests(unittest.TestCase):
             self.assertEqual(consumer.run_job(job,api,None,clock=lambda:100,network_mode='none'),'failed')
         self.assertEqual(api.reports[-1][1]['safeCode'],'SSH_AUTH_FAILED')
         self.assertNotIn('canary',str(api.reports))
+
+class ReadOnlyDiagnosisTests(unittest.TestCase):
+    def test_diagnose_never_executes_install(self):
+        job={'id':'12345678-1234-4123-8123-123456789012','leaseId':'lease',
+             'kind':'v2-install','diagnostic':True,'nodeId':'test-webdade2',
+             'targetIp':'8.8.8.8','mode':'fresh','port':22,'username':'root',
+             'hostFingerprint':'SHA256:'+'a'*43,'credentialsExpireAt':200,
+             'encryptedCredentials':'ciphertext'}
+        api=Api()
+        with patch.object(consumer,'decrypt_credentials',return_value={'method':'password','password':'SECRET'}),\
+             patch.object(consumer,'SshTransport') as ssh,\
+             patch.object(consumer,'install',side_effect=AssertionError('installation forbidden')) as install:
+            ssh.return_value.__enter__.return_value.run.return_value=b'{"code":"DIAG_PORT_443_BUSY"}'
+            self.assertEqual(consumer.run_job(job,api,None,clock=lambda:100,network_mode='none'),'ready')
+            install.assert_not_called()
+        self.assertEqual(api.reports[-1][1]['safeCode'],'DIAG_PORT_443_BUSY')
+        self.assertEqual(api.reports[-1][1]['state'],'ready')
+        self.assertNotIn('SECRET',str(api.reports))
+    def test_diagnostic_output_is_strictly_allowlisted(self):
+        class Transport:
+            def __init__(self,out):self.out=out
+            def run(self,cmd,timeout=0):
+                self.command=cmd
+                return self.out
+        for raw in [b'{"code":"DIAG_PRECHECK_OK"}',b'{"code":"DIAG_EXISTING_VPN"}']:
+            tr=Transport(raw)
+            self.assertIn(consumer.diagnose(tr,lambda:None),consumer.DIAG_CODES)
+            self.assertIn('python3 -c',tr.command)
+        for raw in [b'{"code":"arbitrary error"}',b'{"code":"DIAG_PRECHECK_OK","secret":"x"}',b'not-json']:
+            with self.assertRaises((ValueError,TypeError)):
+                consumer.diagnose(Transport(raw),lambda:None)

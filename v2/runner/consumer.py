@@ -59,6 +59,58 @@ s=json.loads((root/'local-secrets.json').read_text())
 print(json.dumps(dict(public_key=m['reality_public_key'],short_id=m['short_id'],server_name=m['reality_server_name'],uuid=s['clients'][0])))
 '''
 
+# Fixed, read-only diagnostic. No shell input, file writes or installs.
+REMOTE_DIAG=r'''
+import json,os,pathlib,platform,socket,urllib.request,urllib.error
+code='DIAG_PRECHECK_OK'
+paths=('/etc/systemd/system/xray.service','/etc/systemd/system/caddy.service',
+'/etc/systemd/system/madar-v2-xray.service','/etc/systemd/system/madar-v2-caddy.service',
+'/etc/xray','/usr/local/etc/xray','/etc/caddy','/etc/madar-v2','/opt/madar-v2')
+try:
+ if os.geteuid()!=0:code='DIAG_NO_ROOT'
+ elif platform.system()!='Linux':code='DIAG_UNSUPPORTED_OS'
+ else:
+  release=pathlib.Path('/etc/os-release').read_text(encoding='utf-8')
+  rows=[x.split('=',1)[1].strip('" ') for x in release.splitlines() if x.startswith('ID=')]
+  if not rows or rows[0] not in ('ubuntu','debian'):code='DIAG_UNSUPPORTED_OS'
+  elif any(pathlib.Path(p).exists() or pathlib.Path(p).is_symlink() for p in paths):
+   code='DIAG_EXISTING_VPN'
+  elif not pathlib.Path('/usr/bin/systemctl').is_file() or not pathlib.Path('/usr/sbin/useradd').is_file():
+   code='DIAG_SYSTEMD_MISSING'
+  else:
+   for port in (443,8443):
+    with socket.socket(socket.AF_INET,socket.SOCK_STREAM) as sock:
+     try:sock.bind(('0.0.0.0',port))
+     except OSError:
+      code='DIAG_PORT_443_BUSY' if port==443 else 'DIAG_PORT_8443_BUSY'
+      break
+   if code=='DIAG_PRECHECK_OK':
+    url='https://github.com/XTLS/Xray-core/releases/download/v26.11.9/Xray-linux-64.zip'
+    request=urllib.request.Request(url,method='HEAD',headers={'User-Agent':'Madar-V2-ReadOnly-Diagnostic/1'})
+    try:
+     with urllib.request.urlopen(request,timeout=12) as response:
+      if response.status!=200:code='DIAG_GITHUB_UNREACHABLE'
+    except (urllib.error.URLError,TimeoutError,OSError):
+     code='DIAG_GITHUB_UNREACHABLE'
+except Exception:
+ code='DIAG_REMOTE_FAILED'
+print(json.dumps({'code':code},separators=(',',':')))
+'''
+DIAG_CODES=frozenset({'DIAG_EXISTING_VPN','DIAG_PORT_443_BUSY','DIAG_PORT_8443_BUSY',
+    'DIAG_UNSUPPORTED_OS','DIAG_NO_ROOT','DIAG_SYSTEMD_MISSING','DIAG_GITHUB_UNREACHABLE',
+    'DIAG_PRECHECK_OK','DIAG_REMOTE_FAILED'})
+def diagnose(transport,check):
+    # SSH command only runs a fixed Python snippet; no user-provided shell text.
+    code=base64.b64encode(REMOTE_DIAG.encode()).decode()
+    cmd='sudo -n python3 -c '+shlex.quote('import base64;exec(base64.b64decode('+repr(code)+'))')
+    check()
+    out=transport.run(cmd,timeout=35)
+    check()
+    result=json.loads(out)
+    if not isinstance(result,dict) or set(result)!={'code'} or result['code'] not in DIAG_CODES:
+        raise ValueError('BAD_DIAGNOSTIC_RESPONSE')
+    return result['code']
+
 def validate_job(job):
     assert_public_target(job.get('targetIp',''))
     if (not re.fullmatch(r'[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}',job.get('id','')) or
@@ -107,6 +159,7 @@ def safe_failure_code(exc,kind,stage='unknown'):
             return 'INVALID_SSH_KEY'
         if isinstance(exc,ValueError) and str(exc)=='EXPIRED':
             return 'CREDENTIALS_EXPIRED'
+        if stage=='diagnostic':return 'DIAG_REMOTE_FAILED'
         if stage=='credentials':return 'CREDENTIAL_DECRYPT_FAILED'
         if stage=='ssh':return 'SSH_LOGIN_FAILED'
         if stage=='remote':return 'REMOTE_INSTALL_FAILED'
@@ -136,6 +189,12 @@ def run_job(job,api,private_key,clock=time.time,network_mode='aws'):
         job['encryptedCredentials']=None
         stage='ssh'
         with SshTransport(job['targetIp'],job['port'],job['username'],job['hostFingerprint'],credentials) as transport:
+            if job.get('diagnostic') is True:
+                stage='diagnostic'
+                result_code=diagnose(transport,check)
+                stage='report'
+                post('report',state='ready',safeCode=result_code)
+                return 'ready'
             stage='remote'
             details=install(transport,job,check);check()
         # Additional VPN exposure is allowed only after fresh-host preflight and installation.

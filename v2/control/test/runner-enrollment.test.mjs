@@ -297,3 +297,41 @@ test('install reports allowlisted failure reasons without reflecting untrusted r
   }
   DB.close();
 });
+
+// Diagnostic jobs reuse the encrypted V2 install queue, but NEVER create a
+// node/bootstrap row, execute an installation, or expose SSH secrets.
+test('read-only diagnosis is owner-bound to a failed install and cannot provision',async()=>{
+  const DB=database(),now=1000000,secret='s'.repeat(48);
+  const env={DB,BOT_TOKEN:'test-token',ADMIN_TELEGRAM_IDS:'123,456',
+    RUNNER_ENROLLMENT_ENABLED:'true',V2_EXECUTOR_BACKEND:'github-actions',
+    RUNNER_SERVICE_SECRET:secret,GITHUB_ACTIONS_DISPATCH_TOKEN:'g'.repeat(48),
+    RUNNER_PUBLIC_KEY:JSON.stringify({kid:'madar-v2-github-actions',kty:'RSA',alg:'RSA-OAEP-256',e:'AQAB',n:'A'.repeat(512)})};
+  const owner=await initData('test-token',123,1000),other=await initData('test-token',456,1000);
+  const id=crypto.randomUUID(),fp='SHA256:'+'a'.repeat(43);
+  const spec={nodeId:'test-webdade2',provider:'webdade',region:'test',ip:'8.8.8.8',port:22,username:'root',userLimit:5,capacityGb:10,mode:'fresh'};
+  await DB.prepare("INSERT INTO v2_runner_jobs(id,owner_id,kind,spec_json,fingerprint,state,created_ms,expires_ms) VALUES(?,'123','v2-install',?,?,'failed',?,?)")
+    .bind(id,JSON.stringify(spec),fp,now-1000,now+200000).run();
+  const body={failedInstallId:id,trust:true,fingerprint:fp,envelope:{v:1,key:'A'.repeat(512),iv:'A'.repeat(16),data:'A'.repeat(64)}};
+  const req=(auth,data)=>new Request('https://v2/api/enrollment/diagnose',{method:'POST',headers:{'x-telegram-init-data':auth,'content-type':'application/json'},body:JSON.stringify(data)});
+  assert.equal((await enrollmentApi(req(other,body),env,now,async()=>true)).status,409);
+  assert.equal((await enrollmentApi(req(owner,{...body,fingerprint:'SHA256:'+'b'.repeat(43)}),env,now,async()=>true)).status,409);
+  const response=await enrollmentApi(req(owner,body),env,now,async()=>true);
+  assert.equal(response.status,200);
+  const diagId=(await response.json()).id;
+  const rows=(await DB.prepare('SELECT * FROM v2_runner_jobs WHERE id=?').bind(diagId).all()).results;
+  assert.equal(rows.length,1);
+  assert.equal(JSON.parse(rows[0].spec_json).diagnostic,true);
+  assert.equal((await DB.prepare('SELECT COUNT(*) AS n FROM node_bootstrap_jobs').first()).n,0);
+  const run=(action,body)=>runnerApi(new Request('https://v2/api/runner/'+action,{method:'POST',headers:{authorization:'Bearer '+secret,'content-type':'application/json'},body:JSON.stringify(body)}),env,now);
+  const signed=await (await run('lease',{runnerId:'v2-github-actions',jobId:diagId})).json();
+  const job=JSON.parse(signed.payload);
+  assert.equal(job.diagnostic,true);
+  assert.equal(job.kind,'v2-install');
+  const report=await run('report',{id:diagId,leaseId:job.leaseId,state:'ready',safeCode:'DIAG_EXISTING_VPN'});
+  assert.equal(report.status,200);
+  assert.deepEqual((await DB.prepare('SELECT state,safe_code,encrypted_credentials FROM v2_runner_jobs WHERE id=?').bind(diagId).first()),
+    {state:'ready',safe_code:'DIAG_EXISTING_VPN',encrypted_credentials:null});
+  assert.equal((await DB.prepare('SELECT COUNT(*) AS n FROM node_bootstrap_jobs').first()).n,0);
+  assert.equal((await DB.prepare('SELECT COUNT(*) AS n FROM nodes').first()).n,0);
+  DB.close();
+});

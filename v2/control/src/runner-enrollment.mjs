@@ -132,7 +132,7 @@ export async function enrollmentApi(req,env,now=Date.now(),dispatch=dispatchGith
     // Safe fields only. No SSH passwords, private keys, lease tokens or ciphertext.
     return reply({job:{id:job.id,kind:job.kind,state:job.state,
       safe_code:job.safe_code,fingerprint:job.fingerprint,
-      expires_ms:job.expires_ms,
+      expires_ms:job.expires_ms,diagnostic:spec.diagnostic===true,
       spec:{nodeId:spec.nodeId,provider:spec.provider,region:spec.region,
         ip:spec.ip,port:spec.port,username:spec.username,
         userLimit:spec.userLimit,capacityGb:spec.capacityGb}}});
@@ -172,6 +172,39 @@ export async function enrollmentApi(req,env,now=Date.now(),dispatch=dispatchGith
       .bind(id,actor,JSON.stringify(spec),now,now+600000).run();
     if(env.V2_EXECUTOR_BACKEND==='github-actions'&&!(await dispatch(env,id))){
       await env.DB.prepare("UPDATE v2_runner_jobs SET state='failed',safe_code='EXECUTOR_DISPATCH_FAILED' WHERE id=? AND state='queued'").bind(id).run();
+      return reply({error:'EXECUTOR_DISPATCH_FAILED'},503);
+    }
+    return reply({id});
+  }
+  if(path==='/api/enrollment/diagnose'){
+    // Read-only diagnosis is permitted only for this owner's own failed
+    // installation. It never creates/updates a node or retries provisioning.
+    if(!validEnvelope(b.envelope)||b.trust!==true||
+      !/^SHA256:[A-Za-z0-9+/]{43}$/.test(b.fingerprint??'')||
+      !JOB_ID.test(b.failedInstallId??''))
+      return reply({error:'ENCRYPTED_CREDENTIALS_REQUIRED'},400);
+    const failed=await env.DB.prepare(
+      "SELECT id,spec_json,fingerprint,created_ms FROM v2_runner_jobs WHERE id=? AND owner_id=? AND kind='v2-install' AND state='failed'"
+    ).bind(b.failedInstallId,actor).first();
+    if(!failed||failed.created_ms<now-86400000||failed.fingerprint!==b.fingerprint)
+      return reply({error:'FAILED_INSTALL_REQUIRED'},409);
+    const spec=JSON.parse(failed.spec_json);
+    if(spec.diagnostic===true||spec.mode!=='fresh'||!validateConnection(spec))
+      return reply({error:'FAILED_INSTALL_REQUIRED'},409);
+    if(!(await executorReady(env,now)))
+      return reply({error:'EXECUTOR_NOT_CONFIGURED'},503);
+    const active=await env.DB.prepare(
+      "SELECT id FROM v2_runner_jobs WHERE owner_id=? AND state IN ('queued','leased') LIMIT 1"
+    ).bind(actor).first();
+    if(active)return reply({error:'JOB_ALREADY_PENDING',id:active.id},409);
+    const id=crypto.randomUUID(),diagSpec={...spec,diagnostic:true};
+    await env.DB.prepare(
+      "INSERT INTO v2_runner_jobs(id,owner_id,kind,spec_json,fingerprint,encrypted_credentials,state,created_ms,expires_ms) VALUES(?,?,'v2-install',?, ?,?,'queued',?,?)"
+    ).bind(id,actor,JSON.stringify(diagSpec),failed.fingerprint,JSON.stringify(b.envelope),now,now+900000).run();
+    if(env.V2_EXECUTOR_BACKEND==='github-actions'&&!(await dispatch(env,id))){
+      await env.DB.prepare(
+        "UPDATE v2_runner_jobs SET state='failed',safe_code='EXECUTOR_DISPATCH_FAILED',encrypted_credentials=NULL WHERE id=? AND state='queued'"
+      ).bind(id).run();
       return reply({error:'EXECUTOR_DISPATCH_FAILED'},503);
     }
     return reply({id});
@@ -249,6 +282,7 @@ export async function runnerApi(req,env,now=Date.now()){
     let job=null;
     if(row){const s=JSON.parse(row.spec_json);job={id:row.id,leaseId:lease,kind:row.kind,
       nodeId:s.nodeId,targetIp:s.ip,port:s.port,username:s.username,mode:s.mode,
+      diagnostic:s.diagnostic===true,
       hostFingerprint:row.fingerprint,encryptedCredentials:row.encrypted_credentials,
       credentialsExpireAt:Math.floor(row.expires_ms/1000)};}
     const payload=JSON.stringify(job);return reply({payload,signature:hex(await hmac(env.RUNNER_SERVICE_SECRET,payload))});
@@ -271,13 +305,20 @@ export async function runnerApi(req,env,now=Date.now()){
   if(b.state==='ready'&&row.kind==='probe'&&!/^SHA256:[A-Za-z0-9+/]{43}$/.test(fingerprint??''))return reply({error:'BAD_FINGERPRINT'},400);
   const safeProbeCodes=new Set(['SSH_TIMEOUT','SSH_REFUSED','SSH_UNREACHABLE','SSH_HANDSHAKE_FAILED','PROBE_EXPIRED','SSH_PROBE_FAILED']);
   const safeInstallCodes=new Set(['SSH_TIMEOUT','SSH_REFUSED','SSH_UNREACHABLE','SSH_AUTH_FAILED','HOST_KEY_CHANGED','INVALID_SSH_KEY','CREDENTIALS_EXPIRED','CREDENTIAL_DECRYPT_FAILED','SSH_LOGIN_FAILED','REMOTE_INSTALL_FAILED','INSTALL_REPORT_FAILED']);
-  const code=b.state==='ready'?'OK':(
+  const safeDiagnosticCodes=new Set(['DIAG_EXISTING_VPN','DIAG_PORT_443_BUSY','DIAG_PORT_8443_BUSY','DIAG_UNSUPPORTED_OS','DIAG_NO_ROOT','DIAG_SYSTEMD_MISSING','DIAG_GITHUB_UNREACHABLE','DIAG_PRECHECK_OK','DIAG_REMOTE_FAILED']);
+  const diag=row.kind==='v2-install'&&JSON.parse(row.spec_json).diagnostic===true;
+  if(diag&&b.state==='ready'&&!safeDiagnosticCodes.has(b.safeCode))
+    return reply({error:'BAD_DIAG_REPORT'},400);
+  const code=diag?(
+      safeDiagnosticCodes.has(b.safeCode)?b.safeCode:
+      safeInstallCodes.has(b.safeCode)?b.safeCode:'DIAG_REMOTE_FAILED'
+    ):(b.state==='ready'?'OK':(
     row.kind==='probe'&&safeProbeCodes.has(b.safeCode) ||
     row.kind==='v2-install'&&safeInstallCodes.has(b.safeCode)
-      ?b.safeCode:'INSTALLATION_FAILED');
+      ?b.safeCode:'INSTALLATION_FAILED'));
   const completion=env.DB.prepare("UPDATE v2_runner_jobs SET state=?,safe_code=?,fingerprint=COALESCE(?,fingerprint),encrypted_credentials=NULL,lease_until_ms=0 WHERE id=? AND lease_id=? AND state='leased'")
     .bind(b.state,code,row.kind==='probe'?fingerprint??null:null,row.id,b.leaseId);
-  if(row.kind==='v2-install'){
+  if(row.kind==='v2-install'&&!diag){
     const spec=JSON.parse(row.spec_json);
     const result=await reportInstall(new Request('https://internal/report',{method:'POST',headers:{'x-madar-deploy-auth':env.RUNNER_SERVICE_SECRET},body:JSON.stringify({
       ...b.details,job_id:row.id,node_id:spec.nodeId,ip:spec.ip,status:b.state==='ready'?'installed':'failed',error_code:'INSTALLATION_FAILED'
