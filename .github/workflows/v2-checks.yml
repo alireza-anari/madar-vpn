@@ -1,0 +1,202 @@
+name: Madar V2 isolated checks
+
+on:
+  push:
+    branches: ['rewrite/**']
+    paths: ['v2/**', '.github/workflows/v2-checks.yml']
+  pull_request:
+    paths: ['v2/**', '.github/workflows/v2-checks.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: madar-v2-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  v2-control-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax & behavior tests without production secrets
+        working-directory: v2/control
+        run: |
+          npm run check
+          npm test
+      - name: Test dedicated WSS-only Cloudflare relay failure isolation
+        run: node --test v2/edge-wss-probe/test/*.test.mjs
+      - name: Check new D1 schema invariants and quota constraints
+        run: python3 v2/control/test/schema.test.py
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify V2 reuses the runner transport without V1 installation jobs
+        run: |
+          python3 -m pip install paramiko==5.0.0 cryptography==50.0.2
+          python3 -B -m unittest discover -s v2/runner
+      - name: Check read-only network diagnostic probe
+        run: python3 -m unittest discover -s v2/diagnostics -p 'test_*.py'
+      - name: Verify node-agent manifest signing and replay protection
+        working-directory: v2/node-agent
+        run: python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Ban accidental native binaries or private keys from V2 source
+        run: |
+          set -euo pipefail
+          if git ls-files 'v2/**/*.aar' 'v2/**/*.jks' 'v2/**/*.keystore' 'v2/**/.env' | grep -q .; then
+            echo 'Secret, signing key or unapproved AAR detected'; exit 1
+          fi
+          if grep -RIlE --include='*.pem' --include='*.key' 'BEGIN (RSA|OPENSSH|EC) PRIVATE KEY' v2/; then
+            echo 'Committed private key detected'; exit 1
+          fi
+      - name: Verify no production DB bound to V2
+        run: |
+          ! grep -q 'f59e160f-89ab-4a90-a4dc-f257883d5a61' v2/control/wrangler.jsonc
+          ! grep -q '"name": "madar-sales-bot"' v2/control/wrangler.jsonc
+
+  v2-node-config-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify REALITY and WSS against pinned official Xray and Caddy binaries
+        working-directory: v2/node-agent
+        run: python3 -m tests.integration_pinned
+      - name: Exercise isolated REALITY systemd on disposable CI Ubuntu
+        working-directory: v2/node-agent
+        run: |
+          python3 -m pip install paramiko==5.0.0 cryptography==50.0.2
+          bash tests/ci_bootstrap_smoke.sh
+
+  libxray-android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: XTLS/libXray
+          ref: 5a0f7d8d1c28b34afb5727b04b26a10f6dbac7e3
+          path: libxray
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.3'
+          check-latest: true
+      - uses: android-actions/setup-android@v4
+      - name: Install pinned Android NDK
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r30
+          add-to-path: true
+      - name: Build pinned libXray AAR with Madar Android TUN FD binding
+        working-directory: libxray
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+          LIBXRAY_ANDROID_API: '26'
+          LIBXRAY_GOMOBILE_VERSION: 'v0.0.0-20261011034528-197770444867'
+        run: |
+          set -euo pipefail
+          cp ../v2/android/native-overlay/madar_tun_fd_android.go ./madar_tun_fd_android.go
+          test -s madar_tun_fd_android.go
+          python3 build/main.py android
+          test -s libXray.aar
+          test -s libXray-sources.jar
+          mkdir -p dist
+          cp libXray.aar dist/
+          cp libXray-sources.jar dist/
+          (cd dist && sha256sum libXray.aar > libXray.aar.sha256)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: madar-v2-libxray-android
+          path: libxray/dist/
+          retention-days: 7
+          if-no-files-found: error
+
+  v2-android:
+    needs: libxray-android
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Download pinned libXray AAR
+        uses: actions/download-artifact@v4
+        with:
+          name: madar-v2-libxray-android
+          path: v2/android/app/libs
+      - name: Verify libXray artifact
+        working-directory: v2/android/app/libs
+        run: sha256sum --check libXray.aar.sha256
+      - name: Install Android SDK 35
+        run: |
+          SDKMANAGER="$(find "${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools" -type f -name sdkmanager | head -n 1)"
+          test -n "$SDKMANAGER"
+          "$SDKMANAGER" 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Build isolated Android shell and run state machine unit tests
+        working-directory: v2/android
+        run: gradle :app:testDebugUnitTest :app:assembleDebug --no-daemon --stacktrace
+      - name: Enable KVM for stable x86_64 Android emulator
+        run: |
+          set -euo pipefail
+          test -c /dev/kvm
+          sudo chmod 666 /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm
+          ls -l /dev/kvm
+      - name: Run libXray JNI smoke test on Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          script: bash v2/android/scripts/run-emulator-smoke.sh
+      - name: Upload emulator crash diagnostics and instrumentation reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: madar-v2-android-emulator-diagnostics
+          path: |
+            v2/android/emulator-diagnostics/
+            v2/android/app/build/reports/androidTests/
+            v2/android/app/build/outputs/androidTest-results/
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Retain Madar V2 staging debug APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: madar-v2-ux-preview-debug-apk
+          path: v2/android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 7
+          if-no-files-found: error

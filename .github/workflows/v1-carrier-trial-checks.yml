@@ -1,0 +1,42 @@
+name: Madar V1 bot carrier-trial regression checks (no deploy)
+on:
+  push:
+    branches: ["rewrite/madar-v2-20261110"]
+    paths:
+      - "apps/sales-bot/**"
+      - ".github/workflows/v1-carrier-trial-checks.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: madar-carrier-trial-validation
+  cancel-in-progress: true
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.9.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Validate existing bot endpoints and profile gates without touching production
+        run: |
+          pnpm --filter @madar/sales-bot types
+          pnpm --filter @madar/sales-bot typecheck
+          pnpm --filter @madar/sales-bot test
+          pnpm --filter @madar/sales-bot build
+      - name: Retain auditable staging build artifact only
+        uses: actions/upload-artifact@v4
+        with:
+          name: madar-operator-trial-bundle-no-deploy
+          path: apps/sales-bot/dist/
+          retention-days: 3
+          if-no-files-found: error

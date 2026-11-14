@@ -1,0 +1,26 @@
+{
+  "$schema": "../../apps/sales-bot/node_modules/wrangler/config-schema.json",
+  "name": "madar-v2-staging",
+  "main": "src/index.mjs",
+  "compatibility_date": "2026-11-10",
+  "triggers": { "crons": ["* * * * *"] },
+  "observability": { "enabled": true },
+  "vars": {
+    "SHOP_ENABLED": "false",
+    "PROVISIONING_ENABLED": "false",
+    "SUBSCRIPTION_API_ENABLED": "false",
+    "SUBSCRIPTION_LINKS_ENABLED": "false",
+    "V2_BOT_AUTO_ACTIVATE": "true",
+    "ADMIN_TELEGRAM_IDS": ""
+  },
+  "keep_vars": true,
+  "secrets": { "required": ["BOT_TOKEN", "TELEGRAM_WEBHOOK_SECRET"] },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "madar-v2-staging-db",
+      "database_id": "81e78af9-9740-45da-9e80-9b2d498f4f54",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

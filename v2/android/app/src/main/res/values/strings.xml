@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Madar Preview</string>
+    <string name="app_name_short">Madar</string>
+    <string name="preview_label">VERSION 2 · PRIVATE PREVIEW</string>
+    <string name="nav_home">Home</string>
+    <string name="nav_servers">Servers</string>
+    <string name="nav_account">Account</string>
+    <string name="nav_help">Help</string>
+    <string name="home_headline">A more reliable connection, by design</string>
+    <string name="home_desc">Madar selects verified routes based on real network health. This preview connects only to an explicitly provisioned staging subscription.</string>
+    <string name="preview_status_title">Connection unavailable</string>
+    <string name="preview_status_body">The VPN engine and real-world carrier tests are not complete. No background VPN session is active.</string>
+    <string name="connect_disabled">Connect (coming after field tests)</string>
+    <string name="not_connected_disclaimer">Traffic is routed only while the verified VPN session is active.</string>
+    <string name="action_help">How Madar will work</string>
+    <string name="servers_title">Connection routes</string>
+    <string name="servers_desc">A route will only appear as available after its own authentication and tunneled traffic checks have passed.</string>
+    <string name="servers_check_title">Server inventory in preparation</string>
+    <string name="servers_check_details">We separately verify DNS, IP reachability, TLS, WebSocket, proxy handshake and traffic. We do not treat a successful ping as proof of VPN access.</string>
+    <string name="servers_disclaimer">Carrier performance depends on your network and region. Universal connectivity cannot be guaranteed.</string>
+    <string name="account_title">My account</string>
+    <string name="account_preview_title">Subscriptions not yet migrated</string>
+    <string name="account_preview_details">Purchases, usage, renewal and support will become available after secure account migration and payment acceptance tests.</string>
+    <string name="account_disclaimer">Your existing subscription remains managed by the current bot.</string>
+    <string name="help_title">Help and security</string>
+    <string name="help_connect_question">Why is Connect disabled?</string>
+    <string name="help_connect_answer">A VPN is never reported as connected without a verified tunnel and successful traffic test.</string>
+    <string name="help_error_question">What if a route fails?</string>
+    <string name="help_error_answer">Madar will classify the failed layer and try an eligible alternative. Connection errors must not silently consume your plan.</string>
+    <string name="help_privacy_question">What data will be collected?</string>
+    <string name="help_privacy_answer">Only minimal account, subscription and anonymized diagnostic data required to provide and secure the service. Never share passwords or private keys in support chats.</string>
+
+    <string name="token_label">Your subscription link</string>
+    <string name="token_placeholder">Paste the one subscription HTTPS link</string>
+    <string name="save_token">Save securely</string>
+    <string name="verify_subscription">Check subscription</string>
+    <string name="remove_token">Remove saved token</string>
+    <string name="token_saved">Access token saved securely on this device.</string>
+    <string name="token_removed">Access token removed.</string>
+    <string name="token_invalid">Invalid subscription link.</string>
+    <string name="account_verified">Subscription verified. You can start the VPN connection.</string>
+    <string name="subscription_not_ready">This subscription is not yet active or has expired.</string>
+    <string name="server_not_ready">The subscription server is not ready. Please try again later.</string>
+    <string name="subscription_check_failed">Could not verify the subscription. Check your connection.</string>
+    <string name="usage_summary">Usage: %1$.2f / %2$.2f GB</string>
+    <string name="routes_summary">Verified routes: %1$d</string>
+
+
+    <string name="connect_button">Connect securely</string>
+    <string name="disconnect_button">Disconnect</string>
+    <string name="cancel_connection">Cancel connection</string>
+    <string name="add_token_first">Add your subscription link first</string>
+    <string name="select_carrier_first">Choose MCI or Irancell first</string>
+    <string name="select_carrier_title">Choose your mobile network</string>
+    <string name="carrier_mci">MCI</string>
+    <string name="carrier_irancell">Irancell</string>
+    <string name="carrier_hint">Both routes belong to one subscription and share its quota. Select the one that works best in your area; availability is not guaranteed.</string>
+    <string name="connection_status">Connection status</string>
+    <string name="vpn_disconnected">Disconnected</string>
+    <string name="vpn_connecting">Connecting to a verified route…</string>
+    <string name="vpn_testing">Verifying tunneled internet traffic…</string>
+    <string name="vpn_connected">Connected · traffic probe passed</string>
+    <string name="vpn_failed">Not connected · connection test failed</string>
+    <string name="connection_safety_note">Madar only reports Connected after the VPN core is running and HTTPS traffic has passed through the selected proxy.</string>
+
+</resources>

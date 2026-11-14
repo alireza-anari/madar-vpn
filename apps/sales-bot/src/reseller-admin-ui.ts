@@ -13,6 +13,7 @@ import { readConfirmedSecondaryPorts } from "./managed-secondary";
 import { requestAdminManagedWsTrial, canPrepareManagedWsTrial } from "./managed-ws-trial";
 import { issueQuickProtocolTest, quickNodeStatus } from "./admin-quick-config";
 import { buildAccountDeliveryArtifact } from "./account-delivery";
+import { managedCarrierSubscriptionUrl } from "./managed-subscription-tokens";
 import {
   sellerLimits,
   sellerNodeStats,
@@ -494,7 +495,18 @@ export async function handleResellerAdminUi(
         return true;
       }
       const rows: Record<string,unknown>[][]=[];
-      if (artifact.config.length <= 256)
+      const hasTwoReality = account.request_key.startsWith("admin-reality-trial:") &&
+        artifact.profiles.filter(p => p.config.startsWith("vless://") &&
+          (p.port === 443 || p.port === 8443)).length === 2;
+      let singleLink = "";
+      if (hasTwoReality) {
+        try { singleLink = managedCarrierSubscriptionUrl(env,accountId); }
+        catch { /* Preserve the existing direct test profile. */ }
+      }
+      if (singleLink && singleLink.length <= 256) {
+        rows.push([{text:"🔗 کپی لینک دو اپراتوری",copy_text:{text:singleLink}}]);
+        rows.push([{text:"🔄 باز کردن لینک اشتراک",url:singleLink}]);
+      } else if (artifact.config.length <= 256)
         rows.push([{text:"📋 کپی کانفیگ",copy_text:{text:artifact.config}}]);
       rows.push([btn("🌐 تست سرور دیگر", "rs:quick:start")]);
       rows.push(home());
@@ -502,7 +514,10 @@ export async function handleResellerAdminUi(
         "📥 کانفیگ آزمایشی " +
         (artifact.config.startsWith("vmess://") ? "VMess/WSS" : "VLESS/REALITY") +
         " · " + artifact.serverName +
-        "\n\n" + artifact.config +
+        (singleLink
+          ? "\n\n🔗 یک لینک اشتراک با دو کانفیگ پیشنهادی:\nمدار | همراه اول · REALITY 443\nمدار | ایرانسل · REALITY 8443\n\n" + singleLink +
+            "\n\n✅ لینک را در بخش اشتراک‌های v2rayNG اضافه و به‌روزرسانی کن."
+          : "\n\n" + artifact.config) +
         "\n\n🔒 مخصوص تست، با حجم ۱ گیگ و اعتبار ۳۰ دقیقه.",
         rows,
       );
