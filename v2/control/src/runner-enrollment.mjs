@@ -102,6 +102,20 @@ export async function enrollmentApi(req,env,now=Date.now(),dispatch=dispatchGith
       return reply({error:env.V2_EXECUTOR_BACKEND==='github-actions'?'EXECUTOR_NOT_CONFIGURED':'RUNNER_OFFLINE'},503);
     return reply({publicKey});
   }
+  if(path==='/api/enrollment/recent'&&req.method==='GET'){
+    const job=await env.DB.prepare(
+      'SELECT id,kind,state,safe_code,fingerprint,spec_json,expires_ms FROM v2_runner_jobs WHERE owner_id=? ORDER BY created_ms DESC LIMIT 1'
+    ).bind(actor).first();
+    if(!job)return reply({job:null});
+    const spec=JSON.parse(job.spec_json);
+    // Safe fields only. No SSH passwords, private keys, lease tokens or ciphertext.
+    return reply({job:{id:job.id,kind:job.kind,state:job.state,
+      safe_code:job.safe_code,fingerprint:job.fingerprint,
+      expires_ms:job.expires_ms,
+      spec:{nodeId:spec.nodeId,provider:spec.provider,region:spec.region,
+        ip:spec.ip,port:spec.port,username:spec.username,
+        userLimit:spec.userLimit,capacityGb:spec.capacityGb}}});
+  }
   if(path.startsWith('/api/enrollment/jobs/')&&req.method==='GET'){
     const id=path.slice('/api/enrollment/jobs/'.length);
     const job=await env.DB.prepare('SELECT id,kind,state,safe_code,fingerprint FROM v2_runner_jobs WHERE id=? AND owner_id=?')
@@ -168,6 +182,17 @@ export async function runnerApi(req,env,now=Date.now()){
   let b;try{b=await body(req);}catch{return reply({error:'BAD_BODY'},400);}
   const action=new URL(req.url).pathname.slice('/api/runner/'.length);
   await cleanupRunnerJobs(env.DB,now);
+  if(action==='abort-queued'){
+    // A V2 GitHub Actions failure handler can close only its exact queued job.
+    // Never cancel leased jobs: installation effects may already have occurred.
+    if(env.V2_EXECUTOR_BACKEND!=='github-actions' ||
+       b.runnerId!==GITHUB_RUNNER_ID || !JOB_ID.test(b.jobId??''))
+      return reply({error:'INVALID_EXECUTOR_JOB'},403);
+    await env.DB.prepare(
+      "UPDATE v2_runner_jobs SET state='failed',safe_code='EXECUTOR_FAILED',encrypted_credentials=NULL WHERE id=? AND state='queued'"
+    ).bind(b.jobId).run();
+    return reply({ok:true});
+  }
   if(action==='lease'){
     if(!/^[A-Za-z0-9_-]{3,64}$/.test(b.runnerId??''))return reply({error:'BAD_RUNNER'},400);
     const github=env.V2_EXECUTOR_BACKEND==='github-actions';

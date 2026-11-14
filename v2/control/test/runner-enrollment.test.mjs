@@ -182,3 +182,34 @@ test('failed GitHub Actions dispatch is terminal and blocks installation',async(
   assert.equal(row.safe_code,'EXECUTOR_DISPATCH_FAILED');
   DB.close();
 });
+
+// Reopening the form returns the owner's last job and no sensitive material.
+test('reopened enrollment form recovers own queued job without leaking credentials',async()=>{
+  const DB=database(),now=1000000,secret='s'.repeat(48);
+  const env={DB,BOT_TOKEN:'t',ADMIN_TELEGRAM_IDS:'123,456',RUNNER_ENROLLMENT_ENABLED:'true',
+    V2_EXECUTOR_BACKEND:'github-actions',RUNNER_SERVICE_SECRET:secret,
+    GITHUB_ACTIONS_DISPATCH_TOKEN:'g'.repeat(48),
+    RUNNER_PUBLIC_KEY:JSON.stringify({kid:'madar-v2-github-actions',kty:'RSA',alg:'RSA-OAEP-256',e:'AQAB',n:'A'.repeat(342)})};
+  const owner=await initData('t',123,1000),other=await initData('t',456,1000);
+  const admin=(auth,path,b)=>enrollmentApi(new Request('https://v2/api/enrollment/'+path,{
+    method:b?'POST':'GET',headers:{'x-telegram-init-data':auth,'content-type':'application/json'},
+    ...(b?{body:JSON.stringify(b)}:{})}),env,now,async()=>true);
+  const spec={nodeId:'test-aws01',provider:'aws',region:'eu-north-1',ip:'8.8.8.8',
+    port:22,username:'root',userLimit:5,capacityGb:20};
+  const created=await (await admin(owner,'probe',spec)).json();
+  assert.equal((await (await admin(other,'recent')).json()).job,null);
+  const response=await admin(owner,'recent');
+  assert.equal(response.status,200);
+  const recent=(await response.json()).job;
+  assert.equal(recent.id,created.id);
+  assert.equal(recent.state,'queued');
+  assert.deepEqual(recent.spec,spec);
+  assert.equal(JSON.stringify(recent).includes(secret),false);
+  assert.equal(Object.hasOwn(recent,'encrypted_credentials'),false);
+  const abort=()=>runnerApi(new Request('https://v2/api/runner/abort-queued',{
+    method:'POST',headers:{authorization:'Bearer '+secret,'content-type':'application/json'},
+    body:JSON.stringify({runnerId:'v2-github-actions',jobId:created.id})}),env,now);
+  assert.equal((await abort()).status,200);
+  assert.equal((await (await admin(owner,'recent')).json()).job.safe_code,'EXECUTOR_FAILED');
+  DB.close();
+});

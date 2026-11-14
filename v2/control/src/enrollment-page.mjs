@@ -18,10 +18,41 @@ const status=s=>el('status').textContent=s;
 const errors={RUNNER_OFFLINE:'اجراکننده هنوز به V2 متصل نیست؛ نصب شروع نشده است.',RUNNER_NOT_CONFIGURED:'اتصال اجراکننده هنوز تنظیم نشده است.',EXECUTOR_NOT_CONFIGURED:'اجرای درخواستی هنوز به‌طور امن فعال نشده است.',EXECUTOR_DISPATCH_FAILED:'اجرای نصب در GitHub شروع نشد؛ هیچ تغییری در سرور انجام نشد.',AUTH_EXPIRED:'این صفحه را ببند و از ربات دوباره باز کن.',INVALID_TARGET:'مشخصات سرور معتبر نیست.',NODE_ALREADY_EXISTS:'این شناسه قبلاً ثبت شده است.',PROBE_REQUIRED:'بررسی اتصال را دوباره انجام بده.',JOB_ALREADY_PENDING:'یک کار در حال اجرا داری.'};
 async function api(path,data){const r=await fetch('/api/enrollment/'+path,{method:data?'POST':'GET',headers:{'content-type':'application/json','x-telegram-init-data':auth},...(data?{body:JSON.stringify(data)}:{})});const b=await r.json();if(!r.ok)throw Error(errors[b.error]||'عملیات انجام نشد؛ دوباره تلاش کن.');return b;}
 const b64=b=>btoa(String.fromCharCode(...new Uint8Array(b)));
+function restoreSpec(spec){
+  if(!spec)return;
+  for(const id of ['nodeId','provider','region','ip','username'])
+    if(typeof spec[id]==='string')el(id).value=spec[id];
+  for(const id of ['userLimit','capacityGb','port'])
+    if(Number.isInteger(spec[id]))el(id).value=String(spec[id]);
+}
+async function restoreJob(){
+  const {job}=await api('recent');
+  if(!job)return status('آماده بررسی سرور.');
+  restoreSpec(job.spec);
+  if(job.kind==='probe'&&job.state==='ready'&&job.fingerprint){
+    probeId=job.id;fingerprint=job.fingerprint;
+    el('fingerprint').textContent=fingerprint;
+    el('credentials').hidden=false;
+    el('install').disabled=false;
+    return status('بررسی قبلی بازیابی شد. فقط پس از تطبیق اثر انگشت، نصب را ادامه بده.');
+  }
+  if(job.state==='queued'||job.state==='leased'){
+    busy=true;el('probe').disabled=true;lock(true);
+    status('درخواست قبلی بازیابی شد؛ در حال بررسی نتیجه…');
+    return poll(job.id,job.kind==='probe'?'probe':'install');
+  }
+  if(job.state==='failed')
+    return status('بررسی قبلی ناموفق بود: '+(job.safe_code||'INSTALLATION_FAILED')+'. می‌توانی دوباره بررسی کنی.');
+  status('درخواست قبلی پایان یافته است؛ برای سرور دیگر، اطلاعات را تغییر بده.');
+}
 async function encrypt(value){const rsa=await crypto.subtle.importKey('jwk',publicKey,{name:'RSA-OAEP',hash:'SHA-256'},false,['encrypt']);const aes=await crypto.subtle.generateKey({name:'AES-GCM',length:256},true,['encrypt']);const iv=crypto.getRandomValues(new Uint8Array(12));const data=await crypto.subtle.encrypt({name:'AES-GCM',iv},aes,new TextEncoder().encode(JSON.stringify(value)));const key=await crypto.subtle.encrypt('RSA-OAEP',rsa,await crypto.subtle.exportKey('raw',aes));return {v:1,key:b64(key),iv:b64(iv),data:b64(data)};}
 function lock(value){for(const id of ['nodeId','provider','region','userLimit','capacityGb','ip','port','username'])el(id).disabled=value;}
 async function poll(id,kind){clearTimeout(timer);try{const b=await api('jobs/'+id);if(b.state==='failed'){busy=false;lock(false);el('probe').disabled=false;status('عملیات ناموفق بود: '+(b.safe_code||'INSTALLATION_FAILED'));return;}if(b.state==='ready'){busy=false;if(kind==='probe'){probeId=id;fingerprint=b.fingerprint;el('fingerprint').textContent=fingerprint;el('credentials').hidden=false;el('install').disabled=false;status('اتصال بررسی شد. هویت سرور را تأیید و اطلاعات ورود را وارد کن.');}else{el('credentials').hidden=true;status('نصب ثبت شد. به ربات برگرد و «صدور کانفیگ تست» را بزن. آزمون اینترنت و سهمیه هنوز جداگانه انجام می‌شود.');}return;}status(kind==='probe'?'در حال بررسی اتصال…':'نصب در حال اجراست…');timer=setTimeout(()=>poll(id,kind),3000);}catch(e){busy=false;status(e.message);}}
 el('probe').onclick=async()=>{if(busy||!el('form').reportValidity())return;busy=true;el('probe').disabled=true;el('credentials').hidden=true;el('trust').checked=false;try{const b={};for(const id of ['nodeId','provider','region','ip','username'])b[id]=el(id).value.trim();for(const id of ['userLimit','capacityGb','port'])b[id]=Number(el(id).value);const job=await api('probe',b);lock(true);poll(job.id,'probe');}catch(e){busy=false;el('probe').disabled=false;status(e.message);}};
 el('form').onsubmit=async e=>{e.preventDefault();if(busy||!probeId||!el('trust').checked){status('ابتدا اثر انگشت سرور را تأیید کن.');return;}busy=true;el('install').disabled=true;let credentials;try{credentials=el('method').value==='password'?{method:'password',password:el('password').value}:{method:'key',key:await el('keyfile').files[0]?.text(),passphrase:el('password').value};if(credentials.method==='password'?!credentials.password:!credentials.key)throw Error('اطلاعات ورود را وارد کن.');const envelope=await encrypt(credentials);credentials=null;el('password').value='';el('keyfile').value='';const job=await api('install',{probeId,fingerprint,trust:true,envelope});poll(job.id,'install');}catch(e){busy=false;el('install').disabled=false;status(e.message);}finally{credentials=null;el('password').value='';el('keyfile').value='';}};
-if(!auth)status('این صفحه را از دکمه افزودن سرور در ربات V2 باز کن.');else api('session').then(s=>{publicKey=s.publicKey;el('probe').disabled=false;status('آماده بررسی سرور.');}).catch(e=>status(e.message));
+if(!auth)status('این صفحه را از دکمه افزودن سرور در ربات V2 باز کن.');
+else api('session').then(async s=>{
+  publicKey=s.publicKey;el('probe').disabled=false;
+  try{await restoreJob();}catch(e){status(e.message);}
+}).catch(e=>status(e.message));
 </script></html>`;
