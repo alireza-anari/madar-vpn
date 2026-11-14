@@ -176,6 +176,7 @@ test('failed GitHub Actions dispatch is terminal and blocks Aria on-demand cutov
   const rejected=await enrollmentApi(req(spec),env,now,async()=>false);
   assert.equal(rejected.status,503);
   const row=await DB.prepare('SELECT state,safe_code FROM v2_runner_jobs LIMIT 1').first();
-  assert.deepEqual(row,{state:'failed',safe_code:'EXECUTOR_DISPATCH_FAILED'});
+  assert.equal(row.state,'failed');
+  assert.equal(row.safe_code,'EXECUTOR_DISPATCH_FAILED');
   DB.close();
 });
