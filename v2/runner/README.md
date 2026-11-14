@@ -27,12 +27,12 @@ an RSA-OAEP/AES-GCM sealed V2 config in `v2_runner_pairing` with id
 - `baseUrl`: `https://madar-v2-staging.alirezaanari117.workers.dev`
 - `runnerId`: `existing-host-v2`
 - `serviceSecret`: V2's independent runner secret
-- `privateKeyPath`: `/etc/madar-sales-runner/runner-private.pem`
+- `privateKeyPath`: `/etc/madar-v2-runner/runner-private.pem` (local mode-0400 copy owned by `madar-sales-runner`)
 
 Run `v2/runner/attach_existing.py` as root with the existing runner's Python.
-It only creates `/etc/madar-v2-runner/runner.json` and the separate
-`madar-v2-runner.service`. It refuses foreign/preexisting config. It never
-changes V1 config, service or key. An authenticated V2 lease deletes the
+It creates `/etc/madar-v2-runner/runner.json`, a mode-0400 local copy of the
+existing RSA private key owned by `madar-sales-runner`, and the separate
+`madar-v2-runner.service`. V1's original key, config and service remain unchanged. An authenticated V2 lease deletes the
 sealed pairing envelope. Verify both services active and a fresh
 `v2_runner_presence.last_seen_ms` in staging D1 before calling attachment
 successful. Rollback is stopping/disabling only `madar-v2-runner.service`.

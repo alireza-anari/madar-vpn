@@ -17,6 +17,7 @@ from consumer import ORIGIN,REPO,validate_config
 
 KEY=pathlib.Path('/etc/madar-sales-runner/runner-private.pem')
 CONFIG=pathlib.Path('/etc/madar-v2-runner')
+V2_KEY=CONFIG/'runner-private.pem'
 UNIT=pathlib.Path('/etc/systemd/system/madar-v2-runner.service')
 
 def render_service(repo=REPO):
@@ -46,7 +47,7 @@ def decrypt(envelope,key):
     aes=key.decrypt(decode('key'),padding.OAEP(mgf=padding.MGF1(hashes.SHA256()),algorithm=hashes.SHA256(),label=None))
     config=json.loads(AESGCM(aes).decrypt(decode('iv'),decode('data'),None))
     validate_config(config)
-    if config.get('privateKeyPath')!=str(KEY):raise ValueError('WRONG_LOCAL_KEY')
+    if config.get('privateKeyPath')!=str(V2_KEY):raise ValueError('WRONG_LOCAL_KEY')
     return config
 
 def main():
@@ -63,7 +64,13 @@ def main():
     CONFIG.mkdir(mode=0o700,exist_ok=True)
     path=CONFIG/'runner.json'
     if CONFIG.is_symlink() or CONFIG.stat().st_mode&0o077:raise ValueError('CONFIG_PERMISSIONS')
-    if path.exists():raise ValueError('V2_ALREADY_CONFIGURED')
+    if path.exists() or V2_KEY.exists():raise ValueError('V2_ALREADY_CONFIGURED')
+    # A read-only copy gives only the dedicated V2 service account access;
+    # the original V1 private key and its permissions remain unchanged.
+    key_fd=os.open(V2_KEY,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o400)
+    with os.fdopen(key_fd,'wb') as f:f.write(KEY.read_bytes())
+    os.chown(V2_KEY,user.pw_uid,user.pw_gid)
+    config['privateKeyPath']=str(V2_KEY)
     fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
     with os.fdopen(fd,'w') as f:json.dump(config,f)
     for p in [CONFIG,path]:os.chown(p,user.pw_uid,user.pw_gid)
@@ -72,7 +79,8 @@ def main():
     subprocess.run(['systemctl','enable','--now','madar-v2-runner.service'],check=True)
     for name in ['madar-sales-runner.service','madar-v2-runner.service']:
         subprocess.run(['systemctl','is-active','--quiet',name],check=True)
-    print('V2_RUNNER_ATTACHED; V1 service and private key unchanged')
+    subprocess.run(['systemctl','is-active','--quiet','madar-v2-runner.service'],check=True)
+    print('V2_RUNNER_ATTACHED; V1 service and original key unchanged')
 
 if __name__=='__main__':
     try:main()

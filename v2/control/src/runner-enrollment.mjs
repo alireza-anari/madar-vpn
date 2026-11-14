@@ -91,7 +91,7 @@ export async function makeResidentPairing(publicJwk,serviceSecret) {
   const iv=crypto.getRandomValues(new Uint8Array(12));
   const config={baseUrl:'https://madar-v2-staging.alirezaanari117.workers.dev',
     runnerId:'existing-host-v2',serviceSecret,
-    privateKeyPath:'/etc/madar-sales-runner/runner-private.pem'};
+    privateKeyPath:'/etc/madar-v2-runner/runner-private.pem'};
   const data=await crypto.subtle.encrypt({name:'AES-GCM',iv},aes,enc.encode(JSON.stringify(config)));
   const encryptedKey=await crypto.subtle.encrypt({name:'RSA-OAEP'},rsa,key);
   return {v:1,key:toBase64(encryptedKey),iv:toBase64(iv),data:toBase64(data)};

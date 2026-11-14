@@ -271,7 +271,7 @@ test('resident pairing requires signed owner and creates an RSA-OAEP sealed V2 c
   const config=JSON.parse(Buffer.concat([decipher.update(cipher.subarray(0,-16)),decipher.final()]).toString());
   assert.equal(config.serviceSecret,secret);
   assert.equal(config.runnerId,'existing-host-v2');
-  assert.equal(config.privateKeyPath,'/etc/madar-sales-runner/runner-private.pem');
+  assert.equal(config.privateKeyPath,'/etc/madar-v2-runner/runner-private.pem');
   assert.equal((await enrollmentApi(request(owner),{...env,V2_EXECUTOR_BACKEND:'github-actions'},now)).status,503);
   DB.close();
 });
