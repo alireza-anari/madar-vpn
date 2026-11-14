@@ -2,6 +2,9 @@ import importlib.util
 import pathlib
 import sys
 import unittest
+import hashlib
+import hmac
+import json
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parent))
@@ -19,6 +22,32 @@ class Api:
     def post(self,path,payload):self.reports.append((path,payload));return {'ok':True}
 
 class RunnerTests(unittest.TestCase):
+    def test_probe_job_does_not_require_private_key(self):
+        secret='s'*48
+        job={'id':'12345678-1234-4123-8123-123456789012','mode':'fresh','kind':'probe'}
+        payload=json.dumps(job,separators=(',',':'))
+        signature=hmac.new(secret.encode(),payload.encode(),hashlib.sha256).hexdigest()
+        env={'MADAR_V2_URL':one_shot.ORIGIN,'MADAR_V2_RUNNER_SERVICE_SECRET':secret}
+        with patch.object(one_shot,'Api') as api_class, patch.object(one_shot,'run_job',return_value='ready') as run:
+            api=api_class.return_value
+            api.post.return_value={'payload':payload,'signature':signature}
+            self.assertEqual(one_shot.execute(job['id'],env),'ready')
+            run.assert_called_once_with(job,api,None,network_mode='none')
+
+    def test_install_job_requires_private_key_only_after_signed_lease(self):
+        secret='s'*48
+        job={'id':'12345678-1234-4123-8123-123456789012','mode':'fresh','kind':'v2-install'}
+        payload=json.dumps(job,separators=(',',':'))
+        signature=hmac.new(secret.encode(),payload.encode(),hashlib.sha256).hexdigest()
+        env={'MADAR_V2_URL':one_shot.ORIGIN,'MADAR_V2_RUNNER_SERVICE_SECRET':secret}
+        with patch.object(one_shot,'Api') as api_class, patch.object(one_shot,'run_job') as run:
+            api=api_class.return_value
+            api.post.return_value={'payload':payload,'signature':signature}
+            with self.assertRaisesRegex(ValueError,'PRIVATE_KEY_MISSING'):
+                one_shot.execute(job['id'],env)
+            api.post.assert_called_once()
+            run.assert_not_called()
+
     def test_private_key_loader_accepts_pkcs8_and_pkcs1_pem(self):
         key=rsa.generate_private_key(public_exponent=65537,key_size=2048)
         pkcs8=key.private_bytes(serialization.Encoding.PEM,

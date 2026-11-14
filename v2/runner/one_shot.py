@@ -35,7 +35,6 @@ def execute(job_id,env=os.environ):
     secret=env.get('MADAR_V2_RUNNER_SERVICE_SECRET','')
     if len(secret)<32:
         raise ValueError('RUNNER_SERVICE_SECRET_MISSING')
-    private=load_private_key(env.get('MADAR_V2_RUNNER_PRIVATE_KEY_PEM',''))
     api=Api(ORIGIN,secret)
     try:
         signed=api.post('lease',{'runnerId':RUNNER_ID,'jobId':job_id})
@@ -51,6 +50,14 @@ def execute(job_id,env=os.environ):
     job=json.loads(payload)
     if job is None:raise ValueError('JOB_NOT_AVAILABLE')
     if not isinstance(job,dict) or job.get('id')!=job_id or job.get('mode')!='fresh':
+        raise ValueError('INVALID_JOB_PAYLOAD')
+    # Read-only TCP probes never decrypt credentials; only installation jobs
+    # need the RSA private key. Load it after the signed job kind is known.
+    if job.get('kind')=='probe':
+        private=None
+    elif job.get('kind')=='v2-install':
+        private=load_private_key(env.get('MADAR_V2_RUNNER_PRIVATE_KEY_PEM',''))
+    else:
         raise ValueError('INVALID_JOB_PAYLOAD')
     # GitHub-hosted runners have no EC2 instance role: never attempt to
     # mutate a security group or rely on AWS metadata.

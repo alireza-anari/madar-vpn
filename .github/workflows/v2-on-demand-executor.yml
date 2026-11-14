@@ -35,7 +35,6 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$MADAR_V2_RUNNER_SERVICE_SECRET"
-          test -n "$MADAR_V2_RUNNER_PRIVATE_KEY_PEM"
           [[ "${{ inputs.job_id }}" =~ ^[a-f0-9]{8}-([a-f0-9]{4}-){3}[a-f0-9]{12}$ ]]
           test -f v2/runner/one_shot.py
       - name: Install fixed SSH client dependencies
@@ -53,8 +52,6 @@ jobs:
             exit 1
           fi
           echo "V2_RUNNER_AUTH_OK"
-      - name: Validate and load the V2 RSA private key without printing it
-        run: python3 -B -c "import os,sys; sys.path.insert(0,'v2/runner'); from one_shot import load_private_key; load_private_key(os.environ.get('MADAR_V2_RUNNER_PRIVATE_KEY_PEM','')); print('V2_PRIVATE_KEY_OK')"
       - name: Execute exactly this V2 job, with no V1 keys and no AWS IAM mutation
         run: python3 -B v2/runner/one_shot.py --job-id "${{ inputs.job_id }}"
       - name: Report failed queued V2 job to control plane without SSH credentials
