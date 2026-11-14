@@ -20,6 +20,7 @@ import sys
 import tarfile
 import threading
 import time
+import textwrap
 
 REPO=pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(REPO/'sales-runner'))
@@ -49,15 +50,28 @@ sys.path.insert(0,str(dest))
 from agent.bootstrap import plan_node,install_test_node
 from agent.fresh_dual import enable
 if job['mode']!='fresh':raise ValueError('FRESH_NODES_ONLY')
+stage='REMOTE_BOOTSTRAP_FAILED'
 install_test_node(plan_node(node_id=job['nodeId'],public_ip=job['targetIp'],reality_port=8443,wss_domain=None,ws_path='/madar-ws',reality_target='www.cloudflare.com'))
+stage='REMOTE_DUAL_FAILED'
 enable(job['nodeId'],job['targetIp'])
 from agent.dual_reality import listening
 if not (listening(443) and listening(8443)):raise ValueError('LISTENERS_FAILED')
+stage='REMOTE_METADATA_FAILED'
 root=pathlib.Path('/etc/madar-v2')
 m=json.loads((root/'public-route-metadata.json').read_text())
 s=json.loads((root/'local-secrets.json').read_text())
 print(json.dumps(dict(public_key=m['reality_public_key'],short_id=m['short_id'],server_name=m['reality_server_name'],uuid=s['clients'][0])))
 '''
+
+# Return only a fixed stage code; raw errors may contain configuration secrets.
+REMOTE="import json\nstage='REMOTE_PACKAGE_FAILED'\ntry:\n"+textwrap.indent(REMOTE,'    ')+"\nexcept Exception:\n    print(json.dumps({'error':stage}))\n"
+REMOTE_FAILURE_CODES=frozenset({'REMOTE_PACKAGE_FAILED','REMOTE_BOOTSTRAP_FAILED',
+    'REMOTE_DUAL_FAILED','REMOTE_METADATA_FAILED'})
+
+
+class RemoteInstallError(ValueError):
+    pass
+
 
 # Fixed, read-only diagnostic. No shell input, file writes or installs.
 REMOTE_DIAG=r'''
@@ -134,6 +148,8 @@ def install(transport,job,check):
     command='sudo -n python3 -c '+shlex.quote('import base64;exec(base64.b64decode('+repr(code)+'))')+' '+shlex.quote(json.dumps(fields))
     check();out=transport.run(command,buffer.getvalue(),timeout=600);check()
     result=json.loads(out)
+    if isinstance(result,dict) and set(result)=={'error'} and result['error'] in REMOTE_FAILURE_CODES:
+        raise RemoteInstallError(result['error'])
     if set(result)!={'public_key','short_id','server_name','uuid'}:raise ValueError('INVALID_METADATA')
     return result
 
@@ -150,6 +166,8 @@ def safe_failure_code(exc,kind,stage='unknown'):
         if isinstance(exc,ValueError) and str(exc)=='EXPIRED':return 'PROBE_EXPIRED'
         return 'SSH_PROBE_FAILED'
     if kind=='v2-install':
+        if isinstance(exc,RemoteInstallError) and str(exc) in REMOTE_FAILURE_CODES:
+            return str(exc)
         if isinstance(exc,paramiko.AuthenticationException) or (
                 isinstance(exc,ValueError) and str(exc)=='SSH_AUTH_FAILED'):
             return 'SSH_AUTH_FAILED'

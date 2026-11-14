@@ -114,6 +114,26 @@ class SafeProbeFailureTests(unittest.TestCase):
 if __name__=='__main__':unittest.main()
 
 class SafeInstallFailureTests(unittest.TestCase):
+    def test_remote_preparation_failure_returns_only_a_safe_stage(self):
+        import contextlib, io, os, types
+        output=io.StringIO()
+        previous=os.umask(0o077)
+        self.addCleanup(os.umask,previous)
+        with patch('sys.argv',['remote',json.dumps({'id':'test'})]), \
+             patch.dict(sys.modules,{'fcntl':types.SimpleNamespace()}), \
+             patch('builtins.open',side_effect=OSError('canary-password')), \
+             contextlib.redirect_stdout(output):
+            exec(consumer.REMOTE,{})
+        self.assertEqual(json.loads(output.getvalue()),{'error':'REMOTE_PACKAGE_FAILED'})
+        self.assertNotIn('canary',output.getvalue())
+
+    def test_remote_stage_failure_survives_without_untrusted_output(self):
+        class Transport:
+            def run(self,*args,**kwargs):return b'{"error":"REMOTE_DUAL_FAILED"}'
+        with self.assertRaises(ValueError) as failure:
+            consumer.install(Transport(),RunnerTests().job(),lambda:None)
+        self.assertEqual(consumer.safe_failure_code(failure.exception,'v2-install','remote'),'REMOTE_DUAL_FAILED')
+
     def test_ssh_password_auth_failure_is_safe(self):
         import paramiko
         self.assertEqual(consumer.safe_failure_code(paramiko.AuthenticationException('secret'),'v2-install','ssh'),'SSH_AUTH_FAILED')

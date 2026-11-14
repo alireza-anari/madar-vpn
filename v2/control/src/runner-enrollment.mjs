@@ -306,6 +306,7 @@ export async function runnerApi(req,env,now=Date.now()){
   const safeProbeCodes=new Set(['SSH_TIMEOUT','SSH_REFUSED','SSH_UNREACHABLE','SSH_HANDSHAKE_FAILED','PROBE_EXPIRED','SSH_PROBE_FAILED']);
   const safeInstallCodes=new Set(['SSH_TIMEOUT','SSH_REFUSED','SSH_UNREACHABLE','SSH_AUTH_FAILED','HOST_KEY_CHANGED','INVALID_SSH_KEY','CREDENTIALS_EXPIRED','CREDENTIAL_DECRYPT_FAILED','SSH_LOGIN_FAILED','REMOTE_INSTALL_FAILED','INSTALL_REPORT_FAILED']);
   const safeDiagnosticCodes=new Set(['DIAG_EXISTING_VPN','DIAG_PORT_443_BUSY','DIAG_PORT_8443_BUSY','DIAG_UNSUPPORTED_OS','DIAG_NO_ROOT','DIAG_SYSTEMD_MISSING','DIAG_GITHUB_UNREACHABLE','DIAG_PRECHECK_OK','DIAG_REMOTE_FAILED']);
+  for(const code of ['REMOTE_PACKAGE_FAILED','REMOTE_BOOTSTRAP_FAILED','REMOTE_DUAL_FAILED','REMOTE_METADATA_FAILED'])safeInstallCodes.add(code);
   const diag=row.kind==='v2-install'&&JSON.parse(row.spec_json).diagnostic===true;
   if(diag&&b.state==='ready'&&!safeDiagnosticCodes.has(b.safeCode))
     return reply({error:'BAD_DIAG_REPORT'},400);

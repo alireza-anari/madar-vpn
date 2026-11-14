@@ -235,8 +235,13 @@ def install_test_node(plan,*,downloader=None):
     created=[]
     started=[]
     try:
-        BIN.mkdir(parents=True,mode=0o755,exist_ok=False)
+        BIN.parent.mkdir(mode=0o755,exist_ok=False)
         created.append(BIN.parent)
+        # SSH executes with umask 0077. These public binary directories must
+        # remain traversable by the unprivileged systemd service user.
+        BIN.parent.chmod(0o755)
+        BIN.mkdir(mode=0o755,exist_ok=False)
+        BIN.chmod(0o755)
         xray_path=releases.place_executable(BIN,"xray",xray)
         if caddy: releases.place_executable(BIN,"caddy",caddy)
         private,public=parse_reality_keypair(command([str(xray_path),"x25519"],timeout=15,output=True).stdout)

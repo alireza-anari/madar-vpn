@@ -82,6 +82,12 @@ function showDiagnoseForInstall(id,fp){
   el('diagnoseNote').hidden=false;
 }
 const installDetails={SSH_TIMEOUT:'مهلت اتصال SSH تمام شد.',SSH_REFUSED:'اتصال SSH رد شد.',SSH_UNREACHABLE:'مسیر SSH در دسترس نیست.',SSH_HANDSHAKE_FAILED:'پاسخ SSH معتبر دریافت نشد.',PROBE_EXPIRED:'مهلت بررسی پایان یافت.',SSH_PROBE_FAILED:'بررسی SSH ناموفق بود.',SSH_AUTH_FAILED:'نام کاربری یا رمز SSH پذیرفته نشد.',SSH_LOGIN_FAILED:'ورود SSH کامل نشد.',HOST_KEY_CHANGED:'اثر انگشت سرور تغییر کرده است.',INVALID_SSH_KEY:'کلید SSH معتبر نیست.',CREDENTIALS_EXPIRED:'اعتبار درخواست نصب پایان یافت.',CREDENTIAL_DECRYPT_FAILED:'اطلاعات ورود رمزگشایی نشد.',REMOTE_INSTALL_FAILED:'ورود SSH موفق بود اما اجرای فرمان نصب روی VPS شکست خورد.',INSTALL_REPORT_FAILED:'نتیجه نصب قابل ثبت نبود.'};
+Object.assign(installDetails,{
+  REMOTE_PACKAGE_FAILED:'آماده‌سازی بسته نصب روی سرور کامل نشد.',
+  REMOTE_BOOTSTRAP_FAILED:'نصب اولیه یا راه‌اندازی سرویس REALITY روی پورت 8443 ناموفق بود.',
+  REMOTE_DUAL_FAILED:'فعال‌سازی هم‌زمان پورت‌های 443 و 8443 ناموفق بود؛ وضعیت بازگشت باید بررسی شود.',
+  REMOTE_METADATA_FAILED:'خواندن نتیجه نصب برای ثبت در مدار ناموفق بود.'
+});
 async function poll(id,kind){
   clearTimeout(timer);
   try{

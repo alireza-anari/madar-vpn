@@ -282,7 +282,7 @@ test('install reports allowlisted failure reasons without reflecting untrusted r
   const spec={nodeId:'test-fail01',provider:'webdade',region:'test',ip:'8.8.8.8',port:22,username:'root',userLimit:5,capacityGb:10,mode:'fresh'};
   const make=async(id,lease,localSpec)=>DB.prepare("INSERT INTO v2_runner_jobs(id,owner_id,kind,spec_json,state,lease_id,lease_until_ms,created_ms,expires_ms) VALUES(?,'123','v2-install',?,'leased',?,?,?,?)").bind(id,JSON.stringify(localSpec),lease,now+90000,now,now+600000).run();
   const request=(id,lease,safeCode)=>new Request('https://v2/api/runner/report',{method:'POST',headers:{authorization:'Bearer '+secret,'content-type':'application/json'},body:JSON.stringify({id,leaseId:lease,state:'failed',safeCode})});
-  for(const [index,[sent,expected]] of [['SSH_AUTH_FAILED','SSH_AUTH_FAILED'],['REMOTE_INSTALL_FAILED','REMOTE_INSTALL_FAILED'],['password-secret','INSTALLATION_FAILED']].entries()){
+  for(const [index,[sent,expected]] of [['SSH_AUTH_FAILED','SSH_AUTH_FAILED'],['REMOTE_INSTALL_FAILED','REMOTE_INSTALL_FAILED'],['REMOTE_PACKAGE_FAILED','REMOTE_PACKAGE_FAILED'],['REMOTE_BOOTSTRAP_FAILED','REMOTE_BOOTSTRAP_FAILED'],['REMOTE_DUAL_FAILED','REMOTE_DUAL_FAILED'],['REMOTE_METADATA_FAILED','REMOTE_METADATA_FAILED'],['password-secret','INSTALLATION_FAILED']].entries()){
     const id=crypto.randomUUID(),lease=crypto.randomUUID();
     const localSpec={...spec,nodeId:'test-fail0'+index};
     await make(id,lease,localSpec);
