@@ -37,7 +37,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadOnlyPaths=/etc/madar-sales-runner /etc/madar-v2-runner
+ReadOnlyPaths=/etc/madar-v2-runner
 [Install]
 WantedBy=multi-user.target
 '''
