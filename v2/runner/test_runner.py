@@ -1,6 +1,7 @@
 import importlib.util
 import pathlib
 import sys
+import socket
 import unittest
 import hashlib
 import hmac
@@ -88,5 +89,26 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(consumer.run_job(job,api,None,clock=lambda:100),'failed')
         for base in ['https://madar-sales-bot.alirezaanari117.workers.dev','http://localhost']:
             with self.assertRaises(ValueError):consumer.validate_config({'baseUrl':base})
+
+class SafeProbeFailureTests(unittest.TestCase):
+    def test_timeout_is_explicit_and_no_exception_message_is_emitted(self):
+        api=Api()
+        job={'id':'12345678-1234-4123-8123-123456789012','leaseId':'lease','kind':'probe',
+             'nodeId':'test-aws01','targetIp':'8.8.8.8','mode':'fresh','port':22,
+             'username':'ubuntu','credentialsExpireAt':200,'encryptedCredentials':None}
+        with patch.object(consumer,'probe',side_effect=socket.timeout('sensitive diagnostic')):
+            self.assertEqual(consumer.run_job(job,api,None,clock=lambda:100,network_mode='none'),'failed')
+        self.assertEqual(api.reports[-1][1]['safeCode'],'SSH_TIMEOUT')
+        self.assertNotIn('sensitive diagnostic',repr(api.reports))
+    def test_safe_probe_classification(self):
+        import errno,socket,paramiko
+        examples=[(socket.timeout('hidden'),'SSH_TIMEOUT'),
+           (ConnectionRefusedError(errno.ECONNREFUSED,'hidden'),'SSH_REFUSED'),
+           (OSError(errno.ENETUNREACH,'hidden'),'SSH_UNREACHABLE'),
+           (paramiko.SSHException('hidden'),'SSH_HANDSHAKE_FAILED'),
+           (RuntimeError('secret value'),'SSH_PROBE_FAILED')]
+        for exc,code in examples:
+            self.assertEqual(consumer.safe_failure_code(exc,'probe'),code)
+            self.assertEqual(consumer.safe_failure_code(exc,'v2-install'),'INSTALLATION_FAILED')
 
 if __name__=='__main__':unittest.main()

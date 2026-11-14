@@ -223,3 +223,19 @@ test('GitHub executor can verify its shared service secret without leasing a job
   assert.equal((await runnerApi(request('x'.repeat(48)),env)).status,401);
   DB.close();
 });
+
+test('failed SSH probe returns allowlisted safe code and never reflects arbitrary runner strings',async()=>{
+  const DB=database(),now=1000000,secret='s'.repeat(48);
+  const env={DB,RUNNER_ENROLLMENT_ENABLED:'true',RUNNER_SERVICE_SECRET:secret};
+  const id=crypto.randomUUID(),lease=crypto.randomUUID();
+  const spec={nodeId:'test-aws01',provider:'aws',region:'eu-north-1',ip:'8.8.8.8',port:22,username:'ubuntu',userLimit:10,capacityGb:20,mode:'fresh'};
+  await DB.prepare("INSERT INTO v2_runner_jobs(id,owner_id,kind,spec_json,state,lease_id,lease_until_ms,created_ms,expires_ms) VALUES(?,'123','probe',?,'leased',?,?,?,?)").bind(id,JSON.stringify(spec),lease,now+90000,now,now+600000).run();
+  const post=(safeCode,id0=id,lease0=lease)=>runnerApi(new Request('https://v2/api/runner/report',{method:'POST',headers:{authorization:'Bearer '+secret,'content-type':'application/json'},body:JSON.stringify({id:id0,leaseId:lease0,state:'failed',safeCode})}),env,now);
+  assert.equal((await post('SSH_TIMEOUT')).status,200);
+  assert.equal((await DB.prepare('SELECT safe_code FROM v2_runner_jobs WHERE id=?').bind(id).first()).safe_code,'SSH_TIMEOUT');
+  const id2=crypto.randomUUID();
+  await DB.prepare("INSERT INTO v2_runner_jobs(id,owner_id,kind,spec_json,state,lease_id,lease_until_ms,created_ms,expires_ms) VALUES(?,'123','probe',?,'leased',?,?,?,?)").bind(id2,JSON.stringify(spec),lease,now+90000,now,now+600000).run();
+  assert.equal((await post('secret token leaked',id2)).status,200);
+  assert.equal((await DB.prepare('SELECT safe_code FROM v2_runner_jobs WHERE id=?').bind(id2).first()).safe_code,'INSTALLATION_FAILED');
+  DB.close();
+});

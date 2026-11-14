@@ -5,6 +5,9 @@ client. Uses an independent V2 config/service/queue. The V1 private key stays
 on its current host and is only referenced locally by the V2 service user.
 """
 import argparse
+import errno
+import socket
+import paramiko
 import base64
 import io
 import json
@@ -82,6 +85,19 @@ def install(transport,job,check):
     if set(result)!={'public_key','short_id','server_name','uuid'}:raise ValueError('INVALID_METADATA')
     return result
 
+def safe_failure_code(exc,kind):
+    """Classify only public SSH transport failures; never include exception text."""
+    if kind!='probe':return 'INSTALLATION_FAILED'
+    if isinstance(exc,(TimeoutError,socket.timeout)) or (isinstance(exc,OSError) and exc.errno==errno.ETIMEDOUT):
+        return 'SSH_TIMEOUT'
+    if isinstance(exc,ConnectionRefusedError) or (isinstance(exc,OSError) and exc.errno==errno.ECONNREFUSED):
+        return 'SSH_REFUSED'
+    if isinstance(exc,OSError) and exc.errno in (errno.EHOSTUNREACH,errno.ENETUNREACH):
+        return 'SSH_UNREACHABLE'
+    if isinstance(exc,paramiko.SSHException):return 'SSH_HANDSHAKE_FAILED'
+    if isinstance(exc,ValueError) and str(exc)=='EXPIRED':return 'PROBE_EXPIRED'
+    return 'SSH_PROBE_FAILED'
+
 def run_job(job,api,private_key,clock=time.time,network_mode='aws'):
     stop=threading.Event();lost=threading.Event();credentials={}
     def post(path,**extra):return api.post(path,dict(id=job['id'],leaseId=job['leaseId'],**extra))
@@ -108,8 +124,8 @@ def run_job(job,api,private_key,clock=time.time,network_mode='aws'):
         if job['mode']=='fresh' and network_mode=='aws':ensure_network(job['targetIp'],job['port'],extra_tcp_ports=(8443,))
         check()
         post('report',state='ready',details=details);return 'ready'
-    except Exception:
-        try:post('report',state='failed',safeCode='INSTALLATION_FAILED')
+    except Exception as exc:
+        try:post('report',state='failed',safeCode=safe_failure_code(exc,job.get('kind')))
         except Exception:pass
         return 'failed'
     finally:
