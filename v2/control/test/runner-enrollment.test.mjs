@@ -213,3 +213,13 @@ test('reopened enrollment form recovers own queued job without leaking credentia
   assert.equal((await (await admin(owner,'recent')).json()).job.safe_code,'EXECUTOR_FAILED');
   DB.close();
 });
+
+test('GitHub executor can verify its shared service secret without leasing a job',async()=>{
+  const DB=database(),secret='s'.repeat(48);
+  const env={DB,RUNNER_ENROLLMENT_ENABLED:'true',V2_EXECUTOR_BACKEND:'github-actions',RUNNER_SERVICE_SECRET:secret};
+  const request=value=>new Request('https://v2/api/runner/verify',{method:'POST',
+    headers:{authorization:'Bearer '+value,'content-type':'application/json'},body:'{}'});
+  assert.equal((await runnerApi(request(secret),env)).status,200);
+  assert.equal((await runnerApi(request('x'.repeat(48)),env)).status,401);
+  DB.close();
+});

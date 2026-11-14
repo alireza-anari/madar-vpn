@@ -2,6 +2,10 @@ import importlib.util
 import pathlib
 import sys
 import unittest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+sys.path.insert(0,str(pathlib.Path(__file__).resolve().parent))
+import one_shot
 from unittest.mock import patch
 
 HERE=pathlib.Path(__file__).resolve().parent
@@ -15,6 +19,18 @@ class Api:
     def post(self,path,payload):self.reports.append((path,payload));return {'ok':True}
 
 class RunnerTests(unittest.TestCase):
+    def test_private_key_loader_accepts_pkcs8_and_pkcs1_pem(self):
+        key=rsa.generate_private_key(public_exponent=65537,key_size=2048)
+        pkcs8=key.private_bytes(serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,serialization.NoEncryption()).decode()
+        pkcs1=key.private_bytes(serialization.Encoding.PEM,
+            serialization.PrivateFormat.TraditionalOpenSSL,serialization.NoEncryption()).decode()
+        self.assertTrue(hasattr(one_shot.load_private_key(pkcs8),'decrypt'))
+        self.assertTrue(hasattr(one_shot.load_private_key(pkcs1),'decrypt'))
+        with self.assertRaisesRegex(ValueError,'PRIVATE_KEY_MISSING'):
+            one_shot.load_private_key('')
+        with self.assertRaisesRegex(ValueError,'PRIVATE_KEY_INVALID'):
+            one_shot.load_private_key('not a private key')
     def job(self,kind='v2-install'):
         return dict(id='12345678-1234-4123-8123-123456789012',leaseId='lease',kind=kind,
                     nodeId='test-node01',targetIp='8.8.8.8',mode='fresh',port=22,username='root',

@@ -181,6 +181,7 @@ export async function runnerApi(req,env,now=Date.now()){
   if(req.method!=='POST')return reply({error:'NOT_FOUND'},404);
   let b;try{b=await body(req);}catch{return reply({error:'BAD_BODY'},400);}
   const action=new URL(req.url).pathname.slice('/api/runner/'.length);
+  if(action==='verify')return reply({ok:true});
   await cleanupRunnerJobs(env.DB,now);
   if(action==='abort-queued'){
     // A V2 GitHub Actions failure handler can close only its exact queued job.

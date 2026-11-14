@@ -40,6 +40,21 @@ jobs:
           test -f v2/runner/one_shot.py
       - name: Install fixed SSH client dependencies
         run: python3 -m pip install --disable-pip-version-check paramiko==5.0.0 cryptography==50.0.2
+      - name: Verify GitHub and Cloudflare share the V2 runner service secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          code="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            --connect-timeout 5 --max-time 12 -X POST "$MADAR_V2_URL/api/runner/verify" \
+            -H "authorization: Bearer $MADAR_V2_RUNNER_SERVICE_SECRET" \
+            -H "content-type: application/json" --data '{}')"
+          if [[ "$code" != "200" ]]; then
+            echo "RUNNER_SERVICE_SECRET_MISMATCH_OR_WORKER_UNAVAILABLE (HTTP $code)"
+            exit 1
+          fi
+          echo "V2_RUNNER_AUTH_OK"
+      - name: Validate and load the V2 RSA private key without printing it
+        run: python3 -B -c "import os,sys; sys.path.insert(0,'v2/runner'); from one_shot import load_private_key; load_private_key(os.environ.get('MADAR_V2_RUNNER_PRIVATE_KEY_PEM','')); print('V2_PRIVATE_KEY_OK')"
       - name: Execute exactly this V2 job, with no V1 keys and no AWS IAM mutation
         run: python3 -B v2/runner/one_shot.py --job-id "${{ inputs.job_id }}"
       - name: Report failed queued V2 job to control plane without SSH credentials
@@ -49,4 +64,5 @@ jobs:
             -X POST "$MADAR_V2_URL/api/runner/abort-queued" \
             -H "authorization: Bearer $MADAR_V2_RUNNER_SERVICE_SECRET" \
             -H "content-type: application/json" \
-            --data '{"runnerId":"v2-github-actions","jobId":"${{ inputs.job_id }}"}'
+            --data '{"runnerId":"v2-github-actions","jobId":"${{ inputs.job_id }}"}' \
+            || echo "V2_FAILURE_REPORT_UNAVAILABLE: verify the shared service secret"

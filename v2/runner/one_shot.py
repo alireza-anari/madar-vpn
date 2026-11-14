@@ -16,19 +16,26 @@ from runner import Api
 RUNNER_ID='v2-github-actions'
 JOB_ID=re.compile(r'^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$')
 
+def load_private_key(pem):
+    if not isinstance(pem,str) or not pem.strip():
+        raise ValueError('PRIVATE_KEY_MISSING')
+    try:
+        private=serialization.load_pem_private_key(pem.encode(),password=None)
+    except (ValueError,TypeError,UnsupportedAlgorithm):
+        raise ValueError('PRIVATE_KEY_INVALID') from None
+    if not hasattr(private,'decrypt'):
+        raise ValueError('PRIVATE_KEY_NOT_RSA')
+    return private
+
 def execute(job_id,env=os.environ):
     if not JOB_ID.fullmatch(job_id):
         raise ValueError('INVALID_JOB_ID')
     if env.get('MADAR_V2_URL')!=ORIGIN:
         raise ValueError('INVALID_WORKER_ORIGIN')
     secret=env.get('MADAR_V2_RUNNER_SERVICE_SECRET','')
-    key=env.get('MADAR_V2_RUNNER_PRIVATE_KEY_PEM','')
-    if len(secret)<32 or not key.startswith('-----BEGIN PRIVATE KEY-----'):
-        raise ValueError('V2_ACTION_SECRETS_REQUIRED')
-    try:
-        private=serialization.load_pem_private_key(key.encode(),password=None)
-    except (ValueError,TypeError,UnsupportedAlgorithm):
-        raise ValueError('PRIVATE_KEY_INVALID') from None
+    if len(secret)<32:
+        raise ValueError('RUNNER_SERVICE_SECRET_MISSING')
+    private=load_private_key(env.get('MADAR_V2_RUNNER_PRIVATE_KEY_PEM',''))
     api=Api(ORIGIN,secret)
     try:
         signed=api.post('lease',{'runnerId':RUNNER_ID,'jobId':job_id})
@@ -60,10 +67,11 @@ def main():
             raise ValueError('V2_JOB_FAILED')
         print('V2_JOB_REPORTED')
     except Exception as exc:
-        known={'PRIVATE_KEY_INVALID','RUNNER_SERVICE_SECRET_MISMATCH',
+        known={'PRIVATE_KEY_MISSING','PRIVATE_KEY_INVALID','PRIVATE_KEY_NOT_RSA',
+            'RUNNER_SERVICE_SECRET_MISSING','RUNNER_SERVICE_SECRET_MISMATCH',
             'WORKER_HTTP_ERROR','WORKER_UNREACHABLE','JOB_NOT_AVAILABLE',
             'INVALID_JOB_PAYLOAD','INVALID_JOB_SIGNATURE','V2_JOB_FAILED',
-            'V2_ACTION_SECRETS_REQUIRED','INVALID_WORKER_ORIGIN','INVALID_JOB_ID'}
+            'INVALID_WORKER_ORIGIN','INVALID_JOB_ID'}
         code=str(exc)
         print('V2_EXECUTOR_FAILED: '+(code if code in known else 'UNCLASSIFIED'))
         raise SystemExit(1)
