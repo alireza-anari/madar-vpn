@@ -10,6 +10,7 @@ import fcntl
 import json
 import os
 import sys
+import time
 
 from .dual_reality import (
     ROOT,BIN,XUNIT,UNITS,DROP,BACKUP,
@@ -41,6 +42,15 @@ def build_fresh_dual(old):
     return out
 
 
+def ports_ready(probe,ports):
+    # Type=simple/is-active can succeed before Xray has bound its sockets.
+    # Bound the wait and recheck every required port before reporting success.
+    for attempt in range(50):
+        if all(probe(port) for port in ports):return True
+        if attempt<49:time.sleep(0.1)
+    return False
+
+
 def rollback(root,runner,probe):
     backup=root/BACKUP
     original=owned(backup,0o600)
@@ -50,7 +60,7 @@ def rollback(root,runner,probe):
         raise ReconcileError("cannot reload original service")
     call(runner,"restart",XUNIT)
     call(runner,"is-active",XUNIT,5)
-    if not probe(8443):raise ReconcileError("original REALITY port did not recover")
+    if not ports_ready(probe,(8443,)):raise ReconcileError("original REALITY port did not recover")
     backup.unlink()
 
 
@@ -72,7 +82,7 @@ def enable(node,ip,*,root=ROOT,runner=subprocess_runner,probe=listening):
         if (root/BACKUP).exists() or DROP.exists():
             raise ReconcileError("node already cut over or has conflicting drop-in")
         call(runner,"is-active",XUNIT,5)
-        if not probe(8443):raise ReconcileError("original 8443 not listening")
+        if not ports_ready(probe,(8443,)):raise ReconcileError("original 8443 not listening")
         previous=owned(root/"config.json",0o600)
         candidate=build_fresh_dual(json.loads(previous))
         stage=_atomic_file(root,".fresh443-",encode(candidate))
@@ -89,7 +99,7 @@ def enable(node,ip,*,root=ROOT,runner=subprocess_runner,probe=listening):
                 stage=None
                 call(runner,"restart",XUNIT)
                 call(runner,"is-active",XUNIT,5)
-                if not (probe(8443) and probe(443)):
+                if not ports_ready(probe,(8443,443)):
                     raise ReconcileError("one of the ports is not bound")
             except BaseException as exc:
                 try:rollback(root,runner,probe)

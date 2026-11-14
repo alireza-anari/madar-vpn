@@ -69,7 +69,7 @@ def main():
             domain="vpn.example.com",ws_path="/madar-ws",loopback_port=10443
         ).replace("vpn.example.com {", "vpn.example.com:18443 {\\n    tls internal",1)
         testsite=testsite.replace("\\n", "\n")
-        testsite="{\n    admin off\n    auto_https disable_redirects\n}\n"+testsite
+        testsite="{\n    admin off\n    skip_install_trust\n    auto_https disable_redirects\n}\n"+testsite
         local_site=directory/"LocalCaddyfile"
         local_site.write_text(testsite,encoding="utf-8")
         run([paths["caddy"],"validate","--config",str(local_site),"--adapter","caddyfile"])
