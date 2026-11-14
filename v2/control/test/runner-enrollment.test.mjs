@@ -24,13 +24,12 @@ test('Mini App accepts only the signed current owner, not forged, expired or dup
   assert.equal(await authenticateOwner(await initData(env.BOT_TOKEN,456,1000),env,1000000),null);
   assert.equal(await authenticateOwner(raw+'&auth_date=1000',env,1000000),null);
 });
-test('connection validation rejects shell injection, private targets and arbitrary Aria cutovers',()=>{
-  const good={nodeId:'test-new01',provider:'aria',region:'eu',userLimit:20,capacityGb:500,ip:'8.8.8.8',port:22,username:'root'};
+test('fresh AWS connection validation rejects shell injection and private targets',()=>{
+  const good={nodeId:'test-aws01',provider:'aws',region:'eu-north-1',userLimit:20,capacityGb:500,ip:'8.8.8.8',port:22,username:'root'};
   assert.equal(validateConnection(good).mode,'fresh');
+  assert.equal(validateConnection({...good,ip:'1.1.1.1'}).mode,'fresh');
   for(const diff of [{ip:'127.0.0.1'},{username:'root;id'},{port:0},{nodeId:'node1'},{provider:'x;id'},{capacityGb:0}])
     assert.equal(validateConnection({...good,...diff}),null);
-  assert.equal(validateConnection({...good,ip:'86.54.42.66'}),null);
-  assert.equal(validateConnection({...good,nodeId:'test-aria01',ip:'86.54.42.66'}).mode,'aria-cutover');
 });
 test('credential envelope permits bounded ciphertext only, never plaintext secrets',()=>{
   assert.equal(validEnvelope({method:'password',password:'canary'}),false);
@@ -55,7 +54,7 @@ test('real enrollment queue binds owner, fingerprint and ciphertext, signs lease
   assert.equal((await run('lease',{runnerId:'runner-v2'},now,'bad')).status,401);
   await run('lease',{runnerId:'runner-v2'});
   assert.equal((await admin('session')).status,200);
-  const spec={nodeId:'test-new01',provider:'aria',region:'eu',userLimit:20,capacityGb:500,ip:'8.8.8.8',port:22,username:'root'};
+  const spec={nodeId:'test-new01',provider:'aws',region:'eu-north-1',userLimit:20,capacityGb:500,ip:'8.8.8.8',port:22,username:'root'};
   const {id}=await (await admin('probe',spec)).json();
   assert.ok(id);
   assert.equal((await admin('probe',spec)).status,409);
@@ -84,7 +83,7 @@ test('successful install metadata and queue completion are atomic and a repeated
   const DB=database(),now=1000000;
   const env={DB,BOT_TOKEN:'t',ADMIN_TELEGRAM_IDS:'123',RUNNER_ENROLLMENT_ENABLED:'true',RUNNER_SERVICE_SECRET:'s'.repeat(48),SUBSCRIPTION_CREDENTIAL_KEY:'A'.repeat(43)};
   const id='12345678-1234-4123-8123-123456789012',spec={nodeId:'test-new01',ip:'8.8.8.8',mode:'fresh'};
-  await DB.prepare("INSERT INTO nodes(id,provider,region,lifecycle,user_limit,byte_limit) VALUES('test-new01','aria','eu','enrolling',20,500)").run();
+  await DB.prepare("INSERT INTO nodes(id,provider,region,lifecycle,user_limit,byte_limit) VALUES('test-new01','aws','eu-north-1','enrolling',20,500)").run();
   await DB.prepare("INSERT INTO node_bootstrap_jobs(id,node_id,ip,owner_id,mode,state,created_ms,updated_ms) VALUES(?,'test-new01','8.8.8.8','123','fresh','dispatching',?,?)").bind(id,now,now).run();
   await DB.prepare("INSERT INTO v2_runner_jobs(id,owner_id,kind,spec_json,state,lease_id,lease_until_ms,created_ms,expires_ms,encrypted_credentials) VALUES(?,'123','v2-install',?,'leased','lease',?,?,?,'ciphertext')").bind(id,JSON.stringify(spec),now+90000,now,now+900000).run();
   const b={id,leaseId:'lease',state:'ready',details:{public_key:'a'.repeat(43),short_id:'aabb',server_name:'www.cloudflare.com',uuid:'12345678-1234-4123-8123-123456789012'}};
@@ -161,7 +160,7 @@ test('on-demand dispatcher uses only the fixed V2 workflow and reports rejection
 });
 
 // No installation job must be left pending after an Actions API rejection.
-test('failed GitHub Actions dispatch is terminal and blocks Aria on-demand cutover',async()=>{
+test('failed GitHub Actions dispatch is terminal and blocks installation',async()=>{
   const DB=database(),now=1000000;
   const env={DB,BOT_TOKEN:'t',ADMIN_TELEGRAM_IDS:'123',RUNNER_ENROLLMENT_ENABLED:'true',
     V2_EXECUTOR_BACKEND:'github-actions',RUNNER_SERVICE_SECRET:'s'.repeat(48),
@@ -172,7 +171,7 @@ test('failed GitHub Actions dispatch is terminal and blocks Aria on-demand cutov
     headers:{'x-telegram-init-data':owner,'content-type':'application/json'},body:JSON.stringify(b)});
   const spec={nodeId:'test-aws01',provider:'aws',region:'eu-north-1',userLimit:2,
     capacityGb:5,ip:'8.8.8.8',port:22,username:'root'};
-  assert.equal((await enrollmentApi(req({...spec,ip:'86.54.42.66',nodeId:'test-aria01'}),env,now,async()=>true)).status,400);
+  assert.equal((await enrollmentApi(req({...spec,ip:'8.8.8.8',mode:'aria-cutover'}),env,now,async()=>true)).status,200);
   const rejected=await enrollmentApi(req(spec),env,now,async()=>false);
   assert.equal(rejected.status,503);
   const row=await DB.prepare('SELECT state,safe_code FROM v2_runner_jobs LIMIT 1').first();

@@ -43,14 +43,11 @@ for member in archive.getmembers():
     target.parent.mkdir(mode=0o700,exist_ok=True)
     target.write_bytes(archive.extractfile(member).read())
 sys.path.insert(0,str(dest))
-if job['mode']=='aria-cutover':
-    from agent.dual_reality import migrate
-    migrate(job['nodeId'],job['targetIp'],apply=True)
-else:
-    from agent.bootstrap import plan_node,install_test_node
-    from agent.fresh_dual import enable
-    install_test_node(plan_node(node_id=job['nodeId'],public_ip=job['targetIp'],reality_port=8443,wss_domain=None,ws_path='/madar-ws',reality_target='www.cloudflare.com'))
-    enable(job['nodeId'],job['targetIp'])
+from agent.bootstrap import plan_node,install_test_node
+from agent.fresh_dual import enable
+if job['mode']!='fresh':raise ValueError('FRESH_NODES_ONLY')
+install_test_node(plan_node(node_id=job['nodeId'],public_ip=job['targetIp'],reality_port=8443,wss_domain=None,ws_path='/madar-ws',reality_target='www.cloudflare.com'))
+enable(job['nodeId'],job['targetIp'])
 from agent.dual_reality import listening
 if not (listening(443) and listening(8443)):raise ValueError('LISTENERS_FAILED')
 root=pathlib.Path('/etc/madar-v2')
@@ -67,9 +64,7 @@ def validate_job(job):
         not re.fullmatch(r'[a-z_][a-z0-9_-]{0,31}',job.get('username','')) or
         job.get('kind') not in ('probe','v2-install')):
         raise ValueError('INVALID_V2_JOB')
-    if job['targetIp']=='86.54.42.66':
-        if (job['nodeId'],job.get('mode'))!=('test-aria01','aria-cutover'):raise ValueError('INVALID_V2_JOB')
-    elif job.get('mode')!='fresh':raise ValueError('INVALID_V2_JOB')
+    if job.get('mode')!='fresh':raise ValueError('INVALID_V2_JOB')
 
 def install(transport,job,check):
     validate_job(job)

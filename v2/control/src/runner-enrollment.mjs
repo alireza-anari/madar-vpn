@@ -66,10 +66,8 @@ export function validateConnection(b){
      !/^[a-z_][a-z0-9_-]{0,31}$/.test(b.username??'')||
      !Number.isInteger(b.userLimit)||b.userLimit<1||b.userLimit>100000||
      !Number.isInteger(b.capacityGb)||b.capacityGb<1||b.capacityGb>200000)return null;
-  if(b.ip==='86.54.42.66'&&b.nodeId!=='test-aria01')return null;
   return {nodeId:b.nodeId,provider:b.provider,region:b.region,ip:b.ip,port:b.port,
-    username:b.username,userLimit:b.userLimit,capacityGb:b.capacityGb,
-    mode:b.ip==='86.54.42.66'?'aria-cutover':'fresh'};
+    username:b.username,userLimit:b.userLimit,capacityGb:b.capacityGb,mode:'fresh'};
 }
 export function validEnvelope(b){
   const base64=s=>typeof s==='string'&&/^[A-Za-z0-9+/]+={0,2}$/.test(s)&&s.length%4===0;
