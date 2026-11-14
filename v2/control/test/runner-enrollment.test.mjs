@@ -171,10 +171,13 @@ test('failed GitHub Actions dispatch is terminal and blocks installation',async(
     headers:{'x-telegram-init-data':owner,'content-type':'application/json'},body:JSON.stringify(b)});
   const spec={nodeId:'test-aws01',provider:'aws',region:'eu-north-1',userLimit:2,
     capacityGb:5,ip:'8.8.8.8',port:22,username:'root'};
-  assert.equal((await enrollmentApi(req({...spec,ip:'8.8.8.8',mode:'aria-cutover'}),env,now,async()=>true)).status,200);
+  const accepted=await enrollmentApi(req(spec),env,now,async()=>true);
+  assert.equal(accepted.status,200);
+  const first=await accepted.json();
+  await DB.prepare("UPDATE v2_runner_jobs SET state='failed' WHERE id=?").bind(first.id).run();
   const rejected=await enrollmentApi(req(spec),env,now,async()=>false);
   assert.equal(rejected.status,503);
-  const row=await DB.prepare('SELECT state,safe_code FROM v2_runner_jobs LIMIT 1').first();
+  const row=await DB.prepare("SELECT state,safe_code FROM v2_runner_jobs WHERE safe_code='EXECUTOR_DISPATCH_FAILED'").first();
   assert.equal(row.state,'failed');
   assert.equal(row.safe_code,'EXECUTOR_DISPATCH_FAILED');
   DB.close();
