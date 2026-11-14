@@ -27,7 +27,13 @@ class LocalTransport:
         return result.stdout
 job=dict(id=str(uuid.uuid4()),nodeId='test-ci-native',targetIp='8.8.4.4',
          mode='fresh',port=22,username='root',kind='v2-install')
-result=install(LocalTransport(),job,lambda:None)
+try:
+    result=install(LocalTransport(),job,lambda:None)
+except Exception:
+    # CI has no server/user credentials. Surface the fixed ReconcileError
+    # chain on the disposable host, never enable this on a user VPS.
+    subprocess.run(['sudo','python3','-c',"from agent.fresh_dual import enable; enable('test-ci-native','8.8.4.4')"],check=False)
+    raise
 assert set(result)=={'public_key','short_id','server_name','uuid'}
 print('Verified exact remote package/bootstrap/dual/metadata flow; no client credentials logged')
 PY
