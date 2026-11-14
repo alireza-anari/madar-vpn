@@ -117,7 +117,7 @@ test('on-demand executor fails closed, dispatches only a specific signed job and
     RUNNER_ENROLLMENT_ENABLED:'true',V2_EXECUTOR_BACKEND:'github-actions',
     RUNNER_SERVICE_SECRET:'s'.repeat(48),
     GITHUB_ACTIONS_DISPATCH_TOKEN:'g'.repeat(48),
-    RUNNER_PUBLIC_KEY:JSON.stringify({kty:'RSA',kid:'madar-v2-github-actions'})};
+    RUNNER_PUBLIC_KEY:JSON.stringify({kty:'RSA',kid:'madar-v2-github-actions',alg:'RSA-OAEP-256',e:'AQAB',n:'A'.repeat(342)})};
   const owner=await initData(env.BOT_TOKEN,123,1000);
   const req=(path,b)=>new Request('https://v2/api/enrollment/'+path,{method:b?'POST':'GET',
     headers:{'x-telegram-init-data':owner,'content-type':'application/json'},
@@ -147,7 +147,7 @@ test('on-demand executor fails closed, dispatches only a specific signed job and
 });
 test('on-demand dispatcher uses only the fixed V2 workflow and reports rejection',async()=>{
   const env={V2_EXECUTOR_BACKEND:'github-actions',GITHUB_ACTIONS_DISPATCH_TOKEN:'g'.repeat(48),
-    RUNNER_SERVICE_SECRET:'s'.repeat(48),RUNNER_PUBLIC_KEY:'{"kid":"madar-v2-github-actions"}'};
+    RUNNER_SERVICE_SECRET:'s'.repeat(48),RUNNER_PUBLIC_KEY:JSON.stringify({kty:'RSA',kid:'madar-v2-github-actions',alg:'RSA-OAEP-256',e:'AQAB',n:'A'.repeat(342)})};
   const id='12345678-1234-4123-8123-123456789012';
   const calls=[];
   const success=await dispatchGithubJob(env,id,async(url,opts)=>{calls.push({url,opts});return {status:204}});
@@ -158,4 +158,24 @@ test('on-demand dispatcher uses only the fixed V2 workflow and reports rejection
   assert.equal(calls[0].opts.headers.authorization,'Bearer '+env.GITHUB_ACTIONS_DISPATCH_TOKEN);
   assert.equal(await dispatchGithubJob(env,'bad-job-id',async()=>{throw Error('called')}),false);
   assert.equal(await dispatchGithubJob(env,id,async()=>({status:403})),false);
+});
+
+// No installation job must be left pending after an Actions API rejection.
+test('failed GitHub Actions dispatch is terminal and blocks Aria on-demand cutover',async()=>{
+  const DB=database(),now=1000000;
+  const env={DB,BOT_TOKEN:'t',ADMIN_TELEGRAM_IDS:'123',RUNNER_ENROLLMENT_ENABLED:'true',
+    V2_EXECUTOR_BACKEND:'github-actions',RUNNER_SERVICE_SECRET:'s'.repeat(48),
+    GITHUB_ACTIONS_DISPATCH_TOKEN:'g'.repeat(48),
+    RUNNER_PUBLIC_KEY:JSON.stringify({kid:'madar-v2-github-actions',kty:'RSA',alg:'RSA-OAEP-256',e:'AQAB',n:'A'.repeat(342)})};
+  const owner=await initData(env.BOT_TOKEN,123,1000);
+  const req=b=>new Request('https://v2/api/enrollment/probe',{method:'POST',
+    headers:{'x-telegram-init-data':owner,'content-type':'application/json'},body:JSON.stringify(b)});
+  const spec={nodeId:'test-aws01',provider:'aws',region:'eu-north-1',userLimit:2,
+    capacityGb:5,ip:'8.8.8.8',port:22,username:'root'};
+  assert.equal((await enrollmentApi(req({...spec,ip:'86.54.42.66',nodeId:'test-aria01'}),env,now,async()=>true)).status,400);
+  const rejected=await enrollmentApi(req(spec),env,now,async()=>false);
+  assert.equal(rejected.status,503);
+  const row=await DB.prepare('SELECT state,safe_code FROM v2_runner_jobs LIMIT 1').first();
+  assert.deepEqual(row,{state:'failed',safe_code:'EXECUTOR_DISPATCH_FAILED'});
+  DB.close();
 });

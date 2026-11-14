@@ -5,13 +5,17 @@ import {verifyTelegramSecret} from './telegram.mjs';
 const GITHUB_RUNNER_ID='v2-github-actions';
 const JOB_ID=/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/;
 export function githubExecutorReady(env) {
-  return env.V2_EXECUTOR_BACKEND==='github-actions' &&
-    typeof env.GITHUB_ACTIONS_DISPATCH_TOKEN==='string' &&
-    env.GITHUB_ACTIONS_DISPATCH_TOKEN.length>=20 &&
-    typeof env.RUNNER_SERVICE_SECRET==='string' &&
-    env.RUNNER_SERVICE_SECRET.length>=32 &&
-    typeof env.RUNNER_PUBLIC_KEY==='string' &&
-    env.RUNNER_PUBLIC_KEY.includes('"kid":"madar-v2-github-actions"');
+  if(env.V2_EXECUTOR_BACKEND!=='github-actions' ||
+     typeof env.GITHUB_ACTIONS_DISPATCH_TOKEN!=='string' ||
+     env.GITHUB_ACTIONS_DISPATCH_TOKEN.length<20 ||
+     typeof env.RUNNER_SERVICE_SECRET!=='string' ||
+     env.RUNNER_SERVICE_SECRET.length<32)return false;
+  try{
+    const key=JSON.parse(env.RUNNER_PUBLIC_KEY);
+    return key?.kid==='madar-v2-github-actions' &&
+      key?.kty==='RSA' && key?.alg==='RSA-OAEP-256' &&
+      key?.e==='AQAB' && typeof key?.n==='string' && key.n.length>=340;
+  }catch{return false;}
 }
 export async function dispatchGithubJob(env,jobId,send=fetch) {
   if(!githubExecutorReady(env)||!JOB_ID.test(jobId))return false;
@@ -108,7 +112,9 @@ export async function enrollmentApi(req,env,now=Date.now(),dispatch=dispatchGith
   if(req.method!=='POST')return reply({error:'NOT_FOUND'},404);
   let b;try{b=await body(req);}catch{return reply({error:'BAD_BODY'},400);}
   if(path==='/api/enrollment/probe'){
-    const spec=validateConnection(b);if(!spec)return reply({error:'INVALID_TARGET'},400);
+    const spec=validateConnection(b);if(!spec ||
+      (env.V2_EXECUTOR_BACKEND==='github-actions'&&spec.mode!=='fresh'))
+      return reply({error:'INVALID_TARGET'},400);
     if(!(await executorReady(env,now)))
       return reply({error:env.V2_EXECUTOR_BACKEND==='github-actions'?'EXECUTOR_NOT_CONFIGURED':'RUNNER_OFFLINE'},503);
     const active=await env.DB.prepare("SELECT id FROM v2_runner_jobs WHERE owner_id=? AND state IN ('queued','leased') LIMIT 1").bind(actor).first();
