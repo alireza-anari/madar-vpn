@@ -61,3 +61,34 @@ python -B -m unittest discover -s v2/runner
 
 Python uses the same pinned dependencies as sales-runner: Paramiko 5.0.0
 and cryptography 50.0.2. The remote V2 installers require Linux.
+
+## Resident-runner restoration (2026-11, one-time setup)
+
+The V2 Worker must use `V2_EXECUTOR_BACKEND=resident` and the **public**
+RSA JWK corresponding to the existing V1 runner private key. V1 code,
+secret, cron, service, and database are not changed. The private key never
+leaves its existing host. V2 uses a separate Cloudflare D1, Worker, service
+identity, and `RUNNER_SERVICE_SECRET`. **Do not copy V1's secret.**
+
+The Telegram owner opens Add Server, expands "فعال‌سازی یک‌باره سرویس نصب
+V2", and requests a sealed pairing; it lasts 10 minutes. On the **runner
+host** (the host where `madar-sales-runner.service` is running, not an
+arbitrary VPN node), an operator performs exactly one trusted checkout and
+runs `v2/runner/attach_existing.py` as root. The script refuses to touch
+the existing V1 service and uses the pre-existing V1 RSA private key only
+on-host to unwrap the V2-specific config. Only the V2 service is installed.
+
+For an authenticated operator using AWS Systems Manager Run Command, use
+a short, pinned-code workflow to stage the V2 checkout. Run on the correct
+runner host only, after verifying `systemctl is-active madar-sales-runner`.
+Do not run V2 on an arbitrary node with port 443 serving clients.
+
+No one-time pairing step is repeated for future node enrollments. Every
+future fresh server uses only the Telegram V2 form (SSH fingerprint,
+encrypted credentials, and quota limits). The V2 runner becomes online
+after its first signed lease. Absence of its heartbeat fails closed with
+`RUNNER_OFFLINE`, rather than dispatching SSH attempts via dynamic
+GitHub Actions IP ranges.
+
+Keep `SHOP_ENABLED=false`, `SUBSCRIPTION_LINKS_ENABLED=false`, and
+`PROVISIONING_ENABLED=false` pending real end-to-end verification.

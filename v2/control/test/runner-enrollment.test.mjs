@@ -239,3 +239,39 @@ test('failed SSH probe returns allowlisted safe code and never reflects arbitrar
   assert.equal((await DB.prepare('SELECT safe_code FROM v2_runner_jobs WHERE id=?').bind(id2).first()).safe_code,'INSTALLATION_FAILED');
   DB.close();
 });
+
+// Pairing uses only the resident runner's public key. The secret is never
+// returned to the Telegram UI and V1's private key never leaves the host.
+test('resident pairing requires signed owner and creates an RSA-OAEP sealed V2 config',async()=>{
+  const {generateKeyPairSync,privateDecrypt,createDecipheriv,constants}=await import('node:crypto');
+  const {publicKey,privateKey}=generateKeyPairSync('rsa',{modulusLength:2048});
+  const jwk={...publicKey.export({format:'jwk'}),alg:'RSA-OAEP-256',ext:true,key_ops:['encrypt']};
+  const DB=database(),now=1000000,secret='v'.repeat(48);
+  const env={DB,BOT_TOKEN:'test-token',ADMIN_TELEGRAM_IDS:'123',
+    RUNNER_ENROLLMENT_ENABLED:'true',V2_EXECUTOR_BACKEND:'resident',
+    RUNNER_SERVICE_SECRET:secret,RUNNER_PUBLIC_KEY:JSON.stringify(jwk)};
+  const owner=await initData('test-token',123,1000);
+  const request=(auth,method='POST')=>new Request('https://v2/api/enrollment/pair-runner',{
+    method,headers:{'x-telegram-init-data':auth,'content-type':'application/json'},
+    ...(method==='POST'?{body:'{}'}:{})});
+  assert.equal((await enrollmentApi(request(''),env,now)).status,401);
+  assert.equal((await enrollmentApi(request(owner,'GET'),env,now)).status,404);
+  const result=await enrollmentApi(request(owner),env,now);
+  assert.equal(result.status,200);
+  const out=await result.json();
+  assert.equal(out.status,'PAIRING_READY');
+  assert.equal(JSON.stringify(out).includes(secret),false);
+  const row=await DB.prepare("SELECT envelope_json,expires_ms FROM v2_runner_pairing WHERE id='existing-runner'").first();
+  assert.equal(row.expires_ms,now+600000);
+  const envelope=JSON.parse(row.envelope_json);
+  const wrapped=privateDecrypt({key:privateKey,padding:constants.RSA_PKCS1_OAEP_PADDING,oaepHash:'sha256'},Buffer.from(envelope.key,'base64'));
+  const cipher=Buffer.from(envelope.data,'base64');
+  const decipher=createDecipheriv('aes-256-gcm',wrapped,Buffer.from(envelope.iv,'base64'));
+  decipher.setAuthTag(cipher.subarray(-16));
+  const config=JSON.parse(Buffer.concat([decipher.update(cipher.subarray(0,-16)),decipher.final()]).toString());
+  assert.equal(config.serviceSecret,secret);
+  assert.equal(config.runnerId,'existing-host-v2');
+  assert.equal(config.privateKeyPath,'/etc/madar-sales-runner/runner-private.pem');
+  assert.equal((await enrollmentApi(request(owner),{...env,V2_EXECUTOR_BACKEND:'github-actions'},now)).status,503);
+  DB.close();
+});

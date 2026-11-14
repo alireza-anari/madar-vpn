@@ -33,7 +33,8 @@ export async function dispatchGithubJob(env,jobId,send=fetch) {
 }
 async function executorReady(env,now) {
   if(env.V2_EXECUTOR_BACKEND==='github-actions')return githubExecutorReady(env);
-  const presence=await env.DB.prepare('SELECT MAX(last_seen_ms) AS seen FROM v2_runner_presence').first();
+  if(env.V2_EXECUTOR_BACKEND!=='resident')return false;
+  const presence=await env.DB.prepare("SELECT MAX(last_seen_ms) AS seen FROM v2_runner_presence WHERE id='existing-host-v2'").first();
   return !!presence?.seen&&presence.seen>=now-60000;
 }
 const enc=new TextEncoder();
@@ -74,6 +75,26 @@ export function validEnvelope(b){
   return !!b&&Object.keys(b).sort().join(',')==='data,iv,key,v'&&b.v===1&&
     base64(b.key)&&b.key.length>=344&&b.key.length<=1024&&
     base64(b.iv)&&b.iv.length===16&&base64(b.data)&&b.data.length>=24&&b.data.length<=18000;
+}
+const toBase64=b=>btoa(String.fromCharCode(...new Uint8Array(b)));
+export async function makeResidentPairing(publicJwk,serviceSecret) {
+  // One-time bootstrap: V1's existing RSA private key stays on its host.
+  // Its public JWK wraps only a short-lived, independently authenticated V2 config.
+  if(!publicJwk||publicJwk.kty!=='RSA'||publicJwk.alg!=='RSA-OAEP-256'||
+     publicJwk.e!=='AQAB'||typeof publicJwk.n!=='string'||publicJwk.n.length<340||
+     typeof serviceSecret!=='string'||serviceSecret.length<32)
+    throw Error('INVALID_PAIRING_CONFIG');
+  const rsa=await crypto.subtle.importKey('jwk',publicJwk,
+    {name:'RSA-OAEP',hash:'SHA-256'},false,['encrypt']);
+  const aes=await crypto.subtle.generateKey({name:'AES-GCM',length:256},true,['encrypt']);
+  const key=await crypto.subtle.exportKey('raw',aes);
+  const iv=crypto.getRandomValues(new Uint8Array(12));
+  const config={baseUrl:'https://madar-v2-staging.alirezaanari117.workers.dev',
+    runnerId:'existing-host-v2',serviceSecret,
+    privateKeyPath:'/etc/madar-sales-runner/runner-private.pem'};
+  const data=await crypto.subtle.encrypt({name:'AES-GCM',iv},aes,enc.encode(JSON.stringify(config)));
+  const encryptedKey=await crypto.subtle.encrypt({name:'RSA-OAEP'},rsa,key);
+  return {v:1,key:toBase64(encryptedKey),iv:toBase64(iv),data:toBase64(data)};
 }
 export const reply=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{
   'content-type':'application/json; charset=utf-8','cache-control':'no-store',
@@ -123,6 +144,21 @@ export async function enrollmentApi(req,env,now=Date.now(),dispatch=dispatchGith
   }
   if(req.method!=='POST')return reply({error:'NOT_FOUND'},404);
   let b;try{b=await body(req);}catch{return reply({error:'BAD_BODY'},400);}
+  if(path==='/api/enrollment/pair-runner'){
+    // Only the signed Telegram owner can request a short-lived encrypted V2
+    // configuration. Never return the ciphertext or the V2 service secret.
+    if(env.V2_EXECUTOR_BACKEND!=='resident')return reply({error:'RUNNER_NOT_CONFIGURED'},503);
+    if(await executorReady(env,now))return reply({status:'RUNNER_CONNECTED'});
+    let publicJwk;try{publicJwk=JSON.parse(env.RUNNER_PUBLIC_KEY);}catch{}
+    let envelope;
+    try{envelope=await makeResidentPairing(publicJwk,env.RUNNER_SERVICE_SECRET);}catch{
+      return reply({error:'PAIRING_KEY_NOT_CONFIGURED'},503);
+    }
+    const expires=now+10*60*1000;
+    await env.DB.prepare("INSERT INTO v2_runner_pairing(id,envelope_json,expires_ms) VALUES('existing-runner',?,?) ON CONFLICT(id) DO UPDATE SET envelope_json=excluded.envelope_json,expires_ms=excluded.expires_ms")
+      .bind(JSON.stringify(envelope),expires).run();
+    return reply({status:'PAIRING_READY',expires_ms:expires});
+  }
   if(path==='/api/enrollment/probe'){
     const spec=validateConnection(b);if(!spec ||
       (env.V2_EXECUTOR_BACKEND==='github-actions'&&spec.mode!=='fresh'))
@@ -199,7 +235,7 @@ export async function runnerApi(req,env,now=Date.now()){
     const github=env.V2_EXECUTOR_BACKEND==='github-actions';
     if(github&&(b.runnerId!==GITHUB_RUNNER_ID||!JOB_ID.test(b.jobId??'')))
       return reply({error:'INVALID_EXECUTOR_JOB'},403);
-    if(!github&&b.runnerId===GITHUB_RUNNER_ID)return reply({error:'INVALID_EXECUTOR_JOB'},403);
+    if(!github&&b.runnerId!=='existing-host-v2')return reply({error:'INVALID_EXECUTOR_JOB'},403);
     if(!github){
       await env.DB.prepare('INSERT INTO v2_runner_presence(id,last_seen_ms) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET last_seen_ms=excluded.last_seen_ms').bind(b.runnerId,now).run();
       await env.DB.prepare("DELETE FROM v2_runner_pairing WHERE id='existing-runner'").run();
