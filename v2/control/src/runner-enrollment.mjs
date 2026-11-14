@@ -270,7 +270,11 @@ export async function runnerApi(req,env,now=Date.now()){
   const fingerprint=b.details?.fingerprint;
   if(b.state==='ready'&&row.kind==='probe'&&!/^SHA256:[A-Za-z0-9+/]{43}$/.test(fingerprint??''))return reply({error:'BAD_FINGERPRINT'},400);
   const safeProbeCodes=new Set(['SSH_TIMEOUT','SSH_REFUSED','SSH_UNREACHABLE','SSH_HANDSHAKE_FAILED','PROBE_EXPIRED','SSH_PROBE_FAILED']);
-  const code=b.state==='ready'?'OK':(row.kind==='probe'&&safeProbeCodes.has(b.safeCode)?b.safeCode:'INSTALLATION_FAILED');
+  const safeInstallCodes=new Set(['SSH_TIMEOUT','SSH_REFUSED','SSH_UNREACHABLE','SSH_AUTH_FAILED','HOST_KEY_CHANGED','INVALID_SSH_KEY','CREDENTIALS_EXPIRED','CREDENTIAL_DECRYPT_FAILED','SSH_LOGIN_FAILED','REMOTE_INSTALL_FAILED','INSTALL_REPORT_FAILED']);
+  const code=b.state==='ready'?'OK':(
+    row.kind==='probe'&&safeProbeCodes.has(b.safeCode) ||
+    row.kind==='v2-install'&&safeInstallCodes.has(b.safeCode)
+      ?b.safeCode:'INSTALLATION_FAILED');
   const completion=env.DB.prepare("UPDATE v2_runner_jobs SET state=?,safe_code=?,fingerprint=COALESCE(?,fingerprint),encrypted_credentials=NULL,lease_until_ms=0 WHERE id=? AND lease_id=? AND state='leased'")
     .bind(b.state,code,row.kind==='probe'?fingerprint??null:null,row.id,b.leaseId);
   if(row.kind==='v2-install'){

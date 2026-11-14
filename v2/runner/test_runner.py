@@ -109,6 +109,25 @@ class SafeProbeFailureTests(unittest.TestCase):
            (RuntimeError('secret value'),'SSH_PROBE_FAILED')]
         for exc,code in examples:
             self.assertEqual(consumer.safe_failure_code(exc,'probe'),code)
-            self.assertEqual(consumer.safe_failure_code(exc,'v2-install'),'INSTALLATION_FAILED')
+            self.assertEqual(consumer.safe_failure_code(exc,'v2-install'),code if code in ('SSH_TIMEOUT','SSH_REFUSED','SSH_UNREACHABLE') else 'INSTALLATION_FAILED')
 
 if __name__=='__main__':unittest.main()
+
+class SafeInstallFailureTests(unittest.TestCase):
+    def test_ssh_password_auth_failure_is_safe(self):
+        import paramiko
+        self.assertEqual(consumer.safe_failure_code(paramiko.AuthenticationException('secret'),'v2-install','ssh'),'SSH_AUTH_FAILED')
+    def test_installation_stages_without_sensitive_exception_content(self):
+        examples={'credentials':'CREDENTIAL_DECRYPT_FAILED','ssh':'SSH_LOGIN_FAILED','remote':'REMOTE_INSTALL_FAILED','report':'INSTALL_REPORT_FAILED'}
+        for stage,code in examples.items():
+            self.assertEqual(consumer.safe_failure_code(RuntimeError('secret password'),'v2-install',stage),code)
+    def test_report_installs_safe_failure_without_leaking_raw_exception(self):
+        api=Api()
+        job={'id':'12345678-1234-4123-8123-123456789012','leaseId':'lease','kind':'v2-install',
+             'nodeId':'test-abc01','targetIp':'8.8.8.8','mode':'fresh','port':22,
+             'username':'root','credentialsExpireAt':200,'encryptedCredentials':'ciphertext',
+             'hostFingerprint':'SHA256:'+'a'*43}
+        with patch.object(consumer,'decrypt_credentials',return_value={'method':'password','password':'canary'}),patch.object(consumer,'SshTransport',side_effect=__import__('paramiko').AuthenticationException('canary')):
+            self.assertEqual(consumer.run_job(job,api,None,clock=lambda:100,network_mode='none'),'failed')
+        self.assertEqual(api.reports[-1][1]['safeCode'],'SSH_AUTH_FAILED')
+        self.assertNotIn('canary',str(api.reports))

@@ -85,21 +85,36 @@ def install(transport,job,check):
     if set(result)!={'public_key','short_id','server_name','uuid'}:raise ValueError('INVALID_METADATA')
     return result
 
-def safe_failure_code(exc,kind):
-    """Classify only public SSH transport failures; never include exception text."""
-    if kind!='probe':return 'INSTALLATION_FAILED'
+def safe_failure_code(exc,kind,stage='unknown'):
+    """Only bounded, non-sensitive error codes leave the GitHub executor."""
     if isinstance(exc,(TimeoutError,socket.timeout)) or (isinstance(exc,OSError) and exc.errno==errno.ETIMEDOUT):
         return 'SSH_TIMEOUT'
     if isinstance(exc,ConnectionRefusedError) or (isinstance(exc,OSError) and exc.errno==errno.ECONNREFUSED):
         return 'SSH_REFUSED'
     if isinstance(exc,OSError) and exc.errno in (errno.EHOSTUNREACH,errno.ENETUNREACH):
         return 'SSH_UNREACHABLE'
-    if isinstance(exc,paramiko.SSHException):return 'SSH_HANDSHAKE_FAILED'
-    if isinstance(exc,ValueError) and str(exc)=='EXPIRED':return 'PROBE_EXPIRED'
-    return 'SSH_PROBE_FAILED'
+    if kind=='probe':
+        if isinstance(exc,paramiko.SSHException):return 'SSH_HANDSHAKE_FAILED'
+        if isinstance(exc,ValueError) and str(exc)=='EXPIRED':return 'PROBE_EXPIRED'
+        return 'SSH_PROBE_FAILED'
+    if kind=='v2-install':
+        if isinstance(exc,paramiko.AuthenticationException) or (
+                isinstance(exc,ValueError) and str(exc)=='SSH_AUTH_FAILED'):
+            return 'SSH_AUTH_FAILED'
+        if isinstance(exc,ValueError) and str(exc)=='HOST_KEY_CHANGED':
+            return 'HOST_KEY_CHANGED'
+        if isinstance(exc,ValueError) and str(exc)=='INVALID_SSH_KEY':
+            return 'INVALID_SSH_KEY'
+        if isinstance(exc,ValueError) and str(exc)=='EXPIRED':
+            return 'CREDENTIALS_EXPIRED'
+        if stage=='credentials':return 'CREDENTIAL_DECRYPT_FAILED'
+        if stage=='ssh':return 'SSH_LOGIN_FAILED'
+        if stage=='remote':return 'REMOTE_INSTALL_FAILED'
+        if stage=='report':return 'INSTALL_REPORT_FAILED'
+    return 'INSTALLATION_FAILED'
 
 def run_job(job,api,private_key,clock=time.time,network_mode='aws'):
-    stop=threading.Event();lost=threading.Event();credentials={}
+    stop=threading.Event();lost=threading.Event();credentials={};stage='validate'
     def post(path,**extra):return api.post(path,dict(id=job['id'],leaseId=job['leaseId'],**extra))
     def check():
         if lost.is_set():raise ValueError('LEASE_EXPIRED')
@@ -116,16 +131,24 @@ def run_job(job,api,private_key,clock=time.time,network_mode='aws'):
         if job['kind']=='probe':
             fp=probe(job['targetIp'],job['port']);check()
             post('report',state='ready',details={'fingerprint':fp});return 'ready'
+        stage='credentials'
         credentials=decrypt_credentials(job['encryptedCredentials'],private_key,int(clock()),job['credentialsExpireAt'])
         job['encryptedCredentials']=None
+        stage='ssh'
         with SshTransport(job['targetIp'],job['port'],job['username'],job['hostFingerprint'],credentials) as transport:
+            stage='remote'
             details=install(transport,job,check);check()
         # Additional VPN exposure is allowed only after fresh-host preflight and installation.
         if job['mode']=='fresh' and network_mode=='aws':ensure_network(job['targetIp'],job['port'],extra_tcp_ports=(8443,))
         check()
+        stage='report'
         post('report',state='ready',details=details);return 'ready'
     except Exception as exc:
-        try:post('report',state='failed',safeCode=safe_failure_code(exc,job.get('kind')))
+        code=safe_failure_code(exc,job.get('kind'),stage)
+        # Never log raw SSH errors, credentials, command output or server details.
+        if job.get('kind')=='v2-install':
+            print('V2_INSTALL_SAFE_ERROR: '+code,flush=True)
+        try:post('report',state='failed',safeCode=code)
         except Exception:pass
         return 'failed'
     finally:

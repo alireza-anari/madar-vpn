@@ -275,3 +275,24 @@ test('resident pairing requires signed owner and creates an RSA-OAEP sealed V2 c
   assert.equal((await enrollmentApi(request(owner),{...env,V2_EXECUTOR_BACKEND:'github-actions'},now)).status,503);
   DB.close();
 });
+
+test('install reports allowlisted failure reasons without reflecting untrusted runner errors',async()=>{
+  const DB=database(),now=1000000,secret='s'.repeat(48);
+  const env={DB,RUNNER_ENROLLMENT_ENABLED:'true',RUNNER_SERVICE_SECRET:secret};
+  const spec={nodeId:'test-fail01',provider:'webdade',region:'test',ip:'8.8.8.8',port:22,username:'root',userLimit:5,capacityGb:10,mode:'fresh'};
+  const make=async(id,lease)=>DB.prepare("INSERT INTO v2_runner_jobs(id,owner_id,kind,spec_json,state,lease_id,lease_until_ms,created_ms,expires_ms) VALUES(?,'123','v2-install',?,'leased',?,?,?,?)").bind(id,JSON.stringify(spec),lease,now+90000,now,now+600000).run();
+  const request=(id,lease,safeCode)=>new Request('https://v2/api/runner/report',{method:'POST',headers:{authorization:'Bearer '+secret,'content-type':'application/json'},body:JSON.stringify({id,leaseId:lease,state:'failed',safeCode})});
+  for(const [sent,expected] of [['SSH_AUTH_FAILED','SSH_AUTH_FAILED'],['REMOTE_INSTALL_FAILED','REMOTE_INSTALL_FAILED'],['password-secret','INSTALLATION_FAILED']]){
+    const id=crypto.randomUUID(),lease=crypto.randomUUID();
+    await make(id,lease);
+    // A real install report requires the matching bootstrap node row; the
+    // allowlisted sanitization is checked using the report's safe handling.
+    await DB.prepare("INSERT OR IGNORE INTO nodes(id,provider,region,lifecycle,user_limit,byte_limit,desired_revision,acked_revision) VALUES(?,'webdade','test','enrolling',5,10737418240,1,0)").bind(spec.nodeId).run();
+    await DB.prepare("INSERT INTO node_bootstrap_jobs(id,node_id,ip,owner_id,mode,state,created_ms,updated_ms) VALUES(?,?,?,'123','fresh','dispatching',?,?)").bind(id,spec.nodeId,spec.ip,now,now).run();
+    const r=await runnerApi(request(id,lease,sent),env,now);
+    assert.equal(r.status,200);
+    const stored=await DB.prepare('SELECT safe_code FROM v2_runner_jobs WHERE id=?').bind(id).first();
+    assert.equal(stored.safe_code,expected);
+  }
+  DB.close();
+});
