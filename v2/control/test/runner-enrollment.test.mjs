@@ -278,7 +278,7 @@ test('resident pairing requires signed owner and creates an RSA-OAEP sealed V2 c
 
 test('install reports allowlisted failure reasons without reflecting untrusted runner errors',async()=>{
   const DB=database(),now=1000000,secret='s'.repeat(48);
-  const env={DB,RUNNER_ENROLLMENT_ENABLED:'true',RUNNER_SERVICE_SECRET:secret};
+  const env={DB,RUNNER_ENROLLMENT_ENABLED:'true',RUNNER_SERVICE_SECRET:secret,SUBSCRIPTION_CREDENTIAL_KEY:'A'.repeat(43)};
   const spec={nodeId:'test-fail01',provider:'webdade',region:'test',ip:'8.8.8.8',port:22,username:'root',userLimit:5,capacityGb:10,mode:'fresh'};
   const make=async(id,lease)=>DB.prepare("INSERT INTO v2_runner_jobs(id,owner_id,kind,spec_json,state,lease_id,lease_until_ms,created_ms,expires_ms) VALUES(?,'123','v2-install',?,'leased',?,?,?,?)").bind(id,JSON.stringify(spec),lease,now+90000,now,now+600000).run();
   const request=(id,lease,safeCode)=>new Request('https://v2/api/runner/report',{method:'POST',headers:{authorization:'Bearer '+secret,'content-type':'application/json'},body:JSON.stringify({id,leaseId:lease,state:'failed',safeCode})});
