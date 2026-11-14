@@ -329,8 +329,10 @@ test('read-only diagnosis is owner-bound to a failed install and cannot provisio
   assert.equal(job.kind,'v2-install');
   const report=await run('report',{id:diagId,leaseId:job.leaseId,state:'ready',safeCode:'DIAG_EXISTING_VPN'});
   assert.equal(report.status,200);
-  assert.deepEqual((await DB.prepare('SELECT state,safe_code,encrypted_credentials FROM v2_runner_jobs WHERE id=?').bind(diagId).first()),
-    {state:'ready',safe_code:'DIAG_EXISTING_VPN',encrypted_credentials:null});
+  const stored=await DB.prepare('SELECT state,safe_code,encrypted_credentials FROM v2_runner_jobs WHERE id=?').bind(diagId).first();
+  assert.equal(stored.state,'ready');
+  assert.equal(stored.safe_code,'DIAG_EXISTING_VPN');
+  assert.equal(stored.encrypted_credentials,null);
   assert.equal((await DB.prepare('SELECT COUNT(*) AS n FROM node_bootstrap_jobs').first()).n,0);
   assert.equal((await DB.prepare('SELECT COUNT(*) AS n FROM nodes').first()).n,0);
   DB.close();
