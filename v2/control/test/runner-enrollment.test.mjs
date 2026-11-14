@@ -46,20 +46,20 @@ function database(){
 }
 test('real enrollment queue binds owner, fingerprint and ciphertext, signs leases, and refuses stale reports',async()=>{
   const DB=database(),now=1000000;
-  const env={DB,BOT_TOKEN:'test-token',ADMIN_TELEGRAM_IDS:'123,456',RUNNER_ENROLLMENT_ENABLED:'true',RUNNER_SERVICE_SECRET:'s'.repeat(48),RUNNER_PUBLIC_KEY:'{}'};
+  const env={DB,BOT_TOKEN:'test-token',ADMIN_TELEGRAM_IDS:'123,456',RUNNER_ENROLLMENT_ENABLED:'true',V2_EXECUTOR_BACKEND:'resident',RUNNER_SERVICE_SECRET:'s'.repeat(48),RUNNER_PUBLIC_KEY:'{}'};
   const owner=await initData(env.BOT_TOKEN,123,1000),other=await initData(env.BOT_TOKEN,456,1000);
   const admin=(path,b,auth=owner,time=now)=>enrollmentApi(new Request('https://v2/api/enrollment/'+path,{method:b?'POST':'GET',headers:{'x-telegram-init-data':auth,'content-type':'application/json'},...(b?{body:JSON.stringify(b)}:{})}),env,time);
   const run=(path,b,time=now,secret=env.RUNNER_SERVICE_SECRET)=>runnerApi(new Request('https://v2/api/runner/'+path,{method:'POST',headers:{authorization:'Bearer '+secret,'content-type':'application/json'},body:JSON.stringify(b)}),env,time);
   assert.equal((await admin('session')).status,503);
-  assert.equal((await run('lease',{runnerId:'runner-v2'},now,'bad')).status,401);
-  await run('lease',{runnerId:'runner-v2'});
+  assert.equal((await run('lease',{runnerId:'existing-host-v2'},now,'bad')).status,401);
+  await run('lease',{runnerId:'existing-host-v2'});
   assert.equal((await admin('session')).status,200);
   const spec={nodeId:'test-new01',provider:'aws',region:'eu-north-1',userLimit:20,capacityGb:500,ip:'8.8.8.8',port:22,username:'root'};
   const {id}=await (await admin('probe',spec)).json();
   assert.ok(id);
   assert.equal((await admin('probe',spec)).status,409);
   assert.equal((await admin('jobs/'+id,null,other)).status,404);
-  const signed=await (await run('lease',{runnerId:'runner-v2'})).json();
+  const signed=await (await run('lease',{runnerId:'existing-host-v2'})).json();
   const k=await crypto.subtle.importKey('raw',new TextEncoder().encode(env.RUNNER_SERVICE_SECRET),{name:'HMAC',hash:'SHA-256'},false,['verify']);
   assert.equal(await crypto.subtle.verify('HMAC',k,Uint8Array.from(signed.signature.match(/../g),x=>parseInt(x,16)),new TextEncoder().encode(signed.payload)),true);
   const job=JSON.parse(signed.payload),fp='SHA256:'+'a'.repeat(43);
@@ -71,7 +71,7 @@ test('real enrollment queue binds owner, fingerprint and ciphertext, signs lease
   assert.equal((await admin('install',{...install,fingerprint:'SHA256:'+'b'.repeat(43)})).status,409);
   const created=await (await admin('install',install)).json();assert.ok(created.id);
   assert.equal((await (await admin('install',install)).json()).id,created.id);
-  const leased=JSON.parse((await (await run('lease',{runnerId:'runner-v2'})).json()).payload);
+  const leased=JSON.parse((await (await run('lease',{runnerId:'existing-host-v2'})).json()).payload);
   assert.equal(leased.kind,'v2-install');assert.equal(leased.hostFingerprint,fp);
   assert.equal(JSON.parse(leased.encryptedCredentials).v,1);
   assert.equal((await run('renew',{id:created.id,leaseId:leased.leaseId},now+91000)).status,409);
