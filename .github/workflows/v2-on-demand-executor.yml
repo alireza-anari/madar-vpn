@@ -1,0 +1,44 @@
+name: Madar V2 on-demand SSH executor (no resident runner)
+run-name: V2 one-time node job
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: Exact queued V2 job UUID (never credentials)
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: madar-v2-job-${{ inputs.job_id }}
+  cancel-in-progress: false
+jobs:
+  execute:
+    if: github.ref == 'refs/heads/rewrite/madar-v2-20261110'
+    runs-on: ubuntu-24.04
+    environment: madar-v2-staging
+    timeout-minutes: 19
+    env:
+      MADAR_V2_URL: https://madar-v2-staging.alirezaanari117.workers.dev
+      MADAR_V2_RUNNER_SERVICE_SECRET: ${{ secrets.MADAR_V2_RUNNER_SERVICE_SECRET }}
+      MADAR_V2_RUNNER_PRIVATE_KEY_PEM: ${{ secrets.MADAR_V2_RUNNER_PRIVATE_KEY_PEM }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Fail closed if independent V2 credentials are absent
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$MADAR_V2_RUNNER_SERVICE_SECRET"
+          test -n "$MADAR_V2_RUNNER_PRIVATE_KEY_PEM"
+          [[ "${{ inputs.job_id }}" =~ ^[a-f0-9]{8}-([a-f0-9]{4}-){3}[a-f0-9]{12}$ ]]
+          test -f v2/runner/one_shot.py
+      - name: Install fixed SSH client dependencies
+        run: python3 -m pip install --disable-pip-version-check paramiko==5.0.0 cryptography==50.0.2
+      - name: Execute exactly this V2 job, with no V1 keys and no AWS IAM mutation
+        run: python3 -B v2/runner/one_shot.py --job-id "${{ inputs.job_id }}"
