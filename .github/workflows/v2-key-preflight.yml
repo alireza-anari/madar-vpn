@@ -30,13 +30,29 @@ jobs:
           from cryptography.hazmat.primitives.serialization import load_pem_private_key
           from cryptography.hazmat.primitives.asymmetric import rsa
 
-          pem = os.environ.get("PRIVATE_KEY_PEM", "")
-          if not pem.strip():
+          pem = os.environ.get("PRIVATE_KEY_PEM", "").strip()
+          if not pem:
               raise SystemExit("V2_RSA_SECRET_MISSING")
+          if pem.startswith('"') and pem.endswith('"'):
+              import json
+              try:
+                  pem = json.loads(pem)
+              except (ValueError, TypeError):
+                  raise SystemExit("V2_RSA_SECRET_WRAPPED_INVALID_JSON") from None
+          changed_newlines = False
+          if r"\n" in pem and "\n" not in pem:
+              pem = pem.replace(r"\n", "\n")
+              changed_newlines = True
+          if not pem.startswith("-----BEGIN "):
+              raise SystemExit("V2_RSA_PEM_HEADER_MISSING")
+          if "-----END " not in pem:
+              raise SystemExit("V2_RSA_PEM_FOOTER_MISSING")
+          if pem.count("\n") < 2:
+              raise SystemExit("V2_RSA_PEM_NEWLINES_MISSING")
           try:
               key = load_pem_private_key(pem.encode(), password=None)
           except (ValueError, TypeError):
-              raise SystemExit("V2_RSA_PRIVATE_KEY_INVALID") from None
+              raise SystemExit("V2_RSA_PRIVATE_KEY_TRUNCATED_OR_CORRUPTED" if len(pem) < 1000 else "V2_RSA_PRIVATE_KEY_INVALID") from None
           if not isinstance(key, rsa.RSAPrivateKey):
               raise SystemExit("V2_RSA_NOT_RSA")
           public_numbers = key.public_key().public_numbers()
@@ -47,5 +63,5 @@ jobs:
           digest = hashlib.sha256((modulus+"."+exponent).encode()).hexdigest()
           if digest != os.environ["EXPECTED_PUBKEY_SHA256"]:
               raise SystemExit("V2_RSA_KEY_PAIR_MISMATCH")
-          print("V2_RSA_PRIVATE_KEY_VALID_AND_MATCHES_CLOUDFLARE")
+          print("V2_RSA_PRIVATE_KEY_VALID_AFTER_NEWLINE_NORMALIZATION" if changed_newlines else "V2_RSA_PRIVATE_KEY_VALID_AND_MATCHES_CLOUDFLARE")
           PY
