@@ -77,7 +77,9 @@ def _safe_existing_file(path):
 
 
 def _atomic_file(directory,prefix,text):
-    fd,name=tempfile.mkstemp(prefix=prefix,dir=directory)
+    # Native Xray infers the config format from its filename, even for -test.
+    # Staged configs must keep a JSON suffix before their atomic replacement.
+    fd,name=tempfile.mkstemp(prefix=prefix,suffix='.json',dir=directory)
     try:
         os.fchmod(fd,0o600)
         with os.fdopen(fd,"w",encoding="utf-8") as stream:

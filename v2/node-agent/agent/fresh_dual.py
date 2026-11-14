@@ -18,7 +18,7 @@ from .dual_reality import (
 from .bootstrap import xray_unit
 from .installer import require_staging_marker
 from .reconciler import ReconcileError,_atomic_file,_safe_config_root,verify_xray_binary,subprocess_runner
-from .tunnel_probe import EXPECTED_XRAY_SHA256
+from .releases import xray_binary_sha256
 from .xray_config import encode
 
 
@@ -64,7 +64,7 @@ def enable(node,ip,*,root=ROOT,runner=subprocess_runner,probe=listening):
         raise ReconcileError("unrecognized node identity")
     if owned(UNITS/XUNIT,0o644,8192)!=xray_unit():
         raise ReconcileError("Xray systemd definition not the approved staging unit")
-    verify_xray_binary(BIN,EXPECTED_XRAY_SHA256)
+    verify_xray_binary(BIN,xray_binary_sha256())
     fd=os.open(root/"installer.lock",os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW,0o600)
     with os.fdopen(fd,"r+") as f:
         os.fchmod(f.fileno(),0o600)

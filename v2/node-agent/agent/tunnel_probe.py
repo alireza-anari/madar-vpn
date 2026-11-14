@@ -21,6 +21,7 @@ import uuid
 from pathlib import Path
 
 from .installer import require_staging_marker
+from .releases import xray_binary_sha256
 from .reconciler import ReconcileError, _safe_config_root
 from .xray_config import DOMAIN, BASE64URL, SHORT_ID, WS_PATH
 
@@ -214,7 +215,7 @@ def main(argv=None):
     if (not stat.S_ISREG(info.st_mode) or not info.st_mode&stat.S_IXUSR or
             info.st_uid!=0 or xray.is_symlink()):
         raise ReconcileError("test Xray binary is not a safe root-owned regular executable")
-    if hashlib.sha256(xray.read_bytes()).hexdigest()!=EXPECTED_XRAY_SHA256:
+    if hashlib.sha256(xray.read_bytes()).hexdigest()!=xray_binary_sha256():
         raise ReconcileError("test Xray does not match the deployed approved binary")
     outcome={}
     for transport in ("reality","wss"):

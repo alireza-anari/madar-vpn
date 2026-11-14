@@ -25,6 +25,16 @@ def tar_binary(content=b"BINARY",name="caddy",typecode=None):
     return stream.getvalue()
 
 class PinnedReleasesTests(unittest.TestCase):
+    def test_binary_verification_selects_the_host_architecture(self):
+        from unittest.mock import patch
+        with patch.object(releases.platform,'machine',return_value='aarch64'):
+            self.assertEqual(releases.xray_binary_sha256(),
+                'c2d1e66a130556d32089adcf38202fcb6f9027e41fb456cc2cda9a5fabdc093a')
+        with patch.object(releases.platform,'machine',return_value='x86_64'):
+            self.assertEqual(releases.xray_binary_sha256(),
+                'e87bce586acdb9136aa5b1f1d9c8db9f1ea1d145b6d86368c7f6f662f9f6a66d')
+        with patch.object(releases.platform,'machine',return_value='ppc64'):
+            with self.assertRaises(releases.ReleaseError):releases.xray_binary_sha256()
     def test_pins_are_sha256_and_https_only(self):
         for arch in ("amd64","arm64"):
             for url,digest,kind in releases.PINS[arch].values():

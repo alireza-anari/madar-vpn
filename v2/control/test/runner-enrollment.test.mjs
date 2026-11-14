@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {authenticateOwner,validateConnection,validEnvelope,enrollmentApi,runnerApi,githubExecutorReady,dispatchGithubJob} from '../src/runner-enrollment.mjs';
 import worker from '../src/index.mjs';
+import {issueTrialLink,getTrialFeed} from '../src/node-auto.mjs';
 import {DatabaseSync} from 'node:sqlite';
 import {readdirSync,readFileSync} from 'node:fs';
 
@@ -96,6 +97,20 @@ test('successful install metadata and queue completion are atomic and a repeated
   assert.equal((await DB.prepare('SELECT state FROM v2_runner_jobs WHERE id=?').bind(id).first()).state,'ready');
   assert.equal((await DB.prepare('SELECT encrypted_credentials FROM v2_runner_jobs WHERE id=?').bind(id).first()).encrypted_credentials,null);
   assert.equal((await DB.prepare('SELECT COUNT(*) AS n FROM routes').first()).n,1);
+  // Exercise installed metadata -> encrypted UUID -> owner trial token ->
+  // two real feed profiles against SQLite, without publishing a sale route.
+  env.SUBSCRIPTION_PUBLIC_ORIGIN='https://v2.example.com';
+  assert.equal(await issueTrialLink(env,'456',spec.nodeId,now),null);
+  const link=await issueTrialLink(env,'123',spec.nodeId,now);
+  const feed=await getTrialFeed(new Request(link),env,now);
+  assert.equal(feed.status,200);
+  const profiles=atob(await feed.text()).trim().split('\n');
+  assert.equal(profiles.length,2);
+  assert.ok(profiles.some(x=>x.includes('@8.8.8.8:443?')));
+  assert.ok(profiles.some(x=>x.includes('@8.8.8.8:8443?')));
+  assert.ok(profiles.every(x=>x.startsWith('vless://'+b.details.uuid+'@')));
+  assert.equal((await getTrialFeed(new Request(link),env,now+3600001)).status,403);
+  assert.equal((await DB.prepare("SELECT COUNT(*) AS n FROM route_carrier_variants WHERE published=1 OR verified_ms IS NOT NULL").first()).n,0);
   DB.close();
 });
 test('Worker serves the secure form and denies unauthenticated enrollment and runner requests',async()=>{

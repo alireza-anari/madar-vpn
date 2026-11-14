@@ -19,6 +19,11 @@ MAX_DOWNLOAD_BYTES=70*1024*1024
 MAX_BINARY_BYTES=65*1024*1024
 X_VER="v26.11.9"
 C_VER="v2.11.9"
+# Executable digests extracted only after verifying the official archive pins.
+XRAY_BINARY_SHA256={
+    'amd64':'e87bce586acdb9136aa5b1f1d9c8db9f1ea1d145b6d86368c7f6f662f9f6a66d',
+    'arm64':'c2d1e66a130556d32089adcf38202fcb6f9027e41fb456cc2cda9a5fabdc093a',
+}
 PINS={
     "amd64":{
         "xray":("https://github.com/XTLS/Xray-core/releases/download/v26.11.9/Xray-linux-64.zip",
@@ -57,6 +62,10 @@ def _get(url):
     if not raw or len(raw)>MAX_DOWNLOAD_BYTES:
         raise ReleaseError("release archive exceeds bounded size")
     return raw
+
+
+def xray_binary_sha256():
+    return XRAY_BINARY_SHA256[host_arch()]
 
 
 def _extract_binary(archive,kind,member):

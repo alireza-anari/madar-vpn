@@ -17,6 +17,8 @@ import uuid
 from agent import releases
 from agent.bootstrap import parse_reality_keypair
 from agent.xray_config import compile_config,compile_caddy_site
+from agent.fresh_dual import build_fresh_dual
+from agent.reconciler import _atomic_file
 
 def run(args):
     return subprocess.run(args,check=True,timeout=25,text=True,capture_output=True)
@@ -31,6 +33,10 @@ def main():
             actual=hashlib.sha256(binary.read_bytes()).hexdigest()
             assert actual==expected_sha
             paths[name]=str(binary)
+            if name=='xray':assert actual==releases.XRAY_BINARY_SHA256['amd64']
+        # Verify the ARM64 executable pin as bytes only; this runner is x86-64.
+        _,arm_digest=releases.verified_release('xray','arm64')
+        assert arm_digest==releases.XRAY_BINARY_SHA256['arm64']
         # The private key remains in a temporary directory and is never logged.
         private,_=parse_reality_keypair(run([paths["xray"],"x25519"]).stdout)
         payload=compile_config(
@@ -44,6 +50,12 @@ def main():
         config_path.write_text(json.dumps(payload),encoding="utf-8")
         os.chmod(config_path,0o600)
         run([paths["xray"],"run","-test","-config",str(config_path)])
+        fresh=dict(payload,inbounds=payload['inbounds'][:1])
+        dual_path=_atomic_file(directory,'.fresh443-',json.dumps(build_fresh_dual(fresh)))
+        try:
+            run([paths['xray'],'run','-test','-config',str(dual_path)])
+        except subprocess.CalledProcessError as exc:
+            raise AssertionError((exc.stdout+exc.stderr).replace(private,'[redacted]')) from None
         caddyfile=directory/"Caddyfile"
         caddyfile.write_text(compile_caddy_site(
             domain="vpn.example.com",ws_path="/madar-ws",loopback_port=10443
