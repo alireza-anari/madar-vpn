@@ -40,21 +40,30 @@ export async function adminDashboard(env,e) {
     tickets>0?'💬 '+faNumber(tickets)+' درخواست پشتیبانی باز':null,
     ready===0?'🖥 هنوز سرور آماده فروش وجود ندارد':null,
   ].filter(Boolean);
+  // Keep this overview short. Telegram photo captions use the user's native
+  // small text size; dense reports become unreadable on narrow mobile screens.
+  const actionNeeded=receipts>0
+    ?'🧾 '+faNumber(receipts)+' رسید در صف بررسی'
+    :tickets>0
+      ?'💬 '+faNumber(tickets)+' درخواست پشتیبانی باز'
+      :ready===0
+        ?'⚠️ سرور آماده وجود ندارد'
+        :'✅ مورد فوری در صف نیست';
   const body=[
-    panelHeading('📊','پیشخوان مدیریت','مرکز کنترل مدار'),
+    panelHeading('📊','پیشخوان مدیریت','خلاصه وضعیت مدار'),
     '',
     '👥 مشتریان: '+faNumber(customers),
-    '🔗 اشتراک‌های فعال: '+faNumber(subs),
-    '🧾 سفارش‌های باز: '+faNumber(orders),
-    '📩 رسیدهای در صف: '+faNumber(receipts),
+    '🔗 اشتراک فعال: '+faNumber(subs),
+    '🧾 سفارش باز: '+faNumber(orders),
+    '📩 رسید در انتظار: '+faNumber(receipts),
     '💬 پشتیبانی باز: '+faNumber(tickets),
     '',
-    '🖥 سرورها: '+faNumber(nodes),
+    '🖥 کل سرورها: '+faNumber(nodes),
     '🛠 نصب‌شده: '+faNumber(installed),
-    '✅ آماده: '+faNumber(ready),
+    '✅ وضعیت آماده: '+faNumber(ready),
     '',
-    '🛒 فروش عمومی: '+(salesReady?'پیکربندی شده':'غیرفعال'),
-    ...(alerts.length?['','⚠️ نیازمند رسیدگی',...alerts]:['','✅ مورد فوری در صف نیست']),
+    '🛒 فروش عمومی: '+(salesReady?'در حال پیکربندی':'غیرفعال'),
+    actionNeeded
   ].join('\n');
   const urgent=[];
   if(receipts>0)urgent.push([{text:'🧾 بررسی رسیدها · '+faNumber(receipts),callback_data:'v2:admin:queue'}]);
