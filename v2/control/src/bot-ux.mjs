@@ -108,8 +108,9 @@ const managerMenu={inline_keyboard:[
   ],
   [
     {text:'💬 صندوق پشتیبانی',callback_data:'v2:admin:tickets'},
-    {text:'🧑‍💼 کارکنان و فروشندگان',callback_data:'v2:admin:staff'},
+    {text:'🔗 صدور کانفیگ',callback_data:'v2:admin:configs'},
   ],
+  [{text:'🧑‍💼 کارکنان و فروشندگان',callback_data:'v2:admin:staff'}],
 ]};
 const sellerMenuMarkup={inline_keyboard:[
   [
@@ -146,6 +147,21 @@ export function parentPage(key,isAdmin=false){
   if(key==='admin:node:new')return 'admin:node:cancel';
   if(key==='admin:node:cancel')return 'admin:home'; // Cancellation lands on server overview.
   if(key==='admin:node:trials')return 'admin:nodes';
+  if(key==='admin:configs'||key==='admin:configs:home')return 'admin:home';
+  if(/^admin:configs:(trials|subscriptions):[0-9]{1,4}$/.test(key))
+    return 'admin:configs';
+  if(/^admin:configs:trial:[a-f0-9]{24}$/.test(key))
+    return 'admin:configs:trials:0';
+  if(/^admin:configs:subscription:[a-f0-9]{24}$/.test(key))
+    return 'admin:configs:subscriptions:0';
+  if(/^admin:configs:issue:[a-f0-9]{24}$/.test(key))
+    return 'admin:configs:subscription:'+key.slice(-24);
+  if(/^admin:tickets:(open|waiting|closed|all):[0-9]{1,4}$/.test(key))
+    return 'admin:tickets';
+  if(/^ticket:page:tg-[0-9]{1,20}:[0-9]{1,4}$/.test(key))
+    return 'ticket:view:'+key.split(':')[2];
+  if(/^customer:ticket:page:tg-[0-9]{1,20}:[0-9]{1,4}$/.test(key))
+    return 'customer:ticket:'+key.split(':')[3];
   if(/^admin:nodes:(all|ready|setup|attention|quarantine|archive):[0-9]{1,4}$/.test(key))
     return 'admin:nodes';
   if(/^admin:node:(confirm|apply):(quarantine|restore|retire):[a-f0-9]{24}$/.test(key))
