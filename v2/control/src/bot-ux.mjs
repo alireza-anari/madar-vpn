@@ -70,19 +70,22 @@ const customerMenu={inline_keyboard:[
 ]};
 const managerMenu={inline_keyboard:[
   [
+    {text:'➕ افزودن سرور',callback_data:'v2:admin:node:new'},
     {text:'🖥 مدیریت سرورها',callback_data:'v2:admin:nodes'},
+  ],
+  [
     {text:'🧪 لینک‌های آزمایشی',callback_data:'v2:admin:node:trials'},
-  ],
-  [
     {text:'🛍 مدیریت پلن‌ها',callback_data:'v2:admin:plans'},
+  ],
+  [
     {text:'🧾 بررسی رسیدها',callback_data:'v2:admin:queue'},
-  ],
-  [
     {text:'💬 صندوق پشتیبانی',callback_data:'v2:admin:tickets'},
-    {text:'👥 مدیریت مشتریان',callback_data:'v2:admin:customers'},
   ],
   [
+    {text:'👥 مدیریت مشتریان',callback_data:'v2:admin:customers'},
     {text:'🧑‍💼 کارکنان و فروشندگان',callback_data:'v2:admin:staff'},
+  ],
+  [
     {text:'🏠 خانه',callback_data:'v2:home'},
   ],
 ]};
