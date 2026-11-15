@@ -42,10 +42,10 @@ test('support and plan messages may exceed callback limits, typed callbacks cann
   const note=toBotMessage({update_id:901,message:{chat:{id:123,type:'private'},from:{id:123},text:long}});
   assert.ok(note);
   assert.equal(note.inputText,long);
-  assert.equal(note.key,'شرح');
+  assert.equal(note.key,'text');
   const forged=toBotMessage({update_id:902,message:{chat:{id:123,type:'private'},from:{id:123},text:'v2:admin:home'}});
   assert.ok(forged);
-  assert.equal(forged.key,'v2:admin:home');
+  assert.equal(forged.key,'text');
   assert.notEqual(forged.key,'admin:home');
   const invalidCallback=toBotMessage({update_id:903,callback_query:{
     from:{id:123},data:'v2:'+('x'.repeat(300)),message:{chat:{id:123,type:'private'}}
