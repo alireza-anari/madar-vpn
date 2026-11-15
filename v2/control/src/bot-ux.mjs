@@ -231,7 +231,9 @@ export function contextualKeyboard(key,markup,{isAdmin=false}={}){
     )).filter(row=>row.length>0)};
   // Text replies from a wizard have no callback key; honor the secure
   // wizard's explicit return destination instead of guessing a global home.
-  const typedBack=key==='text'?source.flat().find(b=>
+  const explicitBack=(key==='text'||/^ticket:media:[0-9]{1,20}$/.test(key)||
+    /^customer:ticket:media:[0-9]{1,20}$/.test(key));
+  const typedBack=explicitBack?source.flat().find(b=>
     String(b.text??'').startsWith('↩️')&&
     /^v2:[a-zA-Z0-9:_-]{1,64}$/.test(String(b.callback_data??''))):null;
   const target=typedBack?typedBack.callback_data.slice(3):parentPage(key,isAdmin);
