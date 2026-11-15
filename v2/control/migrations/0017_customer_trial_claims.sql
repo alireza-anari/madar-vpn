@@ -2,7 +2,7 @@
 -- The token is stored only as a digest; the token itself is deterministically
 -- derived from the existing credential secret and the immutable issue time.
 CREATE TABLE customer_trial_claims (
-  telegram_id TEXT PRIMARY KEY CHECK(telegram_id GLOB '[0-9]*' AND length(telegram_id) BETWEEN 1 AND 20),
+  telegram_id TEXT PRIMARY KEY CHECK(telegram_id NOT GLOB '*[^0-9]*' AND length(telegram_id) BETWEEN 1 AND 20),
   node_id TEXT NOT NULL REFERENCES nodes(id),
   token_hash TEXT NOT NULL UNIQUE CHECK(length(token_hash)=64),
   issued_ms INTEGER NOT NULL,
