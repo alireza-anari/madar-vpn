@@ -6,6 +6,7 @@ import {
   adminDashboard,adminPanelAction,customerTicketAction,consumePanelInput,staffTicketDetails,
 } from '../src/bot-panels.mjs';
 import {resolveBotAction} from '../src/shop.mjs';
+import {nodeUiRef} from '../src/node-admin.mjs';
 
 function database() {
   const raw=new DatabaseSync(':memory:');
@@ -309,5 +310,95 @@ test('back navigation abandons pending plan, staff, support and server drafts',a
   assert.equal(raw.prepare("SELECT COUNT(*) AS n FROM v2_bot_input_sessions WHERE telegram_id='200' AND mode='ticket_reply'").get().n,1);
   await customerTicketAction(env,{...event(200,'customer:ticket:tg-19',null,807),messageId:54},now+7);
   assert.equal(raw.prepare("SELECT COUNT(*) AS n FROM v2_bot_input_sessions WHERE telegram_id='200'").get().n,0);
+  raw.close();
+});
+
+
+test('server directory separates nodes into individually selectable, paginated status lists',async()=>{
+  const {env,raw,event}=fixture();
+  const states=['ready','provisioning','quarantined','degraded','retired','enrolling','provisioning','quarantined'];
+  for(let i=0;i<states.length;i++)
+    raw.prepare("INSERT INTO nodes(id,provider,region,lifecycle,user_limit,byte_limit) VALUES(?,?,? ,?,20,10737418240)")
+      .run('separate-'+i,'Webdade','eu',states[i]);
+  const list=await resolveBotAction(env,event(100,'admin:nodes',null,200),2000);
+  assert.match(list.text,/کل: ۸/);
+  assert.match(list.text,/قرنطینه: ۲/);
+  assert.ok(list.text.length<1024);
+  const items=list.replyMarkup.inline_keyboard.flat();
+  const choices=items.filter(b=>b.callback_data.startsWith('v2:admin:node:view:'));
+  assert.equal(choices.length,6);
+  assert.equal(new Set(choices.map(x=>x.callback_data)).size,6);
+  assert.ok(choices.every(x=>x.callback_data.length<=64));
+  assert.ok(items.some(x=>x.callback_data==='v2:admin:nodes:all:1'));
+  assert.ok(items.some(x=>x.callback_data==='v2:admin:nodes:quarantine:0'));
+  assert.ok(items.some(x=>x.callback_data==='v2:admin:node:new'));
+  const page2=await resolveBotAction(env,event(100,'admin:nodes:all:1',null,201),2001);
+  assert.equal(page2.replyMarkup.inline_keyboard.flat().filter(x=>x.callback_data.startsWith('v2:admin:node:view:')).length,2);
+  const quarantined=await resolveBotAction(env,event(100,'admin:nodes:quarantine:0',null,202),2002);
+  const qs=quarantined.replyMarkup.inline_keyboard.flat().filter(x=>x.callback_data.startsWith('v2:admin:node:view:'));
+  assert.equal(qs.length,2);
+  assert.ok(qs.every(x=>x.text.includes('قرنطینه')));
+  const token=await nodeUiRef('separate-2');
+  const detail=await resolveBotAction(env,event(100,'admin:node:view:'+token,null,203),2003);
+  assert.match(detail.text,/separate-2/);
+  assert.doesNotMatch(detail.text,/separate-1/);
+  assert.match(detail.text,/وضعیت: قرنطینه/);
+  assert.ok(detail.replyMarkup.inline_keyboard.flat().some(x=>x.callback_data==='v2:admin:node:confirm:restore:'+token));
+  assert.ok(!detail.replyMarkup.inline_keyboard.flat().some(x=>x.callback_data.startsWith('v2:admin:node:confirm:quarantine')));
+  assert.ok(!detail.replyMarkup.inline_keyboard.flat().some(x=>x.text.includes('نمای مشتری')));
+  const denied=await resolveBotAction(env,event(200,'admin:node:view:'+token,null,204),2004);
+  assert.match(denied.text,/دسترسی به این بخش مجاز نیست/);
+  const bad=await resolveBotAction(env,event(100,'admin:node:view:'+'a'.repeat(24),null,205),2005);
+  assert.match(bad.text,/یافت نشد/);
+  raw.close();
+});
+
+test('server management requires confirmation, audits lifecycle, and never auto-approves a quarantined node',async()=>{
+  const {env,raw,event}=fixture();
+  raw.exec("INSERT INTO nodes(id,provider,region,lifecycle,user_limit,byte_limit) VALUES('control-1','Webdade','eu','provisioning',20,10737418240)");
+  const ref=await nodeUiRef('control-1');
+  assert.equal(ref.length,24);
+  const confirm=await resolveBotAction(env,event(100,'admin:node:confirm:quarantine:'+ref,null,300),3000);
+  assert.match(confirm.text,/تأیید قرنطینه/);
+  assert.equal(raw.prepare("SELECT lifecycle FROM nodes WHERE id='control-1'").get().lifecycle,'provisioning');
+  const denied=await resolveBotAction(env,event(200,'admin:node:apply:quarantine:'+ref,null,301),3001);
+  assert.match(denied.text,/دسترسی به این بخش مجاز نیست/);
+  assert.equal(raw.prepare("SELECT lifecycle FROM nodes WHERE id='control-1'").get().lifecycle,'provisioning');
+  const applied=await resolveBotAction(env,event(100,'admin:node:apply:quarantine:'+ref,null,302),3002);
+  assert.match(applied.text,/قرنطینه/);
+  assert.equal(raw.prepare("SELECT lifecycle FROM nodes WHERE id='control-1'").get().lifecycle,'quarantined');
+  const repeat=await resolveBotAction(env,event(100,'admin:node:apply:quarantine:'+ref,null,303),3003);
+  assert.match(repeat.text,/مجاز نیست/);
+  const restoring=await resolveBotAction(env,event(100,'admin:node:confirm:restore:'+ref,null,304),3004);
+  assert.match(restoring.text,/آماده فروش نمی‌شود/);
+  await resolveBotAction(env,event(100,'admin:node:apply:restore:'+ref,null,305),3005);
+  assert.equal(raw.prepare("SELECT lifecycle FROM nodes WHERE id='control-1'").get().lifecycle,'degraded');
+  const retireConfirm=await resolveBotAction(env,event(100,'admin:node:confirm:retire:'+ref,null,306),3006);
+  assert.match(retireConfirm.text,/VPS/);
+  await resolveBotAction(env,event(100,'admin:node:apply:retire:'+ref,null,307),3007);
+  assert.equal(raw.prepare("SELECT lifecycle FROM nodes WHERE id='control-1'").get().lifecycle,'retired');
+  const logs=raw.prepare("SELECT verb FROM audit_events WHERE object_id='control-1' ORDER BY id").all();
+  assert.deepEqual(logs.map(x=>x.verb),['lifecycle:quarantine','lifecycle:restore','lifecycle:retire']);
+  raw.close();
+});
+
+test('active subscriptions prevent retirement, and long node IDs use bounded Telegram callback tokens',async()=>{
+  const {env,raw,event}=fixture();
+  const longId='s'+'a'.repeat(63);
+  raw.prepare("INSERT INTO nodes(id,provider,region,lifecycle,user_limit,byte_limit) VALUES(?,'aws','eu','degraded',10,10737418240)").run(longId);
+  const ref=await nodeUiRef(longId);
+  assert.match(ref,/^[a-f0-9]{24}$/);
+  raw.exec("INSERT INTO subscriptions(id,owner_telegram_id,state,expires_at) VALUES('subtest','200','active',9999999999)");
+  raw.prepare("INSERT INTO node_allocations(id,node_id,subscription_id,quota_bytes,state) VALUES('allocate',?,'subtest',1073741824,'active')").run(longId);
+  const list=await resolveBotAction(env,event(100,'admin:nodes',null,400),4000);
+  const button=list.replyMarkup.inline_keyboard.flat().find(b=>b.callback_data==='v2:admin:node:view:'+ref);
+  assert.ok(button);
+  assert.ok(button.callback_data.length<=64);
+  const detail=await resolveBotAction(env,event(100,'admin:node:view:'+ref,null,401),4001);
+  assert.match(detail.text,/۱ \/ ۱۰/);
+  assert.ok(!detail.replyMarkup.inline_keyboard.flat().some(b=>b.callback_data.includes('retire')));
+  const rejected=await resolveBotAction(env,event(100,'admin:node:apply:retire:'+ref,null,402),4002);
+  assert.match(rejected.text,/مجاز نیست/);
+  assert.equal(raw.prepare('SELECT lifecycle FROM nodes WHERE id=?').get(longId).lifecycle,'degraded');
   raw.close();
 });
