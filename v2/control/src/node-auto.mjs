@@ -201,7 +201,9 @@ export async function issueTrialLink(env,owner,nodeId,nowMs=Date.now()){
   const base=env.SUBSCRIPTION_PUBLIC_ORIGIN;
   if(typeof base!=='string'||!/^https:\/\/[a-z0-9.-]+$/i.test(base))return null;
   const job=await env.DB.prepare(
-    "SELECT node_id FROM node_bootstrap_jobs WHERE node_id=? AND owner_id=? AND state='installed'"
+    "SELECT j.node_id FROM node_bootstrap_jobs j JOIN nodes n ON n.id=j.node_id "+
+    "WHERE j.node_id=? AND j.owner_id=? AND j.state='installed' "+
+    "AND n.lifecycle NOT IN ('quarantined','retired')"
   ).bind(nodeId,owner).first();
   if(!job)return null;
   const entropy=crypto.getRandomValues(new Uint8Array(32));
@@ -221,7 +223,9 @@ export async function getTrialFeed(req,env,nowMs=Date.now()){
     return response('Not found',404,'text/plain; charset=utf-8');
   const h=await tokenDigest(token);
   const trial=await env.DB.prepare(
-    "SELECT l.node_id FROM node_trial_links l JOIN node_bootstrap_jobs j ON j.node_id=l.node_id WHERE l.token_hash=? AND l.expires_ms>? AND j.state='installed'"
+    "SELECT l.node_id FROM node_trial_links l JOIN node_bootstrap_jobs j ON j.node_id=l.node_id "+
+    "JOIN nodes n ON n.id=l.node_id WHERE l.token_hash=? AND l.expires_ms>? "+
+    "AND j.state='installed' AND n.lifecycle NOT IN ('quarantined','retired')"
   ).bind(h,nowMs).first();
   if(!trial)return response('Expired',403,'text/plain; charset=utf-8');
   const c=await env.DB.prepare(
