@@ -27,8 +27,8 @@ export function toBotMessage(update) {
   const key=isCallback&&raw.startsWith('v2:')?raw.slice(3):
     !isCallback&&raw.trim().startsWith('/')?
       raw.trim().split(/\s+/)[0].split('@')[0]:'text';
-  const language=sender?.language_code;
-  const locale=typeof language==='string' && language.startsWith('en')?'en':'fa';
+  // Madar V2 is Persian-only by product decision; device language never changes bot copy.
+  const locale='fa';
   const photos=update.message?.photo;
   const lastPhoto=Array.isArray(photos)?photos.at(-1):null;
   const document=update.message?.document;
