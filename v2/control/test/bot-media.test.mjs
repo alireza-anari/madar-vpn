@@ -4,6 +4,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {readdirSync,readFileSync} from 'node:fs';
 import {resolveBotAction} from '../src/shop.mjs';
 import {toBotMessage} from '../src/telegram.mjs';
+import {processInbox} from '../src/index.mjs';
 
 function fixture(){
   const raw=new DatabaseSync(':memory:');
@@ -104,5 +105,37 @@ test('suspended customer may send a screenshot only inside an active support com
   const other=await resolveBotAction(env,e(200,'text',null,113,'unknown-photo-113'),now+2);
   assert.match(other.text,/تعلیق/);
   assert.equal(raw.prepare('SELECT COUNT(*) n FROM receipts').get().n,0);
+  raw.close();
+});
+
+test('Telegram inbox never edits a screenshot caption into another photo or dashboard',async()=>{
+  const {raw,env,e}=fixture(),now=1000000;
+  raw.exec("INSERT INTO support_tickets(id,customer_telegram_id,subject) VALUES('tg-71','200','تصویر')");
+  raw.exec("INSERT INTO support_messages(id,ticket_id,sender_telegram_id,body,role,telegram_file_id) "+
+    "VALUES('support-media:71','tg-71','200','تصویر مشکل','customer','img-file-101')");
+  const callback=(updateId,key,sourcePhotoId)=>({
+    ...e(200,key,null,updateId),messageId:77,editKind:'caption',sourcePhotoId,
+  });
+  for(const item of [
+    callback(400,'customer:ticket:media:71','brand-not-in-db'),
+    callback(401,'customer:ticket:tg-71','img-file-101'),
+    callback(402,'customer:ticket:tg-71','some-other-brand-image'),
+  ]){
+    raw.prepare("INSERT INTO telegram_inbox(update_id,chat_id,event_json,state,due_ms) "+
+      "VALUES(?,'200',?,'pending',0)").run(item.updateId,JSON.stringify(item));
+  }
+  await processInbox(env,now);
+  const photo=raw.prepare('SELECT media_file_id,edit_message_id,edit_kind FROM telegram_outbox WHERE update_id=400').get();
+  assert.equal(photo.media_file_id,'img-file-101');
+  assert.equal(photo.edit_message_id,null);
+  assert.equal(photo.edit_kind,null);
+  const fromAttachment=raw.prepare('SELECT media_file_id,edit_message_id FROM telegram_outbox WHERE update_id=401').get();
+  assert.equal(fromAttachment.media_file_id,null);
+  assert.equal(fromAttachment.edit_message_id,null);
+  const fromBrand=raw.prepare('SELECT media_file_id,edit_message_id,edit_kind FROM telegram_outbox WHERE update_id=402').get();
+  assert.equal(fromBrand.media_file_id,null);
+  assert.equal(fromBrand.edit_message_id,77);
+  assert.equal(fromBrand.edit_kind,'caption');
+  assert.equal(raw.prepare("SELECT COUNT(*) n FROM receipts").get().n,0);
   raw.close();
 });
