@@ -402,3 +402,23 @@ test('active subscriptions prevent retirement, and long node IDs use bounded Tel
   assert.equal(raw.prepare('SELECT lifecycle FROM nodes WHERE id=?').get(longId).lifecycle,'degraded');
   raw.close();
 });
+
+
+test('a node with an in-flight installation cannot be archived',async()=>{
+  const {env,raw,event}=fixture();
+  raw.exec("INSERT INTO nodes(id,provider,region,lifecycle,user_limit,byte_limit) VALUES('installing-1','webdade','eu','provisioning',20,10737418240)");
+  raw.exec("INSERT INTO node_bootstrap_jobs(id,node_id,ip,owner_id,mode,state,created_ms,updated_ms) VALUES('job-1','installing-1','198.51.100.2','100','fresh','dispatched',100,100)");
+  const ref=await nodeUiRef('installing-1');
+  const page=await resolveBotAction(env,event(100,'admin:node:view:'+ref,null,500),5000);
+  assert.ok(!page.replyMarkup.inline_keyboard.flat().some(x=>x.callback_data.includes('retire')));
+  const request=await resolveBotAction(env,event(100,'admin:node:confirm:retire:'+ref,null,501),5001);
+  assert.match(request.text,/مجاز نیست/);
+  const commit=await resolveBotAction(env,event(100,'admin:node:apply:retire:'+ref,null,502),5002);
+  assert.match(commit.text,/مجاز نیست/);
+  assert.equal(raw.prepare("SELECT lifecycle FROM nodes WHERE id='installing-1'").get().lifecycle,'provisioning');
+  raw.exec("UPDATE node_bootstrap_jobs SET state='installed' WHERE id='job-1'");
+  const archived=await resolveBotAction(env,event(100,'admin:node:apply:retire:'+ref,null,503),5003);
+  assert.match(archived.text,/بایگانی/);
+  assert.equal(raw.prepare("SELECT lifecycle FROM nodes WHERE id='installing-1'").get().lifecycle,'retired');
+  raw.close();
+});
