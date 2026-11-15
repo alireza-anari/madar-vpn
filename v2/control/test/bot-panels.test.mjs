@@ -283,3 +283,31 @@ test('support ticket closure is protected by a human confirmation',async()=>{
   assert.ok(warning.replyMarkup.inline_keyboard.flat().some(x=>x.callback_data==='v2:ticket:close:tg-300'));
   raw.close();
 });
+
+test('back navigation abandons pending plan, staff, support and server drafts',async()=>{
+  const {env,raw,event}=fixture();
+  const now=1000;
+  await adminPanelAction(env,event(100,'admin:plan:new',null,800),now);
+  assert.equal(raw.prepare("SELECT COUNT(*) AS n FROM v2_bot_input_sessions WHERE telegram_id='100' AND mode='plan_draft'").get().n,1);
+  await resolveBotAction(env,{...event(100,'admin:plans',null,801),messageId:51},now+1);
+  assert.equal(raw.prepare("SELECT COUNT(*) AS n FROM v2_bot_input_sessions WHERE telegram_id='100'").get().n,0);
+
+  await adminPanelAction(env,event(100,'admin:staff:grant:seller',null,802),now+2);
+  assert.equal(raw.prepare("SELECT COUNT(*) AS n FROM v2_bot_input_sessions WHERE telegram_id='100'").get().n,1);
+  await adminPanelAction(env,{...event(100,'admin:staff',null,803),messageId:52},now+3);
+  assert.equal(raw.prepare("SELECT COUNT(*) AS n FROM v2_bot_input_sessions WHERE telegram_id='100'").get().n,0);
+
+  await resolveBotAction(env,event(100,'admin:node:new',null,804),now+4);
+  assert.equal(raw.prepare("SELECT COUNT(*) AS n FROM admin_node_sessions WHERE telegram_id='100'").get().n,1);
+  const nodes=await resolveBotAction(env,{...event(100,'admin:node:cancel',null,805),messageId:53},now+5);
+  assert.equal(raw.prepare("SELECT COUNT(*) AS n FROM admin_node_sessions WHERE telegram_id='100'").get().n,0);
+  assert.match(nodes.text,/مدیریت سرورها/);
+  assert.ok(nodes.replyMarkup.inline_keyboard.flat().some(b=>b.callback_data==='v2:admin:node:trials'));
+
+  raw.exec("INSERT INTO support_tickets(id,customer_telegram_id,subject) VALUES('tg-19','200','پرسش آزمایشی')");
+  await customerTicketAction(env,event(200,'customer:ticket:reply:tg-19',null,806),now+6);
+  assert.equal(raw.prepare("SELECT COUNT(*) AS n FROM v2_bot_input_sessions WHERE telegram_id='200' AND mode='ticket_reply'").get().n,1);
+  await customerTicketAction(env,{...event(200,'customer:ticket:tg-19',null,807),messageId:54},now+7);
+  assert.equal(raw.prepare("SELECT COUNT(*) AS n FROM v2_bot_input_sessions WHERE telegram_id='200'").get().n,0);
+  raw.close();
+});
