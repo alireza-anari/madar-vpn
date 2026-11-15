@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { verifyTelegramSecret,toBotMessage } from '../src/telegram.mjs';
 import { dispatchOutbox } from '../src/index.mjs';
 import worker from '../src/index.mjs';
+import {BRAND_BANNER_URL} from '../src/bot-ux.mjs';
 
 test('rejects missing and mismatched webhook credentials', async () => {
   assert.equal(await verifyTelegramSecret('wrong','correct'),false);
@@ -89,19 +90,29 @@ test('branded photo messages use native Telegram sendPhoto and preserve real inl
   const fixture=outboxFixture({
     id:5,chat_id:'456',body:'🌐  مــدار\n👋 پنل کاربری مدار',
     attempts:0,reply_markup:JSON.stringify({inline_keyboard:[[{text:'اشتراک‌های من',callback_data:'v2:my'}]]}),
-    media_file_id:'https://raw.githubusercontent.com/example/brand.jpg',
+    media_file_id:BRAND_BANNER_URL,
     edit_message_id:null,edit_kind:null,
   });
   const original=globalThis.fetch,calls=[];
   globalThis.fetch=async(url,init)=>{
-    calls.push({method:String(url).split('/').pop(),payload:JSON.parse(init.body)});
+    assert.ok(init.body instanceof FormData);
+    const photo=init.body.get('photo');
+    assert.ok(photo instanceof Blob);
+    assert.equal(photo.type,'image/jpeg');
+    const bytes=new Uint8Array(await photo.arrayBuffer());
+    assert.deepEqual([...bytes.slice(0,3)],[255,216,255]);
+    assert.ok(bytes.length>3500);
+    calls.push({method:String(url).split('/').pop(),payload:{
+      caption:init.body.get('caption'),
+      reply_markup:JSON.parse(init.body.get('reply_markup'))
+    }});
     return new Response(JSON.stringify({ok:true,result:{message_id:92}}),{status:200});
   };
   try{await dispatchOutbox({DB:fixture.DB,BOT_TOKEN:'test-token'},1000);}
   finally{globalThis.fetch=original;}
   assert.equal(calls.length,1);
   assert.equal(calls[0].method,'sendPhoto');
-  assert.match(calls[0].payload.photo,/^https:/);
+  assert.match(calls[0].payload.caption,/پنل کاربری مدار/);
   assert.equal(calls[0].payload.reply_markup.inline_keyboard[0][0].callback_data,'v2:my');
   assert.equal(fixture.getState(),'sent');
 });
