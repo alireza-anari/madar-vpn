@@ -57,7 +57,7 @@ const customerMenu={inline_keyboard:[
   ],
   [
     {text:'🧾 سفارش‌های من',callback_data:'v2:orders'},
-    {text:'💬 پشتیبانی',callback_data:'v2:support'},
+    {text:'💬 درخواست‌های پشتیبانی',callback_data:'v2:customer:tickets'},
   ],
   [
     {text:'📶 وضعیت سرویس',callback_data:'v2:status'},
