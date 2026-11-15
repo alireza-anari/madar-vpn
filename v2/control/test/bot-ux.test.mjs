@@ -6,7 +6,7 @@ import {toBotMessage} from '../src/telegram.mjs';
 test('all menu callbacks lead to a meaningful supported page',()=>{
   const menu=botMenu();
   const buttons=menu.inline_keyboard.flat();
-  assert.equal(buttons.length,10);
+  assert.equal(buttons.length,8);
   for(const button of buttons){
     const msg=toBotMessage({update_id:3,callback_query:{id:'callback',
       from:{id:900,language_code:'fa'},data:button.callback_data,message:{chat:{id:900,type:'private'}}}});
@@ -18,15 +18,15 @@ test('all menu callbacks lead to a meaningful supported page',()=>{
 });
 test('no false advertising of live VPN or payment readiness',()=>{
   const plans=botPage('plans').text;
-  assert.match(plans,/فروش.*غیرفعال/);
-  assert.match(botPage('status').text,/تأیید نشده/);
-  assert.match(botPage('home','en').text,/not enabled/);
+  assert.match(plans,/فروش عمومی غیرفعال است/);
+  assert.match(botPage('status').text,/تأییدنشده/);
+  assert.match(botPage('home','en').text,/به مدار خوش آمدید/);
 });
 test('validates Telegram updates and displays localized help',()=>{
   assert.equal(toBotMessage({update_id:1,message:{chat:{id:'not an integer'},text:'/start'}}),null);
   assert.equal(toBotMessage({update_id:1,message:{chat:{id:123,type:'private'},from:{id:123},text:'x'.repeat(2001)}}),null);
   const msg=toBotMessage({update_id:2,message:{chat:{id:123,type:'private'},from:{id:123,language_code:'en-US'},text:'/help'}});
-  assert.match(msg.text,/Help/);
+  assert.match(msg.text,/راهنمای استفاده/);
 });
 
 test('private Telegram identity enforced for all customer and admin entrypoints',()=>{
@@ -51,4 +51,14 @@ test('support and plan messages may exceed callback limits, typed callbacks cann
     from:{id:123},data:'v2:'+('x'.repeat(300)),message:{chat:{id:123,type:'private'}}
   }});
   assert.equal(invalidCallback,null);
+});
+
+test('bot menus are Persian-only, compact and visually consistent',()=>{
+  const menu=botMenu();
+  assert.equal(menu.inline_keyboard.length,4);
+  for(const row of menu.inline_keyboard)assert.ok(row.length<=2);
+  for(const button of menu.inline_keyboard.flat())assert.doesNotMatch(button.text,/[A-Za-z]/);
+  const page=botPage('home','en');
+  assert.match(page.text,/🌐  مــدار/);
+  assert.doesNotMatch(page.text,/[A-Za-z]{3,}/);
 });
