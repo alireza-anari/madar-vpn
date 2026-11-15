@@ -207,6 +207,12 @@ export function contextualKeyboard(key,markup,{isAdmin=false}={}){
       b=>!String(b.text??'').includes('نمای مشتری'))).filter(row=>row.length>0)};
   }
   const source=markup.inline_keyboard;
+  // This conversational wizard has its own previous-step and cancel controls;
+  // an extra global back would clutter the screen and interrupt the draft.
+  if(source.flat().some(b=>b.callback_data==='v2:admin:plan:cancel'))
+    return {...markup,inline_keyboard:source.map(row=>row.filter(b=>
+      !String(b.text??'').startsWith('↩️')&&!String(b.text??'').startsWith('🏠')
+    )).filter(row=>row.length>0)};
   // Text replies from a wizard have no callback key; honor the secure
   // wizard's explicit return destination instead of guessing a global home.
   const typedBack=key==='text'?source.flat().find(b=>
