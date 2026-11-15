@@ -332,11 +332,11 @@ async function supportInbox(env,e) {
   if(!queue.length)return staffResponse('✅ درخواست پشتیبانی بازی در صف نیست.',e,env);
   return staffResponse('💬  صندوق پشتیبانی\n━━━━━━━━━━━━━━━━━━\n'+queue.map(x=>
     x.id+'  |  '+faStatus(x.state)+'\nمشتری: '+x.customer_telegram_id+'\nموضوع: '+x.subject.slice(0,80)
-  ).join('\n\n'),e.locale,queue.map(x=>[
+  ).join('\n\n'),e,env,queue.map(x=>[
     {text:'👁 مشاهده',callback_data:'v2:ticket:view:'+x.id},
     {text:'✉ پاسخ',callback_data:'v2:ticket:reply:'+x.id},
     {text:'✓ بستن',callback_data:'v2:ticket:close:'+x.id},
-  ]),e,env);
+  ]));
 }
 
 async function staffCanReply(db,e,env) {
