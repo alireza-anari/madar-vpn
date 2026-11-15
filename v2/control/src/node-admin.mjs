@@ -46,7 +46,7 @@ export function parseRouteAdd(input) {
 
 export async function enrollNode(db,actor,input) {
   const data=parseNodeAdd(input);
-  if(!data)return panel('قالب ثبت دستی سرور:\\n/node_add شناسه|ارائه‌دهنده|منطقه|سقف کاربر|ظرفیت گیگابایت');
+  if(!data)return panel('قالب ثبت دستی سرور:\n/node_add شناسه|ارائه‌دهنده|منطقه|سقف کاربر|ظرفیت گیگابایت');
   const {id,provider,region,userLimit,byteLimit}=data;
   try {
     await db.batch([
@@ -58,7 +58,7 @@ export async function enrollNode(db,actor,input) {
         "INSERT INTO audit_events(event_id,actor_id,object_type,object_id,verb) VALUES(?,?,?,?,?)"
       ).bind('node:add:'+id,actor,'node',id,'enroll'),
     ]);
-    return panel('✅ سرور '+id+' ثبت شد، اما هنوز آماده استفاده نیست.\\nبرای تعریف مسیر از دستور /node_route استفاده کنید. نصب عامل امن و آزمون واقعی اتصال نیز لازم است.');
+    return panel('✅ سرور '+id+' ثبت شد، اما هنوز آماده استفاده نیست.\nبرای تعریف مسیر از دستور /node_route استفاده کنید. نصب عامل امن و آزمون واقعی اتصال نیز لازم است.');
   } catch {
     return panel('⚠️ سرور از قبل ثبت شده یا اطلاعات آن معتبر نیست؛ هیچ تغییری انجام نشد.');
   }
@@ -67,9 +67,9 @@ export async function enrollNode(db,actor,input) {
 export async function addRoute(db,actor,input) {
   const data=parseRouteAdd(input);
   if(!data)return panel(
-    'قالب تعریف مسیر:\\n'+
-    '/node_route شناسه_سرور|reality|443|mci\\n'+
-    '/node_route شناسه_سرور|reality|8443|irancell\\n'+
+    'قالب تعریف مسیر:\n'+
+    '/node_route شناسه_سرور|reality|443|mci\n'+
+    '/node_route شناسه_سرور|reality|8443|irancell\n'+
     '/node_route شناسه_سرور|wss|8443|دامنه|/ws');
   const node=await db.prepare(
     "SELECT id,lifecycle,desired_revision FROM nodes WHERE id=?"
@@ -108,7 +108,7 @@ export async function addRoute(db,actor,input) {
       return panel('این مسیر اپراتور قبلاً ثبت شده یا به‌روزرسانی پذیرفته نشد؛ تغییری انجام نشد.');
     }
     return panel('✅ مسیر '+(data.operatorHint==='mci'?'همراه اول':'ایرانسل')+
-      ' روی درگاه '+faNumber(data.port)+' به‌صورت پیش‌نویس ثبت شد.\\n'+
+      ' روی درگاه '+faNumber(data.port)+' به‌صورت پیش‌نویس ثبت شد.\n'+
       'هیچ تغییری روی سرویس‌های VPS اعمال نشده است. برای انتشار، عامل امضاشده و آزمون مستقل اتصال لازم است.');
   }
   try {
@@ -129,7 +129,7 @@ export async function addRoute(db,actor,input) {
     return panel('این مسیر از قبل ثبت شده یا به‌روزرسانی رد شد؛ هیچ تغییری انجام نشد.');
   }
   return panel('✅ مسیر '+data.transport.toUpperCase()+' برای سرور '+data.nodeId+
-    ' به‌صورت پیش‌نویس ثبت شد.\\nتا تأیید عامل امضاشده و موفقیت آزمون ترافیک واقعی، فروش این مسیر مجاز نیست.');
+    ' به‌صورت پیش‌نویس ثبت شد.\nتا تأیید عامل امضاشده و موفقیت آزمون ترافیک واقعی، فروش این مسیر مجاز نیست.');
 }
 
 export async function nodeOverview(db) {
@@ -139,13 +139,13 @@ export async function nodeOverview(db) {
     "GROUP BY n.id ORDER BY n.created_at DESC,n.id LIMIT 30"
   ).all()).results??[];
   if(!rows.length)return panel('هنوز سروری در مدار V2 ثبت نشده است. برای افزودن سرور از پنل مدیریت اقدام کنید.');
-  return panel('🖥  فهرست سرورهای مدار\\n━━━━━━━━━━━━━━━━━━\\n'+rows.map(n=>
-    n.id+'\\nارائه‌دهنده: '+n.provider+'  |  منطقه: '+n.region+
-    '\\nوضعیت: '+faStatus(n.lifecycle)+
-    '\\nنسخه تنظیمات: '+faNumber(n.desired_revision)+
+  return panel('🖥  فهرست سرورهای مدار\n━━━━━━━━━━━━━━━━━━\n'+rows.map(n=>
+    n.id+'\nارائه‌دهنده: '+n.provider+'  |  منطقه: '+n.region+
+    '\nوضعیت: '+faStatus(n.lifecycle)+
+    '\nنسخه تنظیمات: '+faNumber(n.desired_revision)+
     '  |  تأیید عامل: '+faNumber(n.acked_revision)+
     '  |  مسیرها: '+faNumber(n.routes)
-  ).join('\\n\\n'));
+  ).join('\n\n'));
 }
 
 export async function nodeAdminAction(db,actor,key,input) {
