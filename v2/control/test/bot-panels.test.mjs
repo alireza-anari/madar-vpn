@@ -126,7 +126,7 @@ test('Persian plan builder asks four questions separately and creates only after
   assert.equal(row.active,0);
   assert.equal(raw.prepare("SELECT COUNT(*) n FROM audit_events WHERE object_id='p14'").get().n,1);
   assert.equal(raw.prepare('SELECT COUNT(*) n FROM v2_bot_input_sessions').get().n,0);
-  assert.match((await resolveBotAction(env,event(100,'admin:plan:save',null,25),now+11)).text,/فرم فعال نیست/);
+  assert.match((await resolveBotAction(env,event(100,'admin:plan:save',null,25),now+11)).text,/فرم پلن فعال نیست/);
   assert.equal(raw.prepare('SELECT COUNT(*) n FROM plans').get().n,1);
   raw.close();
 });
@@ -156,7 +156,7 @@ test('plan wizard supports previous step, cancel, expiry, and protected review',
   assert.equal(raw.prepare('SELECT COUNT(*) n FROM v2_bot_input_sessions').get().n,0);
   await resolveBotAction(env,event(100,'admin:plan:new',null,50),now+11);
   assert.match((await resolveBotAction(env,event(100,'admin:plan:save',null,51),now+12)).text,/تمام مراحل/);
-  assert.match((await resolveBotAction(env,event(100,'admin:plan:back',null,52),now+11*60*1000)).text,/فرم فعال نیست/);
+  assert.match((await resolveBotAction(env,event(100,'admin:plan:back',null,52),now+11*60*1000)).text,/فرم پلن فعال نیست/);
   assert.equal(raw.prepare('SELECT COUNT(*) n FROM v2_bot_input_sessions').get().n,0);
   raw.close();
 });
