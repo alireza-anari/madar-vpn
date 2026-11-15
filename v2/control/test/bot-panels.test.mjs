@@ -480,3 +480,65 @@ test('a node with an in-flight installation cannot be archived',async()=>{
   assert.equal(raw.prepare("SELECT lifecycle FROM nodes WHERE id='installing-1'").get().lifecycle,'retired');
   raw.close();
 });
+
+
+test('support inbox separates open, waiting and closed tickets with pagination and staff-only access',async()=>{
+  const {env,raw,event}=fixture();
+  raw.exec("INSERT INTO staff_roles(telegram_id,role,granted_by) VALUES('300','support','100')");
+  for(let i=0;i<10;i++)
+    raw.prepare("INSERT INTO support_tickets(id,customer_telegram_id,state,subject) VALUES(?, '200',?,?)")
+      .run('tg-'+(500+i),['open','waiting','closed'][i%3],'شرح درخواست '+i);
+  const first=await resolveBotAction(env,event(300,'admin:tickets',null,900),1000000);
+  assert.match(first.text,/صندوق پشتیبانی/);
+  assert.match(first.text,/نیازمند پاسخ: ۴/);
+  assert.match(first.text,/منتظر مشتری: ۳/);
+  assert.match(first.text,/بسته‌شده: ۳/);
+  assert.ok(first.text.length<1000);
+  const choices=first.replyMarkup.inline_keyboard.flat().filter(b=>b.callback_data.startsWith('v2:ticket:view:'));
+  assert.equal(choices.length,4);
+  const all=await resolveBotAction(env,event(300,'admin:tickets:all:0',null,901),1000001);
+  assert.equal(all.replyMarkup.inline_keyboard.flat().filter(b=>b.callback_data.startsWith('v2:ticket:view:')).length,6);
+  assert.ok(all.replyMarkup.inline_keyboard.flat().some(x=>x.callback_data==='v2:admin:tickets:all:1'));
+  const page=await resolveBotAction(env,event(300,'admin:tickets:all:1',null,902),1000002);
+  assert.equal(page.replyMarkup.inline_keyboard.flat().filter(b=>b.callback_data.startsWith('v2:ticket:view:')).length,4);
+  const closed=await resolveBotAction(env,event(300,'admin:tickets:closed:0',null,903),1000003);
+  assert.equal(closed.replyMarkup.inline_keyboard.flat().filter(b=>b.callback_data.startsWith('v2:ticket:view:')).length,3);
+  assert.match((await resolveBotAction(env,event(200,'admin:tickets:all:0',null,904),1000004)).text,/دسترسی به این بخش مجاز نیست/);
+  raw.close();
+});
+
+test('support conversation history paginates privately and closed requests remain immutable',async()=>{
+  const {env,raw,event}=fixture();
+  raw.exec("INSERT INTO staff_roles(telegram_id,role,granted_by) VALUES('300','support','100')");
+  raw.exec("INSERT INTO support_tickets(id,customer_telegram_id,state,subject) VALUES('tg-800','200','open','پیگیری اتصال')");
+  for(let i=0;i<12;i++)
+    raw.prepare("INSERT INTO support_messages(id,ticket_id,sender_telegram_id,body,role) VALUES(?,'tg-800',?,?,?)")
+      .run('history-'+String(i).padStart(2,'0'),i%2?'300':'200','پیام شماره '+String(i).padStart(2,'0'),i%2?'support':'customer');
+  const staff=await resolveBotAction(env,event(300,'ticket:view:tg-800',null,800),1000000);
+  assert.match(staff.text,/صفحه ۱ از ۳/);
+  assert.ok(staff.replyMarkup.inline_keyboard.flat().some(x=>x.callback_data==='v2:ticket:page:tg-800:1'));
+  assert.match(staff.text,/پیام شماره ۱۱/);
+  assert.doesNotMatch(staff.text,/پیام شماره ۰۰/);
+  const older=await resolveBotAction(env,event(300,'ticket:page:tg-800:2',null,801),1000001);
+  assert.match(older.text,/صفحه ۳ از ۳/);
+  assert.match(older.text,/پیام شماره ۰۰/);
+  const customer=await resolveBotAction(env,event(200,'customer:ticket:tg-800',null,802),1000002);
+  assert.match(customer.text,/صفحه ۱ از ۳/);
+  const olderCustomer=await resolveBotAction(env,event(200,'customer:ticket:page:tg-800:1',null,803),1000003);
+  assert.match(olderCustomer.text,/صفحه ۲ از ۳/);
+  assert.match((await resolveBotAction(env,event(100,'customer:ticket:page:tg-800:1',null,804),1000004)).text,/پیدا نشد/);
+  const confirm=await resolveBotAction(env,event(300,'ticket:confirm-close:tg-800',null,805),1000005);
+  assert.match(confirm.text,/بستن گفت‌وگوی پشتیبانی/);
+  await resolveBotAction(env,event(300,'ticket:close:tg-800',null,806),1000006);
+  assert.equal(raw.prepare("SELECT state FROM support_tickets WHERE id='tg-800'").get().state,'closed');
+  const closed=await resolveBotAction(env,event(300,'ticket:view:tg-800',null,807),1000007);
+  assert.ok(!closed.replyMarkup.inline_keyboard.flat().some(x=>x.callback_data==='v2:ticket:reply:tg-800'));
+  assert.ok(!closed.replyMarkup.inline_keyboard.flat().some(x=>x.callback_data.includes('reopen')));
+  assert.throws(()=>raw.prepare("UPDATE support_tickets SET state='open' WHERE id='tg-800'").run(),
+    /SUPPORT_TICKET_CLOSED/);
+  const fresh=await resolveBotAction(env,event(200,'support',null,808),1000008);
+  assert.match(fresh.text,/موضوع/);
+  const ticket=await resolveBotAction(env,event(200,'text','مشکل جدید بعد از بسته‌شدن',809),1000009);
+  assert.match(ticket.text,/tg-809/);
+  raw.close();
+});
