@@ -510,6 +510,7 @@ async function personalizedHome(env,e,customerView=false) {
   const homeLines=[
     panelHeading('👋','پنل کاربری مدار','اشتراک و سفارش‌های شما، یکجا'),
     '',
+    greeting,
     state,
     orderHint,
     '',
