@@ -13,7 +13,7 @@ test('rejects missing and mismatched webhook credentials', async () => {
 test('bounded bot parsing does not fake paid VPN issuance', () => {
   const msg=toBotMessage({update_id:123,message:{chat:{id:456,type:'private'},from:{id:456},text:'/start'}});
   assert.equal(msg.chatId,'456');
-  assert.match(msg.text,/آماده‌سازی/);
+  assert.match(msg.text,/به مدار خوش آمدید/);
   assert.equal(toBotMessage({update_id:-1}),null);
 });
 test('readiness fails closed without required bindings', async () => {
