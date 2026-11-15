@@ -10,6 +10,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -33,6 +34,8 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
@@ -254,38 +257,15 @@ private fun Header() {
     }
 }
 
-/** Vector brand treatment based on the approved turquoise shield/lock logo. */
+/** Exact brand logo supplied by the project owner, compressed for Android. */
 @Composable
 private fun BrandMark(diameter: Dp) {
-    Box(Modifier.size(diameter).background(Panel2, CircleShape)
-        .border(2.dp, Brush.linearGradient(listOf(Cyan, Aqua)), CircleShape),
-        contentAlignment = Alignment.Center) {
-        Canvas(Modifier.fillMaxSize().padding(diameter * .20f)) {
-            val w = size.width
-            val h = size.height
-            val shield = Path().apply {
-                moveTo(w * .5f, h * .06f)
-                lineTo(w * .9f, h * .26f)
-                lineTo(w * .86f, h * .65f)
-                quadraticTo(w * .77f, h * .86f, w * .5f, h * .98f)
-                quadraticTo(w * .23f, h * .86f, w * .14f, h * .65f)
-                lineTo(w * .14f, h * .26f)
-                close()
-            }
-            drawPath(shield, Brush.linearGradient(listOf(Cyan, Aqua)),
-                style = Stroke(width = w * .075f, cap = StrokeCap.Round))
-            drawLine(Cyan, Offset(-w * .15f, h * .4f), Offset(w * .26f, h * .4f),
-                strokeWidth = w * .065f, cap = StrokeCap.Round)
-            drawLine(Aqua, Offset(-w * .06f, h * .59f), Offset(w * .27f, h * .59f),
-                strokeWidth = w * .065f, cap = StrokeCap.Round)
-            drawRoundRect(Aqua, topLeft = Offset(w * .41f, h * .46f),
-                size = Size(w * .20f, h * .27f))
-            drawArc(Aqua, startAngle = 180f, sweepAngle = 180f,
-                useCenter = false, topLeft = Offset(w * .43f, h * .30f),
-                size = Size(w * .16f, h * .32f),
-                style = Stroke(width = w * .06f, cap = StrokeCap.Round))
-        }
-    }
+    Image(
+        painter = painterResource(R.drawable.madar_logo),
+        contentDescription = "لوگوی مدار",
+        modifier = Modifier.size(diameter),
+        contentScale = ContentScale.Fit
+    )
 }
 
 @Composable
