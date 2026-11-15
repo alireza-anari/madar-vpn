@@ -1,12 +1,12 @@
 /** پنل‌های فارسی مدیریت و مشتری در ربات مدار V2. */
-import {botMenu,adminMenu,supportMenu,frameMessage,faNumber,faStatus,faRole} from './bot-ux.mjs';
+import {adminMenu,frameMessage,faNumber,faStatus,faRole,statusSymbol,sectionNavigation,shortCode} from './bot-ux.mjs';
 
 const NAT=/^[0-9]{1,20}$/;
 const TICKET=/^tg-[0-9]{1,20}$/;
 const PLAN=/^[a-zA-Z0-9][a-zA-Z0-9_-]{1,30}$/;
 const panel=(s,locale='fa',buttons=[],audience='customer')=>({
   text:frameMessage(String(s).slice(0,3300)),
-  replyMarkup:{inline_keyboard:[...buttons,...(audience==='admin'?adminMenu():audience==='support'?supportMenu():botMenu()).inline_keyboard]},
+  replyMarkup:{inline_keyboard:[...buttons,...sectionNavigation(audience)]},
 });
 const adminPanel=(s,buttons=[],locale='fa')=>panel(s,locale,buttons,'admin');
 const supportPanel=(s,buttons=[],locale='fa')=>panel(s,locale,buttons,'support');
@@ -32,24 +32,31 @@ export async function adminDashboard(env,e) {
     count(db,"SELECT COUNT(*) AS n FROM nodes WHERE lifecycle='ready'"),
     count(db,"SELECT COUNT(*) AS n FROM subscriptions WHERE state='active'")
   ]);
+  const items=[
+    receipts>0?'🧾 '+faNumber(receipts)+' رسید منتظر بررسی':null,
+    tickets>0?'💬 '+faNumber(tickets)+' درخواست پشتیبانی باز':null,
+    ready===0?'🖥 هنوز سرور آماده فروش وجود ندارد':null,
+  ].filter(Boolean);
   const body=[
     '🛠  پیشخوان مدیریت مدار',
     '━━━━━━━━━━━━━━━━━━',
-    '👥 مشتریان: '+faNumber(customers),
-    '🧾 سفارش‌های باز: '+faNumber(orders)+'  |  رسیدهای منتظر: '+faNumber(receipts),
-    '💬 درخواست‌های باز پشتیبانی: '+faNumber(tickets),
-    '🖥 سرورها: '+faNumber(nodes),
-    '   ├ نصب‌شده: '+faNumber(installed),
-    '   └ آماده: '+faNumber(ready),
-    '🔗 اشتراک‌های فعال: '+faNumber(subs),
+    '📊 نمای کلی سامانه',
+    '👥 مشتریان: '+faNumber(customers)+'    🔗 اشتراک‌های فعال: '+faNumber(subs),
+    '🧾 سفارش‌های باز: '+faNumber(orders)+'    📥 رسیدها: '+faNumber(receipts),
+    '💬 گفت‌وگوهای باز: '+faNumber(tickets),
+    '🖥 سرورها: '+faNumber(nodes)+'  |  نصب‌شده: '+faNumber(installed)+'  |  آماده: '+faNumber(ready),
+    '',
+    '🎯 نیازمند پیگیری',
+    ...(items.length?items:['✅ مورد فوری در صف مدیریت ثبت نشده است.']),
     '',
     ready>0
-      ?'⚠️ وجود سرور آماده به‌تنهایی مجوز فروش نیست؛ آزمون مسیر و کنترل سهمیه نیز باید تأیید شود.'
-      :'⛔ فروش عمومی و صدور اشتراک پولی تا تأیید مسیر و سهمیه غیرفعال است.',
+      ?'⚠️ آماده‌بودن سرور به‌تنهایی مجوز فروش نیست؛ آزمون اتصال و سهمیه باید تأیید شود.'
+      :'⛔ فروش عمومی تا تأیید مسیر و ظرفیت غیرفعال است.',
     '',
-    'از گزینه‌های زیر برای مدیریت بخش‌های مدار استفاده کنید.'
+    'بخش موردنظر را از دکمه‌های زیر انتخاب کنید.'
   ].join('\n');
-  return adminPanel(body,[],e.locale);
+  // فقط در صفحه اصلی مدیر، منوی کامل نمایش داده می‌شود.
+  return {text:frameMessage(body),replyMarkup:adminMenu()};
 }
 
 export async function customerTickets(env,e) {
