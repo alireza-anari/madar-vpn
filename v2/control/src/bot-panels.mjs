@@ -99,7 +99,7 @@ export async function customerTickets(env,e,page=0) {
     e.locale,controls);
 }
 
-async function thread(env,e,id,ownerOnly) {
+async function thread(env,e,id,ownerOnly,page=0) {
   if(!TICKET.test(id))return panel('⚠️ شناسه درخواست معتبر نیست.',e.locale);
   const db=env.DB;
   const ticket=await db.prepare(
@@ -110,23 +110,33 @@ async function thread(env,e,id,ownerOnly) {
   if(ownerOnly&&Number.isSafeInteger(e.messageId)&&e.messageId>0)
     await db.prepare("DELETE FROM v2_bot_input_sessions WHERE telegram_id=? AND mode='ticket_reply'")
       .bind(e.actorId).run();
+  page=Number.isSafeInteger(page)&&page>=0&&page<=1000?page:0;
+  const total=(await db.prepare('SELECT COUNT(*) n FROM support_messages WHERE ticket_id=?')
+    .bind(id).first())?.n??0;
+  const maxPage=Math.max(0,Math.ceil(Number(total)/5)-1);
+  page=Math.min(page,maxPage);
   const rows=(await db.prepare(
-    'SELECT role,body,created_at FROM support_messages WHERE ticket_id=? ORDER BY created_at DESC,id DESC LIMIT 8'
-  ).bind(id).all()).results??[];
+    'SELECT role,body FROM support_messages WHERE ticket_id=? ORDER BY created_at DESC,id DESC LIMIT 5 OFFSET ?'
+  ).bind(id,page*5).all()).results??[];
   const messages=rows.reverse().map(x=>
-    (x.role==='customer'?'👤 شما':'🧑‍💼 پشتیبانی')+'\n'+x.body.slice(0,600));
+    (x.role==='customer'?'👤 شما':'🧑‍💼 پشتیبانی')+'\n'+x.body.slice(0,350));
   const controls=ticket.state==='closed'
     ?[button('➕ ثبت درخواست جدید','support')]
     :[button('✉️ پاسخ به درخواست','customer:ticket:reply:'+id)];
+  const nav=[];
+  if(page<maxPage)nav.push({text:'◀️ قدیمی‌تر',callback_data:'v2:customer:ticket:page:'+id+':'+(page+1)});
+  if(page>0)nav.push({text:'جدیدتر ▶️',callback_data:'v2:customer:ticket:page:'+id+':'+(page-1)});
+  if(nav.length)controls.push(nav);
   controls.push(button('📋 بازگشت به درخواست‌ها','customer:tickets'));
   return panel(
     panelHeading('💬','گفت‌وگوی پشتیبانی',ticket.subject.slice(0,90))+
     '\nکد پیگیری: '+ticket.id+'\nوضعیت: '+statusSymbol(ticket.state)+' '+faStatus(ticket.state)+
-    (messages.length?'\n\n'+messages.join('\n\n──────────────\n\n'):'\n\nهنوز پیامی ثبت نشده است.'),
+    '\n📜 پیام‌ها · صفحه '+faNumber(page+1)+' از '+faNumber(maxPage+1)+
+    (messages.length?'\n\n'+messages.join('\n\n──────────\n\n'):'\n\nهنوز پیامی ثبت نشده است.'),
     e.locale,controls);
 }
 
-export async function staffTicketDetails(env,e,id) {
+export async function staffTicketDetails(env,e,id,page=0) {
   if(!TICKET.test(id))return panel('⚠️ شناسه درخواست معتبر نیست.',e.locale);
   const db=env.DB;
   const isAdministrator=idAdmin(env,e.actorId);
@@ -142,21 +152,33 @@ export async function staffTicketDetails(env,e,id) {
     'SELECT id,customer_telegram_id,state,subject FROM support_tickets WHERE id=?'
   ).bind(id).first();
   if(!ticket)return staffPanel('درخواست موردنظر پیدا نشد.',[],e.locale);
+  page=Number.isSafeInteger(page)&&page>=0&&page<=1000?page:0;
+  const total=(await db.prepare('SELECT COUNT(*) n FROM support_messages WHERE ticket_id=?')
+    .bind(id).first())?.n??0;
+  const maxPage=Math.max(0,Math.ceil(Number(total)/5)-1);
+  page=Math.min(page,maxPage);
   const messages=(await db.prepare(
-    'SELECT role,body,created_at FROM support_messages WHERE ticket_id=? ORDER BY created_at DESC,id DESC LIMIT 12'
-  ).bind(id).all()).results??[];
+    'SELECT role,body FROM support_messages WHERE ticket_id=? ORDER BY created_at DESC,id DESC LIMIT 5 OFFSET ?'
+  ).bind(id,page*5).all()).results??[];
   const conversation=messages.reverse().map(x=>
-    (x.role==='customer'?'👤 مشتری':'🧑‍💼 پشتیبان')+'\n'+x.body.slice(0,600)).join('\n\n──────────────\n\n');
+    (x.role==='customer'?'👤 مشتری':'🧑‍💼 پشتیبان')+'\n'+x.body.slice(0,350)).join('\n\n──────────\n\n');
+  const navigation=[];
+  if(page<maxPage)navigation.push({text:'◀️ قدیمی‌تر',callback_data:'v2:ticket:page:'+id+':'+(page+1)});
+  if(page>0)navigation.push({text:'جدیدتر ▶️',callback_data:'v2:ticket:page:'+id+':'+(page-1)});
   return staffPanel(
     panelHeading('💬','جزئیات درخواست',ticket.subject.slice(0,90))+
     '\nکد پیگیری: '+ticket.id+'\nشناسه مشتری: '+ticket.customer_telegram_id+
     '\nوضعیت: '+statusSymbol(ticket.state)+' '+faStatus(ticket.state)+
+    '\n📜 پیام‌ها · صفحه '+faNumber(page+1)+' از '+faNumber(maxPage+1)+
     (conversation?'\n\n'+conversation:'\n\nهنوز پیامی ثبت نشده است.'),
     [
-      ...(ticket.state==='closed'?[]:[
-        button('✉️ پاسخ به مشتری','ticket:reply:'+id),
-        button('🔒 بستن درخواست','ticket:confirm-close:'+id)
-      ]),
+      ...(ticket.state==='closed'
+        ?[button('🔓 بازگشایی درخواست','ticket:confirm-reopen:'+id)]
+        :[
+          button('✉️ پاسخ به مشتری','ticket:reply:'+id),
+          button('🔒 بستن درخواست','ticket:confirm-close:'+id),
+        ]),
+      ...(navigation.length?[navigation]:[]),
       button('📋 بازگشت به صندوق','admin:tickets'),
     ],e.locale);
 }
@@ -171,6 +193,8 @@ async function startSession(db,e,mode,context,nowMs) {
 export async function customerTicketAction(env,e,nowMs=Date.now()) {
   const key=e.key??'';
   if(key==='customer:tickets'||key==='/tickets')return customerTickets(env,e);
+  const threadPage=key.match(/^customer:ticket:page:(tg-[0-9]{1,20}):([0-9]{1,4})$/);
+  if(threadPage)return thread(env,e,threadPage[1],true,Number(threadPage[2]));
   if(/^customer:tickets:[0-9]{1,4}$/.test(key))
     return customerTickets(env,e,Number(key.slice('customer:tickets:'.length)));
   if(key.startsWith('customer:ticket:reply:')){
