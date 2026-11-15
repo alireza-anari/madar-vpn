@@ -6,7 +6,7 @@ import {toBotMessage} from '../src/telegram.mjs';
 test('all menu callbacks lead to a meaningful supported page',()=>{
   const menu=botMenu();
   const buttons=menu.inline_keyboard.flat();
-  assert.equal(buttons.length,7);
+  assert.equal(buttons.length,8);
   for(const button of buttons){
     const msg=toBotMessage({update_id:3,callback_query:{id:'callback',
       from:{id:900,language_code:'fa'},data:button.callback_data,message:{chat:{id:900,type:'private'}}}});
