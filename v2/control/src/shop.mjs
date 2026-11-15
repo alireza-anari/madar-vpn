@@ -221,7 +221,7 @@ async function maybeRecordSupport(db,e,env,nowMs) {
   await db.batch([
     db.prepare('INSERT OR IGNORE INTO support_tickets(id,customer_telegram_id,subject) VALUES(?,?,?)')
       .bind(ticketId,e.actorId,subject),
-    db.prepare('INSERT OR IGNORE INTO support_messages(id,ticket_id,sender_telegram_id,body,role) VALUES(?,?,?,?,"customer")')
+    db.prepare("INSERT OR IGNORE INTO support_messages(id,ticket_id,sender_telegram_id,body,role) VALUES(?,?,?,?,'customer')")
       .bind('customer-initial:'+e.updateId,ticketId,e.actorId,e.inputText.trim().slice(0,1000)),
     db.prepare('DELETE FROM customer_sessions WHERE telegram_id=?').bind(e.actorId),
   ]);
