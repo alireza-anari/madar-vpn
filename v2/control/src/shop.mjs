@@ -249,51 +249,52 @@ async function adminQueue(db,e) {
     "AND EXISTS(SELECT 1 FROM receipts r WHERE r.order_id=o.id AND r.state='pending') " +
     "ORDER BY o.created_at LIMIT 8"
   ).all()).results??[];
-  if (!queue.length) return response(t('✅ رسیدی در صف بررسی نیست.','✅ No receipts awaiting review.',e.locale),e.locale);
-  return response(line(t('🧑‍💼 رسیدهای در انتظار بررسی','🧑‍💼 Pending receipts',e.locale),
-    ...queue.map(x=>x.id.slice(0,8)+'… · '+money(x.quoted_amount,x.quoted_currency)+' · '+x.customer_telegram_id)),
-    e.locale, queue.map(x=>[
-      {text:'👁 '+x.id.slice(0,8),callback_data:'v2:admin:receipt:'+x.id},
-      {text:'✅ '+x.id.slice(0,8),callback_data:'v2:approve:'+x.id},
-      {text:'❌ '+x.id.slice(0,8),callback_data:'v2:reject:'+x.id},
+  if(!queue.length)return adminResponse('✅ هیچ رسیدی در صف بررسی نیست.',e.locale);
+  return adminResponse('🧾  رسیدهای منتظر بررسی\n━━━━━━━━━━━━━━━━━━\n'+
+    queue.map(x=>'شناسه: '+x.id.slice(0,8)+'…  |  مبلغ: '+money(x.quoted_amount,x.quoted_currency)+
+      '\nمشتری: '+x.customer_telegram_id).join('\n\n'),
+    e.locale,queue.map(x=>[
+      {text:'👁 مشاهده رسید',callback_data:'v2:admin:receipt:'+x.id},
+      {text:'✅ تأیید',callback_data:'v2:approve:'+x.id},
+      {text:'❌ رد رسید',callback_data:'v2:reject:'+x.id},
     ]));
 }
 
 async function adminReceipt(db,e,id) {
-  if (!ORDER_ID.test(id)) return response('Invalid order ID',e.locale);
+  if(!ORDER_ID.test(id))return adminResponse('⚠️ شناسه سفارش معتبر نیست.',e.locale);
   const receipt=await db.prepare(
     "SELECT r.telegram_file_id,o.id,o.state,o.quoted_amount,o.quoted_currency " +
     "FROM receipts r JOIN orders o ON o.id=r.order_id WHERE o.id=? AND r.state='pending' " +
     "AND o.state='receipt_submitted' LIMIT 1"
   ).bind(id).first();
-  if (!receipt) return response('Receipt not available for review',e.locale);
+  if(!receipt)return adminResponse('رسید برای بررسی در دسترس نیست.',e.locale);
   return {
-    text:'Receipt for order ' + id + '\nAmount: ' +
-      money(receipt.quoted_amount,receipt.quoted_currency) + '\nReview the image before approval.',
+    text:frameMessage('🧾  بررسی رسید پرداخت\n━━━━━━━━━━━━━━━━━━\nشناسه سفارش: '+id+
+      '\nمبلغ: '+money(receipt.quoted_amount,receipt.quoted_currency)+
+      '\nتصویر رسید را بررسی کنید و سپس نتیجه را ثبت کنید.'),
     photoId:receipt.telegram_file_id,
     replyMarkup:{inline_keyboard:[
-      [{text:'✅ Approve',callback_data:'v2:approve:'+id},
-       {text:'❌ Reject',callback_data:'v2:reject:'+id}],
-      ...botMenu(e.locale).inline_keyboard,
+      [{text:'✅ تأیید رسید',callback_data:'v2:approve:'+id},
+       {text:'❌ رد رسید',callback_data:'v2:reject:'+id}],
+      ...adminMenu().inline_keyboard,
     ]},
   };
 }
 
 async function adminDecision(db,e,action,id) {
-  if (!ORDER_ID.test(id)) return response('Invalid order ID',e.locale);
+  if(!ORDER_ID.test(id))return adminResponse('⚠️ شناسه سفارش معتبر نیست.',e.locale);
   const desired=action==='approve'?'approved':'rejected';
   const old=await db.prepare(
     "SELECT id,customer_telegram_id,state FROM orders WHERE id=?"
   ).bind(id).first();
-  if (!old) return response('Order not found',e.locale);
-  if (old.state===desired) return response('Already reviewed: '+id,e.locale);
-  if (old.state!=='receipt_submitted') return response('Not reviewable: '+old.state,e.locale);
-  // One atomic transaction covers the state, receipt decision, audit event
-  // and customer notification. If any part fails, the whole batch rolls back.
+  if(!old)return adminResponse('سفارش موردنظر پیدا نشد.',e.locale);
+  if(old.state===desired)return adminResponse('این سفارش قبلاً بررسی شده است: '+id,e.locale);
+  if(old.state!=='receipt_submitted')
+    return adminResponse('این سفارش در وضعیت فعلی قابل بررسی نیست: '+faStatus(old.state),e.locale);
   const idKey='review:'+id;
   const message=action==='approve'
-    ? '✅ رسید سفارش '+id+' تأیید شد. صدور کانفیگ پس از آماده‌سازی و تأیید سرور انجام می‌شود.'
-    : '❌ رسید سفارش '+id+' تأیید نشد. از پشتیبانی پیگیری کنید.';
+    ?'✅ رسید سفارش '+id+' تأیید شد. صدور کانفیگ پس از آماده‌سازی و تأیید سرور انجام می‌شود.'
+    :'❌ رسید سفارش '+id+' تأیید نشد. لطفاً از بخش پشتیبانی پیگیری کنید.';
   const results=await db.batch([
     db.prepare(
       "UPDATE orders SET state=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND state='receipt_submitted' " +
@@ -312,8 +313,10 @@ async function adminDecision(db,e,action,id) {
       "SELECT ?,?,?,'pending',? WHERE EXISTS(SELECT 1 FROM orders WHERE id=? AND state=?)"
     ).bind(idKey,old.customer_telegram_id,message,Date.now(),id,desired),
   ]);
-  if (results[0]?.meta?.changes!==1) return response('Order changed; refresh review queue.',e.locale);
-  return response('Recorded '+action+' for '+id+'. No configuration issued.',e.locale);
+  if(results[0]?.meta?.changes!==1)return adminResponse('وضعیت سفارش تغییر کرده است؛ فهرست رسیدها را دوباره باز کنید.',e.locale);
+  return adminResponse('✅ نتیجه بررسی سفارش ثبت شد.\nشناسه: '+id+
+    '\nوضعیت: '+(action==='approve'?'تأیید شد':'رد شد')+
+    '\nهنوز هیچ کانفیگی صادر نشده است.',e.locale);
 }
 
 async function supportInbox(db,e) {
@@ -321,14 +324,14 @@ async function supportInbox(db,e) {
     "SELECT id,customer_telegram_id,subject,state FROM support_tickets " +
     "WHERE state IN ('open','waiting') ORDER BY created_at LIMIT 8"
   ).all()).results??[];
-  if (!queue.length) return response('✅ No open support tickets',e.locale);
-  return response(line('💬 Support inbox',...queue.map(x=>
-    x.id+' / '+x.customer_telegram_id+' / '+x.subject.slice(0,80)+' / '+x.state)),
-    e.locale,queue.map(x=>[
-      {text:'👁 '+t('مشاهده','View',e.locale),callback_data:'v2:ticket:view:'+x.id},
-      {text:'✉ '+t('پاسخ','Reply',e.locale),callback_data:'v2:ticket:reply:'+x.id},
-      {text:'✓ '+t('بستن','Close',e.locale),callback_data:'v2:ticket:close:'+x.id},
-    ]));
+  if(!queue.length)return adminResponse('✅ درخواست پشتیبانی بازی در صف نیست.',e.locale);
+  return adminResponse('💬  صندوق پشتیبانی\n━━━━━━━━━━━━━━━━━━\n'+queue.map(x=>
+    x.id+'  |  '+faStatus(x.state)+'\nمشتری: '+x.customer_telegram_id+'\nموضوع: '+x.subject.slice(0,80)
+  ).join('\n\n'),e.locale,queue.map(x=>[
+    {text:'👁 مشاهده',callback_data:'v2:ticket:view:'+x.id},
+    {text:'✉ پاسخ',callback_data:'v2:ticket:reply:'+x.id},
+    {text:'✓ بستن',callback_data:'v2:ticket:close:'+x.id},
+  ]));
 }
 
 async function staffCanReply(db,e,env) {
@@ -339,30 +342,30 @@ async function startTicketReply(db,e,id,nowMs) {
   const ticket=await db.prepare(
     "SELECT id,customer_telegram_id,subject,state FROM support_tickets WHERE id=?"
   ).bind(id).first();
-  if (!ticket || ticket.state==='closed') return response('Ticket unavailable',e.locale);
+  if(!ticket||ticket.state==='closed')return adminResponse('این درخواست بسته شده یا در دسترس نیست.',e.locale);
   await db.prepare(
     "INSERT INTO support_staff_sessions(telegram_id,ticket_id,expires_ms) VALUES(?,?,?) " +
     "ON CONFLICT(telegram_id) DO UPDATE SET ticket_id=excluded.ticket_id,expires_ms=excluded.expires_ms"
   ).bind(e.actorId,id,nowMs+10*60*1000).run();
-  return response('✉ Reply to '+id+'\n'+ticket.subject.slice(0,140)+
-    '\n\nSend one message within 10 minutes. Never request passwords or secret keys.',e.locale);
+  return adminResponse('✉️  پاسخ به درخواست '+id+'\nموضوع: '+ticket.subject.slice(0,140)+
+    '\n\nپاسخ خود را در یک پیام بفرستید. مهلت: ۱۰ دقیقه.\n🔐 هرگز رمز عبور یا کلید خصوصی درخواست نکنید.',e.locale);
 }
 
 async function staffReply(db,e,env,nowMs) {
   const text=e.inputText;
-  if(typeof text!=='string' || !text.trim() || text.startsWith('/') ||
-     text.startsWith('v2:') || !await staffCanReply(db,e,env)) return null;
+  if(typeof text!=='string'||!text.trim()||text.startsWith('/')||
+     text.startsWith('v2:')||!await staffCanReply(db,e,env))return null;
   const session=await db.prepare(
     'SELECT ticket_id,expires_ms FROM support_staff_sessions WHERE telegram_id=?'
   ).bind(e.actorId).first();
-  if(!session || session.expires_ms<nowMs) return null;
+  if(!session||session.expires_ms<nowMs)return null;
   const ticket=await db.prepare(
     "SELECT id,customer_telegram_id,state FROM support_tickets WHERE id=?"
   ).bind(session.ticket_id).first();
-  if (!ticket || ticket.state==='closed') {
+  if(!ticket||ticket.state==='closed'){
     await db.prepare('DELETE FROM support_staff_sessions WHERE telegram_id=?')
       .bind(e.actorId).run();
-    return response('Ticket closed; no message sent.',e.locale);
+    return adminResponse('این درخواست بسته شده است؛ پیامی ارسال نشد.',e.locale);
   }
   const body=text.trim().slice(0,1000);
   await db.batch([
@@ -384,15 +387,15 @@ async function staffReply(db,e,env,nowMs) {
       'INSERT OR IGNORE INTO audit_events(event_id,actor_id,object_type,object_id,verb) VALUES(?,?,?,?,?)'
     ).bind('support:reply:'+e.updateId,e.actorId,'support_ticket',ticket.id,'reply'),
   ]);
-  return response('✅ Reply queued for '+ticket.id,e.locale);
+  return adminResponse('✅ پاسخ برای مشتری ارسال شد.\nشناسه درخواست: '+ticket.id,e.locale);
 }
 
 async function closeSupport(db,e,id,nowMs) {
   const ticket=await db.prepare(
     'SELECT id,state,customer_telegram_id FROM support_tickets WHERE id=?'
   ).bind(id).first();
-  if (!ticket) return response('Ticket not found',e.locale);
-  if (ticket.state==='closed') return response('Ticket already closed',e.locale);
+  if(!ticket)return adminResponse('درخواست موردنظر پیدا نشد.',e.locale);
+  if(ticket.state==='closed')return adminResponse('این درخواست قبلاً بسته شده است.',e.locale);
   await db.batch([
     db.prepare(
       "UPDATE support_tickets SET state='closed' WHERE id=? AND state IN ('open','waiting')"
@@ -401,12 +404,12 @@ async function closeSupport(db,e,id,nowMs) {
       "INSERT OR IGNORE INTO telegram_notifications(id,chat_id,body,state,due_ms) " +
       "VALUES(?,?,?,'pending',?)"
     ).bind('support:closed:'+id,ticket.customer_telegram_id,
-      '✅ درخواست پشتیبانی '+id+' بسته شد. در صورت نیاز درخواست جدید ثبت کنید.',nowMs),
+      '✅ درخواست پشتیبانی '+id+' بسته شد. در صورت نیاز، درخواست تازه‌ای ثبت کنید.',nowMs),
     db.prepare(
       'INSERT OR IGNORE INTO audit_events(event_id,actor_id,object_type,object_id,verb) VALUES(?,?,?,?,?)'
     ).bind('support:close:'+id,e.actorId,'support_ticket',id,'close'),
   ]);
-  return response('✅ Ticket closed: '+id,e.locale);
+  return adminResponse('✅ درخواست پشتیبانی بسته شد.\nشناسه: '+id,e.locale);
 }
 
 async function personalizedHome(env,e) {
