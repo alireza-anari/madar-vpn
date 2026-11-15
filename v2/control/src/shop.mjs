@@ -369,22 +369,52 @@ async function adminDecision(db,e,action,id) {
     '\nهنوز هیچ کانفیگی صادر نشده است.',e.locale);
 }
 
-async function supportInbox(env,e) {
+async function supportInbox(env,e,filter='open',page=0) {
   const db=env.DB;
-  const queue=(await db.prepare(
-    "SELECT id,customer_telegram_id,subject,state FROM support_tickets " +
-    "WHERE state IN ('open','waiting') ORDER BY created_at LIMIT 8"
-  ).all()).results??[];
-  if(!queue.length)return staffResponse(
-    panelHeading('💬','صندوق پشتیبانی','مدیریت گفت‌وگوهای مشتریان')+
-    '\n\n✅ درخواست بازِ پشتیبانی در صف نیست.',e,env);
-  return staffResponse(panelHeading('💬','صندوق پشتیبانی','درخواست‌های نیازمند پاسخ')+
-    '\n\n'+queue.map((x,i)=>faNumber(i+1)+'. '+statusSymbol(x.state)+' '+faStatus(x.state)+
-      '\nکد: '+x.id+'  ·  مشتری: '+x.customer_telegram_id+
-      '\nموضوع: '+x.subject.slice(0,80)).join('\n\n──────────────\n\n'),
-    e,env,queue.map(x=>[
-      {text:'💬 مشاهده · '+shortCode(x.id,10),callback_data:'v2:ticket:view:'+x.id},
-    ]));
+  const options={
+    open:{name:'نیازمند پاسخ',where:"state='open'"},
+    waiting:{name:'منتظر مشتری',where:"state='waiting'"},
+    closed:{name:'بسته‌شده',where:"state='closed'"},
+    all:{name:'همه',where:"1=1"},
+  };
+  if(!Object.hasOwn(options,filter))filter='open';
+  page=Number.isSafeInteger(page)&&page>=0&&page<=1000?page:0;
+  const [open,waiting,closed,filtered]=await Promise.all([
+    db.prepare("SELECT COUNT(*) n FROM support_tickets WHERE state='open'").first(),
+    db.prepare("SELECT COUNT(*) n FROM support_tickets WHERE state='waiting'").first(),
+    db.prepare("SELECT COUNT(*) n FROM support_tickets WHERE state='closed'").first(),
+    db.prepare("SELECT COUNT(*) n FROM support_tickets WHERE "+options[filter].where).first(),
+  ]);
+  const total=Number(filtered?.n??0),last=Math.max(0,Math.ceil(total/6)-1);
+  page=Math.min(page,last);
+  const rows=(await db.prepare(
+    "SELECT id,customer_telegram_id,subject,state FROM support_tickets WHERE "+options[filter].where+
+    " ORDER BY created_at DESC,id DESC LIMIT 6 OFFSET ?"
+  ).bind(page*6).all()).results??[];
+  const optionsRow=[
+    {text:(filter==='open'?'✅ ':'')+'نیازمند پاسخ',callback_data:'v2:admin:tickets:open:0'},
+    {text:(filter==='waiting'?'✅ ':'')+'منتظر مشتری',callback_data:'v2:admin:tickets:waiting:0'},
+  ];
+  const optionsRow2=[
+    {text:(filter==='closed'?'✅ ':'')+'بسته‌شده',callback_data:'v2:admin:tickets:closed:0'},
+    {text:(filter==='all'?'✅ ':'')+'همه',callback_data:'v2:admin:tickets:all:0'},
+  ];
+  const pages=[];
+  if(page>0)pages.push({text:'◀️ قبلی',callback_data:'v2:admin:tickets:'+filter+':'+(page-1)});
+  if(page<last)pages.push({text:'بعدی ▶️',callback_data:'v2:admin:tickets:'+filter+':'+(page+1)});
+  const buttons=[
+    optionsRow,optionsRow2,
+    ...rows.map(row=>[{text:statusSymbol(row.state)+' '+shortCode(row.id,14)+' · '+shortCode(row.subject,22),
+      callback_data:'v2:ticket:view:'+row.id}]),
+    ...(pages.length?[pages]:[]),
+  ];
+  return staffResponse(panelHeading('💬','صندوق پشتیبانی','درخواست‌ها تفکیک‌شده و قابل پیگیری‌اند')+
+    '\n\n🔵 نیازمند پاسخ: '+faNumber(open?.n??0)+
+    '\n🟡 منتظر مشتری: '+faNumber(waiting?.n??0)+
+    '\n⚪ بسته‌شده: '+faNumber(closed?.n??0)+
+    '\n\n📂 '+options[filter].name+' · صفحه '+faNumber(page+1)+' از '+faNumber(last+1)+
+    '\n'+(rows.length?'برای مشاهده گفت‌وگو یک درخواست را انتخاب کنید.':'در این دسته درخواستی وجود ندارد.'),
+    e,env,buttons);
 }
 
 async function staffCanReply(db,e,env) {
@@ -800,10 +830,12 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
     if (!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
     return adminReceipt(db,e,key.slice('admin:receipt:'.length));
   }
-  if (key==='admin:tickets') {
+  if (key==='admin:tickets'||
+      /^admin:tickets:(open|waiting|closed|all):[0-9]{1,4}$/.test(key)) {
     if (!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId) &&
       !await isStaff(db,e,'support')) return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
-    return supportInbox(env,e);
+    const match=key.match(/^admin:tickets:(open|waiting|closed|all):([0-9]{1,4})$/);
+    return supportInbox(env,e,match?.[1]??'open',match?Number(match[2]):0);
   }
   if(key.startsWith('ticket:view:')) {
     if(!await staffCanReply(db,e,env))return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
