@@ -40,7 +40,7 @@ test('owner-only dashboard shows real counts with actions but no payment shortcu
   assert.match(a.text,/مشتریان: ۳/);
   assert.match(a.text,/سرورها: ۱/);
   assert.match(a.text,/فروش عمومی/);
-  assert.match(a.photoId,/^https:\/\/raw\.githubusercontent\.com\//);
+  assert.match(a.photoId,/^https:\/\/madar-v2-staging\.alirezaanari117\.workers\.dev\/brand\/banner\.jpg$/);
   assert.ok(a.text.length<1024);
   assert.doesNotMatch(a.text,/━━━━━━━━/);
   const keys=a.replyMarkup.inline_keyboard.flat().map(x=>x.callback_data);
