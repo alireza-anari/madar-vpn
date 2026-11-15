@@ -85,6 +85,45 @@ test('outbox treats an unchanged Telegram panel as successfully delivered on ret
   assert.deepEqual(calls,['editMessageText']);
   assert.equal(fixture.getState(),'sent');
 });
+test('branded photo messages use native Telegram sendPhoto and preserve real inline buttons',async()=>{
+  const fixture=outboxFixture({
+    id:5,chat_id:'456',body:'🌐  مــدار\n👋 پنل کاربری مدار',
+    attempts:0,reply_markup:JSON.stringify({inline_keyboard:[[{text:'اشتراک‌های من',callback_data:'v2:my'}]]}),
+    media_file_id:'https://raw.githubusercontent.com/example/brand.jpg',
+    edit_message_id:null,edit_kind:null,
+  });
+  const original=globalThis.fetch,calls=[];
+  globalThis.fetch=async(url,init)=>{
+    calls.push({method:String(url).split('/').pop(),payload:JSON.parse(init.body)});
+    return new Response(JSON.stringify({ok:true,result:{message_id:92}}),{status:200});
+  };
+  try{await dispatchOutbox({DB:fixture.DB,BOT_TOKEN:'test-token'},1000);}
+  finally{globalThis.fetch=original;}
+  assert.equal(calls.length,1);
+  assert.equal(calls[0].method,'sendPhoto');
+  assert.match(calls[0].payload.photo,/^https:/);
+  assert.equal(calls[0].payload.reply_markup.inline_keyboard[0][0].callback_data,'v2:my');
+  assert.equal(fixture.getState(),'sent');
+});
+test('branded photo dashboard edits its caption rather than stacking new photos',async()=>{
+  const fixture=outboxFixture({
+    id:6,chat_id:'456',body:'🌐  مــدار\n📊 پیشخوان مدیریت',
+    attempts:0,reply_markup:JSON.stringify({inline_keyboard:[[{text:'سرورها',callback_data:'v2:admin:nodes'}]]}),
+    media_file_id:'https://raw.githubusercontent.com/example/brand.jpg',
+    edit_message_id:91,edit_kind:'caption',
+  });
+  const original=globalThis.fetch,calls=[];
+  globalThis.fetch=async(url,init)=>{
+    calls.push({method:String(url).split('/').pop(),payload:JSON.parse(init.body)});
+    return new Response(JSON.stringify({ok:true,result:{message_id:91}}),{status:200});
+  };
+  try{await dispatchOutbox({DB:fixture.DB,BOT_TOKEN:'test-token'},1000);}
+  finally{globalThis.fetch=original;}
+  assert.deepEqual(calls.map(c=>c.method),['editMessageCaption']);
+  assert.equal(calls[0].payload.message_id,91);
+  assert.ok(calls[0].payload.caption.includes('پیشخوان مدیریت'));
+  assert.equal(fixture.getState(),'sent');
+});
 test('readiness fails closed without required bindings', async () => {
   const response=await worker.fetch(new Request('https://localhost/health/ready'),{},{});
   assert.equal(response.status,503);
