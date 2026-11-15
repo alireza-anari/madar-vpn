@@ -94,8 +94,9 @@ export async function getSubscription(request,env,nowMs=Date.now()) {
   const active=await env.DB.prepare(
     "SELECT s.id,s.state,s.expires_at,s.max_bytes,s.used_bytes " +
     "FROM subscription_tokens t JOIN subscriptions s ON s.id=t.subscription_id " +
+    "JOIN customers c ON c.telegram_id=s.owner_telegram_id " +
     "WHERE t.token_hash=? AND t.revoked=0 AND t.expires_at>? " +
-    "AND s.state='active' AND s.expires_at>? LIMIT 1"
+    "AND s.state='active' AND c.state='active' AND s.expires_at>? LIMIT 1"
   ).bind(hash,nowMs,nowMs).first();
   if(!active) return json({error:'subscription_inactive'},403);
   if(active.max_bytes<=0 || active.used_bytes>=active.max_bytes)
@@ -148,7 +149,8 @@ export async function issueActiveToken(env,subId,nowMs=Date.now()) {
   const row=await env.DB.prepare(
     "SELECT s.id,s.expires_at FROM subscriptions s " +
     "JOIN subscription_credentials c ON c.subscription_id=s.id " +
-    "WHERE s.id=? AND s.state='active' AND s.expires_at>? " +
+    "JOIN customers owner ON owner.telegram_id=s.owner_telegram_id " +
+    "WHERE s.id=? AND s.state='active' AND owner.state='active' AND s.expires_at>? " +
     "AND s.max_bytes>0 AND s.used_bytes<s.max_bytes " +
     "AND EXISTS(SELECT 1 FROM node_allocations a WHERE a.subscription_id=s.id AND a.state='active')"
   ).bind(subId,nowMs).first();
