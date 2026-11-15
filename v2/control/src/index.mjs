@@ -3,6 +3,7 @@ import {enrollmentApi,runnerApi,cleanupRunnerJobs} from './runner-enrollment.mjs
 import {enrollmentPage} from './enrollment-page.mjs';
 import {activateIsolatedBotWebhook} from './telegram-activation.mjs';
 import { getSubscription } from './subscription.mjs';
+import {androidLoginRoute,approveAndroidLogin,purgeAndroidLogins} from './android-login.mjs';
 import { getCarrierFeed } from './carrier-subscription.mjs';
 import { nodeRoute } from './node-control.mjs';
 import { toBotMessage, verifyTelegramSecret } from './telegram.mjs';
@@ -78,7 +79,7 @@ export async function processInbox(env,nowMs=Date.now()) {
     try {
       const event=JSON.parse(item.event_json);
       if(event.updateId!==item.update_id) throw new Error('inbox_id_mismatch');
-      const reply=await resolveBotAction(env,event,nowMs);
+      const reply=(await approveAndroidLogin(env,event,nowMs))??await resolveBotAction(env,event,nowMs);
       const msg=reply??{text:frameMessage('⚠️ پاسخ مناسبی دریافت نشد. لطفاً دوباره تلاش کنید.'),replyMarkup:null};
       // This insert precedes marking inbox done. A crash will re-run the
       // idempotent action but cannot add a second outgoing reply.
@@ -296,6 +297,10 @@ export default {
         'referrer-policy':'no-referrer','x-content-type-options':'nosniff',
       }});}
     }
+    if(path==='/api/v2/android/login/start' || path==='/api/v2/android/login/complete') {
+      try{return await androidLoginRoute(request,env);}
+      catch{return json({error:'temporary_failure'},503);}
+    }
     if(path==='/api/v2/subscription') {
       if(new URL(request.url).search) return json({error:'query_not_allowed'},400);
       try{return await getSubscription(request,env);}
@@ -319,6 +324,7 @@ export default {
     const now=Date.now();
     // Minimize stored Telegram content. Orders, receipts and subscriptions
     if(env.RUNNER_ENROLLMENT_ENABLED==='true')await cleanupRunnerJobs(env.DB,now);
+    await purgeAndroidLogins(env.DB,now);
     // are deliberately excluded: they require a separate accounting policy.
     const oldDays=(n)=>Math.floor((now-n*86400000)/1000);
     await env.DB.prepare('DELETE FROM node_nonces WHERE created_ms<?')
