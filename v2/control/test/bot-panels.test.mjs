@@ -517,8 +517,8 @@ test('support conversation history paginates privately and closed requests remai
   const staff=await resolveBotAction(env,event(300,'ticket:view:tg-800',null,800),1000000);
   assert.match(staff.text,/صفحه ۱ از ۳/);
   assert.ok(staff.replyMarkup.inline_keyboard.flat().some(x=>x.callback_data==='v2:ticket:page:tg-800:1'));
-  assert.match(staff.text,/پیام شماره ۱۱/);
-  assert.doesNotMatch(staff.text,/پیام شماره ۰۰/);
+  assert.match(staff.text,/پیام شماره 11/);
+  assert.doesNotMatch(staff.text,/پیام شماره 00/);
   const older=await resolveBotAction(env,event(300,'ticket:page:tg-800:2',null,801),1000001);
   assert.match(older.text,/صفحه ۳ از ۳/);
   assert.match(older.text,/پیام شماره ۰۰/);
