@@ -75,7 +75,7 @@ test('customer support ticket has owner-scoped messages, replies, and staff noti
 
 test('admin plan wizard creates disabled plan and cannot be opened by customers',async()=>{
   const {env,raw,event}=fixture();
-  assert.match((await adminPanelAction(env,event(200,'admin:plan:new'),1000)).text,/Access denied/);
+  assert.match((await adminPanelAction(env,event(200,'admin:plan:new'),1000)).text,/دسترسی به این بخش مجاز نیست/);
   const prompt=await adminPanelAction(env,event(100,'admin:plan:new'),1000);
   assert.match(prompt.text,/پلن جدید/);
   const invalid=await consumePanelInput(env,event(100,'text','not valid',16),1100);
@@ -92,7 +92,7 @@ test('admin plan wizard creates disabled plan and cannot be opened by customers'
 
 test('staff grants and revokes require admin, with session expiry and admin protection',async()=>{
   const {env,raw,event}=fixture();
-  assert.match((await adminPanelAction(env,event(300,'admin:staff'),1000)).text,/Access denied/);
+  assert.match((await adminPanelAction(env,event(300,'admin:staff'),1000)).text,/دسترسی به این بخش مجاز نیست/);
   const start=await adminPanelAction(env,event(100,'admin:staff:grant:seller'),1000);
   assert.match(start.text,/شناسه عددی/);
   assert.match((await consumePanelInput(env,event(100,'text','100',20),1500)).text,/دسترسی مدیر/);
