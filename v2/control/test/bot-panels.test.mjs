@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {readdirSync,readFileSync} from 'node:fs';
 import {
-  adminDashboard,adminPanelAction,customerTicketAction,consumePanelInput,
+  adminDashboard,adminPanelAction,customerTicketAction,consumePanelInput,staffTicketDetails,
 } from '../src/bot-panels.mjs';
 import {resolveBotAction} from '../src/shop.mjs';
 
@@ -118,5 +118,41 @@ test('language switch persists and customer home never claims a paid subscriptio
   const next=await resolveBotAction(env,event(200,'home',null,27));
   assert.match(next.text,/You have no active/);
   assert.ok(next.replyMarkup.inline_keyboard.flat().some(b=>b.callback_data==='v2:customer:tickets'));
+  raw.close();
+});
+
+test('suspension needs confirmation and never blocks the support path',async()=>{
+  const {env,raw,event}=fixture();
+  const prompt=await adminPanelAction(env,event(100,'admin:customer:suspend:200',null,40),1000);
+  assert.match(prompt.text,/مطمئنی/);
+  assert.equal(raw.prepare("SELECT state FROM customers WHERE telegram_id='200'").get().state,'active');
+  const done=await adminPanelAction(env,event(100,'admin:customer:confirm:suspend:200',null,41),1001);
+  assert.match(done.text,/suspended/);
+  assert.equal(raw.prepare("SELECT state FROM customers WHERE telegram_id='200'").get().state,'suspended');
+  const forbidden=await resolveBotAction(env,event(200,'buy:someplan',null,42),1100);
+  assert.match(forbidden.text,/تعلیق/);
+  const support=await resolveBotAction(env,event(200,'support',null,43),1100);
+  assert.match(support.text,/موضوع/);
+  const ticket=await resolveBotAction(env,event(200,'help','مشکل در تست اتصال',44),1200);
+  assert.match(ticket.text,/tg-44/);
+  const replyPrompt=await resolveBotAction(env,event(200,'customer:ticket:reply:tg-44',null,45),1300);
+  assert.match(replyPrompt.text,/۱۰ دقیقه/);
+  const replied=await resolveBotAction(env,event(200,'more','با همراه اول تست شد',46),1400);
+  assert.match(replied.text,/ثبت شد/);
+  const restored=await adminPanelAction(env,event(100,'admin:customer:confirm:activate:200',null,47),1500);
+  assert.match(restored.text,/active/);
+  raw.close();
+});
+
+test('support staff can inspect conversations but customers cannot inspect staff-only details',async()=>{
+  const {env,raw,event}=fixture();
+  raw.exec("INSERT INTO staff_roles(telegram_id,role,granted_by) VALUES('300','support','100')");
+  raw.exec("INSERT INTO support_tickets(id,customer_telegram_id,subject) VALUES('tg-22','200','Connection issue')");
+  raw.exec("INSERT INTO support_messages(id,ticket_id,sender_telegram_id,body,role) VALUES('msg-1','tg-22','200','سلام یک سوال دارم','customer')");
+  const view=await staffTicketDetails(env,event(300,'ticket:view:tg-22'),'tg-22');
+  assert.match(view.text,/یک سوال دارم/);
+  assert.ok(view.replyMarkup.inline_keyboard.flat().some(x=>x.callback_data==='v2:ticket:reply:tg-22'));
+  const denied=await staffTicketDetails(env,event(200,'ticket:view:tg-22'),'tg-22');
+  assert.match(denied.text,/Access denied/);
   raw.close();
 });
