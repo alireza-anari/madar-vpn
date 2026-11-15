@@ -42,7 +42,7 @@ test('node admin input never runs an arbitrary shell process',async()=>{
     return {bind(...x){return {sql,params:x};}};
   }};
   const res=await enrollNode(db,'123','/node_add node_01|aws|eu|10|50');
-  assert.match(res.text,/NOT ready/);
+  assert.match(res.text,/ثبت شد، اما هنوز آماده استفاده نیست/);
 });
 
 test('second Reality carrier is a draft variant of one parent, not another route allocation',async()=>{
@@ -69,7 +69,7 @@ test('second Reality carrier is a draft variant of one parent, not another route
     batch:async q=>{assert.equal(q.length,3);return []},
   };
   const result=await addRoute(db,'123','/node_route eu_01|reality|443|mci');
-  assert.match(result.text,/unpublished variant/);
+  assert.match(result.text,/به‌صورت پیش‌نویس ثبت شد/);
   assert.ok(statements.some(x=>x.sql.includes('INSERT INTO route_carrier_variants')));
   assert.ok(!statements.some(x=>x.sql.includes('INSERT INTO routes(')));
 });
@@ -80,6 +80,6 @@ test('operator variant refuses missing parent instead of faking a ready route',a
       {id:'eu_01',lifecycle:'provisioning',desired_revision:3}:null}}};
   },batch(){batchCalled=true;throw Error('must not write')}};
   const result=await addRoute(db,'123','/node_route eu_01|reality|8443|irancell');
-  assert.match(result.text,/no complete public metadata/);
+  assert.match(result.text,/اطلاعات عمومی مسیر اصلی REALITY کامل نیست/);
   assert.equal(batchCalled,false);
 });
