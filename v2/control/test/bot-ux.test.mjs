@@ -65,8 +65,8 @@ test('bot menus are Persian-only, compact and visually consistent',()=>{
 
 test('manager, seller and support menus use Persian labels and local display formats',()=>{
   const manager=adminMenu();
-  assert.equal(manager.inline_keyboard.length,3);
-  assert.equal(manager.inline_keyboard.flat().length,6);
+  assert.equal(manager.inline_keyboard.length,4);
+  assert.equal(manager.inline_keyboard.flat().length,7);
   for(const menu of [manager,sellerMenu(),supportMenu()]){
     for(const button of menu.inline_keyboard.flat())assert.doesNotMatch(button.text,/[A-Za-z]{3,}/);
   }
@@ -160,6 +160,12 @@ test('back routes follow section hierarchy without self-links or customer previe
   assert.equal(parentPage('admin:plan:new',true),'admin:plans');
   assert.equal(parentPage('admin:staff:grant:seller',true),'admin:staff');
   assert.equal(parentPage('ticket:view:tg-19',true),'admin:tickets');
+  assert.equal(parentPage('ticket:page:tg-19:2',true),'ticket:view:tg-19');
+  assert.equal(parentPage('customer:ticket:page:tg-19:1'),'customer:ticket:tg-19');
+  assert.equal(parentPage('admin:tickets:closed:2',true),'admin:tickets');
+  assert.equal(parentPage('admin:configs',true),'admin:home');
+  assert.equal(parentPage('admin:configs:trials:0',true),'admin:configs');
+  assert.equal(parentPage('admin:configs:trial:'+'a'.repeat(24),true),'admin:configs:trials:0');
   assert.equal(parentPage('customer:ticket:tg-19'),'customer:tickets');
   assert.equal(parentPage('customer:ticket:reply:tg-19'),'customer:ticket:tg-19');
   assert.equal(parentPage('orders:view:order-1'),'orders');
