@@ -75,8 +75,8 @@ test('one Telegram account receives one one-hour link with both verified carrier
   assert.equal(feed.status,200);
   const lines=atob(await feed.text()).trim().split('\n');
   assert.equal(lines.length,2);
-  assert.ok(lines.some(x=>x.includes(':443?')&&x.includes('مدار')));
-  assert.ok(lines.some(x=>x.includes(':8443?')&&x.includes('مدار')));
+  assert.ok(lines.some(x=>x.includes(':443?')&&decodeURIComponent(x).includes('همراه اول')));
+  assert.ok(lines.some(x=>x.includes(':8443?')&&decodeURIComponent(x).includes('ایرانسل')));
   assert.ok(lines.every(x=>x.startsWith('vless://'+UUID+'@')));
 
   const repeat=await resolveBotAction(env,event(200,'customer:trial',502),now+1000);
