@@ -439,7 +439,7 @@ async function personalizedHome(env,e) {
   const quick=[
     ...(isAdmin?[[{text:'🛠 ورود به پیشخوان مدیریت',callback_data:'v2:admin:home'}]]:[]),
     ...(seller?[[{text:'🧑‍💼 ورود به پنل فروشنده',callback_data:'v2:seller:home'}]]:[]),
-    ...(supportAgent&&!isAdmin?[[{text:'💬 ورود به صندوق پشتیبانی',callback_data:'v2:admin:tickets'}]]:[]),
+
   ];
   return {text:frameMessage(greeting+'\n\n'+state+'\n'+safety+restriction),
     replyMarkup:{inline_keyboard:[...quick,...menu.inline_keyboard]}};
