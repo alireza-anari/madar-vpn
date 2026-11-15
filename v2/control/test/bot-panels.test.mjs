@@ -44,8 +44,17 @@ test('owner-only dashboard shows real counts with actions but no payment shortcu
   assert.ok(a.text.length<1024);
   assert.doesNotMatch(a.text,/━━━━━━━━/);
   const keys=a.replyMarkup.inline_keyboard.flat().map(x=>x.callback_data);
-  for(const required of ['v2:admin:plans','v2:admin:queue','v2:admin:staff','v2:admin:customers','v2:admin:node:trials'])
+  for(const required of ['v2:admin:nodes','v2:admin:plans','v2:admin:queue',
+    'v2:admin:staff','v2:admin:customers','v2:admin:tickets'])
     assert.ok(keys.includes(required));
+  assert.ok(keys.includes('v2:customer:home')); // Admin dashboard preview only.
+  assert.ok(!keys.includes('v2:admin:node:new'));
+  assert.ok(!keys.includes('v2:admin:node:trials'));
+  const nodePage=await resolveBotAction(env,event(100,'admin:nodes'),Date.now());
+  const scoped=nodePage.replyMarkup.inline_keyboard.flat().map(b=>b.callback_data);
+  assert.ok(scoped.includes('v2:admin:node:new'));
+  assert.ok(scoped.includes('v2:admin:node:trials'));
+  assert.ok(!nodePage.replyMarkup.inline_keyboard.flat().some(b=>b.text.includes('نمای مشتری')));
   const no=await adminDashboard(env,event(200,'admin:home'));
   assert.match(no.text,/دسترسی به این بخش مجاز نیست/);
   assert.equal(await env.DB.prepare("SELECT COUNT(*) AS n FROM node_trial_links").first().then(x=>x.n),0);
