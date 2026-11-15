@@ -1,5 +1,6 @@
 import {issueTrialLink,enqueueAutoNode} from './node-auto.mjs';
 import {issueCarrierLink} from './carrier-subscription.mjs';
+import {adminDashboard,adminPanelAction,customerTicketAction,consumePanelInput,notifySupport} from './bot-panels.mjs';
 import {beginNodeWizard,cancelNodeWizard,consumeNodeWizard} from './node-wizard.mjs';
 import { nodeAdminAction } from './node-admin.mjs';
 import { handleSeller, linkSellerOnStart, grantStaffRole } from './referrals.mjs';
@@ -182,7 +183,7 @@ async function myOrders(db,e) {
 
 async function mySubscriptions(db,e,env) {
   const rows=(await db.prepare(
-    'SELECT id,state,expires_at FROM subscriptions WHERE owner_telegram_id=? ORDER BY expires_at DESC LIMIT 5'
+    'SELECT id,state,expires_at,max_bytes,used_bytes FROM subscriptions WHERE owner_telegram_id=? ORDER BY expires_at DESC LIMIT 5'
   ).bind(e.actorId).all()).results??[];
   if (!rows.length) return response(t('هنوز اشتراک فعال نسخه جدید ندارید. اشتراک قبلی شما مستقل باقی مانده است.',
     'No V2 subscription yet; your existing V1 subscription is unaffected.',e.locale),e.locale);
@@ -192,7 +193,13 @@ async function mySubscriptions(db,e,env) {
       callback_data:'v2:my:link:'+x.id,
     }]):[];
   return response(line(t('👤 اشتراک‌های من','👤 My subscriptions',e.locale),
-    ...rows.map(x=>x.id.slice(0,8)+'… | '+x.state+' | '+new Date(x.expires_at).toISOString().slice(0,10))),e.locale,buttons);
+    ...rows.map(x=>x.id.slice(0,8)+'… | '+x.state+' | '+new Date(x.expires_at).toISOString().slice(0,10)+
+      ' | '+(Math.round(x.used_bytes/1073741824*100)/100)+'/'+
+      (Math.round(x.max_bytes/1073741824*100)/100)+' GB')),e.locale,[
+      ...buttons,
+      [{text:t('🧾 سفارش‌های من','🧾 My orders',e.locale),callback_data:'v2:orders'}],
+      [{text:t('💬 تیکت‌های من','💬 My support tickets',e.locale),callback_data:'v2:customer:tickets'}]
+    ]);
 }
 
 async function beginSupport(db,e,nowMs) {
@@ -204,7 +211,7 @@ async function beginSupport(db,e,nowMs) {
     '💬 Send a short support issue within 10 minutes. Never send passwords or card details.',e.locale),e.locale);
 }
 
-async function maybeRecordSupport(db,e,nowMs) {
+async function maybeRecordSupport(db,e,env,nowMs) {
   if (!e.inputText || e.inputText.startsWith('/') || e.inputText.startsWith('v2:')) return null;
   const s=await db.prepare('SELECT mode,expires_ms FROM customer_sessions WHERE telegram_id=?').bind(e.actorId).first();
   if (!s || s.mode!=='support' || s.expires_ms<nowMs) return null;
@@ -214,8 +221,11 @@ async function maybeRecordSupport(db,e,nowMs) {
   await db.batch([
     db.prepare('INSERT OR IGNORE INTO support_tickets(id,customer_telegram_id,subject) VALUES(?,?,?)')
       .bind(ticketId,e.actorId,subject),
+    db.prepare('INSERT OR IGNORE INTO support_messages(id,ticket_id,sender_telegram_id,body,role) VALUES(?,?,?,?,"customer")')
+      .bind('customer-initial:'+e.updateId,ticketId,e.actorId,e.inputText.trim().slice(0,1000)),
     db.prepare('DELETE FROM customer_sessions WHERE telegram_id=?').bind(e.actorId),
   ]);
+  await notifySupport(env,e,ticketId,nowMs);
   return response(t('✅ درخواست پشتیبانی ثبت شد: ','✅ Support ticket created: ',e.locale)+ticketId,e.locale);
 }
 
@@ -392,27 +402,76 @@ async function closeSupport(db,e,id,nowMs) {
   return response('✅ Ticket closed: '+id,e.locale);
 }
 
+async function personalizedHome(env,e) {
+  const isAdmin=adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId);
+  const seller=await isStaff(env.DB,e,'seller');
+  const active=(await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM subscriptions WHERE owner_telegram_id=? AND state='active' AND expires_at>?"
+  ).bind(e.actorId,Date.now()).first())?.n??0;
+  const greeting=t('🌐 مدار VPN — نسخه ۲','🌐 Madar VPN — V2',e.locale);
+  const state=active>0
+    ?t('اشتراک‌های فعال شما: ','Your active subscriptions: ',e.locale)+active
+    :t('در حال حاضر اشتراک فعالی در این نسخه ندارید.','You have no active V2 subscription yet.',e.locale);
+  const safety=!salesConfigured(env)
+    ?t('فروش عمومی هنوز فعال نشده است؛ تا تأیید اتصال، ظرفیت و سهمیه پرداخت نکنید.',
+      'Public checkout is disabled until connectivity, capacity and quota enforcement are verified.',e.locale)
+    :t('برای مشاهده پلن‌ها از منو استفاده کنید.','Choose Plans to view available offers.',e.locale);
+  return response(greeting+'\n\n'+state+'\n'+safety,e.locale,[
+    ...(isAdmin?[[{text:'🛠 '+t('پنل مدیریت','Admin panel',e.locale),callback_data:'v2:admin:home'}]]:[]),
+    ...(seller?[[{text:'🧑‍💼 '+t('پنل فروشنده','Seller panel',e.locale),callback_data:'v2:seller:home'}]]:[]),
+  ]);
+}
+
+async function liveServiceStatus(env,e,nowMs) {
+  const ready=(await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM nodes n WHERE n.lifecycle='ready' AND EXISTS("+
+    "SELECT 1 FROM routes r WHERE r.node_id=n.id AND r.state='ready' AND r.verified_ms BETWEEN ? AND ?)"
+  ).bind(nowMs-600000,nowMs).first())?.n??0;
+  return response(t('📶 وضعیت مدار V2','📶 Madar V2 status',e.locale)+'\n\n'+
+    (ready>0?t('نودهای دارای تأیید مسیر در ۱۰ دقیقه اخیر: ','Nodes with recent verified routes: ',e.locale)+ready:
+      t('هنوز نودی برای فروش عمومی با تأیید تازه ثبت نشده است.',
+        'No node currently has fresh verification for public issuance.',e.locale))+'\n'+
+    t('نصب آزمایشی و لینک تست به معنی آماده‌بودن سرویس پولی نیست.',
+      'Trial installation does not establish paid-service readiness.',e.locale),e.locale);
+}
+
 /** The caller must already validate the Telegram webhook and sender identity. */
 export async function resolveBotAction(env,e,nowMs=Date.now()) {
   const db=env.DB;
   if (!db || !e || !/^\d+$/.test(e.actorId??'')) throw new Error('invalid_event');
   await upsertCustomer(db,e);
+  const preferred=await db.prepare('SELECT locale FROM customers WHERE telegram_id=?')
+    .bind(e.actorId).first();
+  if(preferred?.locale==='fa'||preferred?.locale==='en')e={...e,locale:preferred.locale};
   if (!await isCustomerActive(db,e.actorId))
     return response(t('حساب شما تعلیق شده است. از پشتیبانی پیگیری کنید.',
       'Account suspended. Contact support.',e.locale),e.locale);
 
   const key=e.key??'';
-  if (e.photoId) return storeReceipt(db,e,env);
-  if (key==='/start') {
-    const referral=await linkSellerOnStart(db,e,nowMs);
-    const home=botPage('home',e.locale);
-    const isAdmin=adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId);
-    const menu=isAdmin ? {inline_keyboard:[
-      [{text:'🛠 پنل مدیریت و تست مدار V2',callback_data:'v2:admin:home'}],
-      ...home.replyMarkup.inline_keyboard,
-    ]}:home.replyMarkup;
-    return {...home,replyMarkup:menu,...(referral?{text:home.text+'\n\n'+referral}:{})};
+  if(key==='lang'||key==='/lang')return response(
+    '🌐 زبان ربات را انتخاب کنید / Choose your language',e.locale,[
+      [{text:'🇮🇷 فارسی',callback_data:'v2:lang:fa'},
+       {text:'🇬🇧 English',callback_data:'v2:lang:en'}],
+    ]);
+  if(key==='lang:fa'||key==='lang:en'){
+    const locale=key.slice(5);
+    await db.prepare('UPDATE customers SET locale=? WHERE telegram_id=?')
+      .bind(locale,e.actorId).run();
+    e={...e,locale};
+    return personalizedHome(env,e);
   }
+  if(key==='/start'){
+    const referral=await linkSellerOnStart(db,e,nowMs);
+    const home=await personalizedHome(env,e);
+    return referral?{...home,text:home.text+'\n\n'+referral}:home;
+  }
+  if(e.photoId)return storeReceipt(db,e,env);
+  const customer=await customerTicketAction(env,e,nowMs);
+  if(customer)return customer;
+  const adminPanel=await adminPanelAction(env,e,nowMs);
+  if(adminPanel)return adminPanel;
+  const panelInput=await consumePanelInput(env,e,nowMs);
+  if(panelInput)return panelInput;
   if (key==='admin:node:new' || key==='admin:node:cancel') {
     if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
       return response('Access denied',e.locale);
@@ -443,17 +502,7 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
       '\n\nاین لینک دو مسیر REALITY را فقط برای آزمون نشان می‌دهد؛ سرور هنوز برای فروش تأیید نشده است.',e.locale)
       :response('⏸ نصب کامل نشده یا لینک آزمایشی آماده نیست. وضعیت سرور و دسترسی اجراکننده را بررسی کن.',e.locale);
   }
-  if (key==='/admin' || key==='admin:home') {
-    if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) return response('Access denied',e.locale);
-    return response('🛠 مدیریت مدار V2\n\nاز همین‌جا سرور آزمایشی را ثبت و پس از نصب موفق، یک لینک شامل دو مسیر REALITY دریافت کن.\nفروش تا تأیید واقعی اتصال غیرفعال است.',e.locale,[
-      [{text:'➕ افزودن خودکار سرور',callback_data:'v2:admin:node:new'}],
-      [{text:'🧪 صدور لینک دو‌اپراتوری تست',callback_data:'v2:admin:node:trials'}],
-      [{text:'🖥 سرورها و وضعیت نصب',callback_data:'v2:admin:nodes'}],
-      [{text:'🛍 مدیریت پلن‌ها',callback_data:'v2:admin:plans'}],
-      [{text:'🧾 رسیدهای در انتظار',callback_data:'v2:admin:queue'}],
-      [{text:'💬 پشتیبانی',callback_data:'v2:admin:tickets'}],
-    ]);
-  }
+  if(key==='/admin'||key==='admin:home')return adminDashboard(env,e);
   if (key==='admin:node:trials') {
     if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
       return response('Access denied',e.locale);
@@ -470,10 +519,14 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
   if (key==='admin:plans') {
     if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) return response('Access denied',e.locale);
     const plans=(await db.prepare('SELECT id,title_fa,active,price_amount,price_currency FROM plans ORDER BY id LIMIT 12').all()).results??[];
-    return response(line('🛍 Plans',...plans.map(x=>x.id+' · '+x.title_fa+' · '+(x.active?'active':'disabled')+' · '+money(x.price_amount,x.price_currency)),
-      'Use /plan_add id|نام|English|price|IRT|quotaGB|days to create a disabled plan.'),e.locale,
-      plans.map(x=>[{text:(x.active?'🔴 Disable ':'🟢 Enable ')+x.id,
-        callback_data:'v2:plan:'+(x.active?'off:':'on:')+x.id}]));
+    return response(line(t('🛍 مدیریت پلن‌ها','🛍 Manage plans',e.locale),
+      ...plans.map(x=>x.id+' · '+x.title_fa+' · '+(x.active?'active':'disabled')+' · '+money(x.price_amount,x.price_currency)),
+      t('پلن جدید در حالت غیرفعال ایجاد می‌شود. فعال‌سازی تنها با ظرفیت واقعی و امکان صدور مجاز است.',
+        'New plans are disabled by default. Activation requires verified capacity and issuance.',e.locale)),e.locale,[
+        [{text:'➕ '+t('ساخت پلن جدید','Add plan',e.locale),callback_data:'v2:admin:plan:new'}],
+        ...plans.map(x=>[{text:(x.active?'🔴 Disable ':'🟢 Enable ')+x.id,
+          callback_data:'v2:plan:'+(x.active?'off:':'on:')+x.id}]),
+      ]);
   }
   if (key==='/node_add_auto') {
     if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))return response('Access denied',e.locale);
@@ -529,7 +582,7 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
     ]);
     return response('Plan '+id+' is now '+(mode==='on'?'active':'disabled'),e.locale);
   }
-  if (key==='home') return botPage('home',e.locale);
+  if (key==='home') return personalizedHome(env,e);
   if (key==='plans' || key==='/plans') return listPlans(db,env,e.locale,nowMs);
   if (key==='my' || key==='/my') return mySubscriptions(db,e,env);
   if (key.startsWith('my:link:')) {
@@ -557,7 +610,7 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
     ),e.locale);
   }
   if (key==='orders' || key==='/orders') return myOrders(db,e);
-  if (key==='status' || key==='/status') return botPage('status',e.locale);
+  if (key==='status' || key==='/status') return liveServiceStatus(env,e,nowMs);
   if (key==='privacy' || key==='/privacy') return botPage('privacy',e.locale);
   if (key==='help' || key==='/help') return botPage('help',e.locale);
   if (key==='support' || key==='/support') return beginSupport(db,e,nowMs);
@@ -589,6 +642,6 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
   }
   const reply=await staffReply(db,e,env,nowMs);
   if(reply) return reply;
-  const support=await maybeRecordSupport(db,e,nowMs);
+  const support=await maybeRecordSupport(db,e,env,nowMs);
   return support??botPage('unknown',e.locale);
 }
