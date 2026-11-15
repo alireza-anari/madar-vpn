@@ -171,7 +171,8 @@ const pages={
   unknown:'این گزینه شناخته نشد. برای نمایش منوی اصلی، «خانه» را انتخاب کنید.',
 };
 export function botPage(page) {
-  const resolved=page==='customer:tickets'?'tickets':\n    (page==='customer:home'||page==='admin:home')?'home':page;
+  const resolved=page==='customer:tickets'?'tickets':
+    (page==='customer:home'||page==='admin:home')?'home':page;
   const body=Object.hasOwn(pages,resolved)?pages[resolved]:pages.unknown;
   return {text:frameMessage(body),replyMarkup:botMenu()};
 }
