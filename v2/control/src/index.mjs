@@ -93,6 +93,19 @@ export async function processInbox(env,nowMs=Date.now()) {
   }
 }
 
+/** UTF-16 offsets used by Telegram for brand and screen headings. */
+export function brandedEntities(body){
+  if(typeof body!=='string'||!body.startsWith('🌐  مــدار\n'))return [];
+  const header='🌐  مــدار';
+  const out=[{type:'bold',offset:0,length:header.length}];
+  const first=body.indexOf('\n'),second=body.indexOf('\n',first+1);
+  if(second<0)return out;
+  const start=second+1,end=body.indexOf('\n',start);
+  const title=body.slice(start,end<0?body.length:end);
+  if(title.length>0&&title.length<=85)out.push({type:'bold',offset:start,length:title.length});
+  return out;
+}
+
 /** Every table is a compile-time constant; never interpolate user data as SQL. */
 async function deliverTable(env,name,nowMs,withPhoto) {
   const rows=(await env.DB.prepare(
@@ -110,9 +123,12 @@ async function deliverTable(env,name,nowMs,withPhoto) {
     try {
       const markup=withPhoto && item.reply_markup?JSON.parse(item.reply_markup):null;
       const media=withPhoto && typeof item.media_file_id==='string' && item.media_file_id.length>0;
+      const displayBody=media?item.body.slice(0,1024):item.body;
+      const entities=brandedEntities(displayBody);
       sent=await telegram(env,media?'sendPhoto':'sendMessage',{
         chat_id:item.chat_id,
-        ...(media?{photo:item.media_file_id,caption:item.body.slice(0,1024)}:{text:item.body}),
+        ...(media?{photo:item.media_file_id,caption:displayBody}:{text:displayBody}),
+        ...(entities.length?{[media?'caption_entities':'entities']:entities}:{}),
         ...(markup?{reply_markup:markup}:{}),
       });
     } catch { /* retry; no credentials, content or chat IDs in logs */ }
