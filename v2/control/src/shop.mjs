@@ -476,6 +476,7 @@ async function closeSupport(db,e,id,nowMs,env) {
 
 async function personalizedHome(env,e,customerView=false) {
   const isAdmin=adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId);
+  if(isAdmin&&!customerView)return adminDashboard(env,e);
   const seller=await isStaff(env.DB,e,'seller');
   const supportAgent=await isStaff(env.DB,e,'support');
   const [active,customer,latestOrder]=await Promise.all([
