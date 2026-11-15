@@ -9,7 +9,7 @@ import { handleSeller, linkSellerOnStart, grantStaffRole } from './referrals.mjs
  * update ID or by a state-qualified SQL transition. No unattended payment or
  * config issuance takes place from this module.
  */
-import { botMenu,botPage,adminMenu,sellerMenu,supportMenu,frameMessage,faNumber,faMoney,faGB,faDate,faStatus,faRole,sectionNavigation,usageMeter,statusSymbol,shortCode,panelHeading } from './bot-ux.mjs';
+import { botMenu,botPage,adminMenu,sellerMenu,supportMenu,frameMessage,faNumber,faMoney,faGB,faDate,faStatus,faRole,sectionNavigation,usageMeter,statusSymbol,shortCode,panelHeading,BRAND_BANNER_URL } from './bot-ux.mjs';
 
 const ORDER_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{1,48}$/;
 const PLAN_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{1,30}$/;
@@ -507,8 +507,15 @@ async function personalizedHome(env,e,customerView=false) {
     ...(isAdmin&&!customerView?[[{text:'👤 مشاهده نمای مشتری',callback_data:'v2:customer:home'}]]:[]),
     ...(seller?[[{text:'🧑‍💼 ورود به پنل فروشنده',callback_data:'v2:seller:home'}]]:[]),
   ];
-  return {text:frameMessage(panelHeading('🌐','پنل کاربری مدار','مدیریت اشتراک، سفارش و پشتیبانی')+
-    '\n\n'+greeting+'\n'+state+'\n'+orderHint+'\n\n'+safety+restriction),
+  const homeLines=[
+    panelHeading('👋','پنل کاربری مدار','اشتراک و سفارش‌های شما، یکجا'),
+    '',
+    state,
+    orderHint,
+    '',
+    safety+restriction
+  ];
+  return {text:frameMessage(homeLines.join('\n')),photoId:BRAND_BANNER_URL,
     replyMarkup:{inline_keyboard:[...quick,...menu.inline_keyboard]}};
 }
 
