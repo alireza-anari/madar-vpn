@@ -224,9 +224,7 @@ async function orderDetails(db,e,id){
     '\n📅 تاریخ ثبت: '+faDate(order.created_at)+
     '\n\nروند سفارش\n'+timeline+
     '\n\nمرحله بعد\n'+step,e.locale,[
-    [{text:'🔄 تازه‌سازی وضعیت',callback_data:'v2:orders:view:'+id}],
-    [{text:'🧾 سفارش‌های من',callback_data:'v2:orders'},
-     {text:'💬 پشتیبانی',callback_data:'v2:customer:tickets'}]
+    [{text:'🔄 تازه‌سازی وضعیت',callback_data:'v2:orders:view:'+id}]
   ]);
 }
 
@@ -237,10 +235,7 @@ async function mySubscriptions(db,e,env) {
   if (!rows.length)return response(
     panelHeading('📦','اشتراک‌های من','وضعیت و اطلاعات اتصال سرویس شما')+
     '\n\nهنوز اشتراک فعالی در مدار V2 ندارید.\nاشتراک نسخه قبلی شما مستقل و محفوظ است.',
-    e.locale,[[
-      {text:'🛍 مشاهده بسته‌ها',callback_data:'v2:plans'},
-      {text:'🧾 پیگیری سفارش',callback_data:'v2:orders'}
-    ]]);
+    e.locale,[[{text:'🛍 مشاهده بسته‌ها',callback_data:'v2:plans'}]]);
   const buttons=env.SUBSCRIPTION_LINKS_ENABLED==='true'?
     rows.filter(x=>x.state==='active').map(x=>[{
       text:'🔗 دریافت لینک اتصال · '+shortCode(x.id,8),
@@ -255,11 +250,7 @@ async function mySubscriptions(db,e,env) {
       '\n📅 پایان اعتبار: '+faDate(x.expires_at)
     )).join('\n\n──────────────\n\n')+
     '\n\n🔐 لینک اتصال خصوصی است؛ حجم دو مسیر همراه اول و ایرانسل مشترک محاسبه می‌شود.',
-    e.locale,[
-      ...buttons,
-      [{text:'🧾 سفارش‌های من',callback_data:'v2:orders'},
-       {text:'💬 پشتیبانی',callback_data:'v2:customer:tickets'}]
-    ]);
+    e.locale,buttons);
 }
 
 async function beginSupport(db,e,nowMs) {
