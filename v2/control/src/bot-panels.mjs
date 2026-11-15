@@ -116,13 +116,15 @@ async function thread(env,e,id,ownerOnly,page=0) {
   const maxPage=Math.max(0,Math.ceil(Number(total)/5)-1);
   page=Math.min(page,maxPage);
   const rows=(await db.prepare(
-    'SELECT role,body FROM support_messages WHERE ticket_id=? ORDER BY created_at DESC,id DESC LIMIT 5 OFFSET ?'
+    'SELECT id,role,body,telegram_file_id FROM support_messages WHERE ticket_id=? ORDER BY created_at DESC,id DESC LIMIT 5 OFFSET ?'
   ).bind(id,page*5).all()).results??[];
   const messages=rows.reverse().map(x=>
     (x.role==='customer'?'👤 شما':'🧑‍💼 پشتیبانی')+'\n'+x.body.slice(0,350));
   const controls=ticket.state==='closed'
     ?[button('➕ ثبت درخواست جدید','support')]
     :[button('✉️ پاسخ به درخواست','customer:ticket:reply:'+id)];
+  controls.push(...rows.filter(x=>x.telegram_file_id&&/^support-media:[0-9]{1,20}$/.test(x.id))
+    .map(x=>button('🖼 مشاهده تصویر پیوست','customer:ticket:media:'+x.id.slice(14))));
   const nav=[];
   if(page<maxPage)nav.push({text:'◀️ قدیمی‌تر',callback_data:'v2:customer:ticket:page:'+id+':'+(page+1)});
   if(page>0)nav.push({text:'جدیدتر ▶️',callback_data:'v2:customer:ticket:page:'+id+':'+(page-1)});
@@ -158,7 +160,7 @@ export async function staffTicketDetails(env,e,id,page=0) {
   const maxPage=Math.max(0,Math.ceil(Number(total)/5)-1);
   page=Math.min(page,maxPage);
   const messages=(await db.prepare(
-    'SELECT role,body FROM support_messages WHERE ticket_id=? ORDER BY created_at DESC,id DESC LIMIT 5 OFFSET ?'
+    'SELECT id,role,body,telegram_file_id FROM support_messages WHERE ticket_id=? ORDER BY created_at DESC,id DESC LIMIT 5 OFFSET ?'
   ).bind(id,page*5).all()).results??[];
   const conversation=messages.reverse().map(x=>
     (x.role==='customer'?'👤 مشتری':'🧑‍💼 پشتیبان')+'\n'+x.body.slice(0,350)).join('\n\n──────────\n\n');
@@ -178,6 +180,8 @@ export async function staffTicketDetails(env,e,id,page=0) {
           button('✉️ پاسخ به مشتری','ticket:reply:'+id),
           button('🔒 بستن درخواست','ticket:confirm-close:'+id),
         ]),
+      ...messages.filter(x=>x.telegram_file_id&&/^support-media:[0-9]{1,20}$/.test(x.id))
+        .map(x=>button('🖼 مشاهده تصویر پیوست','ticket:media:'+x.id.slice(14))),
       ...(navigation.length?[navigation]:[]),
       button('📋 بازگشت به صندوق','admin:tickets'),
     ],e.locale);
