@@ -67,7 +67,7 @@ export function styleInlineKeyboard(markup){
   if(!markup||!Array.isArray(markup.inline_keyboard))return markup;
   const primary=new Set(['v2:plans','v2:my','v2:admin:home','v2:customer:home',
     'v2:admin:nodes','v2:admin:tickets','v2:status','v2:seller:home']);
-  const success=new Set(['v2:admin:node:new','v2:seller:invite']);
+  const success=new Set(['v2:admin:node:new','v2:seller:invite','v2:customer:trial']);
   const danger=new Set(['v2:seller:revoke']);
   return {...markup,inline_keyboard:markup.inline_keyboard.map(row=>
     row.map(button=>{
@@ -86,11 +86,14 @@ const customerMenu={inline_keyboard:[
     {text:'📦 اشتراک‌های من',callback_data:'v2:my'},
   ],
   [
+    {text:'🧪 دریافت تست رایگان',callback_data:'v2:customer:trial'},
+    {text:'📶 وضعیت سرویس',callback_data:'v2:status'},
+  ],
+  [
     {text:'🧾 سفارش‌های من',callback_data:'v2:orders'},
     {text:'💬 پشتیبانی',callback_data:'v2:customer:tickets'},
   ],
   [
-    {text:'📶 وضعیت سرویس',callback_data:'v2:status'},
     {text:'📘 راهنمای اتصال',callback_data:'v2:help'},
   ],
   [
@@ -144,6 +147,7 @@ export function sectionNavigation(role='customer'){
  * Pure, bounded callback routing; permissions are still enforced by shop.mjs. */
 export function parentPage(key,isAdmin=false){
   key=String(key??'');
+  if(key==='customer:trial')return 'customer:home';
   if(key==='admin:node:new')return 'admin:node:cancel';
   if(key==='admin:node:cancel')return 'admin:home'; // Cancellation lands on server overview.
   if(key==='admin:node:trials')return 'admin:nodes';
