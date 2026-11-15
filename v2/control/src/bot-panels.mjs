@@ -59,20 +59,33 @@ export async function adminDashboard(env,e) {
   return {text:frameMessage(body),replyMarkup:adminMenu()};
 }
 
-export async function customerTickets(env,e) {
+export async function customerTickets(env,e,page=0) {
+  const pageIndex=Number.isInteger(page)&&page>=0&&page<=1000?page:0;
   const rows=(await env.DB.prepare(
-    'SELECT id,subject,state,created_at FROM support_tickets WHERE customer_telegram_id=? ORDER BY created_at DESC,id DESC LIMIT 12'
-  ).bind(e.actorId).all()).results??[];
-  if(!rows.length)return panel(
-    '💬 هنوز درخواستی ثبت نکرده‌اید. برای شروع، گزینه «پشتیبانی» را انتخاب کنید.',
+    'SELECT id,subject,state,created_at FROM support_tickets WHERE customer_telegram_id=? '+
+    'ORDER BY created_at DESC,id DESC LIMIT 7 OFFSET ?'
+  ).bind(e.actorId,pageIndex*6).all()).results??[];
+  const visible=rows.slice(0,6),next=rows.length>6;
+  if(!visible.length)return panel(
+    '💬  پشتیبانی مدار\n\nدرخواستی برای نمایش وجود ندارد.\n'+
+    'برای صحبت با پشتیبانی، «ثبت درخواست جدید» را انتخاب کنید.',
     e.locale,[button('➕ ثبت درخواست جدید','support')]);
+  const controls=visible.map(x=>button(
+    statusSymbol(x.state)+' '+shortCode(x.id,12)+' · '+faStatus(x.state),
+    'customer:ticket:'+x.id));
+  const pages=[];
+  if(pageIndex>0)pages.push({text:'◀️ قبلی',callback_data:'v2:customer:tickets:'+(pageIndex-1)});
+  if(next)pages.push({text:'بعدی ▶️',callback_data:'v2:customer:tickets:'+(pageIndex+1)});
+  if(pages.length)controls.push(pages);
+  controls.push(button('➕ درخواست جدید','support'));
   return panel(
     '💬  درخواست‌های پشتیبانی من\n━━━━━━━━━━━━━━━━━━\n'+
-    rows.map(x=>'• '+x.id+'  |  '+faStatus(x.state)+'\n  '+x.subject.slice(0,80)).join('\n\n'),
-    e.locale,[
-      ...rows.map(x=>button('📨 '+x.id+' · '+faStatus(x.state),'customer:ticket:'+x.id)),
-      button('➕ ثبت درخواست جدید','support'),
-    ]);
+    'صفحه '+faNumber(pageIndex+1)+'\n\n'+
+    visible.map((x,i)=>
+      faNumber(pageIndex*6+i+1)+'. '+statusSymbol(x.state)+' '+faStatus(x.state)+
+      '\n'+x.subject.slice(0,85)+'\nکد: '+x.id
+    ).join('\n\n──────────────\n\n'),
+    e.locale,controls);
 }
 
 async function thread(env,e,id,ownerOnly) {
@@ -141,6 +154,8 @@ async function startSession(db,e,mode,context,nowMs) {
 export async function customerTicketAction(env,e,nowMs=Date.now()) {
   const key=e.key??'';
   if(key==='customer:tickets'||key==='/tickets')return customerTickets(env,e);
+  if(/^customer:tickets:[0-9]{1,4}$/.test(key))
+    return customerTickets(env,e,Number(key.slice('customer:tickets:'.length)));
   if(key.startsWith('customer:ticket:reply:')){
     const id=key.slice('customer:ticket:reply:'.length);
     if(!TICKET.test(id))return panel('⚠️ شناسه درخواست معتبر نیست.',e.locale);
