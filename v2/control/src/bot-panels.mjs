@@ -1,5 +1,5 @@
 /** پنل‌های فارسی مدیریت و مشتری در ربات مدار V2. */
-import {botMenu,adminMenu,frameMessage,faNumber,faStatus,faRole} from './bot-ux.mjs';
+import {botMenu,adminMenu,supportMenu,frameMessage,faNumber,faStatus,faRole} from './bot-ux.mjs';
 
 const NAT=/^[0-9]{1,20}$/;
 const TICKET=/^tg-[0-9]{1,20}$/;
@@ -9,6 +9,7 @@ const panel=(s,locale='fa',buttons=[],audience='customer')=>({
   replyMarkup:{inline_keyboard:[...buttons,...(audience==='admin'?adminMenu():botMenu()).inline_keyboard]},
 });
 const adminPanel=(s,buttons=[],locale='fa')=>panel(s,locale,buttons,'admin');
+const supportPanel=(s,buttons=[],locale='fa')=>panel(s,locale,buttons,'support');
 const idAdmin=(env,id)=>typeof env.ADMIN_TELEGRAM_IDS==='string'&&NAT.test(id??'')&&
   env.ADMIN_TELEGRAM_IDS.split(',').map(x=>x.trim()).includes(id);
 const button=(text,key)=>[{text,callback_data:'v2:'+key}];
@@ -101,22 +102,24 @@ async function thread(env,e,id,ownerOnly) {
 }
 
 export async function staffTicketDetails(env,e,id) {
-  if(!TICKET.test(id))return adminPanel('⚠️ شناسه درخواست معتبر نیست.',[],e.locale);
+  if(!TICKET.test(id))return staffPanel('⚠️ شناسه درخواست معتبر نیست.',[],e.locale);
   const db=env.DB;
-  const authorized=idAdmin(env,e.actorId)||!!(await db.prepare(
+  const isAdministrator=idAdmin(env,e.actorId);
+  const authorized=isAdministrator||!!(await db.prepare(
     "SELECT 1 AS ok FROM staff_roles sr JOIN customers c ON c.telegram_id=sr.telegram_id WHERE sr.telegram_id=? AND sr.role='support' AND c.state='active'"
   ).bind(e.actorId).first());
-  if(!authorized)return adminPanel('⛔ دسترسی به این بخش مجاز نیست.',[],e.locale);
+  if(!authorized)return panel('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
+  const staffPanel=isAdministrator?adminPanel:supportPanel;
   const ticket=await db.prepare(
     'SELECT id,customer_telegram_id,state,subject FROM support_tickets WHERE id=?'
   ).bind(id).first();
-  if(!ticket)return adminPanel('درخواست موردنظر پیدا نشد.',[],e.locale);
+  if(!ticket)return staffPanel('درخواست موردنظر پیدا نشد.',[],e.locale);
   const messages=(await db.prepare(
     'SELECT role,body,created_at FROM support_messages WHERE ticket_id=? ORDER BY created_at DESC,id DESC LIMIT 12'
   ).bind(id).all()).results??[];
   const conversation=messages.reverse().map(x=>
     (x.role==='customer'?'👤 مشتری':'🧑‍💼 پشتیبان')+'\n'+x.body.slice(0,600)).join('\n\n──────────────\n\n');
-  return adminPanel(
+  return staffPanel(
     '💬  جزئیات درخواست پشتیبانی\n━━━━━━━━━━━━━━━━━━\n'+
     'شناسه: '+ticket.id+'\nمشتری: '+ticket.customer_telegram_id+
     '\nوضعیت: '+faStatus(ticket.state)+'\nموضوع: '+ticket.subject+
