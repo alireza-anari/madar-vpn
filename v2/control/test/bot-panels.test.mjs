@@ -133,7 +133,7 @@ test('suspension needs confirmation and never blocks the support path',async()=>
   assert.match(forbidden.text,/تعلیق/);
   const support=await resolveBotAction(env,event(200,'support',null,43),1100);
   assert.match(support.text,/موضوع/);
-  const ticket=await resolveBotAction(env,event(200,'help','مشکل در تست اتصال',44),1200);
+  const ticket=await resolveBotAction(env,event(200,'text','مشکل در تست اتصال',44),1200);
   assert.match(ticket.text,/tg-44/);
   const replyPrompt=await resolveBotAction(env,event(200,'customer:ticket:reply:tg-44',null,45),1300);
   assert.match(replyPrompt.text,/۱۰ دقیقه/);
