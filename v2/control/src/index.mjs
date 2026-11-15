@@ -89,8 +89,8 @@ export async function processInbox(env,nowMs=Date.now()) {
       ).bind(item.update_id,event.chatId,msg.text.slice(0,3800),
         msg.replyMarkup?JSON.stringify(msg.replyMarkup):null,
         msg.photoId??null,
-        msg.photoId?null:(Number.isSafeInteger(event.messageId)?event.messageId:null),
-        msg.photoId?null:(event.editKind==='caption'?'caption':event.editKind==='text'?'text':null),
+        (msg.photoId&&event.editKind!=='caption')?null:(Number.isSafeInteger(event.messageId)?event.messageId:null),
+        (msg.photoId&&event.editKind!=='caption')?null:(event.editKind==='caption'?'caption':event.editKind==='text'?'text':null),
         nowMs).run();
       await env.DB.prepare(
         "UPDATE telegram_inbox SET state='done',lease_until_ms=0,event_json='{}' " +
@@ -110,9 +110,9 @@ export function brandedEntities(body){
   if(typeof body!=='string'||!body.startsWith('🌐  مــدار\n'))return [];
   const header='🌐  مــدار';
   const out=[{type:'bold',offset:0,length:header.length}];
-  const first=body.indexOf('\n'),second=body.indexOf('\n',first+1);
-  if(second<0)return out;
-  const start=second+1,end=body.indexOf('\n',start);
+  const first=body.indexOf('\n');
+  if(first<0)return out;
+  const start=first+1,end=body.indexOf('\n',start);
   const title=body.slice(start,end<0?body.length:end);
   if(title.length>0&&title.length<=85)out.push({type:'bold',offset:start,length:title.length});
   return out;
@@ -144,7 +144,7 @@ async function deliverTable(env,name,nowMs,withPhoto) {
         ...(markup?{reply_markup:markup}:{}),
       };
       let editAttempted=false;
-      if(withPhoto&&item.edit_message_id&&!media) {
+      if(withPhoto&&item.edit_message_id&&(!media||item.edit_kind==='caption')) {
         const caption=item.edit_kind==='caption';
         if(!caption||displayBody.length<=1024) {
           editAttempted=true;
@@ -158,8 +158,7 @@ async function deliverTable(env,name,nowMs,withPhoto) {
           const edited=await telegramCall(env,method,editPayload);
           sent=edited.ok||/message is not modified/i.test(edited.description);
           if(!sent&&/message to edit not found|message can't be edited|there is no text in the message to edit|message_id_invalid|message caption is too long|message is too long/i.test(edited.description))
-            sent=await telegram(env,'sendMessage',{chat_id:item.chat_id,text:displayBody,
-              ...(entities.length?{entities}:{}),...(markup?{reply_markup:markup}:{})});
+            sent=await telegram(env,media?'sendPhoto':'sendMessage',sendPayload);
         }
       }
       if(!editAttempted)sent=await telegram(env,media?'sendPhoto':'sendMessage',sendPayload);
