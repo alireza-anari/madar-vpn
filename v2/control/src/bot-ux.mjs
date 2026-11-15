@@ -61,6 +61,25 @@ export function frameMessage(content) {
 export const BRAND_BANNER_URL='https://madar-v2-staging.alirezaanari117.workers.dev/brand/banner.jpg';
 
 
+/** Telegram Bot API 9.4+ supports a restricted semantic button palette.
+ * Older clients may render the usual neutral button instead. */
+export function styleInlineKeyboard(markup){
+  if(!markup||!Array.isArray(markup.inline_keyboard))return markup;
+  const primary=new Set(['v2:plans','v2:my','v2:admin:home','v2:customer:home',
+    'v2:admin:nodes','v2:admin:tickets','v2:status','v2:seller:home']);
+  const success=new Set(['v2:admin:node:new','v2:seller:invite']);
+  const danger=new Set(['v2:seller:revoke']);
+  return {...markup,inline_keyboard:markup.inline_keyboard.map(row=>
+    row.map(button=>{
+      const cb=String(button.callback_data??'');
+      if(button.style||!cb)return {...button};
+      const style=primary.has(cb)?'primary':success.has(cb)?'success':
+        danger.has(cb)?'danger':null;
+      return style?{...button,style}:{...button};
+    })
+  )};
+}
+
 const customerMenu={inline_keyboard:[
   [
     {text:'🛍 خرید اشتراک',callback_data:'v2:plans'},
