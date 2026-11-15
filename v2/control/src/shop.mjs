@@ -441,7 +441,12 @@ async function staffReply(db,e,env,nowMs) {
   const session=await db.prepare(
     'SELECT ticket_id,expires_ms FROM support_staff_sessions WHERE telegram_id=?'
   ).bind(e.actorId).first();
-  if(!session||session.expires_ms<nowMs)return null;
+  if(!session)return null;
+  if(session.expires_ms<nowMs){
+    await db.prepare('DELETE FROM support_staff_sessions WHERE telegram_id=?')
+      .bind(e.actorId).run();
+    return staffResponse('⌛ زمان پاسخ‌گویی پایان یافته است؛ درخواست را دوباره باز کنید.',e,env);
+  }
   const ticket=await db.prepare(
     "SELECT id,customer_telegram_id,state FROM support_tickets WHERE id=?"
   ).bind(session.ticket_id).first();
@@ -592,6 +597,7 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
       db.prepare('DELETE FROM customer_sessions WHERE telegram_id=?').bind(e.actorId),
       db.prepare('DELETE FROM admin_node_sessions WHERE telegram_id=?').bind(e.actorId),
     ]);
+    await db.prepare('DELETE FROM support_staff_sessions WHERE telegram_id=?').bind(e.actorId).run();
     return response(t('✅ عملیات لغو شد.','✅ Cancelled.',e.locale),e.locale);
   }
   if (key==='admin:node:new' || key==='admin:node:cancel') {
@@ -837,9 +843,49 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
     const match=key.match(/^admin:tickets:(open|waiting|closed|all):([0-9]{1,4})$/);
     return supportInbox(env,e,match?.[1]??'open',match?Number(match[2]):0);
   }
+  const staffPage=key.match(/^ticket:page:(tg-[0-9]{1,20}):([0-9]{1,4})$/);
+  if(staffPage){
+    if(!await staffCanReply(db,e,env))return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
+    return staffTicketDetails(env,e,staffPage[1],Number(staffPage[2]));
+  }
   if(key.startsWith('ticket:view:')) {
     if(!await staffCanReply(db,e,env))return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
     return staffTicketDetails(env,e,key.slice('ticket:view:'.length));
+  }
+  if(key.startsWith('ticket:confirm-reopen:')||key.startsWith('ticket:reopen:')){
+    if(!await staffCanReply(db,e,env))
+      return staffResponse('⛔ دسترسی به این بخش مجاز نیست.',e,env);
+    const confirmed=key.startsWith('ticket:reopen:');
+    const id=key.slice(confirmed?'ticket:reopen:'.length:'ticket:confirm-reopen:'.length);
+    if(!/^tg-[0-9]{1,20}$/.test(id))
+      return staffResponse('⚠️ شناسه درخواست معتبر نیست.',e,env);
+    const ticket=await db.prepare(
+      'SELECT id,state,customer_telegram_id,subject FROM support_tickets WHERE id=?'
+    ).bind(id).first();
+    if(!ticket||ticket.state!=='closed')
+      return staffResponse('این درخواست بسته نیست یا قبلاً بازگشایی شده است.',e,env);
+    if(!confirmed)return staffResponse(
+      '⚠️ تأیید بازگشایی درخواست\n\nکد: '+id+
+      '\nموضوع: '+ticket.subject.slice(0,100)+
+      '\n\nآیا می‌خواهید گفت‌وگو دوباره فعال شود؟',e,env,[
+        [{text:'✅ تأیید بازگشایی',callback_data:'v2:ticket:reopen:'+id}],
+        [{text:'↩️ انصراف',callback_data:'v2:ticket:view:'+id}],
+      ]);
+    const updated=await db.prepare(
+      "UPDATE support_tickets SET state='open' WHERE id=? AND state='closed'"
+    ).bind(id).run();
+    if(updated.meta?.changes!==1)
+      return staffResponse('این درخواست هم‌زمان تغییر کرده است؛ صفحه را تازه کنید.',e,env);
+    await db.batch([
+      db.prepare("INSERT OR IGNORE INTO audit_events(event_id,actor_id,object_type,object_id,verb) "+
+        "VALUES(?,?,?,?,?)").bind('support:reopen:'+e.updateId,e.actorId,'support_ticket',id,'reopen'),
+      db.prepare("INSERT OR IGNORE INTO telegram_notifications(id,chat_id,body,state,due_ms) "+
+        "VALUES(?,?,?,'pending',?)").bind('support:reopen:'+e.updateId,ticket.customer_telegram_id,
+          '💬 درخواست پشتیبانی '+id+' بازگشایی شد. می‌توانید پاسخ دهید.',nowMs),
+    ]);
+    return staffResponse('✅ درخواست بازگشایی شد.',e,env,[
+      [{text:'💬 مشاهده گفت‌وگو',callback_data:'v2:ticket:view:'+id}],
+    ]);
   }
   if(key.startsWith('ticket:confirm-close:')){
     if(!await staffCanReply(db,e,env))
