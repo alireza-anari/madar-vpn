@@ -195,3 +195,76 @@ test('support agents see a focused Persian support menu from home',async()=>{
   assert.ok(!keys.includes('v2:admin:customers'));
   raw.close();
 });
+
+
+test('customer order details are account-scoped and show the next action',async()=>{
+  const {env,raw,event}=fixture();
+  raw.exec("INSERT INTO plans(id,title_fa,title_en,price_amount,price_currency,quota_bytes,duration_days) VALUES('monthly','یک ماهه','Monthly',300000,'IRT',32212254720,30)");
+  raw.exec("INSERT INTO orders(id,customer_telegram_id,plan_id,idempotency_key,quoted_amount,quoted_currency) VALUES('order-demo','200','monthly','order-test','300000','IRT')");
+  const list=await resolveBotAction(env,event(200,'orders',null,101));
+  assert.match(list.text,/پیگیری سفارش‌ها/);
+  assert.ok(list.replyMarkup.inline_keyboard.flat().some(b=>b.callback_data==='v2:orders:view:order-demo'));
+  const details=await resolveBotAction(env,event(200,'orders:view:order-demo',null,102));
+  assert.match(details.text,/کد پیگیری: order-demo/);
+  assert.match(details.text,/مرحله بعد/);
+  assert.match(details.text,/تصویر رسید پرداخت/);
+  const forbidden=await resolveBotAction(env,event(300,'orders:view:order-demo',null,103));
+  assert.match(forbidden.text,/پیدا نشد/);
+  raw.close();
+});
+
+test('the new admin plan and receipt flows require confirmation before changing records',async()=>{
+  const {env,raw,event}=fixture();
+  raw.exec("INSERT INTO plans(id,title_fa,title_en,price_amount,price_currency,quota_bytes,duration_days,active) VALUES('monthly','اشتراک یک‌ماهه','Monthly',300000,'IRT',32212254720,30,1)");
+  raw.exec("INSERT INTO orders(id,customer_telegram_id,plan_id,idempotency_key,quoted_amount,quoted_currency,state) VALUES('order-demo','200','monthly','order-test','300000','IRT','receipt_submitted')");
+  raw.exec("INSERT INTO receipts(id,order_id,telegram_file_id,upload_by_telegram_id) VALUES('receipt-1','order-demo','telegram-photo-test','200')");
+  const plan=await resolveBotAction(env,event(100,'admin:plans',null,110));
+  assert.ok(plan.replyMarkup.inline_keyboard.flat().some(b=>b.callback_data==='v2:admin:plan:confirm:off:monthly'));
+  const caution=await resolveBotAction(env,event(100,'admin:plan:confirm:off:monthly',null,111));
+  assert.match(caution.text,/تأیید تغییر پلن/);
+  assert.equal(raw.prepare("SELECT active FROM plans WHERE id='monthly'").get().active,1);
+  const review=await resolveBotAction(env,event(100,'admin:queue',null,112));
+  assert.ok(review.replyMarkup.inline_keyboard.flat().some(b=>b.callback_data==='v2:admin:receipt:order-demo'));
+  assert.ok(!review.replyMarkup.inline_keyboard.flat().some(b=>b.callback_data==='v2:approve:order-demo'));
+  const preview=await resolveBotAction(env,event(100,'admin:receipt:order-demo',null,113));
+  assert.equal(preview.photoId,'telegram-photo-test');
+  assert.ok(preview.replyMarkup.inline_keyboard.flat().some(b=>b.callback_data==='v2:admin:review:approve:order-demo'));
+  const confirm=await resolveBotAction(env,event(100,'admin:review:approve:order-demo',null,114));
+  assert.match(confirm.text,/تأیید تصمیم/);
+  assert.equal(raw.prepare("SELECT state FROM orders WHERE id='order-demo'").get().state,'receipt_submitted');
+  raw.close();
+});
+
+test('support and customer directories paginate with fewer buttons and contextual navigation',async()=>{
+  const {env,raw,event}=fixture();
+  for(let i=400;i<412;i++)raw.prepare('INSERT INTO customers(telegram_id) VALUES(?)').run(String(i));
+  const first=await resolveBotAction(env,event(100,'admin:customers',null,120));
+  const firstKeys=first.replyMarkup.inline_keyboard.flat().map(x=>x.callback_data);
+  assert.ok(firstKeys.includes('v2:admin:customers:1'));
+  assert.ok(firstKeys.includes('v2:admin:home'));
+  assert.ok(!firstKeys.includes('v2:admin:plans'));
+  const second=await resolveBotAction(env,event(100,'admin:customers:1',null,121));
+  assert.match(second.text,/صفحه ۲/);
+  assert.ok(second.replyMarkup.inline_keyboard.flat().some(x=>x.callback_data==='v2:admin:customers:0'));
+  for(let i=300;i<308;i++)raw.prepare("INSERT INTO support_tickets(id,customer_telegram_id,subject) VALUES(?,'200',?)")
+    .run('tg-'+i,'درخواست آزمایشی '+i);
+  const inbox=await resolveBotAction(env,event(200,'customer:tickets',null,122));
+  assert.ok(inbox.replyMarkup.inline_keyboard.flat().some(x=>x.callback_data==='v2:customer:tickets:1'));
+  const next=await resolveBotAction(env,event(200,'customer:tickets:1',null,123));
+  assert.match(next.text,/صفحه ۲/);
+  assert.ok(next.replyMarkup.inline_keyboard.flat().some(x=>x.callback_data==='v2:customer:tickets:0'));
+  raw.close();
+});
+
+test('support ticket closure is protected by a human confirmation',async()=>{
+  const {env,raw,event}=fixture();
+  raw.exec("INSERT INTO staff_roles(telegram_id,role,granted_by) VALUES('300','support','100')");
+  raw.exec("INSERT INTO support_tickets(id,customer_telegram_id,subject) VALUES('tg-300','200','تست سرعت')");
+  const thread=await resolveBotAction(env,event(300,'ticket:view:tg-300',null,130));
+  assert.ok(thread.replyMarkup.inline_keyboard.flat().some(x=>x.callback_data==='v2:ticket:confirm-close:tg-300'));
+  const warning=await resolveBotAction(env,event(300,'ticket:confirm-close:tg-300',null,131));
+  assert.match(warning.text,/بستن گفت‌وگوی پشتیبانی/);
+  assert.equal(raw.prepare("SELECT state FROM support_tickets WHERE id='tg-300'").get().state,'open');
+  assert.ok(warning.replyMarkup.inline_keyboard.flat().some(x=>x.callback_data==='v2:ticket:close:tg-300'));
+  raw.close();
+});
