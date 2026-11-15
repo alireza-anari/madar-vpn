@@ -68,7 +68,7 @@ test('config issuance is admin-only and never fabricates a paid subscription',as
 });
 
 test('installed V2 node offers exactly one private two-carrier trial link, blocked on quarantine',async()=>{
-  const {raw,env,event}=fixture(),now=1000000,id='trial-node';
+  const {raw,env,event}=fixture(),now=1000000,id='test-trial-node';
   raw.prepare("INSERT INTO nodes(id,provider,region,lifecycle,user_limit,byte_limit) VALUES(?,'Webdade','test','provisioning',20,10737418240)").run(id);
   raw.prepare(
     "INSERT INTO node_bootstrap_jobs(id,node_id,ip,owner_id,mode,state,created_ms,updated_ms) "+
