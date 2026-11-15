@@ -92,6 +92,23 @@ class LibXrayNativeEngine(private val vpnService: VpnService) : NativeTunnelEngi
         } catch (_: Exception) { false }
     }
 
+    /** Counters come only from the locally running Xray engine, never guessed
+     * from a system-wide traffic monitor. */
+    fun trafficCounters(): TrafficCounters? {
+        if (!started) return null
+        return runCatching {
+            val connection = URL("http://127.0.0.1:49227/debug/vars")
+                .openConnection() as HttpURLConnection
+            try {
+                connection.connectTimeout = 1500
+                connection.readTimeout = 1500
+                connection.useCaches = false
+                val json = JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
+                XrayTrafficMetrics.counters(json)
+            } finally { connection.disconnect() }
+        }.getOrNull()
+    }
+
     override fun stop() = stopCore()
 
     private fun invoke(method: String, payload: JSONObject? = null): JSONObject {
