@@ -8,6 +8,7 @@ import { nodeRoute } from './node-control.mjs';
 import { toBotMessage, verifyTelegramSecret } from './telegram.mjs';
 import { resolveBotAction } from './shop.mjs';
 import {frameMessage} from './bot-ux.mjs';
+import {bannerImageResponse} from './brand-banner.mjs';
 
 const json=(value,status=200)=>new Response(JSON.stringify(value),{
   status,headers:{
@@ -161,7 +162,16 @@ async function deliverTable(env,name,nowMs,withPhoto) {
             sent=await telegram(env,media?'sendPhoto':'sendMessage',sendPayload);
         }
       }
-      if(!editAttempted)sent=await telegram(env,media?'sendPhoto':'sendMessage',sendPayload);
+      if(!editAttempted) {
+        const result=await telegramCall(env,media?'sendPhoto':'sendMessage',sendPayload);
+        sent=result.ok;
+        if(!sent&&media&&/failed to get HTTP URL content|wrong file identifier|wrong type of the web page content|photo_invalid_dimensions|file is too big/i.test(result.description)) {
+          const body=item.body.slice(0,3800),textEntities=brandedEntities(body);
+          sent=await telegram(env,'sendMessage',{chat_id:item.chat_id,text:body,
+            ...(textEntities.length?{entities:textEntities}:{}),
+            ...(markup?{reply_markup:markup}:{})});
+        }
+      }
     } catch { /* retry; no credentials, content or chat IDs in logs */ }
     if(sent) {
       await env.DB.prepare('UPDATE '+name+" SET state='sent',lease_until_ms=0 "+
@@ -264,6 +274,7 @@ export default {
     if(path.startsWith('/api/runner/')){
       try{return await runnerApi(request,env);}catch{return json({error:'TEMPORARY_FAILURE'},503);}
     }
+    if(request.method==='GET' && path==='/brand/banner.jpg')return bannerImageResponse();
     if(request.method==='GET' && path==='/health/bot')return telegramBindingStatus(env);
     if(request.method==='GET' && path==='/health/live')
       return json({status:'alive',service:'madar-v2'});
