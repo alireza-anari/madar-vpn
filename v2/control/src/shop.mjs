@@ -493,113 +493,127 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
   }
   if (key==='admin:node:new' || key==='admin:node:cancel') {
     if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
-      return response('Access denied',e.locale);
+      return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
     const panel=key==='admin:node:new'
-      ? await beginNodeWizard(db,e.actorId,nowMs,env)
-      : await cancelNodeWizard(db,e.actorId);
-    return response(panel.text,e.locale,panel.replyMarkup?.inline_keyboard??[]);
+      ?await beginNodeWizard(db,e.actorId,nowMs,env)
+      :await cancelNodeWizard(db,e.actorId);
+    return adminResponse(panel.text,e.locale,panel.replyMarkup?.inline_keyboard??[]);
   }
   if(adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) {
     const wizard=await consumeNodeWizard(db,e.actorId,e.inputText,nowMs,env);
-    if(wizard)return response(wizard.text,e.locale);
+    if(wizard)return adminResponse(wizard.text,e.locale);
   }
   const sellerAction=await handleSeller(env,e,nowMs);
-  if (sellerAction) return sellerAction;
-  if (key==='/seller_grant' || key==='/support_grant') {
-    if (!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) return response('Access denied',e.locale);
+  if(sellerAction)return sellerAction;
+  if(key==='/seller_grant'||key==='/support_grant') {
+    if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
+      return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
     const id=e.inputText?.trim().split(/\s+/)[1]??'';
     const role=key==='/seller_grant'?'seller':'support';
-    if(!await grantStaffRole(db,e,role,id)) return response('Use '+key+' <telegram numeric ID>',e.locale);
-    return response('Role '+role+' granted to '+id,e.locale);
+    if(!await grantStaffRole(db,e,role,id))
+      return adminResponse('⚠️ شناسه تلگرام معتبر نیست. دستور را همراه شناسه عددی بفرستید.',e.locale);
+    return adminResponse('✅ دسترسی '+faRole(role)+' برای شناسه '+id+' فعال شد.',e.locale);
   }
-  if (key.startsWith('admin:node:trial:')) {
+  if(key.startsWith('admin:node:trial:')) {
     if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
-      return response('Access denied',e.locale);
+      return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
     const id=key.slice('admin:node:trial:'.length);
     const url=await issueTrialLink(env,e.actorId,id,nowMs);
-    return url?response('🔗 لینک آزمایشی یک‌ساعته مدار\n'+url+
-      '\n\nاین لینک دو مسیر REALITY را فقط برای آزمون نشان می‌دهد؛ سرور هنوز برای فروش تأیید نشده است.',e.locale)
-      :response('⏸ نصب کامل نشده یا لینک آزمایشی آماده نیست. وضعیت سرور و دسترسی اجراکننده را بررسی کن.',e.locale);
+    return url?adminResponse('🔗 لینک آزمایشی یک‌ساعته مدار\n'+url+
+      '\n\nاین لینک دو مسیر همراه اول و ایرانسل را فقط برای آزمون نشان می‌دهد؛ سرور هنوز برای فروش تأیید نشده است.',e.locale)
+      :adminResponse('⏸ نصب کامل نشده یا لینک آزمایشی آماده نیست. وضعیت سرور و اجراکننده امن را بررسی کنید.',e.locale);
   }
   if(key==='/admin'||key==='admin:home')return adminDashboard(env,e);
-  if (key==='admin:node:trials') {
+  if(key==='admin:node:trials') {
     if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
-      return response('Access denied',e.locale);
+      return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
     const rows=(await db.prepare(
       "SELECT node_id,state FROM node_bootstrap_jobs ORDER BY created_ms DESC LIMIT 12"
     ).all()).results??[];
-    if(!rows.length)return response('هنوز سرور آزمایشی اضافه نشده است.',e.locale);
-    return response('🧪 صدور لینک اشتراک آزمایشی\n'+rows.map(x=>
-      x.node_id+' · '+x.state).join('\n'),e.locale,
+    if(!rows.length)return adminResponse('🧪 هنوز سرور آزمایشی اضافه نشده است.',e.locale);
+    return adminResponse('🧪  لینک‌های آزمایشی سرورها\n━━━━━━━━━━━━━━━━━━\n'+rows.map(x=>
+      x.node_id+'  |  '+faStatus(x.state)).join('\n'),e.locale,
       rows.filter(x=>x.state==='installed').map(x=>[{
-        text:'🔗 '+x.node_id,callback_data:'v2:admin:node:trial:'+x.node_id
+        text:'🔗 دریافت لینک '+x.node_id,callback_data:'v2:admin:node:trial:'+x.node_id
       }]));
   }
-  if (key==='admin:plans') {
-    if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) return response('Access denied',e.locale);
-    const plans=(await db.prepare('SELECT id,title_fa,active,price_amount,price_currency FROM plans ORDER BY id LIMIT 12').all()).results??[];
-    return response(line(t('🛍 مدیریت پلن‌ها','🛍 Manage plans',e.locale),
-      ...plans.map(x=>x.id+' · '+x.title_fa+' · '+(x.active?'active':'disabled')+' · '+money(x.price_amount,x.price_currency)),
-      t('پلن جدید در حالت غیرفعال ایجاد می‌شود. فعال‌سازی تنها با ظرفیت واقعی و امکان صدور مجاز است.',
-        'New plans are disabled by default. Activation requires verified capacity and issuance.',e.locale)),e.locale,[
-        [{text:'➕ '+t('ساخت پلن جدید','Add plan',e.locale),callback_data:'v2:admin:plan:new'}],
-        ...plans.map(x=>[{text:(x.active?'🔴 Disable ':'🟢 Enable ')+x.id,
+  if(key==='admin:plans') {
+    if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
+      return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
+    const plans=(await db.prepare(
+      'SELECT id,title_fa,active,price_amount,price_currency FROM plans ORDER BY id LIMIT 12'
+    ).all()).results??[];
+    return adminResponse(line('🛍  مدیریت پلن‌ها','━━━━━━━━━━━━━━━━━━',
+      ...plans.map(x=>x.id+'  |  '+x.title_fa+'  |  '+(x.active?'فعال':'غیرفعال')+'  |  '+money(x.price_amount,x.price_currency)),
+      'پلن‌های تازه غیرفعال ساخته می‌شوند. فعال‌سازی فقط پس از تأیید ظرفیت و امکان صدور مجاز است.'),e.locale,[
+        [{text:'➕ ساخت پلن جدید',callback_data:'v2:admin:plan:new'}],
+        ...plans.map(x=>[{text:(x.active?'🔴 غیرفعال‌سازی ':'🟢 فعال‌سازی ')+x.id,
           callback_data:'v2:plan:'+(x.active?'off:':'on:')+x.id}]),
       ]);
   }
-  if (key==='/node_add_auto') {
-    if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))return response('Access denied',e.locale);
+  if(key==='/node_add_auto') {
+    if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
+      return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
     const data=(e.inputText??'').replace(/^\/node_add_auto(?:@\w+)?\s*/,'').trim();
     const result=await enqueueAutoNode(env,e.actorId,data,nowMs);
-    if(result.error)return response('⚠️ ثبت انجام نشد: '+result.error,e.locale);
-    return response(result.dispatched?'🚀 نصب خودکار برای '+result.id+' درخواست شد.':
-      '⏸ سرور '+result.id+' ثبت شد اما دسترسی امن اجرای خودکار هنوز متصل نیست.',e.locale);
+    const errors={bad_input:'اطلاعات سرور با قالب خواسته‌شده مطابقت ندارد.',
+      not_ready:'پایگاه داده آماده نیست.',automation_not_configured:'اتصال اجراکننده امن کامل نیست.',
+      already_exists:'این شناسه سرور قبلاً ثبت شده است.'};
+    if(result.error)return adminResponse('⚠️ ثبت انجام نشد.\n'+
+      (errors[result.error]??'خطای پیش‌بینی‌نشده؛ تنظیمات را بررسی کنید.'),e.locale);
+    return adminResponse(result.dispatched
+      ?'🚀 درخواست نصب خودکار سرور '+result.id+' به اجراکننده امن ارسال شد.'
+      :'⏸ سرور '+result.id+' ثبت شد، اما اجرای خودکار هنوز آغاز نشده است.',e.locale);
   }
-  if (key==='/node_add' || key==='/node_route' || key==='/nodes' || key==='admin:nodes') {
+  if(key==='/node_add'||key==='/node_route'||key==='/nodes'||key==='admin:nodes') {
     if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
-      return response('Access denied',e.locale);
-    const panel=await nodeAdminAction(db,e.actorId,key==='admin:nodes'?'/nodes':key,e.inputText);
-    if(key==='admin:nodes')return response(panel.text,e.locale,[
+      return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
+    const result=await nodeAdminAction(db,e.actorId,key==='admin:nodes'?'/nodes':key,e.inputText);
+    if(key==='admin:nodes')return adminResponse(result.text,e.locale,[
       [{text:'➕ افزودن سرور',callback_data:'v2:admin:node:new'}],
     ]);
-    return panel;
+    return adminResponse(result.text,e.locale);
   }
-  if (key==='/plan_add') {
-    if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) return response('Access denied',e.locale);
+  if(key==='/plan_add') {
+    if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
+      return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
     const raw=(e.inputText??'').replace(/^\/plan_add\s*/,'').trim();
     const parts=raw.split('|').map(x=>x.trim());
-    if(parts.length!==7) return response('Format: /plan_add id|فارسی|English|price|IRT|quotaGB|days',e.locale);
-    const [id,fa,en,priceRaw,currency,gbRaw,daysRaw]=parts;
+    if(parts.length!==5)return adminResponse(
+      'قالب درست: /plan_add شناسه فنی|نام فارسی|قیمت تومان|حجم گیگابایت|مدت روز',e.locale);
+    const [id,title,priceRaw,gbRaw,daysRaw]=parts;
     const numeric=/^(0|[1-9]\d*)$/;
-    if(!PLAN_ID.test(id)||!fa||!en||fa.length>64||en.length>64||
-      !numeric.test(priceRaw)||!numeric.test(gbRaw)||!numeric.test(daysRaw)||
-      !['IRT','IRR','USD'].includes(currency))
-      return response('Invalid plan fields; no changes made.',e.locale);
+    if(!PLAN_ID.test(id)||!title||title.length>64||
+      !numeric.test(priceRaw)||!numeric.test(gbRaw)||!numeric.test(daysRaw))
+      return adminResponse('⚠️ اطلاعات پلن معتبر نیست؛ هیچ تغییری انجام نشد.',e.locale);
     const price=Number(priceRaw),gb=Number(gbRaw),days=Number(daysRaw);
     if(!Number.isSafeInteger(price)||price>100000000000||gb<1||gb>2000||days<1||days>366)
-      return response('Plan price/quota/duration outside safe bounds.',e.locale);
+      return adminResponse('⚠️ قیمت، حجم یا مدت خارج از محدوده مجاز است.',e.locale);
     const result=await db.batch([
       db.prepare('INSERT OR IGNORE INTO plans(id,title_fa,title_en,price_amount,price_currency,quota_bytes,duration_days,active) VALUES(?,?,?,?,?,?,?,0)')
-        .bind(id,fa,en,price,currency,gb*1073741824,days),
+        .bind(id,title,title,price,'IRT',gb*1073741824,days),
       db.prepare('INSERT OR IGNORE INTO audit_events(event_id,actor_id,object_type,object_id,verb) VALUES(?,?,?,?,?)')
         .bind('plan:create:'+id,e.actorId,'plan',id,'create:disabled'),
     ]);
-    return response(result[0]?.meta?.changes===1?'Plan created, disabled by default.':'Plan already exists; unchanged.',e.locale);
+    return adminResponse(result[0]?.meta?.changes===1
+      ?'✅ پلن با موفقیت و در وضعیت غیرفعال ثبت شد.'
+      :'ℹ️ این شناسه پلن قبلاً ثبت شده است؛ تغییری ایجاد نشد.',e.locale);
   }
-  if (key.startsWith('plan:on:') || key.startsWith('plan:off:')) {
-    if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) return response('Access denied',e.locale);
+  if(key.startsWith('plan:on:')||key.startsWith('plan:off:')) {
+    if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
+      return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
     const [,mode,id]=key.split(':');
-    if(!PLAN_ID.test(id)) return response('Invalid plan ID',e.locale);
+    if(!PLAN_ID.test(id))return adminResponse('⚠️ شناسه پلن معتبر نیست.',e.locale);
     const plan=await db.prepare('SELECT * FROM plans WHERE id=?').bind(id).first();
-    if(!plan) return response('Plan not found',e.locale);
-    if(mode==='on' && (!salesConfigured(env)||!await availableForSale(db,plan,nowMs)))
-      return response('Cannot enable plan: provisioning, payments, or verified capacity not ready.',e.locale);
+    if(!plan)return adminResponse('پلن موردنظر پیدا نشد.',e.locale);
+    if(mode==='on'&&(!salesConfigured(env)||!await availableForSale(db,plan,nowMs)))
+      return adminResponse('⛔ امکان فعال‌سازی پلن وجود ندارد؛ پرداخت، نصب و ظرفیت سرور هنوز به‌طور کامل تأیید نشده‌اند.',e.locale);
     await db.batch([
       db.prepare('UPDATE plans SET active=? WHERE id=?').bind(mode==='on'?1:0,id),
       db.prepare('INSERT OR IGNORE INTO audit_events(event_id,actor_id,object_type,object_id,verb) VALUES(?,?,?,?,?)')
         .bind('plan:toggle:'+e.updateId,e.actorId,'plan',id,'toggle:'+mode),
     ]);
-    return response('Plan '+id+' is now '+(mode==='on'?'active':'disabled'),e.locale);
+    return adminResponse('✅ وضعیت پلن '+id+' به '+(mode==='on'?'فعال':'غیرفعال')+' تغییر کرد.',e.locale);
   }
   if (key==='home') return personalizedHome(env,e);
   if (key==='plans' || key==='/plans') return listPlans(db,env,e.locale,nowMs);
