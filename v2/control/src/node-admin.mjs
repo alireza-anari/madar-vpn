@@ -334,7 +334,7 @@ export async function nodeManagement(db,actor,ref,operation,apply=false,updateId
     (operation==='retire'?
       " AND NOT EXISTS (SELECT 1 FROM node_allocations WHERE node_id=? AND state IN ('reserved','active'))"+
       " AND NOT EXISTS (SELECT 1 FROM node_bootstrap_jobs WHERE node_id=? AND state IN ('pending','dispatching','dispatched'))":'');
-  const params=operation==='retire'?[t.to,n.id,n.id]:[t.to,n.id];
+  const params=operation==='retire'?[t.to,n.id,n.id,n.id]:[t.to,n.id];
   const results=await db.batch([
     db.prepare(sql).bind(...params),
     db.prepare("INSERT OR IGNORE INTO audit_events(event_id,actor_id,object_type,object_id,verb) "+
