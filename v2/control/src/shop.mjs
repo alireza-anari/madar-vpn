@@ -1,5 +1,6 @@
 import {issueTrialLink,enqueueAutoNode} from './node-auto.mjs';
 import {issueCarrierLink} from './carrier-subscription.mjs';
+import {receiveSupportPhoto,viewSupportPhoto} from './support-media.mjs';
 import {adminConfigAction} from './bot-config.mjs';
 import {adminDashboard,adminPanelAction,customerTicketAction,consumePanelInput,notifySupport,staffTicketDetails} from './bot-panels.mjs';
 import {beginNodeWizard,cancelNodeWizard,consumeNodeWizard} from './node-wizard.mjs';
@@ -569,7 +570,7 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
       !['/start','home','support','/support','customer:tickets','/tickets','lang','/lang'].includes(key) &&
       !key.startsWith('lang:') && !key.startsWith('customer:ticket:') &&
       !key.startsWith('customer:ticket:reply:') &&
-      !(typeof e.inputText==='string' && (
+      !((typeof e.inputText==='string'||!!e.photoId) && (
         !!(await db.prepare(
           "SELECT 1 AS ok FROM customer_sessions WHERE telegram_id=? AND mode='support' AND expires_ms>?"
         ).bind(e.actorId,nowMs).first()) ||
@@ -586,7 +587,13 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
     const home=await personalizedHome(env,e);
     return referral?{...home,text:home.text+'\n\n'+referral}:home;
   }
-  if(e.photoId)return storeReceipt(db,e,env);
+  if(e.photoId){
+    const image=await receiveSupportPhoto(env,e,nowMs);
+    if(image)return image;
+    return storeReceipt(db,e,env);
+  }
+  const customerImage=key.match(/^customer:ticket:media:([0-9]{1,20})$/);
+  if(customerImage)return viewSupportPhoto(env,e,customerImage[1],true);
   const customer=await customerTicketAction(env,e,nowMs);
   if(customer)return customer;
   const adminPanel=await adminPanelAction(env,e,nowMs);
@@ -849,6 +856,8 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
     const match=key.match(/^admin:tickets:(open|waiting|closed|all):([0-9]{1,4})$/);
     return supportInbox(env,e,match?.[1]??'open',match?Number(match[2]):0);
   }
+  const staffImage=key.match(/^ticket:media:([0-9]{1,20})$/);
+  if(staffImage)return viewSupportPhoto(env,e,staffImage[1],false);
   const staffPage=key.match(/^ticket:page:(tg-[0-9]{1,20}):([0-9]{1,4})$/);
   if(staffPage){
     if(!await staffCanReply(db,e,env))return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
