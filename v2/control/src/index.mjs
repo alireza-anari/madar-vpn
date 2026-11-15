@@ -6,8 +6,9 @@ import { getSubscription } from './subscription.mjs';
 import { getCarrierFeed } from './carrier-subscription.mjs';
 import { nodeRoute } from './node-control.mjs';
 import { toBotMessage, verifyTelegramSecret } from './telegram.mjs';
-import { resolveBotAction } from './shop.mjs';
-import {frameMessage} from './bot-ux.mjs';
+import { resolveBotAction,adminAllowed } from './shop.mjs';
+import {frameMessage,BRAND_BANNER_URL,styleInlineKeyboard,contextualKeyboard} from './bot-ux.mjs';
+import {bannerImageResponse,brandBannerBytes} from './brand-banner.mjs';
 
 const json=(value,status=200)=>new Response(JSON.stringify(value),{
   status,headers:{
@@ -44,9 +45,20 @@ async function readJson(request) {
 
 async function telegramCall(env,method,payload) {
   try {
+    // Upload branded photos as multipart bytes: Telegram never needs to fetch a public URL.
+    const brandedPhoto=method==='sendPhoto'&&payload.photo===BRAND_BANNER_URL;
+    let form=null;
+    if(brandedPhoto){
+      form=new FormData();
+      form.append('chat_id',String(payload.chat_id));
+      form.append('photo',new Blob([brandBannerBytes()],{type:'image/jpeg'}),'madar-banner.jpg');
+      form.append('caption',String(payload.caption??''));
+      if(payload.caption_entities)form.append('caption_entities',JSON.stringify(payload.caption_entities));
+      if(payload.reply_markup)form.append('reply_markup',JSON.stringify(payload.reply_markup));
+    }
     const response=await fetch('https://api.telegram.org/bot'+env.BOT_TOKEN+'/'+method,{
-      method:'POST',headers:{'content-type':'application/json'},
-      body:JSON.stringify(payload),signal:AbortSignal.timeout(12000),
+      method:'POST',...(form?{}:{headers:{'content-type':'application/json'}}),
+      body:form??JSON.stringify(payload),signal:AbortSignal.timeout(12000),
     });
     const data=await response.json().catch(()=>null);
     return {ok:response.ok&&data?.ok===true,description:String(data?.description??'')};
@@ -80,6 +92,19 @@ export async function processInbox(env,nowMs=Date.now()) {
       if(event.updateId!==item.update_id) throw new Error('inbox_id_mismatch');
       const reply=await resolveBotAction(env,event,nowMs);
       const msg=reply??{text:frameMessage('⚠️ پاسخ مناسبی دریافت نشد. لطفاً دوباره تلاش کنید.'),replyMarkup:null};
+      // Caption edits cannot replace a photo; attachments need a fresh message.
+      let sourceIsAttachment=false;
+      if(typeof event.sourcePhotoId==='string'&&event.sourcePhotoId.length>=5){
+        const original=await env.DB.prepare(
+          'SELECT 1 ok WHERE EXISTS(SELECT 1 FROM support_messages WHERE telegram_file_id=?) '+
+          'OR EXISTS(SELECT 1 FROM receipts WHERE telegram_file_id=?)'
+        ).bind(event.sourcePhotoId,event.sourcePhotoId).first();
+        sourceIsAttachment=!!original;
+      }
+      const canEditMessage=!sourceIsAttachment&&(!msg.photoId||msg.photoId===BRAND_BANNER_URL);
+       const pageKeyboard=msg.replyMarkup?styleInlineKeyboard(contextualKeyboard(
+         event.key,msg.replyMarkup,{isAdmin:adminAllowed(env.ADMIN_TELEGRAM_IDS,event.actorId)}
+       )):null;
       // This insert precedes marking inbox done. A crash will re-run the
       // idempotent action but cannot add a second outgoing reply.
       await env.DB.prepare(
@@ -87,10 +112,12 @@ export async function processInbox(env,nowMs=Date.now()) {
         "(update_id,chat_id,body,reply_markup,media_file_id,edit_message_id,edit_kind,state,due_ms) "+
         "VALUES (?,?,?,?,?,?,?,'pending',?)"
       ).bind(item.update_id,event.chatId,msg.text.slice(0,3800),
-        msg.replyMarkup?JSON.stringify(msg.replyMarkup):null,
+        pageKeyboard?JSON.stringify(pageKeyboard):null,
         msg.photoId??null,
-        msg.photoId?null:(Number.isSafeInteger(event.messageId)?event.messageId:null),
-        msg.photoId?null:(event.editKind==='caption'?'caption':event.editKind==='text'?'text':null),
+        canEditMessage&&(!msg.photoId||event.editKind==='caption')&&
+          Number.isSafeInteger(event.messageId)?event.messageId:null,
+        canEditMessage&&(!msg.photoId||event.editKind==='caption')?
+          (event.editKind==='caption'?'caption':event.editKind==='text'?'text':null):null,
         nowMs).run();
       await env.DB.prepare(
         "UPDATE telegram_inbox SET state='done',lease_until_ms=0,event_json='{}' " +
@@ -110,9 +137,9 @@ export function brandedEntities(body){
   if(typeof body!=='string'||!body.startsWith('🌐  مــدار\n'))return [];
   const header='🌐  مــدار';
   const out=[{type:'bold',offset:0,length:header.length}];
-  const first=body.indexOf('\n'),second=body.indexOf('\n',first+1);
-  if(second<0)return out;
-  const start=second+1,end=body.indexOf('\n',start);
+  const first=body.indexOf('\n');
+  if(first<0)return out;
+  const start=first+1,end=body.indexOf('\n',start);
   const title=body.slice(start,end<0?body.length:end);
   if(title.length>0&&title.length<=85)out.push({type:'bold',offset:start,length:title.length});
   return out;
@@ -144,7 +171,7 @@ async function deliverTable(env,name,nowMs,withPhoto) {
         ...(markup?{reply_markup:markup}:{}),
       };
       let editAttempted=false;
-      if(withPhoto&&item.edit_message_id&&!media) {
+      if(withPhoto&&item.edit_message_id&&(!media||item.edit_kind==='caption')) {
         const caption=item.edit_kind==='caption';
         if(!caption||displayBody.length<=1024) {
           editAttempted=true;
@@ -158,11 +185,19 @@ async function deliverTable(env,name,nowMs,withPhoto) {
           const edited=await telegramCall(env,method,editPayload);
           sent=edited.ok||/message is not modified/i.test(edited.description);
           if(!sent&&/message to edit not found|message can't be edited|there is no text in the message to edit|message_id_invalid|message caption is too long|message is too long/i.test(edited.description))
-            sent=await telegram(env,'sendMessage',{chat_id:item.chat_id,text:displayBody,
-              ...(entities.length?{entities}:{}),...(markup?{reply_markup:markup}:{})});
+            sent=await telegram(env,media?'sendPhoto':'sendMessage',sendPayload);
         }
       }
-      if(!editAttempted)sent=await telegram(env,media?'sendPhoto':'sendMessage',sendPayload);
+      if(!editAttempted) {
+        const result=await telegramCall(env,media?'sendPhoto':'sendMessage',sendPayload);
+        sent=result.ok;
+        if(!sent&&media&&/failed to get HTTP URL content|wrong file identifier|wrong type of the web page content|photo_invalid_dimensions|file is too big/i.test(result.description)) {
+          const body=item.body.slice(0,3800),textEntities=brandedEntities(body);
+          sent=await telegram(env,'sendMessage',{chat_id:item.chat_id,text:body,
+            ...(textEntities.length?{entities:textEntities}:{}),
+            ...(markup?{reply_markup:markup}:{})});
+        }
+      }
     } catch { /* retry; no credentials, content or chat IDs in logs */ }
     if(sent) {
       await env.DB.prepare('UPDATE '+name+" SET state='sent',lease_until_ms=0 "+
@@ -265,6 +300,7 @@ export default {
     if(path.startsWith('/api/runner/')){
       try{return await runnerApi(request,env);}catch{return json({error:'TEMPORARY_FAILURE'},503);}
     }
+    if(request.method==='GET' && path==='/brand/banner.jpg')return bannerImageResponse();
     if(request.method==='GET' && path==='/health/bot')return telegramBindingStatus(env);
     if(request.method==='GET' && path==='/health/live')
       return json({status:'alive',service:'madar-v2'});

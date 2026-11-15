@@ -1,5 +1,5 @@
 import {enqueueAutoNode,parseAutoNode} from './node-auto.mjs';
-import {adminMenu,frameMessage,panelHeading} from './bot-ux.mjs';
+import {frameMessage,panelHeading} from './bot-ux.mjs';
 
 /** راهنمای افزودن امن سرور؛ رمز و کلید خصوصی هرگز در تلگرام دریافت نمی‌شود. */
 const prompt=panelHeading('🖥','افزودن خودکار سرور','راه‌اندازی امن از داخل پنل مدیریت')+'\n\n'+
@@ -14,7 +14,7 @@ const prompt=panelHeading('🖥','افزودن خودکار سرور','راه‌
 export function newNodePrompt() {
   return {text:frameMessage(prompt),replyMarkup:{inline_keyboard:[
     [{text:'❌ انصراف',callback_data:'v2:admin:node:cancel'}],
-    ...adminMenu().inline_keyboard,
+    [{text:'↩️ مدیریت سرورها',callback_data:'v2:admin:nodes'}],
   ]}};
 }
 
@@ -25,7 +25,7 @@ export async function beginNodeWizard(db,actor,nowMs,env=null) {
       '🔐 رمز عبور یا کلید خصوصی را در پیام تلگرام ارسال نکنید.'),
     replyMarkup:{inline_keyboard:[
       [{text:'🔒 باز کردن فرم امن افزودن سرور',web_app:{url:'https://madar-v2-staging.alirezaanari117.workers.dev/enroll'}}],
-      ...adminMenu().inline_keyboard,
+      [{text:'↩️ مدیریت سرورها',callback_data:'v2:admin:nodes'}],
     ]}
   };
   await db.prepare(
@@ -38,7 +38,7 @@ export async function beginNodeWizard(db,actor,nowMs,env=null) {
 export async function cancelNodeWizard(db,actor) {
   await db.prepare('DELETE FROM admin_node_sessions WHERE telegram_id=?')
     .bind(actor).run();
-  return {text:frameMessage('✅ فرایند افزودن سرور لغو شد.'),replyMarkup:adminMenu()};
+  return {text:frameMessage('✅ فرایند افزودن سرور لغو شد.'),replyMarkup:{inline_keyboard:[[{text:'↩️ مدیریت سرورها',callback_data:'v2:admin:nodes'}]]}};
 }
 
 export async function consumeNodeWizard(db,actor,input,nowMs,env=null) {
@@ -49,11 +49,11 @@ export async function consumeNodeWizard(db,actor,input,nowMs,env=null) {
   if(!session||session.mode!=='add')return null;
   if(session.expires_ms<nowMs) {
     await db.prepare('DELETE FROM admin_node_sessions WHERE telegram_id=?').bind(actor).run();
-    return {text:frameMessage('⌛ مهلت ثبت سرور به پایان رسید. از پنل مدیریت دوباره شروع کنید.'),replyMarkup:adminMenu()};
+    return {text:frameMessage('⌛ مهلت ثبت سرور به پایان رسید. از پنل مدیریت دوباره شروع کنید.'),replyMarkup:{inline_keyboard:[[{text:'↩️ مدیریت سرورها',callback_data:'v2:admin:nodes'}]]}};
   }
   const parsed=parseAutoNode(input.trim());
-  if(!parsed)return {text:frameMessage('⚠️ اطلاعات واردشده معتبر نیست. شش مقدار را مطابق نمونه ارسال کنید.\n\n'+prompt),replyMarkup:adminMenu()};
-  if(!env)return {text:frameMessage('⚠️ اجرای خودکار تنظیم نشده است؛ هیچ سروری ثبت نشد.'),replyMarkup:adminMenu()};
+  if(!parsed)return {text:frameMessage('⚠️ اطلاعات واردشده معتبر نیست. شش مقدار را مطابق نمونه ارسال کنید.\n\n'+prompt),replyMarkup:{inline_keyboard:[[{text:'↩️ مدیریت سرورها',callback_data:'v2:admin:nodes'}]]}};
+  if(!env)return {text:frameMessage('⚠️ اجرای خودکار تنظیم نشده است؛ هیچ سروری ثبت نشد.'),replyMarkup:{inline_keyboard:[[{text:'↩️ مدیریت سرورها',callback_data:'v2:admin:nodes'}]]}};
   const result=await enqueueAutoNode(env,actor,input.trim(),nowMs);
   if(result.error) {
     const errors={
@@ -62,7 +62,7 @@ export async function consumeNodeWizard(db,actor,input,nowMs,env=null) {
       automation_not_configured:'اتصال اجراکننده امن کامل نشده است.',
       already_exists:'این شناسه سرور قبلاً ثبت شده است.',
     };
-    return {text:frameMessage('⚠️ ثبت سرور انجام نشد.\n'+(errors[result.error]??'خطای پیش‌بینی‌نشده؛ تنظیمات را بررسی کنید.')),replyMarkup:adminMenu()};
+    return {text:frameMessage('⚠️ ثبت سرور انجام نشد.\n'+(errors[result.error]??'خطای پیش‌بینی‌نشده؛ تنظیمات را بررسی کنید.')),replyMarkup:{inline_keyboard:[[{text:'↩️ مدیریت سرورها',callback_data:'v2:admin:nodes'}]]}};
   }
   await db.prepare('DELETE FROM admin_node_sessions WHERE telegram_id=?')
     .bind(actor).run();
@@ -70,5 +70,5 @@ export async function consumeNodeWizard(db,actor,input,nowMs,env=null) {
     ?'🚀 درخواست نصب امن به اجراکننده ارسال شد. وضعیت را از بخش «مدیریت سرورها» پیگیری کنید.'
     :'⏸ سرور ثبت شد، اما دسترسی امن اجراکننده هنوز برقرار نیست؛ نصب آغاز نشد.';
   return {text:frameMessage('✅ سرور '+parsed.id+' ثبت شد.\n'+status+
-    '\n\n🔒 تا تأیید واقعی مسیرها، صدور کانفیگ برای فروش غیرفعال می‌ماند.'),replyMarkup:adminMenu()};
+    '\n\n🔒 تا تأیید واقعی مسیرها، صدور کانفیگ برای فروش غیرفعال می‌ماند.'),replyMarkup:{inline_keyboard:[[{text:'↩️ مدیریت سرورها',callback_data:'v2:admin:nodes'}]]}};
 }

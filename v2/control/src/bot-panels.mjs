@@ -1,5 +1,6 @@
 /** پنل‌های فارسی مدیریت و مشتری در ربات مدار V2. */
-import {adminMenu,frameMessage,faNumber,faStatus,faRole,statusSymbol,sectionNavigation,shortCode,panelHeading} from './bot-ux.mjs';
+import {adminMenu,frameMessage,faNumber,faStatus,faRole,statusSymbol,sectionNavigation,shortCode,panelHeading,BRAND_BANNER_URL} from './bot-ux.mjs';
+import {planWizardAction,planWizardInput} from './plan-wizard.mjs';
 
 const NAT=/^[0-9]{1,20}$/;
 const TICKET=/^tg-[0-9]{1,20}$/;
@@ -35,43 +36,42 @@ export async function adminDashboard(env,e) {
   const salesReady=env.SHOP_ENABLED==='true'&&env.PROVISIONING_ENABLED==='true'&&
     typeof env.PAYMENT_INSTRUCTIONS==='string'&&env.PAYMENT_INSTRUCTIONS.trim().length>=12&&
     env.PAYMENT_INSTRUCTIONS.length<=700;
-  const alerts=[
-    receipts>0?'🧾 '+faNumber(receipts)+' رسید منتظر بررسی':null,
-    tickets>0?'💬 '+faNumber(tickets)+' درخواست پشتیبانی باز':null,
-    ready===0?'🖥 هنوز سرور آماده فروش وجود ندارد':null,
-  ].filter(Boolean);
+  // Keep this overview short. Telegram photo captions use the user's native
+  // small text size; dense reports become unreadable on narrow mobile screens.
+  const actionNeeded=receipts>0
+    ?'🧾 '+faNumber(receipts)+' رسید در صف بررسی'
+    :tickets>0
+      ?'💬 '+faNumber(tickets)+' درخواست پشتیبانی باز'
+      :ready===0
+        ?'⚠️ سرور آماده وجود ندارد'
+        :'✅ مورد فوری در صف نیست';
   const body=[
-    panelHeading('📊','پیشخوان مدیریت','مرکز کنترل و پایش مدار'),
+    panelHeading('📊','پیشخوان مدیریت','خلاصه وضعیت مدار'),
     '',
-    'شاخص‌های کلیدی',
-    '👥 مشتریان: '+faNumber(customers)+'   ·   🔗 اشتراک‌های فعال: '+faNumber(subs),
-    '🧾 سفارش‌های باز: '+faNumber(orders)+'   ·   رسیدهای دریافتی: '+faNumber(receipts),
-    '💬 درخواست‌های باز پشتیبانی: '+faNumber(tickets),
+    '👥 مشتریان: '+faNumber(customers),
+    '🔗 اشتراک فعال: '+faNumber(subs),
+    '🧾 سفارش باز: '+faNumber(orders),
+    '📩 رسید در انتظار: '+faNumber(receipts),
+    '💬 پشتیبانی باز: '+faNumber(tickets),
     '',
-    'زیرساخت و ظرفیت',
-    '🖥 سرورها: '+faNumber(nodes)+'   ·   نصب‌شده: '+faNumber(installed)+'   ·   آماده: '+faNumber(ready),
-    '🛒 وضعیت فروش عمومی: '+(salesReady?'پیکربندی شده':'غیرفعال'),
+    '🖥 کل سرورها: '+faNumber(nodes),
+    '🛠 نصب‌شده: '+faNumber(installed),
+    '✅ وضعیت آماده: '+faNumber(ready),
     '',
-    'نیازمند اقدام',
-    ...(alerts.length?alerts:['✅ مورد فوری در صف مدیریت ثبت نشده است.']),
-    '',
-    ready>0
-      ?'🛡 آماده‌بودن سرور به‌تنهایی مجوز فروش نیست؛ آزمون مسیر و ظرفیت باید تأیید شده باشد.'
-      :'⛔ فروش عمومی تا تأیید مسیر و ظرفیت غیرفعال است.',
-    '',
-    'برای ادامه، یکی از بخش‌های مدیریت را انتخاب کنید.'
+    '🛒 فروش عمومی: '+(salesReady?'در حال پیکربندی':'غیرفعال'),
+    actionNeeded
   ].join('\n');
-  const urgent=[];
-  if(receipts>0)urgent.push([{text:'🧾 بررسی رسیدها · '+faNumber(receipts),callback_data:'v2:admin:queue'}]);
-  if(tickets>0)urgent.push([{text:'💬 درخواست‌های باز · '+faNumber(tickets),callback_data:'v2:admin:tickets'}]);
-  return {text:frameMessage(body),replyMarkup:{inline_keyboard:[
-    ...urgent,
+  return {text:frameMessage(body),photoId:BRAND_BANNER_URL,replyMarkup:{inline_keyboard:[
     [{text:'👤 مشاهده نمای مشتری',callback_data:'v2:customer:home'}],
     ...adminMenu().inline_keyboard
   ]}};
 }
 
 export async function customerTickets(env,e,page=0) {
+  // Leaving the support composer with Back must not send the next free text as a ticket.
+  if(Number.isSafeInteger(e.messageId)&&e.messageId>0)
+    await env.DB.prepare("DELETE FROM customer_sessions WHERE telegram_id=? AND mode='support'")
+      .bind(e.actorId).run();
   const pageIndex=Number.isInteger(page)&&page>=0&&page<=1000?page:0;
   const rows=(await env.DB.prepare(
     'SELECT id,subject,state,created_at FROM support_tickets WHERE customer_telegram_id=? '+
@@ -99,7 +99,7 @@ export async function customerTickets(env,e,page=0) {
     e.locale,controls);
 }
 
-async function thread(env,e,id,ownerOnly) {
+async function thread(env,e,id,ownerOnly,page=0) {
   if(!TICKET.test(id))return panel('⚠️ شناسه درخواست معتبر نیست.',e.locale);
   const db=env.DB;
   const ticket=await db.prepare(
@@ -107,23 +107,38 @@ async function thread(env,e,id,ownerOnly) {
     (ownerOnly?' AND customer_telegram_id=?':'')
   ).bind(...(ownerOnly?[id,e.actorId]:[id])).first();
   if(!ticket)return panel('درخواست موردنظر پیدا نشد.',e.locale);
+  if(ownerOnly&&Number.isSafeInteger(e.messageId)&&e.messageId>0)
+    await db.prepare("DELETE FROM v2_bot_input_sessions WHERE telegram_id=? AND mode='ticket_reply'")
+      .bind(e.actorId).run();
+  page=Number.isSafeInteger(page)&&page>=0&&page<=1000?page:0;
+  const total=(await db.prepare('SELECT COUNT(*) n FROM support_messages WHERE ticket_id=?')
+    .bind(id).first())?.n??0;
+  const maxPage=Math.max(0,Math.ceil(Number(total)/5)-1);
+  page=Math.min(page,maxPage);
   const rows=(await db.prepare(
-    'SELECT role,body,created_at FROM support_messages WHERE ticket_id=? ORDER BY created_at DESC,id DESC LIMIT 8'
-  ).bind(id).all()).results??[];
+    'SELECT id,role,body,telegram_file_id FROM support_messages WHERE ticket_id=? ORDER BY created_at DESC,id DESC LIMIT 5 OFFSET ?'
+  ).bind(id,page*5).all()).results??[];
   const messages=rows.reverse().map(x=>
-    (x.role==='customer'?'👤 شما':'🧑‍💼 پشتیبانی')+'\n'+x.body.slice(0,600));
+    (x.role==='customer'?'👤 شما':'🧑‍💼 پشتیبانی')+'\n'+x.body.slice(0,350));
   const controls=ticket.state==='closed'
     ?[button('➕ ثبت درخواست جدید','support')]
     :[button('✉️ پاسخ به درخواست','customer:ticket:reply:'+id)];
+  controls.push(...rows.filter(x=>x.telegram_file_id&&/^support-media:[0-9]{1,20}$/.test(x.id))
+    .map(x=>button('🖼 مشاهده تصویر پیوست','customer:ticket:media:'+x.id.slice(14))));
+  const nav=[];
+  if(page<maxPage)nav.push({text:'◀️ قدیمی‌تر',callback_data:'v2:customer:ticket:page:'+id+':'+(page+1)});
+  if(page>0)nav.push({text:'جدیدتر ▶️',callback_data:'v2:customer:ticket:page:'+id+':'+(page-1)});
+  if(nav.length)controls.push(nav);
   controls.push(button('📋 بازگشت به درخواست‌ها','customer:tickets'));
   return panel(
     panelHeading('💬','گفت‌وگوی پشتیبانی',ticket.subject.slice(0,90))+
     '\nکد پیگیری: '+ticket.id+'\nوضعیت: '+statusSymbol(ticket.state)+' '+faStatus(ticket.state)+
-    (messages.length?'\n\n'+messages.join('\n\n──────────────\n\n'):'\n\nهنوز پیامی ثبت نشده است.'),
+    '\n📜 پیام‌ها · صفحه '+faNumber(page+1)+' از '+faNumber(maxPage+1)+
+    (messages.length?'\n\n'+messages.join('\n\n──────────\n\n'):'\n\nهنوز پیامی ثبت نشده است.'),
     e.locale,controls);
 }
 
-export async function staffTicketDetails(env,e,id) {
+export async function staffTicketDetails(env,e,id,page=0) {
   if(!TICKET.test(id))return panel('⚠️ شناسه درخواست معتبر نیست.',e.locale);
   const db=env.DB;
   const isAdministrator=idAdmin(env,e.actorId);
@@ -131,26 +146,43 @@ export async function staffTicketDetails(env,e,id) {
     "SELECT 1 AS ok FROM staff_roles sr JOIN customers c ON c.telegram_id=sr.telegram_id WHERE sr.telegram_id=? AND sr.role='support' AND c.state='active'"
   ).bind(e.actorId).first());
   if(!authorized)return panel('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
+  if(Number.isSafeInteger(e.messageId)&&e.messageId>0)
+    await db.prepare("DELETE FROM support_staff_sessions WHERE telegram_id=?")
+      .bind(e.actorId).run();
   const staffPanel=isAdministrator?adminPanel:supportPanel;
   const ticket=await db.prepare(
     'SELECT id,customer_telegram_id,state,subject FROM support_tickets WHERE id=?'
   ).bind(id).first();
   if(!ticket)return staffPanel('درخواست موردنظر پیدا نشد.',[],e.locale);
+  page=Number.isSafeInteger(page)&&page>=0&&page<=1000?page:0;
+  const total=(await db.prepare('SELECT COUNT(*) n FROM support_messages WHERE ticket_id=?')
+    .bind(id).first())?.n??0;
+  const maxPage=Math.max(0,Math.ceil(Number(total)/5)-1);
+  page=Math.min(page,maxPage);
   const messages=(await db.prepare(
-    'SELECT role,body,created_at FROM support_messages WHERE ticket_id=? ORDER BY created_at DESC,id DESC LIMIT 12'
-  ).bind(id).all()).results??[];
+    'SELECT id,role,body,telegram_file_id FROM support_messages WHERE ticket_id=? ORDER BY created_at DESC,id DESC LIMIT 5 OFFSET ?'
+  ).bind(id,page*5).all()).results??[];
   const conversation=messages.reverse().map(x=>
-    (x.role==='customer'?'👤 مشتری':'🧑‍💼 پشتیبان')+'\n'+x.body.slice(0,600)).join('\n\n──────────────\n\n');
+    (x.role==='customer'?'👤 مشتری':'🧑‍💼 پشتیبان')+'\n'+x.body.slice(0,350)).join('\n\n──────────\n\n');
+  const navigation=[];
+  if(page<maxPage)navigation.push({text:'◀️ قدیمی‌تر',callback_data:'v2:ticket:page:'+id+':'+(page+1)});
+  if(page>0)navigation.push({text:'جدیدتر ▶️',callback_data:'v2:ticket:page:'+id+':'+(page-1)});
   return staffPanel(
     panelHeading('💬','جزئیات درخواست',ticket.subject.slice(0,90))+
     '\nکد پیگیری: '+ticket.id+'\nشناسه مشتری: '+ticket.customer_telegram_id+
     '\nوضعیت: '+statusSymbol(ticket.state)+' '+faStatus(ticket.state)+
+    '\n📜 پیام‌ها · صفحه '+faNumber(page+1)+' از '+faNumber(maxPage+1)+
     (conversation?'\n\n'+conversation:'\n\nهنوز پیامی ثبت نشده است.'),
     [
-      ...(ticket.state==='closed'?[]:[
-        button('✉️ پاسخ به مشتری','ticket:reply:'+id),
-        button('🔒 بستن درخواست','ticket:confirm-close:'+id)
-      ]),
+      ...(ticket.state==='closed'
+        ?[]
+        :[
+          button('✉️ پاسخ به مشتری','ticket:reply:'+id),
+          button('🔒 بستن درخواست','ticket:confirm-close:'+id),
+        ]),
+      ...messages.filter(x=>x.telegram_file_id&&/^support-media:[0-9]{1,20}$/.test(x.id))
+        .map(x=>button('🖼 مشاهده تصویر پیوست','ticket:media:'+x.id.slice(14))),
+      ...(navigation.length?[navigation]:[]),
       button('📋 بازگشت به صندوق','admin:tickets'),
     ],e.locale);
 }
@@ -165,6 +197,8 @@ async function startSession(db,e,mode,context,nowMs) {
 export async function customerTicketAction(env,e,nowMs=Date.now()) {
   const key=e.key??'';
   if(key==='customer:tickets'||key==='/tickets')return customerTickets(env,e);
+  const threadPage=key.match(/^customer:ticket:page:(tg-[0-9]{1,20}):([0-9]{1,4})$/);
+  if(threadPage)return thread(env,e,threadPage[1],true,Number(threadPage[2]));
   if(/^customer:tickets:[0-9]{1,4}$/.test(key))
     return customerTickets(env,e,Number(key.slice('customer:tickets:'.length)));
   if(key.startsWith('customer:ticket:reply:')){
@@ -184,20 +218,13 @@ export async function customerTicketAction(env,e,nowMs=Date.now()) {
 export async function adminPanelAction(env,e,nowMs=Date.now()) {
   const key=e.key??'';
   if(!key.startsWith('admin:customers')&&!key.startsWith('admin:customer:')&&
-     !key.startsWith('admin:staff')&&!key.startsWith('admin:plan:new'))return null;
+     !key.startsWith('admin:staff')&&
+     !['admin:plan:new','admin:plan:back','admin:plan:cancel','admin:plan:save'].includes(key))
+    return null;
   if(!idAdmin(env,e.actorId))return adminPanel('⛔ دسترسی به این بخش مجاز نیست.',[],e.locale);
   const db=env.DB;
-  if(key==='admin:plan:new'){
-    await startSession(db,e,'plan_draft',null,nowMs);
-    return adminPanel(
-      '🛍  ساخت پلن جدید\n━━━━━━━━━━━━━━━━━━\n'+
-      'اطلاعات را در یک پیام و به ترتیب زیر بفرستید:\n\n'+
-      'شناسه فنی | نام پلن | قیمت به تومان | حجم به گیگابایت | مدت به روز\n\n'+
-      'نمونه:\nmahane-30 | اشتراک یک‌ماهه | ۳۰۰۰۰۰ | ۳۰ | ۳۰\n\n'+
-      'شناسه فنی باید کوتاه و با حروف انگلیسی باشد؛ نام پلن فارسی است.\n'+
-      'پلن ابتدا غیرفعال ثبت می‌شود. برای لغو، /cancel را بفرستید.',
-      [],e.locale);
-  }
+  if(['admin:plan:new','admin:plan:back','admin:plan:cancel','admin:plan:save'].includes(key))
+    return planWizardAction(db,e,nowMs);
   if(key==='admin:customers'||/^admin:customers:[0-9]{1,4}$/.test(key)){
     const page=key==='admin:customers'?0:Math.min(1000,Number(key.slice('admin:customers:'.length)));
     const rows=(await db.prepare(
@@ -266,6 +293,9 @@ export async function adminPanelAction(env,e,nowMs=Date.now()) {
       buttons,e.locale);
   }
   if(key==='admin:staff'){
+    if(Number.isSafeInteger(e.messageId)&&e.messageId>0)
+      await db.prepare("DELETE FROM v2_bot_input_sessions WHERE telegram_id=? AND mode IN ('grant_seller','grant_support','revoke_seller','revoke_support')")
+        .bind(e.actorId).run();
     const rows=(await db.prepare(
       "SELECT sr.telegram_id,sr.role FROM staff_roles sr JOIN customers c ON c.telegram_id=sr.telegram_id WHERE sr.role IN ('seller','support') ORDER BY sr.role,sr.telegram_id LIMIT 25"
     ).all()).results??[];
@@ -292,7 +322,7 @@ export async function adminPanelAction(env,e,nowMs=Date.now()) {
 }
 
 export async function adminPlanNewButton(db,e,nowMs) {
-  await startSession(db,e,'plan_draft',null,nowMs);
+  return planWizardAction(db,e,nowMs);
 }
 
 export async function notifySupport(env,e,ticketId,nowMs=Date.now()) {
@@ -344,35 +374,7 @@ export async function consumePanelInput(env,e,nowMs=Date.now()) {
       [button('💬 مشاهده گفت‌وگو','customer:ticket:'+ticket.id)]);
   }
   if(!idAdmin(env,e.actorId))return adminPanel('⛔ دسترسی به این بخش مجاز نیست.',[],e.locale);
-  if(session.mode==='plan_draft'){
-    const parts=raw.trim().split('|').map(x=>x.trim());
-    const [id,title,priceText,gbText,daysText]=parts;
-    const numeric=/^(0|[1-9][0-9]*)$/;
-    if(parts.length!==5||!PLAN.test(id??'')||!title||title.length>64||
-       !numeric.test(priceText??'')||!numeric.test(gbText??'')||!numeric.test(daysText??'')){
-      return adminPanel(
-        '⚠️ فرمت معتبر نیست. قالب درست را دوباره بفرستید:\n'+
-        'شناسه فنی | نام پلن | قیمت تومان | حجم گیگابایت | مدت روز',
-        [],e.locale);
-    }
-    const price=Number(priceText),gbCount=Number(gbText),days=Number(daysText);
-    if(!Number.isSafeInteger(price)||price>100000000000||
-       !Number.isSafeInteger(gbCount)||gbCount<1||gbCount>2000||
-       !Number.isSafeInteger(days)||days<1||days>366)
-      return adminPanel('⚠️ قیمت، حجم یا مدت خارج از محدوده مجاز است.',[],e.locale);
-    const r=await db.prepare(
-      'INSERT OR IGNORE INTO plans(id,title_fa,title_en,price_amount,price_currency,quota_bytes,duration_days,active) VALUES(?,?,?,?,?,?,?,0)'
-    ).bind(id,title,title,price,'IRT',gbCount*1073741824,days).run();
-    await db.batch([
-      db.prepare('DELETE FROM v2_bot_input_sessions WHERE telegram_id=?').bind(e.actorId),
-      db.prepare('INSERT OR IGNORE INTO audit_events(event_id,actor_id,object_type,object_id,verb) VALUES(?,?,?,?,?)')
-        .bind('plan:bot:'+e.updateId,e.actorId,'plan',id,'create:disabled'),
-    ]);
-    return adminPanel(
-      r.meta?.changes===1?'✅ پلن غیرفعال ثبت شد: '+title:
-        'ℹ️ این شناسه پلن قبلاً ثبت شده است؛ تغییری ایجاد نشد.',
-      [button('🛍 بازگشت به مدیریت پلن‌ها','admin:plans')],e.locale);
-  }
+  if(session.mode==='plan_draft')return planWizardInput(db,e,session,nowMs);
   const match=session.mode.match(/^(grant|revoke)_(seller|support)$/);
   if(match){
     const id=raw.trim(),mode=match[1],role=match[2];

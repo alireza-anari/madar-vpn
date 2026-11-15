@@ -47,13 +47,37 @@ export function faRole(value) {
   return ({seller:'فروشنده',support:'پشتیبان',admin:'مدیر'})[value]??String(value??'');
 }
 export function panelHeading(icon,title,subtitle='') {
-  return [icon+'  '+title,'━━━━━━━━━━━━━━━━━━',subtitle].filter(Boolean).join('\n');
+  return [icon+'  '+title,subtitle].filter(Boolean).join('\n');
 }
 export function panelRow(icon,label,value) { return icon+' '+label+': '+value; }
 export function frameMessage(content) {
-  const body=String(content??'').trim();
-  if(body.startsWith('🌐  مــدار\n━━━━━━━━━━━━━━━━━━'))return body;
-  return '🌐  مــدار\n━━━━━━━━━━━━━━━━━━\n'+body+'\n━━━━━━━━━━━━━━━━━━';
+  // Telegram wraps long decorative lines unpredictably in Persian RTL chats.
+  const body=String(content??'').replace(/^[━─═]{6,}\s*$/gm,'').replace(/\n{3,}/g,'\n\n').trim();
+  if(body.startsWith('🌐  مــدار\n'))return body;
+  return '🌐  مــدار\n'+body;
+}
+
+/** Locally hosted non-sensitive brand artwork; all live counts stay in the caption. */
+export const BRAND_BANNER_URL='https://madar-v2-staging.alirezaanari117.workers.dev/brand/banner.jpg';
+
+
+/** Telegram Bot API 9.4+ supports a restricted semantic button palette.
+ * Older clients may render the usual neutral button instead. */
+export function styleInlineKeyboard(markup){
+  if(!markup||!Array.isArray(markup.inline_keyboard))return markup;
+  const primary=new Set(['v2:plans','v2:my','v2:admin:home','v2:customer:home',
+    'v2:admin:nodes','v2:admin:tickets','v2:status','v2:seller:home']);
+  const success=new Set(['v2:admin:node:new','v2:seller:invite','v2:customer:trial']);
+  const danger=new Set(['v2:seller:revoke']);
+  return {...markup,inline_keyboard:markup.inline_keyboard.map(row=>
+    row.map(button=>{
+      const cb=String(button.callback_data??'');
+      if(button.style||!cb)return {...button};
+      const style=primary.has(cb)?'primary':success.has(cb)?'success':
+        danger.has(cb)?'danger':null;
+      return style?{...button,style}:{...button};
+    })
+  )};
 }
 
 const customerMenu={inline_keyboard:[
@@ -62,38 +86,32 @@ const customerMenu={inline_keyboard:[
     {text:'📦 اشتراک‌های من',callback_data:'v2:my'},
   ],
   [
+    {text:'🧪 دریافت تست رایگان',callback_data:'v2:customer:trial'},
+    {text:'📶 وضعیت سرویس',callback_data:'v2:status'},
+  ],
+  [
     {text:'🧾 سفارش‌های من',callback_data:'v2:orders'},
     {text:'💬 پشتیبانی',callback_data:'v2:customer:tickets'},
   ],
   [
-    {text:'📶 وضعیت سرویس',callback_data:'v2:status'},
     {text:'📘 راهنمای اتصال',callback_data:'v2:help'},
-  ],
-  [
     {text:'🔐 حریم خصوصی',callback_data:'v2:privacy'},
-    {text:'🏠 خانه',callback_data:'v2:customer:home'},
   ],
 ]};
 const managerMenu={inline_keyboard:[
   [
-    {text:'📊 پیشخوان مدیریت',callback_data:'v2:admin:home'},
     {text:'🖥 مدیریت سرورها',callback_data:'v2:admin:nodes'},
-  ],
-  [
-    {text:'➕ افزودن سرور',callback_data:'v2:admin:node:new'},
-    {text:'🧪 آزمون سرورها',callback_data:'v2:admin:node:trials'},
-  ],
-  [
     {text:'🛍 مدیریت پلن‌ها',callback_data:'v2:admin:plans'},
+  ],
+  [
     {text:'🧾 بررسی رسیدها',callback_data:'v2:admin:queue'},
-  ],
-  [
     {text:'👥 مشتریان',callback_data:'v2:admin:customers'},
-    {text:'💬 صندوق پشتیبانی',callback_data:'v2:admin:tickets'},
   ],
   [
-    {text:'🧑‍💼 کارکنان و فروشندگان',callback_data:'v2:admin:staff'},
+    {text:'💬 صندوق پشتیبانی',callback_data:'v2:admin:tickets'},
+    {text:'🔗 صدور کانفیگ',callback_data:'v2:admin:configs'},
   ],
+  [{text:'🧑‍💼 کارکنان و فروشندگان',callback_data:'v2:admin:staff'}],
 ]};
 const sellerMenuMarkup={inline_keyboard:[
   [
@@ -114,27 +132,132 @@ export function adminMenu() { return structuredClone(managerMenu); }
 export function sellerMenu() { return structuredClone(sellerMenuMarkup); }
 export function supportMenu() { return structuredClone(supportMenuMarkup); }
 
-/** دکمه‌های کم‌تعداد و وابسته به موقعیت؛ فقط صفحه نخست منوی کامل دارد. */
+/** A single back button outside home screens, never a global menu. */
 export function sectionNavigation(role='customer'){
-  const nav={
-    customer:[
-      [{text:'🛍 خرید اشتراک',callback_data:'v2:plans'},
-       {text:'🏠 خانه',callback_data:'v2:customer:home'}],
-    ],
-    admin:[
-      [{text:'↩️ پیشخوان مدیریت',callback_data:'v2:admin:home'},
-       {text:'👤 نمای مشتری',callback_data:'v2:customer:home'}],
-    ],
-    seller:[
-      [{text:'↩️ پنل فروشنده',callback_data:'v2:seller:home'},
-       {text:'🏠 خانه',callback_data:'v2:customer:home'}],
-    ],
-    support:[
-      [{text:'↩️ صندوق پشتیبانی',callback_data:'v2:admin:tickets'},
-       {text:'🏠 خانه',callback_data:'v2:customer:home'}],
-    ]
-  };
-  return structuredClone(nav[role]??nav.customer);
+  const destination={
+    customer:'customer:home',admin:'admin:home',
+    seller:'seller:home',support:'admin:tickets',
+  }[role]??'customer:home';
+  return [[{text:'↩️ بازگشت',callback_data:'v2:'+destination}]];
+}
+
+/** Resolve a real parent page instead of returning every screen to the dashboard.
+ * Pure, bounded callback routing; permissions are still enforced by shop.mjs. */
+export function parentPage(key,isAdmin=false){
+  key=String(key??'');
+  if(key==='customer:trial')return 'customer:home';
+  if(key==='admin:node:new')return 'admin:node:cancel';
+  if(key==='admin:node:cancel')return 'admin:home'; // Cancellation lands on server overview.
+  if(key==='admin:node:trials')return 'admin:nodes';
+  if(key==='admin:configs'||key==='admin:configs:home')return 'admin:home';
+  if(/^admin:configs:(trials|subscriptions):[0-9]{1,4}$/.test(key))
+    return 'admin:configs';
+  if(/^admin:configs:trial:[a-f0-9]{24}$/.test(key))
+    return 'admin:configs:trials:0';
+  if(/^admin:configs:subscription:[a-f0-9]{24}$/.test(key))
+    return 'admin:configs:subscriptions:0';
+  if(/^admin:configs:issue:[a-f0-9]{24}$/.test(key))
+    return 'admin:configs:subscription:'+key.slice(-24);
+  if(/^admin:tickets:(open|waiting|closed|all):[0-9]{1,4}$/.test(key))
+    return 'admin:tickets';
+  if(/^ticket:page:tg-[0-9]{1,20}:[0-9]{1,4}$/.test(key))
+    return 'ticket:view:'+key.split(':')[2];
+  if(/^customer:ticket:page:tg-[0-9]{1,20}:[0-9]{1,4}$/.test(key))
+    return 'customer:ticket:'+key.split(':')[3];
+  if(/^admin:nodes:(all|ready|setup|attention|quarantine|archive):[0-9]{1,4}$/.test(key))
+    return 'admin:nodes';
+  if(/^admin:node:(confirm|apply):(quarantine|restore|retire):[a-f0-9]{24}$/.test(key))
+    return 'admin:node:view:'+key.slice(-24);
+  if(/^admin:node:trialref:[a-f0-9]{24}$/.test(key))
+    return 'admin:node:view:'+key.slice(-24);
+  if(/^admin:node:view:[a-f0-9]{24}$/.test(key))return 'admin:nodes';
+  if(key.startsWith('admin:node:trial:'))return 'admin:node:trials';
+  if(key==='admin:nodes'||key==='/nodes'||key==='/node_add'||key==='/node_route')return 'admin:home';
+  if(key.startsWith('admin:plan:')||key.startsWith('plan:'))return 'admin:plans';
+  if(key==='admin:plans')return 'admin:home';
+  if(key.startsWith('admin:receipt:'))return 'admin:queue';
+  if(key.startsWith('admin:review:')){
+    const id=key.split(':').at(-1);
+    return /^[a-zA-Z0-9][a-zA-Z0-9_-]{1,48}$/.test(id)?'admin:receipt:'+id:'admin:queue';
+  }
+  if(key==='admin:queue')return 'admin:home';
+  if(key.startsWith('admin:customer:')){
+    const id=key.split(':').at(-1);
+    const isAction=/^admin:customer:(?:suspend|activate|confirm):/.test(key);
+    return isAction&&/^[0-9]{1,20}$/.test(id)
+      ?'admin:customer:'+id:'admin:customers';
+  }
+  if(key.startsWith('admin:customers'))return 'admin:home';
+  if(key.startsWith('admin:staff:'))return 'admin:staff';
+  if(key==='admin:staff')return 'admin:home';
+  if(key==='admin:tickets')return isAdmin?'admin:home':'home'; // Staff goes to their dedicated support home.
+  if(key.startsWith('ticket:view:'))return 'admin:tickets';
+  if(key.startsWith('ticket:')){
+    const id=key.split(':').at(-1);
+    return /^tg-[0-9]{1,20}$/.test(id)?'ticket:view:'+id:'admin:tickets';
+  }
+  if(key.startsWith('seller:'))return 'seller:home';
+  if(key==='support'||key==='/support')return 'customer:tickets';
+  if(key.startsWith('customer:ticket:reply:'))
+    return 'customer:ticket:'+key.slice('customer:ticket:reply:'.length);
+  if(key.startsWith('customer:ticket:'))return 'customer:tickets';
+  if(key.startsWith('customer:tickets'))return 'customer:home';
+  if(key.startsWith('orders:view:'))return 'orders';
+  if(key.startsWith('my:link:'))return 'my';
+  if(key.startsWith('buy:'))return 'plans';
+  if(key==='plans'||key==='my'||key==='orders'||key==='status'||
+     key==='help'||key==='privacy'||key==='/plans'||key==='/my'||key==='/orders')
+    return 'customer:home';
+  return isAdmin?'admin:home':'customer:home';
+}
+
+/** Called at outbox time so every route, including legacy wizards and
+ * secondary screens, gets the same scoped action + one back convention. */
+export function contextualKeyboard(key,markup,{isAdmin=false}={}){
+  if(!markup||!Array.isArray(markup.inline_keyboard))return markup;
+  key=String(key??'');
+  const adminHome=isAdmin&&['/start','/admin','admin:home','home'].includes(key);
+  const userHome=['customer:home'].includes(key)||!isAdmin&&['/start','home'].includes(key);
+  const sellerHome=key==='seller:home'||key==='/seller';
+  if(adminHome)return structuredClone(markup);
+  if(userHome||sellerHome){
+    return {...markup,inline_keyboard:markup.inline_keyboard.map(row=>row.filter(
+      b=>!String(b.text??'').includes('نمای مشتری'))).filter(row=>row.length>0)};
+  }
+  const source=markup.inline_keyboard;
+  // This conversational wizard has its own previous-step and cancel controls;
+  // an extra global back would clutter the screen and interrupt the draft.
+  if(source.flat().some(b=>b.callback_data==='v2:admin:plan:cancel'))
+    return {...markup,inline_keyboard:source.map(row=>row.filter(b=>
+      !String(b.text??'').startsWith('↩️')&&!String(b.text??'').startsWith('🏠')
+    )).filter(row=>row.length>0)};
+  // Text replies from a wizard have no callback key; honor the secure
+  // wizard's explicit return destination instead of guessing a global home.
+  const explicitBack=(key==='text'||/^ticket:media:[0-9]{1,20}$/.test(key)||
+    /^customer:ticket:media:[0-9]{1,20}$/.test(key));
+  const typedBack=explicitBack?source.flat().find(b=>
+    String(b.text??'').startsWith('↩️')&&
+    /^v2:[a-zA-Z0-9:_-]{1,64}$/.test(String(b.callback_data??''))):null;
+  const target=typedBack?typedBack.callback_data.slice(3):parentPage(key,isAdmin);
+  const backData='v2:'+target;
+  const rootAdmin=new Set(adminMenu().inline_keyboard.flat().map(b=>b.callback_data));
+  const rootCustomer=new Set(botMenu().inline_keyboard.flat().map(b=>b.callback_data));
+  const rootSeller=new Set(sellerMenu().inline_keyboard.flat().map(b=>b.callback_data));
+  const isFullAdminMenu=source.flat().filter(b=>rootAdmin.has(b.callback_data)).length>=4;
+  const isFullCustomerMenu=source.flat().filter(b=>rootCustomer.has(b.callback_data)).length>=4;
+  const isFullSellerMenu=source.flat().filter(b=>rootSeller.has(b.callback_data)).length>=3;
+  const rows=source.map(row=>row.filter(button=>{
+    const txt=String(button.text??''),cb=String(button.callback_data??'');
+    if(txt.includes('نمای مشتری'))return false;
+    if(cb===backData)return false;
+    if(txt.startsWith('↩️')||txt.startsWith('🏠'))return false;
+    if(isFullAdminMenu&&rootAdmin.has(cb))return false;
+    if(isFullCustomerMenu&&rootCustomer.has(cb))return false;
+    if(isFullSellerMenu&&rootSeller.has(cb))return false;
+    return true;
+  })).filter(row=>row.length>0);
+  rows.push([{text:'↩️ بازگشت',callback_data:backData}]);
+  return {...markup,inline_keyboard:rows};
 }
 export function usageMeter(usedBytes,maxBytes){
   const max=Number(maxBytes),used=Number(usedBytes);

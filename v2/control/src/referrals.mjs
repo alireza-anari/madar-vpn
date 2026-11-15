@@ -1,13 +1,14 @@
-import {botMenu,sellerMenu,frameMessage,faMoney,faStatus,faNumber} from './bot-ux.mjs';
+import {botMenu,sellerMenu,sectionNavigation,frameMessage,faMoney,faStatus,faNumber} from './bot-ux.mjs';
 
-const response=(text,locale='fa',buttons=[],audience='customer')=>({
+const response=(text,locale='fa',buttons=[],audience='customer',home=false)=>({
   text:frameMessage(text),
   replyMarkup:{inline_keyboard:[
     ...buttons,
-    ...(audience==='seller'?sellerMenu():botMenu()).inline_keyboard
+    ...(home?(audience==='seller'?sellerMenu():botMenu()).inline_keyboard
+      :sectionNavigation(audience))
   ]},
 });
-const sellerResponse=(text,locale='fa',buttons=[])=>response(text,locale,buttons,'seller');
+const sellerResponse=(text,locale='fa',buttons=[],home=false)=>response(text,locale,buttons,'seller',home);
 const lang=(fa)=>fa;
 const ID=/^\d{1,20}$/;
 const START_TOKEN=/^[a-f0-9]{32}$/;
@@ -87,8 +88,7 @@ export async function handleSeller(env,e,nowMs=Date.now()) {
       return sellerResponse('🔒 تمام لینک‌های معرفی قبلی غیرفعال شدند.',e.locale);
     }
     if(key==='seller:orders')return sellerOrders(db,e);
-    return sellerResponse('🧑‍💼  پیشخوان فروشنده\n━━━━━━━━━━━━━━━━━━\n'+
-      'از گزینه‌های زیر برای مدیریت سفارش‌ها و لینک‌های معرفی استفاده کنید.',e.locale);
+    return sellerResponse('🧑‍💼  پیشخوان فروشنده\nاز گزینه‌های زیر برای مدیریت سفارش‌ها و لینک‌های معرفی استفاده کنید.',e.locale,[],true);
   }
   return null;
 }
