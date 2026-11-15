@@ -37,14 +37,14 @@ test('owner-only dashboard shows real counts with actions but no payment shortcu
   const {env,raw,event}=fixture();
   raw.exec("INSERT INTO nodes(id,provider,region,lifecycle,user_limit,byte_limit) VALUES('test-a','Webdade','test','provisioning',20,5000)");
   const a=await adminDashboard(env,event(100,'admin:home'));
-  assert.match(a.text,/مشتریان: 3/);
-  assert.match(a.text,/سرورها: 1/);
+  assert.match(a.text,/مشتریان: ۳/);
+  assert.match(a.text,/سرورها: ۱/);
   assert.match(a.text,/فروش عمومی/);
   const keys=a.replyMarkup.inline_keyboard.flat().map(x=>x.callback_data);
   for(const required of ['v2:admin:plans','v2:admin:queue','v2:admin:staff','v2:admin:customers','v2:admin:node:trials'])
     assert.ok(keys.includes(required));
   const no=await adminDashboard(env,event(200,'admin:home'));
-  assert.match(no.text,/Access denied/);
+  assert.match(no.text,/دسترسی به این بخش مجاز نیست/);
   assert.equal(await env.DB.prepare("SELECT COUNT(*) AS n FROM node_trial_links").first().then(x=>x.n),0);
   raw.close();
 });
@@ -81,7 +81,7 @@ test('admin plan wizard creates disabled plan and cannot be opened by customers'
   const invalid=await consumePanelInput(env,event(100,'text','not valid',16),1100);
   assert.match(invalid.text,/فرمت معتبر/);
   assert.equal(raw.prepare('SELECT COUNT(*) AS n FROM plans').get().n,0);
-  const created=await consumePanelInput(env,event(100,'text','monthly|یک ماهه|Monthly|300000|IRT|30|30',17),1200);
+  const created=await consumePanelInput(env,event(100,'text','monthly|یک ماهه|300000|30|30',17),1200);
   assert.match(created.text,/غیرفعال ثبت شد/);
   const row=raw.prepare("SELECT id,active,price_amount FROM plans WHERE id='monthly'").get();
   assert.equal(row.active,0);
@@ -97,7 +97,7 @@ test('staff grants and revokes require admin, with session expiry and admin prot
   assert.match(start.text,/شناسه عددی/);
   assert.match((await consumePanelInput(env,event(100,'text','100',20),1500)).text,/دسترسی مدیر/);
   const granted=await consumePanelInput(env,event(100,'text','300',21),1600);
-  assert.match(granted.text,/grant/);
+  assert.match(granted.text,/فعال شد/);
   assert.equal(raw.prepare("SELECT COUNT(*) AS n FROM staff_roles WHERE telegram_id='300' AND role='seller'").get().n,1);
   await adminPanelAction(env,event(100,'admin:staff:revoke:seller'),2000);
   await consumePanelInput(env,event(100,'text','300',22),2100);
@@ -108,15 +108,15 @@ test('staff grants and revokes require admin, with session expiry and admin prot
   raw.close();
 });
 
-test('language switch persists and customer home never claims a paid subscription',async()=>{
+test('bot language stays Persian for every Telegram device locale',async()=>{
   const {env,raw,event}=fixture();
   const home=await resolveBotAction(env,event(100,'/start','/start',25));
   assert.ok(home.replyMarkup.inline_keyboard.flat().some(b=>b.callback_data==='v2:admin:home'));
   const lang=await resolveBotAction(env,event(200,'lang:en',null,26));
-  assert.match(lang.text,/Madar VPN/);
-  assert.equal(raw.prepare("SELECT locale FROM customers WHERE telegram_id='200'").get().locale,'en');
+  assert.match(lang.text,/زبان ربات مدار فارسی است/);
+  assert.equal(raw.prepare("SELECT locale FROM customers WHERE telegram_id='200'").get().locale,'fa');
   const next=await resolveBotAction(env,event(200,'home',null,27));
-  assert.match(next.text,/You have no active/);
+  assert.match(next.text,/در حال حاضر اشتراک فعالی در این نسخه ندارید/);
   assert.ok(next.replyMarkup.inline_keyboard.flat().some(b=>b.callback_data==='v2:customer:tickets'));
   raw.close();
 });
@@ -127,7 +127,7 @@ test('suspension needs confirmation and never blocks the support path',async()=>
   assert.match(prompt.text,/مطمئنی/);
   assert.equal(raw.prepare("SELECT state FROM customers WHERE telegram_id='200'").get().state,'active');
   const done=await adminPanelAction(env,event(100,'admin:customer:confirm:suspend:200',null,41),1001);
-  assert.match(done.text,/suspended/);
+  assert.match(done.text,/تعلیق‌شده/);
   assert.equal(raw.prepare("SELECT state FROM customers WHERE telegram_id='200'").get().state,'suspended');
   const forbidden=await resolveBotAction(env,event(200,'buy:someplan',null,42),1100);
   assert.match(forbidden.text,/تعلیق/);
@@ -140,7 +140,7 @@ test('suspension needs confirmation and never blocks the support path',async()=>
   const replied=await resolveBotAction(env,event(200,'more','با همراه اول تست شد',46),1400);
   assert.match(replied.text,/ثبت شد/);
   const restored=await adminPanelAction(env,event(100,'admin:customer:confirm:activate:200',null,47),1500);
-  assert.match(restored.text,/active/);
+  assert.match(restored.text,/وضعیت مشتری به‌روزرسانی شد/);
   raw.close();
 });
 
@@ -153,7 +153,7 @@ test('support staff can inspect conversations but customers cannot inspect staff
   assert.match(view.text,/یک سوال دارم/);
   assert.ok(view.replyMarkup.inline_keyboard.flat().some(x=>x.callback_data==='v2:ticket:reply:tg-22'));
   const denied=await staffTicketDetails(env,event(200,'ticket:view:tg-22'),'tg-22');
-  assert.match(denied.text,/Access denied/);
+  assert.match(denied.text,/دسترسی به این بخش مجاز نیست/);
   raw.close();
 });
 
@@ -170,5 +170,14 @@ test('suspended account cannot use an existing carrier subscription token',async
   raw.prepare("UPDATE customers SET state='active' WHERE telegram_id='200'").run();
   // Valid owner passes token check but must still have a verified node route.
   assert.equal((await getSubscription(req,protectedEnv,1000000)).status,503);
+  raw.close();
+});
+
+test('customer messages are branded and customer panel never exposes English labels',async()=>{
+  const {env,raw,event}=fixture();
+  const home=await resolveBotAction(env,event(300,'/start','/start',90));
+  assert.match(home.text,/🌐  مــدار/);
+  assert.doesNotMatch(home.text,/[A-Za-z]{3,}/);
+  assert.ok(home.replyMarkup.inline_keyboard.flat().some(x=>x.text==='🛍 خرید اشتراک'));
   raw.close();
 });
