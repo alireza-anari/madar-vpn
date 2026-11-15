@@ -2,7 +2,7 @@ import {issueTrialLink,enqueueAutoNode} from './node-auto.mjs';
 import {issueCarrierLink} from './carrier-subscription.mjs';
 import {adminDashboard,adminPanelAction,customerTicketAction,consumePanelInput,notifySupport,staffTicketDetails} from './bot-panels.mjs';
 import {beginNodeWizard,cancelNodeWizard,consumeNodeWizard} from './node-wizard.mjs';
-import { nodeAdminAction } from './node-admin.mjs';
+import { nodeAdminAction,nodeOverview,nodeDetails,nodeManagement,nodeFromRef } from './node-admin.mjs';
 import { handleSeller, linkSellerOnStart, grantStaffRole } from './referrals.mjs';
 /**
  * Madar V2 business UI. Every mutable action is idempotent by the Telegram
@@ -569,11 +569,8 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
       return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
     if(key==='admin:node:cancel'){
       await cancelNodeWizard(db,e.actorId);
-      const overview=await nodeAdminAction(db,e.actorId,'/nodes',null);
-      return adminResponse(overview.text,e.locale,[[
-        {text:'➕ افزودن سرور',callback_data:'v2:admin:node:new'},
-        {text:'🧪 آزمون سرورها',callback_data:'v2:admin:node:trials'},
-      ]]);
+      const overview=await nodeOverview(db);
+      return adminResponse(overview.text,e.locale,overview.replyMarkup.inline_keyboard);
     }
     const panel=await beginNodeWizard(db,e.actorId,nowMs,env);
     return adminResponse(panel.text,e.locale,panel.replyMarkup?.inline_keyboard??[]);
@@ -592,6 +589,43 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
     if(!await grantStaffRole(db,e,role,id))
       return adminResponse('⚠️ شناسه تلگرام معتبر نیست. دستور را همراه شناسه عددی بفرستید.',e.locale);
     return adminResponse('✅ دسترسی '+faRole(role)+' برای شناسه '+id+' فعال شد.',e.locale);
+  }
+  if(/^admin:nodes:(all|ready|setup|attention|quarantine|archive):[0-9]{1,4}$/.test(key)){
+    if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
+      return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
+    const [, ,filter,page]=key.split(':');
+    const list=await nodeOverview(db,{filter,page:Number(page)});
+    return adminResponse(list.text,e.locale,list.replyMarkup.inline_keyboard);
+  }
+  if(key.startsWith('admin:node:view:') ||
+     /^admin:node:(confirm|apply|trialref):/.test(key)){
+    if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
+      return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
+    let panel;
+    const view=key.match(/^admin:node:view:([a-f0-9]{24})$/);
+    const manage=key.match(/^admin:node:(confirm|apply):(quarantine|restore|retire):([a-f0-9]{24})$/);
+    const trial=key.match(/^admin:node:trialref:([a-f0-9]{24})$/);
+    if(view)panel=await nodeDetails(db,view[1],e.actorId);
+    else if(manage)
+      panel=await nodeManagement(db,e.actorId,manage[3],manage[2],
+        manage[1]==='apply',e.updateId);
+    else if(trial){
+      const node=await nodeFromRef(db,trial[1]);
+      const job=node?await db.prepare(
+        'SELECT state,owner_id FROM node_bootstrap_jobs WHERE node_id=?'
+      ).bind(node.id).first():null;
+      if(!node||!job||job.state!=='installed'||job.owner_id!==e.actorId||
+         ['quarantined','retired'].includes(node.lifecycle))
+        panel={text:'⛔ صدور لینک تست این سرور مجاز نیست.',replyMarkup:{inline_keyboard:[]}};
+      else {
+        const url=await issueTrialLink(env,e.actorId,node.id,nowMs);
+        panel={text:url?'🔗 لینک تست سرور '+node.id+'\n'+url+
+          '\n\nاین لینک آزمایشی است و تأیید آمادگی فروش محسوب نمی‌شود.':
+          '⏸ لینک تست آماده نیست. نصب سرور و مسیرهای اپراتورها را بررسی کنید.',
+          replyMarkup:{inline_keyboard:[]}};
+      }
+    }else panel={text:'⚠️ درخواست مدیریت سرور معتبر نیست.',replyMarkup:{inline_keyboard:[]}};
+    return adminResponse(panel.text,e.locale,panel.replyMarkup?.inline_keyboard??[]);
   }
   if(key.startsWith('admin:node:trial:')) {
     if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
@@ -655,12 +689,8 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
     if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
       return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
     const result=await nodeAdminAction(db,e.actorId,key==='admin:nodes'?'/nodes':key,e.inputText);
-    if(key==='admin:nodes')return adminResponse(result.text,e.locale,[
-      [
-        {text:'➕ افزودن سرور',callback_data:'v2:admin:node:new'},
-        {text:'🧪 آزمون سرورها',callback_data:'v2:admin:node:trials'},
-      ],
-    ]);
+    if(key==='admin:nodes'||key==='/nodes')
+      return adminResponse(result.text,e.locale,result.replyMarkup?.inline_keyboard??[]);
     return adminResponse(result.text,e.locale);
   }
   if(key==='/plan_add') {
