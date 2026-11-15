@@ -6,8 +6,8 @@ import { getSubscription } from './subscription.mjs';
 import { getCarrierFeed } from './carrier-subscription.mjs';
 import { nodeRoute } from './node-control.mjs';
 import { toBotMessage, verifyTelegramSecret } from './telegram.mjs';
-import { resolveBotAction } from './shop.mjs';
-import {frameMessage,BRAND_BANNER_URL,styleInlineKeyboard} from './bot-ux.mjs';
+import { resolveBotAction,adminAllowed } from './shop.mjs';
+import {frameMessage,BRAND_BANNER_URL,styleInlineKeyboard,contextualKeyboard} from './bot-ux.mjs';
 import {bannerImageResponse,brandBannerBytes} from './brand-banner.mjs';
 
 const json=(value,status=200)=>new Response(JSON.stringify(value),{
@@ -92,6 +92,9 @@ export async function processInbox(env,nowMs=Date.now()) {
       if(event.updateId!==item.update_id) throw new Error('inbox_id_mismatch');
       const reply=await resolveBotAction(env,event,nowMs);
       const msg=reply??{text:frameMessage('⚠️ پاسخ مناسبی دریافت نشد. لطفاً دوباره تلاش کنید.'),replyMarkup:null};
+       const pageKeyboard=msg.replyMarkup?styleInlineKeyboard(contextualKeyboard(
+         event.key,msg.replyMarkup,{isAdmin:adminAllowed(env.ADMIN_TELEGRAM_IDS,event.actorId)}
+       )):null;
       // This insert precedes marking inbox done. A crash will re-run the
       // idempotent action but cannot add a second outgoing reply.
       await env.DB.prepare(
@@ -99,7 +102,7 @@ export async function processInbox(env,nowMs=Date.now()) {
         "(update_id,chat_id,body,reply_markup,media_file_id,edit_message_id,edit_kind,state,due_ms) "+
         "VALUES (?,?,?,?,?,?,?,'pending',?)"
       ).bind(item.update_id,event.chatId,msg.text.slice(0,3800),
-        msg.replyMarkup?JSON.stringify(styleInlineKeyboard(msg.replyMarkup)):null,
+        pageKeyboard?JSON.stringify(pageKeyboard):null,
         msg.photoId??null,
         (msg.photoId&&event.editKind!=='caption')?null:(Number.isSafeInteger(event.messageId)?event.messageId:null),
         (msg.photoId&&event.editKind!=='caption')?null:(event.editKind==='caption'?'caption':event.editKind==='text'?'text':null),
