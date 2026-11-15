@@ -100,8 +100,12 @@ test('Telegram native styling highlights the brand and section without parsing u
 test('Telegram semantic button accents are restricted and do not change callback identity',()=>{
   const menu=styleInlineKeyboard(adminMenu());
   const all=menu.inline_keyboard.flat();
-  assert.equal(all.find(x=>x.callback_data==='v2:admin:home').style,'primary');
-  assert.equal(all.find(x=>x.callback_data==='v2:admin:node:new').style,'success');
+  assert.equal(all.find(x=>x.callback_data==='v2:admin:nodes').style,'primary');
+  assert.ok(!all.some(x=>x.callback_data==='v2:admin:node:new'));
+  const serverMenu=styleInlineKeyboard({inline_keyboard:[[
+    {text:'➕ افزودن سرور',callback_data:'v2:admin:node:new'}
+  ]]});
+  assert.equal(serverMenu.inline_keyboard[0][0].style,'success');
   assert.equal(all.find(x=>x.callback_data==='v2:admin:customers').style,undefined);
   const seller=styleInlineKeyboard(sellerMenu()).inline_keyboard.flat();
   assert.equal(seller.find(x=>x.callback_data==='v2:seller:revoke').style,'danger');
