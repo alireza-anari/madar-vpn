@@ -124,7 +124,8 @@ test('Telegram inbox never edits a screenshot caption into another photo or dash
     raw.prepare("INSERT INTO telegram_inbox(update_id,chat_id,event_json,state,due_ms) "+
       "VALUES(?,'200',?,'pending',0)").run(item.updateId,JSON.stringify(item));
   }
-  await processInbox(env,now);
+  // Per-chat FIFO: each pass releases only the next pending inbox event.
+  for(let i=0;i<3;i++)await processInbox(env,now);
   const photo=raw.prepare('SELECT media_file_id,edit_message_id,edit_kind FROM telegram_outbox WHERE update_id=400').get();
   assert.equal(photo.media_file_id,'img-file-101');
   assert.equal(photo.edit_message_id,null);
