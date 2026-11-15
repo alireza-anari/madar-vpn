@@ -7,6 +7,7 @@ import { getCarrierFeed } from './carrier-subscription.mjs';
 import { nodeRoute } from './node-control.mjs';
 import { toBotMessage, verifyTelegramSecret } from './telegram.mjs';
 import { resolveBotAction } from './shop.mjs';
+import {frameMessage} from './bot-ux.mjs';
 
 const json=(value,status=200)=>new Response(JSON.stringify(value),{
   status,headers:{
@@ -70,7 +71,7 @@ export async function processInbox(env,nowMs=Date.now()) {
       const event=JSON.parse(item.event_json);
       if(event.updateId!==item.update_id) throw new Error('inbox_id_mismatch');
       const reply=await resolveBotAction(env,event,nowMs);
-      const msg=reply??{text:'Unexpected response',replyMarkup:null};
+      const msg=reply??{text:frameMessage('⚠️ پاسخ مناسبی دریافت نشد. لطفاً دوباره تلاش کنید.'),replyMarkup:null};
       // This insert precedes marking inbox done. A crash will re-run the
       // idempotent action but cannot add a second outgoing reply.
       await env.DB.prepare(
