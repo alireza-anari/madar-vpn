@@ -110,6 +110,7 @@ test('suspended customer may send a screenshot only inside an active support com
 
 test('Telegram inbox never edits a screenshot caption into another photo or dashboard',async()=>{
   const {raw,env,e}=fixture(),now=1000000;
+  env.BOT_TOKEN='test-bot'; // Processing requires bot configuration; no network sends occur.
   raw.exec("INSERT INTO support_tickets(id,customer_telegram_id,subject) VALUES('tg-71','200','تصویر')");
   raw.exec("INSERT INTO support_messages(id,ticket_id,sender_telegram_id,body,role,telegram_file_id) "+
     "VALUES('support-media:71','tg-71','200','تصویر مشکل','customer','img-file-101')");
