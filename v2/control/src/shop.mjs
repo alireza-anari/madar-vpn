@@ -9,18 +9,16 @@ import { handleSeller, linkSellerOnStart, grantStaffRole } from './referrals.mjs
  * update ID or by a state-qualified SQL transition. No unattended payment or
  * config issuance takes place from this module.
  */
-import { botMenu,botPage,adminMenu,sellerMenu,supportMenu,frameMessage,faNumber,faMoney,faGB,faDate,faStatus,faRole } from './bot-ux.mjs';
+import { botMenu,botPage,adminMenu,sellerMenu,supportMenu,frameMessage,faNumber,faMoney,faGB,faDate,faStatus,faRole,sectionNavigation,usageMeter,statusSymbol,shortCode } from './bot-ux.mjs';
 
 const ORDER_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{1,48}$/;
 const PLAN_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{1,30}$/;
 const t = (fa) => fa;
 const line = (...parts) => parts.filter(Boolean).join('\n');
+// ناوبری درون بخش‌ها فقط اقدامات مرتبط را نشان می‌دهد.
 const response = (text, locale = 'fa', extra = [], audience = 'customer') => ({
   text: frameMessage(String(text).slice(0, 3300)),
-  replyMarkup: {inline_keyboard:[
-    ...extra,
-    ...(audience==='admin'?adminMenu():audience==='seller'?sellerMenu():audience==='support'?supportMenu():botMenu()).inline_keyboard
-  ]},
+  replyMarkup: {inline_keyboard:[...extra,...sectionNavigation(audience)]},
 });
 const adminResponse = (text,locale='fa',extra=[]) => response(text,locale,extra,'admin');
 const supportResponse = (text,locale='fa',extra=[]) => response(text,locale,extra,'support');
@@ -417,7 +415,7 @@ async function closeSupport(db,e,id,nowMs,env) {
   return staffResponse('✅ درخواست پشتیبانی بسته شد.\nشناسه: '+id,e,env);
 }
 
-async function personalizedHome(env,e) {
+async function personalizedHome(env,e,customerView=false) {
   const isAdmin=adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId);
   const seller=await isStaff(env.DB,e,'seller');
   const supportAgent=await isStaff(env.DB,e,'support');
@@ -435,9 +433,10 @@ async function personalizedHome(env,e) {
     :'برای مشاهده پیشنهادها، بخش خرید اشتراک را انتخاب کنید.';
   const restriction=customer?.state==='suspended'
     ?'\n⛔ حساب شما تعلیق شده است؛ دسترسی به پشتیبانی همچنان برقرار است.':'';
-  const menu=isAdmin?adminMenu():supportAgent?supportMenu():seller?sellerMenu():botMenu();
+  const menu=customerView?botMenu():isAdmin?adminMenu():supportAgent?supportMenu():seller?sellerMenu():botMenu();
   const quick=[
-    ...(isAdmin?[[{text:'🛠 ورود به پیشخوان مدیریت',callback_data:'v2:admin:home'}]]:[]),
+    ...(isAdmin?[[{text:'🛠 پیشخوان مدیریت',callback_data:'v2:admin:home'}]]:[]),
+    ...(isAdmin&&!customerView?[[{text:'👤 مشاهده نمای مشتری',callback_data:'v2:customer:home'}]]:[]),
     ...(seller?[[{text:'🧑‍💼 ورود به پنل فروشنده',callback_data:'v2:seller:home'}]]:[]),
 
   ];
@@ -623,6 +622,7 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
     return adminResponse('✅ وضعیت پلن '+id+' به '+(mode==='on'?'فعال':'غیرفعال')+' تغییر کرد.',e.locale);
   }
   if (key==='home') return personalizedHome(env,e);
+  if (key==='customer:home') return personalizedHome(env,e,true);
   if (key==='plans' || key==='/plans') return listPlans(db,env,e.locale,nowMs);
   if (key==='my' || key==='/my') return mySubscriptions(db,e,env);
   if (key.startsWith('my:link:')) {
