@@ -241,15 +241,16 @@ async function activeAllocations(db,id){
 function quotaLabel(value){
   return formatCount((Number(value??0)/1073741824).toFixed(1))+' گیگابایت';
 }
-function managementButtons(node,ref,active){
+function managementButtons(node,ref,active,jobState){
+  const installing=['pending','dispatching','dispatched'].includes(jobState);
   if(node.lifecycle==='retired')return [];
   if(node.lifecycle==='quarantined')return [
     nodeButton('🔄 بازگردانی به بررسی','admin:node:confirm:restore:'+ref),
-    ...(active===0?[nodeButton('🗄 بایگانی سرور','admin:node:confirm:retire:'+ref)]:[]),
+    ...(active===0&&!installing?[nodeButton('🗄 بایگانی سرور','admin:node:confirm:retire:'+ref)]:[]),
   ];
   return [
     nodeButton('🛡 قرنطینه سرور','admin:node:confirm:quarantine:'+ref),
-    ...(['enrolling','provisioning','degraded'].includes(node.lifecycle)&&active===0?
+    ...(['enrolling','provisioning','degraded'].includes(node.lifecycle)&&active===0&&!installing?
       [nodeButton('🗄 بایگانی سرور','admin:node:confirm:retire:'+ref)]:[]),
   ];
 }
@@ -287,7 +288,7 @@ export async function nodeDetails(db,ref,actor){
     nodeButton('🔄 تازه‌سازی همین سرور','admin:node:view:'+ref),
     ...(job?.state==='installed'&&job.owner_id===actor&&n.lifecycle!=='retired'&&n.lifecycle!=='quarantined'?
       [nodeButton('🧪 لینک تست این سرور','admin:node:trialref:'+ref)]:[]),
-    ...managementButtons(n,ref,alloc.n),
+    ...managementButtons(n,ref,alloc.n,job?.state),
     nodeButton('↩️ فهرست سرورها','admin:nodes'),
   ];
   return {text:frameMessage(text),replyMarkup:{inline_keyboard:buttons}};
@@ -303,7 +304,11 @@ export async function nodeManagement(db,actor,ref,operation,apply=false,updateId
   const n=await nodeRecord(db,ref);
   if(!n)return panel('⚠️ سرور پیدا نشد.');
   const alloc=await activeAllocations(db,n.id);
-  if(!t.from.includes(n.lifecycle) || (operation==='retire'&&alloc.n>0))
+  const job=operation==='retire'?await db.prepare(
+    'SELECT state FROM node_bootstrap_jobs WHERE node_id=?'
+  ).bind(n.id).first():null;
+  const installing=['pending','dispatching','dispatched'].includes(job?.state);
+  if(!t.from.includes(n.lifecycle) || (operation==='retire'&&(alloc.n>0||installing)))
     return {text:frameMessage('⛔ تغییر وضعیت مجاز نیست. وضعیت سرور یا اشتراک‌های تخصیص‌یافته را بررسی کنید.'),
       replyMarkup:{inline_keyboard:[nodeButton('↩️ پرونده سرور','admin:node:view:'+ref)]}};
   if(!apply){
@@ -327,7 +332,8 @@ export async function nodeManagement(db,actor,ref,operation,apply=false,updateId
   const allowed=t.from.map(x=>"'"+x+"'").join(',');
   const sql="UPDATE nodes SET lifecycle=? WHERE id=? AND lifecycle IN ("+allowed+")"+
     (operation==='retire'?
-      " AND NOT EXISTS (SELECT 1 FROM node_allocations WHERE node_id=? AND state IN ('reserved','active'))":'');
+      " AND NOT EXISTS (SELECT 1 FROM node_allocations WHERE node_id=? AND state IN ('reserved','active'))"+
+      " AND NOT EXISTS (SELECT 1 FROM node_bootstrap_jobs WHERE node_id=? AND state IN ('pending','dispatching','dispatched'))":'');
   const params=operation==='retire'?[t.to,n.id,n.id]:[t.to,n.id];
   const results=await db.batch([
     db.prepare(sql).bind(...params),
