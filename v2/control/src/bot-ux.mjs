@@ -208,8 +208,10 @@ export function contextualKeyboard(key,markup,{isAdmin=false}={}){
   const backData='v2:'+target;
   const rootAdmin=new Set(adminMenu().inline_keyboard.flat().map(b=>b.callback_data));
   const rootCustomer=new Set(botMenu().inline_keyboard.flat().map(b=>b.callback_data));
+  const rootSeller=new Set(sellerMenu().inline_keyboard.flat().map(b=>b.callback_data));
   const isFullAdminMenu=source.flat().filter(b=>rootAdmin.has(b.callback_data)).length>=4;
   const isFullCustomerMenu=source.flat().filter(b=>rootCustomer.has(b.callback_data)).length>=4;
+  const isFullSellerMenu=source.flat().filter(b=>rootSeller.has(b.callback_data)).length>=3;
   const rows=source.map(row=>row.filter(button=>{
     const txt=String(button.text??''),cb=String(button.callback_data??'');
     if(txt.includes('نمای مشتری'))return false;
@@ -217,6 +219,7 @@ export function contextualKeyboard(key,markup,{isAdmin=false}={}){
     if(txt.startsWith('↩️')||txt.startsWith('🏠'))return false;
     if(isFullAdminMenu&&rootAdmin.has(cb))return false;
     if(isFullCustomerMenu&&rootCustomer.has(cb))return false;
+    if(isFullSellerMenu&&rootSeller.has(cb))return false;
     return true;
   })).filter(row=>row.length>0);
   rows.push([{text:'↩️ بازگشت',callback_data:backData}]);
