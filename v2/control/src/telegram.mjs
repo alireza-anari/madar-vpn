@@ -24,8 +24,9 @@ export function toBotMessage(update) {
   // Telegram button payloads are short; customer support and plan inputs
   // need longer private messages. Never interpret typed text as a callback.
   if(typeof raw!=='string'||raw.length>(isCallback?256:2000))return null;
-  const key=isCallback&&raw.startsWith('v2:')
-    ?raw.slice(3):raw.trim().split(/\s+/)[0].split('@')[0];
+  const key=isCallback&&raw.startsWith('v2:')?raw.slice(3):
+    !isCallback&&raw.trim().startsWith('/')?
+      raw.trim().split(/\s+/)[0].split('@')[0]:'text';
   const language=sender?.language_code;
   const locale=typeof language==='string' && language.startsWith('en')?'en':'fa';
   const photos=update.message?.photo;
