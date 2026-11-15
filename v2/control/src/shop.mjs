@@ -1,4 +1,4 @@
-import {issueTrialLink,enqueueAutoNode} from './node-auto.mjs';
+import {issueTrialLink,issueCustomerTrialLink,enqueueAutoNode} from './node-auto.mjs';
 import {issueCarrierLink} from './carrier-subscription.mjs';
 import {receiveSupportPhoto,viewSupportPhoto} from './support-media.mjs';
 import {adminConfigAction} from './bot-config.mjs';
@@ -808,6 +808,27 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
   }
   if (key==='home') return personalizedHome(env,e);
   if (key==='customer:home') return personalizedHome(env,e,true);
+  if(key==='customer:trial'){
+    const trial=await issueCustomerTrialLink(env,e.actorId,nowMs);
+    if(trial.status==='issued')return response(
+      panelHeading('🧪','تست رایگان مدار','اعتبار لینک: یک ساعت')+
+      '\n\n✅ تست یک‌ساعته شما فعال شد.'+
+      '\nیک لینک شامل دو مسیر همراه اول و ایرانسل دریافت می‌کنید:'+
+      '\n\n'+trial.url+
+      '\n\nدر v2rayNG از بخش تنظیمات اشتراک، لینک را اضافه و به‌روزرسانی کنید.'+
+      '\n🔐 لینک خصوصی است و فقط یک بار برای این حساب صادر می‌شود.',e.locale);
+    if(trial.status==='existing')return response(
+      panelHeading('🧪','تست رایگان شما','این تست قبلاً برای حساب شما صادر شده است')+
+      '\n\nهمان لینک قبلی هنوز تا پایان مهلت یک‌ساعته معتبر است:'+
+      '\n\n'+trial.url+
+      '\n\nپس از پایان مهلت، امکان دریافت تست دوم وجود ندارد.',e.locale);
+    if(trial.status==='used')return response(
+      panelHeading('🧪','سهمیه تست استفاده شده','هر حساب تلگرام فقط یک بار مجاز به دریافت تست است.')+
+      '\n\nتست قبلی شما منقضی شده یا قبلاً استفاده شده است؛ امکان صدور تست مجدد وجود ندارد.',e.locale);
+    return response(
+      panelHeading('⏳','تست رایگان فعلاً در دسترس نیست','سرور آماده با دو مسیر تأییدشده پیدا نشد.')+
+      '\n\nسهمیه یک‌باره شما مصرف نشده است. لطفاً بعداً دوباره تلاش کنید.',e.locale);
+  }
   if (key==='plans' || key==='/plans') return listPlans(db,env,e.locale,nowMs);
   if (key==='my' || key==='/my') return mySubscriptions(db,e,env);
   if (key.startsWith('my:link:')) {
