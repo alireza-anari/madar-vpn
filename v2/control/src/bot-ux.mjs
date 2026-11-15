@@ -95,8 +95,6 @@ const customerMenu={inline_keyboard:[
   ],
   [
     {text:'📘 راهنمای اتصال',callback_data:'v2:help'},
-  ],
-  [
     {text:'🔐 حریم خصوصی',callback_data:'v2:privacy'},
   ],
 ]};
