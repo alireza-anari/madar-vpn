@@ -64,7 +64,10 @@ test('bot menus are Persian-only, compact and visually consistent',()=>{
 });
 
 test('manager, seller and support menus use Persian labels and local display formats',()=>{
-  for(const menu of [adminMenu(),sellerMenu(),supportMenu()]){
+  const manager=adminMenu();
+  assert.equal(manager.inline_keyboard.length,5);
+  assert.equal(manager.inline_keyboard.flat().length,9);
+  for(const menu of [manager,sellerMenu(),supportMenu()]){
     for(const button of menu.inline_keyboard.flat())assert.doesNotMatch(button.text,/[A-Za-z]{3,}/);
   }
   assert.equal(faGB(30),'۳۰ گیگابایت');
