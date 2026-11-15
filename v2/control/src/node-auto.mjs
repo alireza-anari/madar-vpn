@@ -215,6 +215,90 @@ export async function issueTrialLink(env,owner,nodeId,nowMs=Date.now()){
   return base+'/t/'+token;
 }
 
+/** Derive a stable private trial capability from the existing credential secret
+ * and immutable claim timestamp. Inbox retries can return the same active URL
+ * without ever storing the bearer token itself. */
+async function customerTrialToken(telegramId,issuedMs,keyText){
+  if(typeof keyText!=='string'||!/^[A-Za-z0-9_-]{43}$/.test(keyText)||
+     !/^[0-9]{1,20}$/.test(telegramId??'')||
+     !Number.isSafeInteger(issuedMs)||issuedMs<0)return null;
+  let raw;
+  try{
+    const clean=keyText.replace(/-/g,'+').replace(/_/g,'/');
+    raw=Uint8Array.from(atob(clean+'='),x=>x.charCodeAt(0));
+  }catch{return null;}
+  if(raw.length!==32)return null;
+  const key=await crypto.subtle.importKey('raw',raw,
+    {name:'HMAC',hash:'SHA-256'},false,['sign']);
+  const signature=await crypto.subtle.sign('HMAC',key,
+    new TextEncoder().encode('madar-v2-customer-trial-v1:'+telegramId+':'+issuedMs));
+  const token=toBase64url(new Uint8Array(signature));
+  return TOKEN.test(token)?token:null;
+}
+
+async function customerTrialResult(env,claim,nowMs){
+  if(!claim||claim.expires_ms<=nowMs)return {status:'used'};
+  const token=await customerTrialToken(claim.telegram_id,claim.issued_ms,
+    env.SUBSCRIPTION_CREDENTIAL_KEY);
+  if(!token||await tokenDigest(token)!==claim.token_hash)return {status:'used'};
+  const stored=await env.DB.prepare(
+    'SELECT token_hash FROM node_trial_links WHERE token_hash=? AND node_id=? AND owner_id=? AND expires_ms=?'
+  ).bind(claim.token_hash,claim.node_id,claim.telegram_id,claim.expires_ms).first();
+  if(!stored)return {status:'unavailable'};
+  return {status:claim.issued_ms===nowMs?'issued':'existing',
+    url:env.SUBSCRIPTION_PUBLIC_ORIGIN+'/t/'+token,expires_ms:claim.expires_ms};
+}
+
+/** A Telegram ID can claim one test for its lifetime. The claim is created in
+ * the same D1 batch as its link and only when a fresh, published two-carrier
+ * REALITY pair is actually available on an installed, ready server. */
+export async function issueCustomerTrialLink(env,telegramId,nowMs=Date.now()){
+  if(!env.DB||!env.SUBSCRIPTION_CREDENTIAL_KEY||
+     !/^[0-9]{1,20}$/.test(telegramId??'')||
+     typeof env.SUBSCRIPTION_PUBLIC_ORIGIN!=='string'||
+     !/^https:\/\/[a-z0-9.-]+$/i.test(env.SUBSCRIPTION_PUBLIC_ORIGIN))
+    return {status:'unavailable'};
+  const prior=await env.DB.prepare(
+    'SELECT telegram_id,node_id,token_hash,issued_ms,expires_ms FROM customer_trial_claims WHERE telegram_id=?'
+  ).bind(telegramId).first();
+  if(prior)return customerTrialResult(env,prior,nowMs);
+  const token=await customerTrialToken(telegramId,nowMs,env.SUBSCRIPTION_CREDENTIAL_KEY);
+  if(!token)return {status:'unavailable'};
+  const digest=await tokenDigest(token),expiresMs=nowMs+3600000;
+  try{
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT OR IGNORE INTO customer_trial_claims(telegram_id,node_id,token_hash,issued_ms,expires_ms) "+
+        "SELECT ?,n.id,?,?,? FROM nodes n "+
+        "JOIN node_bootstrap_jobs j ON j.node_id=n.id AND j.state='installed' "+
+        "JOIN node_trial_credentials tc ON tc.node_id=n.id AND tc.key_version=1 "+
+        "JOIN routes r ON r.node_id=n.id AND r.transport='reality' AND r.state='ready' "+
+        "JOIN route_carrier_variants m ON m.route_id=r.id AND m.operator='mci' AND m.published=1 "+
+        "JOIN route_carrier_variants i ON i.route_id=r.id AND i.operator='irancell' AND i.published=1 "+
+        "WHERE n.lifecycle='ready' AND r.verified_ms BETWEEN ? AND ? "+
+        "AND m.verified_ms BETWEEN ? AND ? AND i.verified_ms BETWEEN ? AND ? "+
+        "AND m.port<>i.port "+
+        "AND (SELECT COUNT(*) FROM route_carrier_variants v WHERE v.route_id=r.id)=2 "+
+        "AND EXISTS(SELECT 1 FROM customers c WHERE c.telegram_id=? AND c.state='active') "+
+        "AND n.user_limit>(SELECT COUNT(*) FROM node_allocations a WHERE a.node_id=n.id AND a.state IN ('reserved','active')) "+
+        "AND n.byte_limit>(SELECT COALESCE(SUM(a.quota_bytes),0) FROM node_allocations a WHERE a.node_id=n.id AND a.state IN ('reserved','active')) "+
+        "ORDER BY (SELECT COUNT(*) FROM node_trial_links l WHERE l.node_id=n.id AND l.expires_ms>?) ASC,n.id LIMIT 1"
+      ).bind(telegramId,digest,nowMs,expiresMs,
+        nowMs-600000,nowMs,nowMs-600000,nowMs,nowMs-600000,nowMs,
+        telegramId,nowMs),
+      env.DB.prepare(
+        "INSERT OR IGNORE INTO node_trial_links(token_hash,node_id,owner_id,expires_ms) "+
+        "SELECT token_hash,node_id,telegram_id,expires_ms FROM customer_trial_claims "+
+        "WHERE telegram_id=? AND token_hash=?"
+      ).bind(telegramId,digest),
+    ]);
+  }catch{return {status:'unavailable'};}
+  const claim=await env.DB.prepare(
+    'SELECT telegram_id,node_id,token_hash,issued_ms,expires_ms FROM customer_trial_claims WHERE telegram_id=?'
+  ).bind(telegramId).first();
+  return claim?customerTrialResult(env,claim,nowMs):{status:'unavailable'};
+}
+
 export async function getTrialFeed(req,env,nowMs=Date.now()){
   if(req.method!=='GET'||!env.DB||!env.SUBSCRIPTION_CREDENTIAL_KEY)
     return response('Not ready',503,'text/plain; charset=utf-8');
@@ -222,19 +306,44 @@ export async function getTrialFeed(req,env,nowMs=Date.now()){
   if(u.search||u.hash||!TOKEN.test(token))
     return response('Not found',404,'text/plain; charset=utf-8');
   const h=await tokenDigest(token);
+  const customerClaim=await env.DB.prepare(
+    'SELECT telegram_id,node_id FROM customer_trial_claims WHERE token_hash=?'
+  ).bind(h).first();
+  if(customerClaim){
+    const customer=await env.DB.prepare(
+      'SELECT state FROM customers WHERE telegram_id=?'
+    ).bind(customerClaim.telegram_id).first();
+    if(customer?.state!=='active')
+      return response('Expired',403,'text/plain; charset=utf-8');
+  }
   const trial=await env.DB.prepare(
     "SELECT l.node_id FROM node_trial_links l JOIN node_bootstrap_jobs j ON j.node_id=l.node_id "+
     "JOIN nodes n ON n.id=l.node_id WHERE l.token_hash=? AND l.expires_ms>? "+
     "AND j.state='installed' AND n.lifecycle NOT IN ('quarantined','retired')"
   ).bind(h,nowMs).first();
   if(!trial)return response('Expired',403,'text/plain; charset=utf-8');
+  if(customerClaim){
+    const ready=await env.DB.prepare(
+      "SELECT r.id FROM nodes n JOIN routes r ON r.node_id=n.id AND r.transport='reality' "+
+      "JOIN route_carrier_variants m ON m.route_id=r.id AND m.operator='mci' AND m.published=1 "+
+      "JOIN route_carrier_variants i ON i.route_id=r.id AND i.operator='irancell' AND i.published=1 "+
+      "WHERE n.id=? AND n.lifecycle='ready' AND r.state='ready' AND r.verified_ms BETWEEN ? AND ? "+
+      "AND m.verified_ms BETWEEN ? AND ? AND i.verified_ms BETWEEN ? AND ? "+
+      "AND m.port<>i.port "+
+      "AND (SELECT COUNT(*) FROM route_carrier_variants v WHERE v.route_id=r.id)=2"
+    ).bind(trial.node_id,nowMs-600000,nowMs,nowMs-600000,nowMs,
+      nowMs-600000,nowMs).first();
+    if(!ready)return response('Not ready',503,'text/plain; charset=utf-8');
+  }
   const c=await env.DB.prepare(
     "SELECT ciphertext_b64,nonce_b64,key_version FROM node_trial_credentials WHERE node_id=?"
   ).bind(trial.node_id).first();
   if(!c||c.key_version!==1)return response('Not ready',503,'text/plain; charset=utf-8');
   const routes=(await env.DB.prepare(
-    "SELECT operator,host,port,server_name,reality_public_key,reality_short_id FROM route_carrier_variants WHERE route_id=? ORDER BY operator"
-  ).bind(trial.node_id+'_reality').all()).results??[];
+    "SELECT operator,host,port,server_name,reality_public_key,reality_short_id FROM route_carrier_variants "+
+    "WHERE route_id=? "+(customerClaim?"AND published=1 AND verified_ms BETWEEN ? AND ? ":"")+
+    "ORDER BY operator"
+  ).bind(...(customerClaim?[trial.node_id+'_reality',nowMs-600000,nowMs]:[trial.node_id+'_reality'])).all()).results??[];
   const uuid=await unwrapClientUuid(c,env.SUBSCRIPTION_CREDENTIAL_KEY);
   const snapshot={client:{uuid},routes:routes.map(x=>({
     id:trial.node_id+':'+x.operator,transport:'reality',operator_hint:x.operator,
