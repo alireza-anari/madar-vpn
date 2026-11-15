@@ -169,14 +169,22 @@ export async function adminPanelAction(env,e,nowMs=Date.now()) {
   }
   if(key.startsWith('admin:customer:')){
     const tail=key.slice('admin:customer:'.length);
-    const action=tail.startsWith('suspend:')?'suspend':tail.startsWith('activate:')?'activate':null;
-    const id=action?tail.slice(action.length+1):tail;
+    const confirmed=tail.startsWith('confirm:');
+    const target=confirmed?tail.slice('confirm:'.length):tail;
+    const action=target.startsWith('suspend:')?'suspend':target.startsWith('activate:')?'activate':null;
+    const id=action?target.slice(action.length+1):target;
     if(!NAT.test(id))return panel('Invalid customer',e.locale);
     const row=await db.prepare('SELECT telegram_id,state,locale,seller_telegram_id FROM customers WHERE telegram_id=?')
       .bind(id).first();
     if(!row)return panel('Customer not found',e.locale);
     if(action) {
       if(idAdmin(env,id))return panel('Administrator cannot be suspended from this panel.',e.locale);
+      if(!confirmed)return panel(
+        '⚠️ '+lang('آیا از تغییر وضعیت این حساب مطمئنی؟','Confirm customer state change?',e.locale)+
+        '\n'+id+' · '+action,e.locale,[
+          button('✅ '+lang('تأیید','Confirm',e.locale),'admin:customer:confirm:'+action+':'+id),
+          button('↩️ '+lang('انصراف','Cancel',e.locale),'admin:customer:'+id),
+        ]);
       const state=action==='suspend'?'suspended':'active';
       await db.batch([
         db.prepare('UPDATE customers SET state=? WHERE telegram_id=? AND state<>?').bind(state,id,state),
