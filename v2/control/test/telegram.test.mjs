@@ -124,6 +124,15 @@ test('branded photo dashboard edits its caption rather than stacking new photos'
   assert.ok(calls[0].payload.caption.includes('پیشخوان مدیریت'));
   assert.equal(fixture.getState(),'sent');
 });
+test('first-party Madar banner serves JPEG without database or secrets',async()=>{
+  const response=await worker.fetch(new Request('https://localhost/brand/banner.jpg'),{},{});
+  assert.equal(response.status,200);
+  assert.match(response.headers.get('content-type'),/image\/jpeg/);
+  const pixels=new Uint8Array(await response.arrayBuffer());
+  assert.ok(pixels.length>3500);
+  assert.deepEqual([...pixels.slice(0,3)],[255,216,255]);
+  assert.deepEqual([...pixels.slice(-2)],[255,217]);
+});
 test('readiness fails closed without required bindings', async () => {
   const response=await worker.fetch(new Request('https://localhost/health/ready'),{},{});
   assert.equal(response.status,503);
