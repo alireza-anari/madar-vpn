@@ -108,6 +108,48 @@ export function adminMenu() { return structuredClone(managerMenu); }
 export function sellerMenu() { return structuredClone(sellerMenuMarkup); }
 export function supportMenu() { return structuredClone(supportMenuMarkup); }
 
+/** دکمه‌های کم‌تعداد و وابسته به موقعیت؛ فقط صفحه نخست منوی کامل دارد. */
+export function sectionNavigation(role='customer'){
+  const nav={
+    customer:[
+      [{text:'🛍 خرید اشتراک',callback_data:'v2:plans'},
+       {text:'🏠 خانه',callback_data:'v2:customer:home'}],
+    ],
+    admin:[
+      [{text:'↩️ پیشخوان مدیریت',callback_data:'v2:admin:home'},
+       {text:'👤 نمای مشتری',callback_data:'v2:customer:home'}],
+    ],
+    seller:[
+      [{text:'↩️ پیشخوان فروشنده',callback_data:'v2:seller:home'},
+       {text:'🏠 خانه',callback_data:'v2:customer:home'}],
+    ],
+    support:[
+      [{text:'↩️ صندوق پشتیبانی',callback_data:'v2:admin:tickets'},
+       {text:'🏠 خانه',callback_data:'v2:customer:home'}],
+    ]
+  };
+  return structuredClone(nav[role]??nav.customer);
+}
+export function usageMeter(usedBytes,maxBytes){
+  const max=Number(maxBytes),used=Number(usedBytes);
+  if(!Number.isFinite(max)||max<=0)return 'حجم اشتراک نامشخص است';
+  const safeUsed=Number.isFinite(used)?Math.max(0,used):0;
+  const ratio=Math.min(1,safeUsed/max),filled=Math.round(ratio*10);
+  const percent=new Intl.NumberFormat('fa-IR',{maximumFractionDigits:0}).format(safeUsed/max*100);
+  return '▰'.repeat(filled)+'▱'.repeat(10-filled)+'  '+percent+'٪';
+}
+export function shortCode(value,max=10){
+  const str=String(value??'');
+  return str.length<=max?str:str.slice(0,max)+'…';
+}
+export function statusSymbol(state){
+  return ({active:'🟢',ready:'🟢',approved:'✅',installed:'🟢',
+    pending:'🟡',receipt_submitted:'🟡',waiting:'🟡',
+    provisioning:'🟠',enrolling:'🟠',open:'🔵',
+    rejected:'🔴',failed:'🔴',suspended:'🔴',degraded:'🟠',
+    expired:'⚪',closed:'⚪',disabled:'⚪'})[state]??'🔹';
+}
+
 const pages={
   home:'🌐 به مدار خوش آمدید\n\nاز منوی پایین می‌توانید اشتراک، سفارش‌ها و درخواست‌های پشتیبانی خود را مدیریت کنید.\n\n⛔ فروش عمومی تا تکمیل آزمون‌های اتصال و کنترل مصرف غیرفعال است. لطفاً پرداختی انجام ندهید.',
   plans:'🛍  خرید اشتراک\n\nفروش عمومی غیرفعال است. پس از تأیید پرداخت، ظرفیت سرورها و کنترل سهمیه، پلن‌ها در همین بخش منتشر می‌شوند.\n\nاشتراک‌های نسخه قبلی شما مستقل و محفوظ هستند.',
