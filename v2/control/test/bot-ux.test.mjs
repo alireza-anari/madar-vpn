@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { botMenu,adminMenu,supportMenu,sellerMenu,botPage,faMoney,faGB,faStatus,faDate,usageMeter,sectionNavigation,frameMessage } from '../src/bot-ux.mjs';
+import { botMenu,adminMenu,supportMenu,sellerMenu,botPage,faMoney,faGB,faStatus,faDate,usageMeter,sectionNavigation,frameMessage,styleInlineKeyboard } from '../src/bot-ux.mjs';
 import {toBotMessage} from '../src/telegram.mjs';
 
 test('all menu callbacks lead to a meaningful supported page',()=>{
@@ -95,4 +95,18 @@ test('Telegram native styling highlights the brand and section without parsing u
   assert.equal(text.slice(entities[0].offset,entities[0].offset+entities[0].length),'🌐  مــدار');
   assert.equal(text.slice(entities[1].offset,entities[1].offset+entities[1].length),'🛠  پیشخوان مدیریت مدار');
   assert.deepEqual(brandedEntities('plain text'),[]);
+});
+
+test('Telegram semantic button accents are restricted and do not change callback identity',()=>{
+  const menu=styleInlineKeyboard(adminMenu());
+  const all=menu.inline_keyboard.flat();
+  assert.equal(all.find(x=>x.callback_data==='v2:admin:home').style,'primary');
+  assert.equal(all.find(x=>x.callback_data==='v2:admin:node:new').style,'success');
+  assert.equal(all.find(x=>x.callback_data==='v2:admin:customers').style,undefined);
+  const seller=styleInlineKeyboard(sellerMenu()).inline_keyboard.flat();
+  assert.equal(seller.find(x=>x.callback_data==='v2:seller:revoke').style,'danger');
+  const original=adminMenu();
+  assert.ok(original.inline_keyboard.flat().every(x=>x.style===undefined));
+  assert.deepEqual(menu.inline_keyboard.map(row=>row.map(x=>x.callback_data)),
+    original.inline_keyboard.map(row=>row.map(x=>x.callback_data)));
 });
