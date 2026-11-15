@@ -1,7 +1,25 @@
 // Same-origin Mini App. Only encrypted SSH credentials leave this form.
 export const enrollmentPage=String.raw`<!doctype html><html lang="fa" dir="rtl"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>افزودن سرور مدار V2</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<style>body{font:16px/1.9 system-ui;background:#0c1728;color:#eef3ff;max-width:560px;margin:24px auto;padding:16px}input,select,button{box-sizing:border-box;display:block;width:100%;font:inherit;padding:12px;margin:8px 0 16px;border:1px solid #456;border-radius:12px;background:#182b43;color:inherit}button{background:#246bbe}button:disabled{opacity:.5}fieldset{border:1px solid #456;border-radius:16px}#status{white-space:pre-wrap;overflow-wrap:anywhere}#fingerprint{direction:ltr;overflow-wrap:anywhere}input[type=checkbox]{width:auto;display:inline}</style>
+<style>
+:root{color-scheme:dark;--surface:#111f33;--surface2:#172b45;--line:#2d4564;--accent:#438df5;--muted:#a9bbd2}
+*{box-sizing:border-box}
+body{font:16px/1.9 system-ui,-apple-system,sans-serif;background:radial-gradient(ellipse at top,#18365a 0,#0b1628 48%,#07111f 100%);color:#eef4ff;max-width:600px;min-height:100vh;margin:0 auto;padding:28px 16px 40px}
+h1{font-size:25px;line-height:1.5;margin:8px 0 12px;letter-spacing:-.4px}
+body>p:first-of-type{color:#bdcce0;margin:0 0 20px}
+form,details{background:linear-gradient(145deg,rgba(24,43,69,.96),rgba(14,28,46,.96));border:1px solid var(--line);border-radius:20px;padding:18px;margin:16px 0;box-shadow:0 18px 44px rgba(0,0,0,.22)}
+label{display:block;font-weight:600;color:#dbe7f8}
+input,select,button{box-sizing:border-box;display:block;width:100%;font:inherit;padding:12px 14px;margin:8px 0 16px;border:1px solid #385474;border-radius:13px;background:#0c1a2c;color:inherit;transition:border-color .15s,box-shadow .15s}
+input:focus,select:focus{outline:none;border-color:#6aa7ff;box-shadow:0 0 0 3px rgba(67,141,245,.18)}
+button{background:linear-gradient(135deg,#438df5,#2868c7);border:0;font-weight:750;cursor:pointer;box-shadow:0 8px 18px rgba(25,91,183,.22)}
+button:disabled{opacity:.45;cursor:not-allowed;box-shadow:none}
+fieldset{border:1px solid var(--line);border-radius:16px;padding:14px;margin-top:18px}
+legend{padding:0 8px;color:#a9caff;font-weight:700}
+summary{cursor:pointer;font-weight:700;color:#c7dcf7}
+#status{white-space:pre-wrap;overflow-wrap:anywhere;background:rgba(8,20,35,.75);border:1px solid var(--line);border-radius:14px;padding:12px 14px;color:#d9e8ff;min-height:48px}
+#fingerprint{direction:ltr;overflow-wrap:anywhere;background:#091727;border:1px dashed #54749a;border-radius:12px;padding:10px}
+input[type=checkbox]{width:auto;display:inline;accent-color:#438df5}
+</style>
 <h1>افزودن سرور مدار V2</h1><p>اطلاعات سرور را وارد کن؛ بررسی اتصال و نصب از همین صفحه انجام می‌شود. رمز و کلید را در پیام تلگرام نفرست.</p>
 <details id="runnerPairing" hidden><summary>فعال‌سازی یک‌باره سرویس نصب V2 (فقط مدیر)</summary>
 <p>این کار فقط یک‌بار روی میزبان رانر موجود انجام می‌شود، نه هنگام افزودن هر سرور. سرویس V1 تغییر نمی‌کند.</p>
@@ -42,7 +60,7 @@ async function restoreJob(){
   }
   if(job.kind==='v2-install'&&job.state==='failed'&&!job.diagnostic&&job.fingerprint){
     showDiagnoseForInstall(job.id,job.fingerprint);
-    return status('نصب قبلی ناموفق بود: '+(job.safe_code||'INSTALLATION_FAILED')+'. برای بررسی بدون نصب دوباره اطلاعات ورود را وارد کن.');
+    return status('نصب قبلی ناموفق بود: '+('خطای نامشخص در نصب')+'. برای بررسی بدون نصب دوباره اطلاعات ورود را وارد کن.');
   }
   if(job.kind==='v2-install'&&job.diagnostic&&['failed','ready'].includes(job.state))
     return status(diagnosisMessage(job.safe_code));
@@ -52,7 +70,7 @@ async function restoreJob(){
     return poll(job.id,job.kind==='probe'?'probe':job.diagnostic?'diagnose':'install');
   }
   if(job.state==='failed')
-    return status('بررسی قبلی ناموفق بود: '+(job.safe_code||'INSTALLATION_FAILED')+'. می‌توانی دوباره بررسی کنی.');
+    return status('بررسی قبلی ناموفق بود: '+'خطای نامشخص در بررسی'+'. می‌توانی دوباره بررسی کنی.');
   status('درخواست قبلی پایان یافته است؛ برای سرور دیگر، اطلاعات را تغییر بده.');
 }
 async function encrypt(value){const rsa=await crypto.subtle.importKey('jwk',publicKey,{name:'RSA-OAEP',hash:'SHA-256'},false,['encrypt']);const aes=await crypto.subtle.generateKey({name:'AES-GCM',length:256},true,['encrypt']);const iv=crypto.getRandomValues(new Uint8Array(12));const data=await crypto.subtle.encrypt({name:'AES-GCM',iv},aes,new TextEncoder().encode(JSON.stringify(value)));const key=await crypto.subtle.encrypt('RSA-OAEP',rsa,await crypto.subtle.exportKey('raw',aes));return {v:1,key:b64(key),iv:b64(iv),data:b64(data)};}
@@ -69,7 +87,7 @@ const diagnosticDetail={
   DIAG_REMOTE_FAILED:'بررسی از داخل VPS کامل نشد. این پیام به معنی اجرای نصب نیست.'
 };
 function diagnosisMessage(code){
-  return 'نتیجه عیب‌یابی بدون نصب: '+(diagnosticDetail[code]||code||'DIAG_REMOTE_FAILED');
+  return 'نتیجه عیب‌یابی بدون نصب: '+(diagnosticDetail[code]||'خطای نامشخص در عیب‌یابی رخ داد.');
 }
 function showDiagnoseForInstall(id,fp){
   failedInstallId=id;fingerprint=fp;
@@ -96,7 +114,7 @@ async function poll(id,kind){
       busy=false;lock(false);el('probe').disabled=false;
       if(kind==='install'&&b.fingerprint)showDiagnoseForInstall(id,b.fingerprint);
       status(kind==='diagnose'?diagnosisMessage(b.safe_code):
-        'عملیات ناموفق بود: '+(installDetails[b.safe_code]||b.safe_code||'INSTALLATION_FAILED'));
+        'عملیات ناموفق بود: '+(installDetails[b.safe_code]||'خطای نامشخص هنگام نصب رخ داد.'));
       return;
     }
     if(b.state==='ready'){
@@ -118,7 +136,7 @@ async function poll(id,kind){
     }
     status(kind==='probe'?'در حال بررسی اتصال…':kind==='diagnose'?'در حال عیب‌یابی فقط‌خواندنی سرور…':'نصب در حال اجراست…');
     timer=setTimeout(()=>poll(id,kind),3000);
-  }catch(e){busy=false;status(e.message);}
+  }catch(e){busy=false;status('ارتباط با سرویس برقرار نشد؛ دوباره تلاش کنید.');}
 }
 el('diagnose').onclick=async()=>{
   if(busy||!failedInstallId||!fingerprint||!el('trust').checked){
@@ -137,7 +155,7 @@ el('diagnose').onclick=async()=>{
     const job=await api('diagnose',{failedInstallId,fingerprint,trust:true,envelope});
     status('عیب‌یابی بدون نصب شروع شد…');
     poll(job.id,'diagnose');
-  }catch(e){busy=false;el('diagnose').disabled=false;status(e.message);}
+  }catch(e){busy=false;el('diagnose').disabled=false;status('عیب‌یابی آغاز نشد؛ ارتباط را بررسی و دوباره تلاش کنید.');}
   finally{credentials=null;el('password').value='';el('keyfile').value='';}
 };
 
@@ -148,17 +166,17 @@ el('pairRunner').onclick=async()=>{
     el('pairingStatus').textContent=r.status==='RUNNER_CONNECTED'
       ?'رانر V2 از قبل متصل است؛ صفحه را از ربات دوباره باز کن.'
       :'اتصال رمزگذاری‌شده برای ۱۰ دقیقه آماده شد. فرمان نصب یک‌باره V2 باید روی میزبان رانر قدیمی اجرا شود؛ هیچ رمز یا کلید خصوصی از آن خارج نمی‌شود.';
-  }catch(e){el('pairingStatus').textContent=e.message;}
+  }catch(e){el('pairingStatus').textContent='اتصال امن رانر برقرار نشد؛ تنظیمات را بررسی کنید.';}
   finally{el('pairRunner').disabled=false;}
 };
-el('probe').onclick=async()=>{if(busy||!el('form').reportValidity())return;busy=true;failedInstallId=null;el('diagnose').hidden=true;el('diagnoseNote').hidden=true;el('probe').disabled=true;el('credentials').hidden=true;el('trust').checked=false;try{const b={};for(const id of ['nodeId','provider','region','ip','username'])b[id]=el(id).value.trim();for(const id of ['userLimit','capacityGb','port'])b[id]=Number(el(id).value);const job=await api('probe',b);lock(true);poll(job.id,'probe');}catch(e){busy=false;el('probe').disabled=false;status(e.message);}};
-el('form').onsubmit=async e=>{e.preventDefault();if(busy||failedInstallId||!probeId||!el('trust').checked){status('ابتدا اثر انگشت سرور را تأیید کن. برای نصب قبلی ناموفق، گزینه عیب‌یابی بدون نصب را بزن.');return;}busy=true;el('install').disabled=true;let credentials;try{credentials=el('method').value==='password'?{method:'password',password:el('password').value}:{method:'key',key:await el('keyfile').files[0]?.text(),passphrase:el('password').value};if(credentials.method==='password'?!credentials.password:!credentials.key)throw Error('اطلاعات ورود را وارد کن.');const envelope=await encrypt(credentials);credentials=null;el('password').value='';el('keyfile').value='';const job=await api('install',{probeId,fingerprint,trust:true,envelope});poll(job.id,'install');}catch(e){busy=false;el('install').disabled=false;status(e.message);}finally{credentials=null;el('password').value='';el('keyfile').value='';}};
+el('probe').onclick=async()=>{if(busy||!el('form').reportValidity())return;busy=true;failedInstallId=null;el('diagnose').hidden=true;el('diagnoseNote').hidden=true;el('probe').disabled=true;el('credentials').hidden=true;el('trust').checked=false;try{const b={};for(const id of ['nodeId','provider','region','ip','username'])b[id]=el(id).value.trim();for(const id of ['userLimit','capacityGb','port'])b[id]=Number(el(id).value);const job=await api('probe',b);lock(true);poll(job.id,'probe');}catch(e){busy=false;el('probe').disabled=false;status('بررسی اتصال آغاز نشد؛ اطلاعات سرور و ارتباط را بررسی کنید.');}};
+el('form').onsubmit=async e=>{e.preventDefault();if(busy||failedInstallId||!probeId||!el('trust').checked){status('ابتدا اثر انگشت سرور را تأیید کن. برای نصب قبلی ناموفق، گزینه عیب‌یابی بدون نصب را بزن.');return;}busy=true;el('install').disabled=true;let credentials;try{credentials=el('method').value==='password'?{method:'password',password:el('password').value}:{method:'key',key:await el('keyfile').files[0]?.text(),passphrase:el('password').value};if(credentials.method==='password'?!credentials.password:!credentials.key)throw Error('اطلاعات ورود را وارد کن.');const envelope=await encrypt(credentials);credentials=null;el('password').value='';el('keyfile').value='';const job=await api('install',{probeId,fingerprint,trust:true,envelope});poll(job.id,'install');}catch(e){busy=false;el('install').disabled=false;status('نصب آغاز نشد؛ ارتباط را بررسی و دوباره تلاش کنید.');}finally{credentials=null;el('password').value='';el('keyfile').value='';}};
 if(!auth)status('این صفحه را از دکمه افزودن سرور در ربات V2 باز کن.');
 else api('session').then(async s=>{
   publicKey=s.publicKey;el('probe').disabled=false;
-  try{await restoreJob();}catch(e){status(e.message);}
+  try{await restoreJob();}catch(e){status('بازیابی وضعیت قبلی ممکن نشد؛ دوباره تلاش کنید.');}
 }).catch(e=>{
   el('runnerPairing').hidden=false;
-  status(e.message);
+  status('نشست امن منقضی شده یا ارتباط برقرار نیست؛ صفحه را از ربات دوباره باز کنید.');
 });
 </script></html>`;
