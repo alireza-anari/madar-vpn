@@ -216,7 +216,7 @@ async function beginSupport(db,e,nowMs) {
     "INSERT INTO customer_sessions(telegram_id,mode,expires_ms) VALUES(?,'support',?) " +
     "ON CONFLICT(telegram_id) DO UPDATE SET mode='support',expires_ms=excluded.expires_ms"
   ).bind(e.actorId,nowMs+10*60*1000).run();
-  return response('💬  ثبت درخواست پشتیبانی\n━━━━━━━━━━━━━━━━━━\nمشکل خود را در یک پیام توضیح دهید. تا ۱۰ دقیقه فرصت دارید.\n\n🔐 رمز عبور، اطلاعات کارت بانکی یا کلید خصوصی ارسال نکنید.',e.locale);
+  return response('💬  ثبت درخواست پشتیبانی\n━━━━━━━━━━━━━━━━━━\nموضوع و شرح مشکل خود را در یک پیام توضیح دهید. تا ۱۰ دقیقه فرصت دارید.\n\n🔐 رمز عبور، اطلاعات کارت بانکی یا کلید خصوصی ارسال نکنید.',e.locale);
 }
 
 async function maybeRecordSupport(db,e,env,nowMs) {
