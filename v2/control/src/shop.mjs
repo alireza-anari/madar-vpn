@@ -9,7 +9,7 @@ import { handleSeller, linkSellerOnStart, grantStaffRole } from './referrals.mjs
  * update ID or by a state-qualified SQL transition. No unattended payment or
  * config issuance takes place from this module.
  */
-import { botMenu,botPage,adminMenu,sellerMenu,frameMessage,faNumber,faMoney,faGB,faDate,faStatus,faRole } from './bot-ux.mjs';
+import { botMenu,botPage,adminMenu,sellerMenu,supportMenu,frameMessage,faNumber,faMoney,faGB,faDate,faStatus,faRole } from './bot-ux.mjs';
 
 const ORDER_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{1,48}$/;
 const PLAN_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{1,30}$/;
@@ -19,10 +19,14 @@ const response = (text, locale = 'fa', extra = [], audience = 'customer') => ({
   text: frameMessage(String(text).slice(0, 3300)),
   replyMarkup: {inline_keyboard:[
     ...extra,
-    ...(audience==='admin'?adminMenu():audience==='seller'?sellerMenu():botMenu()).inline_keyboard
+    ...(audience==='admin'?adminMenu():audience==='seller'?sellerMenu():audience==='support'?supportMenu():botMenu()).inline_keyboard
   ]},
 });
 const adminResponse = (text,locale='fa',extra=[]) => response(text,locale,extra,'admin');
+const supportResponse = (text,locale='fa',extra=[]) => response(text,locale,extra,'support');
+const staffResponse = (text,e,env,extra=[]) =>
+  adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)
+    ?adminResponse(text,e.locale,extra):supportResponse(text,e.locale,extra);
 
 function money(amount, currency) {
   return faMoney(amount,currency);
@@ -319,36 +323,37 @@ async function adminDecision(db,e,action,id) {
     '\nهنوز هیچ کانفیگی صادر نشده است.',e.locale);
 }
 
-async function supportInbox(db,e) {
+async function supportInbox(env,e) {
+  const db=env.DB;
   const queue=(await db.prepare(
     "SELECT id,customer_telegram_id,subject,state FROM support_tickets " +
     "WHERE state IN ('open','waiting') ORDER BY created_at LIMIT 8"
   ).all()).results??[];
-  if(!queue.length)return adminResponse('✅ درخواست پشتیبانی بازی در صف نیست.',e.locale);
-  return adminResponse('💬  صندوق پشتیبانی\n━━━━━━━━━━━━━━━━━━\n'+queue.map(x=>
+  if(!queue.length)return staffResponse('✅ درخواست پشتیبانی بازی در صف نیست.',e,env);
+  return staffResponse('💬  صندوق پشتیبانی\n━━━━━━━━━━━━━━━━━━\n'+queue.map(x=>
     x.id+'  |  '+faStatus(x.state)+'\nمشتری: '+x.customer_telegram_id+'\nموضوع: '+x.subject.slice(0,80)
   ).join('\n\n'),e.locale,queue.map(x=>[
     {text:'👁 مشاهده',callback_data:'v2:ticket:view:'+x.id},
     {text:'✉ پاسخ',callback_data:'v2:ticket:reply:'+x.id},
     {text:'✓ بستن',callback_data:'v2:ticket:close:'+x.id},
-  ]));
+  ]),e,env);
 }
 
 async function staffCanReply(db,e,env) {
   return adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId) || await isStaff(db,e,'support');
 }
 
-async function startTicketReply(db,e,id,nowMs) {
+async function startTicketReply(db,e,id,nowMs,env) {
   const ticket=await db.prepare(
     "SELECT id,customer_telegram_id,subject,state FROM support_tickets WHERE id=?"
   ).bind(id).first();
-  if(!ticket||ticket.state==='closed')return adminResponse('این درخواست بسته شده یا در دسترس نیست.',e.locale);
+  if(!ticket||ticket.state==='closed')return staffResponse('این درخواست بسته شده یا در دسترس نیست.',e,env);
   await db.prepare(
     "INSERT INTO support_staff_sessions(telegram_id,ticket_id,expires_ms) VALUES(?,?,?) " +
     "ON CONFLICT(telegram_id) DO UPDATE SET ticket_id=excluded.ticket_id,expires_ms=excluded.expires_ms"
   ).bind(e.actorId,id,nowMs+10*60*1000).run();
-  return adminResponse('✉️  پاسخ به درخواست '+id+'\nموضوع: '+ticket.subject.slice(0,140)+
-    '\n\nپاسخ خود را در یک پیام بفرستید. مهلت: ۱۰ دقیقه.\n🔐 هرگز رمز عبور یا کلید خصوصی درخواست نکنید.',e.locale);
+  return staffResponse('✉️  پاسخ به درخواست '+id+'\nموضوع: '+ticket.subject.slice(0,140)+
+    '\n\nپاسخ خود را در یک پیام بفرستید. مهلت: ۱۰ دقیقه.\n🔐 هرگز رمز عبور یا کلید خصوصی درخواست نکنید.',e,env);
 }
 
 async function staffReply(db,e,env,nowMs) {
@@ -365,7 +370,7 @@ async function staffReply(db,e,env,nowMs) {
   if(!ticket||ticket.state==='closed'){
     await db.prepare('DELETE FROM support_staff_sessions WHERE telegram_id=?')
       .bind(e.actorId).run();
-    return adminResponse('این درخواست بسته شده است؛ پیامی ارسال نشد.',e.locale);
+    return staffResponse('این درخواست بسته شده است؛ پیامی ارسال نشد.',e,env);
   }
   const body=text.trim().slice(0,1000);
   await db.batch([
@@ -387,15 +392,15 @@ async function staffReply(db,e,env,nowMs) {
       'INSERT OR IGNORE INTO audit_events(event_id,actor_id,object_type,object_id,verb) VALUES(?,?,?,?,?)'
     ).bind('support:reply:'+e.updateId,e.actorId,'support_ticket',ticket.id,'reply'),
   ]);
-  return adminResponse('✅ پاسخ برای مشتری ارسال شد.\nشناسه درخواست: '+ticket.id,e.locale);
+  return staffResponse('✅ پاسخ برای مشتری ارسال شد.\nشناسه درخواست: '+ticket.id,e,env);
 }
 
-async function closeSupport(db,e,id,nowMs) {
+async function closeSupport(db,e,id,nowMs,env) {
   const ticket=await db.prepare(
     'SELECT id,state,customer_telegram_id FROM support_tickets WHERE id=?'
   ).bind(id).first();
-  if(!ticket)return adminResponse('درخواست موردنظر پیدا نشد.',e.locale);
-  if(ticket.state==='closed')return adminResponse('این درخواست قبلاً بسته شده است.',e.locale);
+  if(!ticket)return staffResponse('درخواست موردنظر پیدا نشد.',e,env);
+  if(ticket.state==='closed')return staffResponse('این درخواست قبلاً بسته شده است.',e,env);
   await db.batch([
     db.prepare(
       "UPDATE support_tickets SET state='closed' WHERE id=? AND state IN ('open','waiting')"
@@ -409,12 +414,13 @@ async function closeSupport(db,e,id,nowMs) {
       'INSERT OR IGNORE INTO audit_events(event_id,actor_id,object_type,object_id,verb) VALUES(?,?,?,?,?)'
     ).bind('support:close:'+id,e.actorId,'support_ticket',id,'close'),
   ]);
-  return adminResponse('✅ درخواست پشتیبانی بسته شد.\nشناسه: '+id,e.locale);
+  return staffResponse('✅ درخواست پشتیبانی بسته شد.\nشناسه: '+id,e,env);
 }
 
 async function personalizedHome(env,e) {
   const isAdmin=adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId);
   const seller=await isStaff(env.DB,e,'seller');
+  const supportAgent=await isStaff(env.DB,e,'support');
   const active=(await env.DB.prepare(
     "SELECT COUNT(*) AS n FROM subscriptions WHERE owner_telegram_id=? AND state='active' AND expires_at>?"
   ).bind(e.actorId,Date.now()).first())?.n??0;
@@ -429,10 +435,11 @@ async function personalizedHome(env,e) {
     :'برای مشاهده پیشنهادها، بخش خرید اشتراک را انتخاب کنید.';
   const restriction=customer?.state==='suspended'
     ?'\n⛔ حساب شما تعلیق شده است؛ دسترسی به پشتیبانی همچنان برقرار است.':'';
-  const menu=isAdmin?adminMenu():seller?sellerMenu():botMenu();
+  const menu=isAdmin?adminMenu():supportAgent?supportMenu():seller?sellerMenu():botMenu();
   const quick=[
     ...(isAdmin?[[{text:'🛠 ورود به پیشخوان مدیریت',callback_data:'v2:admin:home'}]]:[]),
     ...(seller?[[{text:'🧑‍💼 ورود به پنل فروشنده',callback_data:'v2:seller:home'}]]:[]),
+    ...(supportAgent&&!isAdmin?[[{text:'💬 ورود به صندوق پشتیبانی',callback_data:'v2:admin:tickets'}]]:[]),
   ];
   return {text:frameMessage(greeting+'\n\n'+state+'\n'+safety+restriction),
     replyMarkup:{inline_keyboard:[...quick,...menu.inline_keyboard]}};
@@ -659,7 +666,7 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
   if (key==='admin:tickets') {
     if (!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId) &&
       !await isStaff(db,e,'support')) return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
-    return supportInbox(db,e);
+    return supportInbox(env,e);
   }
   if(key.startsWith('ticket:view:')) {
     if(!await staffCanReply(db,e,env))return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
@@ -670,7 +677,7 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
     const action=key.startsWith('ticket:reply:')?'reply':'close';
     const id=key.slice(action==='reply'?'ticket:reply:'.length:'ticket:close:'.length);
     if(!/^tg-[0-9]{1,20}$/.test(id)) return adminResponse('⚠️ شناسه درخواست معتبر نیست.',e.locale);
-    return action==='reply' ? startTicketReply(db,e,id,nowMs) : closeSupport(db,e,id,nowMs);
+    return action==='reply' ? startTicketReply(db,e,id,nowMs,env) : closeSupport(db,e,id,nowMs,env);
   }
   if (key.startsWith('approve:') || key.startsWith('reject:')) {
     if (!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
