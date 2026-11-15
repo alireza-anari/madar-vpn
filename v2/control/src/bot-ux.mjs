@@ -95,17 +95,11 @@ const customerMenu={inline_keyboard:[
   ],
   [
     {text:'🔐 حریم خصوصی',callback_data:'v2:privacy'},
-    {text:'🏠 خانه',callback_data:'v2:customer:home'},
   ],
 ]};
 const managerMenu={inline_keyboard:[
   [
-    {text:'📊 پیشخوان مدیریت',callback_data:'v2:admin:home'},
     {text:'🖥 مدیریت سرورها',callback_data:'v2:admin:nodes'},
-  ],
-  [
-    {text:'➕ افزودن سرور',callback_data:'v2:admin:node:new'},
-    {text:'🧪 آزمون سرورها',callback_data:'v2:admin:node:trials'},
   ],
   [
     {text:'🛍 مدیریت پلن‌ها',callback_data:'v2:admin:plans'},
@@ -138,27 +132,90 @@ export function adminMenu() { return structuredClone(managerMenu); }
 export function sellerMenu() { return structuredClone(sellerMenuMarkup); }
 export function supportMenu() { return structuredClone(supportMenuMarkup); }
 
-/** دکمه‌های کم‌تعداد و وابسته به موقعیت؛ فقط صفحه نخست منوی کامل دارد. */
+/** A single back button outside home screens, never a global menu. */
 export function sectionNavigation(role='customer'){
-  const nav={
-    customer:[
-      [{text:'🛍 خرید اشتراک',callback_data:'v2:plans'},
-       {text:'🏠 خانه',callback_data:'v2:customer:home'}],
-    ],
-    admin:[
-      [{text:'↩️ پیشخوان مدیریت',callback_data:'v2:admin:home'},
-       {text:'👤 نمای مشتری',callback_data:'v2:customer:home'}],
-    ],
-    seller:[
-      [{text:'↩️ پنل فروشنده',callback_data:'v2:seller:home'},
-       {text:'🏠 خانه',callback_data:'v2:customer:home'}],
-    ],
-    support:[
-      [{text:'↩️ صندوق پشتیبانی',callback_data:'v2:admin:tickets'},
-       {text:'🏠 خانه',callback_data:'v2:customer:home'}],
-    ]
-  };
-  return structuredClone(nav[role]??nav.customer);
+  const destination={
+    customer:'customer:home',admin:'admin:home',
+    seller:'seller:home',support:'admin:tickets',
+  }[role]??'customer:home';
+  return [[{text:'↩️ بازگشت',callback_data:'v2:'+destination}]];
+}
+
+/** Resolve a real parent page instead of returning every screen to the dashboard.
+ * Pure, bounded callback routing; permissions are still enforced by shop.mjs. */
+export function parentPage(key,isAdmin=false){
+  key=String(key??'');
+  if(key==='admin:node:new')return 'admin:node:cancel';
+  if(key==='admin:node:cancel'||key==='admin:node:trials')return 'admin:nodes';
+  if(key.startsWith('admin:node:trial:'))return 'admin:node:trials';
+  if(key==='admin:nodes'||key==='/nodes'||key==='/node_add'||key==='/node_route')return 'admin:home';
+  if(key.startsWith('admin:plan:')||key.startsWith('plan:'))return 'admin:plans';
+  if(key==='admin:plans')return 'admin:home';
+  if(key.startsWith('admin:receipt:'))return 'admin:queue';
+  if(key.startsWith('admin:review:')){
+    const id=key.split(':').at(-1);
+    return /^[a-zA-Z0-9][a-zA-Z0-9_-]{1,48}$/.test(id)?'admin:receipt:'+id:'admin:queue';
+  }
+  if(key==='admin:queue')return 'admin:home';
+  if(key.startsWith('admin:customer:')){
+    const id=key.split(':').at(-1);
+    return /^[0-9]{1,20}$/.test(id)?'admin:customer:'+id:'admin:customers';
+  }
+  if(key.startsWith('admin:customers'))return 'admin:home';
+  if(key.startsWith('admin:staff:'))return 'admin:staff';
+  if(key==='admin:staff')return 'admin:home';
+  if(key==='admin:tickets')return isAdmin?'admin:home':'customer:home';
+  if(key.startsWith('ticket:view:'))return 'admin:tickets';
+  if(key.startsWith('ticket:')){
+    const id=key.split(':').at(-1);
+    return /^tg-[0-9]{1,20}$/.test(id)?'ticket:view:'+id:'admin:tickets';
+  }
+  if(key.startsWith('seller:'))return 'seller:home';
+  if(key==='support'||key==='/support')return 'customer:tickets';
+  if(key.startsWith('customer:ticket:reply:'))
+    return 'customer:ticket:'+key.slice('customer:ticket:reply:'.length);
+  if(key.startsWith('customer:ticket:'))return 'customer:tickets';
+  if(key.startsWith('customer:tickets'))return 'customer:home';
+  if(key.startsWith('orders:view:'))return 'orders';
+  if(key.startsWith('my:link:'))return 'my';
+  if(key.startsWith('buy:'))return 'plans';
+  if(key==='plans'||key==='my'||key==='orders'||key==='status'||
+     key==='help'||key==='privacy'||key==='/plans'||key==='/my'||key==='/orders')
+    return 'customer:home';
+  return isAdmin?'admin:home':'customer:home';
+}
+
+/** Called at outbox time so every route, including legacy wizards and
+ * secondary screens, gets the same scoped action + one back convention. */
+export function contextualKeyboard(key,markup,{isAdmin=false}={}){
+  if(!markup||!Array.isArray(markup.inline_keyboard))return markup;
+  key=String(key??'');
+  const adminHome=isAdmin&&['/start','/admin','admin:home','home'].includes(key);
+  const userHome=['customer:home'].includes(key)||!isAdmin&&['/start','home'].includes(key);
+  const sellerHome=key==='seller:home'||key==='/seller';
+  if(adminHome)return structuredClone(markup);
+  if(userHome||sellerHome){
+    return {...markup,inline_keyboard:markup.inline_keyboard.map(row=>row.filter(
+      b=>!String(b.text??'').includes('نمای مشتری'))).filter(row=>row.length>0)};
+  }
+  const target=parentPage(key,isAdmin);
+  const backData='v2:'+target;
+  const rootAdmin=new Set(adminMenu().inline_keyboard.flat().map(b=>b.callback_data));
+  const rootCustomer=new Set(botMenu().inline_keyboard.flat().map(b=>b.callback_data));
+  const source=markup.inline_keyboard;
+  const isFullAdminMenu=source.flat().filter(b=>rootAdmin.has(b.callback_data)).length>=4;
+  const isFullCustomerMenu=source.flat().filter(b=>rootCustomer.has(b.callback_data)).length>=4;
+  const rows=source.map(row=>row.filter(button=>{
+    const txt=String(button.text??''),cb=String(button.callback_data??'');
+    if(txt.includes('نمای مشتری'))return false;
+    if(cb===backData)return false;
+    if(txt.startsWith('↩️')||txt.startsWith('🏠'))return false;
+    if(isFullAdminMenu&&rootAdmin.has(cb))return false;
+    if(isFullCustomerMenu&&rootCustomer.has(cb))return false;
+    return true;
+  })).filter(row=>row.length>0);
+  rows.push([{text:'↩️ بازگشت',callback_data:backData}]);
+  return {...markup,inline_keyboard:rows};
 }
 export function usageMeter(usedBytes,maxBytes){
   const max=Number(maxBytes),used=Number(usedBytes);
