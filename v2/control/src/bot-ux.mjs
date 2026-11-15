@@ -100,16 +100,14 @@ const customerMenu={inline_keyboard:[
 const managerMenu={inline_keyboard:[
   [
     {text:'🖥 مدیریت سرورها',callback_data:'v2:admin:nodes'},
-  ],
-  [
     {text:'🛍 مدیریت پلن‌ها',callback_data:'v2:admin:plans'},
+  ],
+  [
     {text:'🧾 بررسی رسیدها',callback_data:'v2:admin:queue'},
-  ],
-  [
     {text:'👥 مشتریان',callback_data:'v2:admin:customers'},
-    {text:'💬 صندوق پشتیبانی',callback_data:'v2:admin:tickets'},
   ],
   [
+    {text:'💬 صندوق پشتیبانی',callback_data:'v2:admin:tickets'},
     {text:'🧑‍💼 کارکنان و فروشندگان',callback_data:'v2:admin:staff'},
   ],
 ]};
@@ -159,7 +157,9 @@ export function parentPage(key,isAdmin=false){
   if(key==='admin:queue')return 'admin:home';
   if(key.startsWith('admin:customer:')){
     const id=key.split(':').at(-1);
-    return /^[0-9]{1,20}$/.test(id)?'admin:customer:'+id:'admin:customers';
+    const isAction=/^admin:customer:(?:suspend|activate|confirm):/.test(key);
+    return isAction&&/^[0-9]{1,20}$/.test(id)
+      ?'admin:customer:'+id:'admin:customers';
   }
   if(key.startsWith('admin:customers'))return 'admin:home';
   if(key.startsWith('admin:staff:'))return 'admin:staff';
