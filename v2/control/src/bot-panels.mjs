@@ -173,7 +173,7 @@ export async function staffTicketDetails(env,e,id,page=0) {
     (conversation?'\n\n'+conversation:'\n\nهنوز پیامی ثبت نشده است.'),
     [
       ...(ticket.state==='closed'
-        ?[button('🔓 بازگشایی درخواست','ticket:confirm-reopen:'+id)]
+        ?[]
         :[
           button('✉️ پاسخ به مشتری','ticket:reply:'+id),
           button('🔒 بستن درخواست','ticket:confirm-close:'+id),
