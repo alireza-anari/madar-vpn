@@ -156,3 +156,19 @@ test('support staff can inspect conversations but customers cannot inspect staff
   assert.match(denied.text,/Access denied/);
   raw.close();
 });
+
+test('suspended account cannot use an existing carrier subscription token',async()=>{
+  const {env,raw}=fixture();
+  const {tokenDigest,getSubscription}=await import('../src/subscription.mjs');
+  const token='A'.repeat(43),hash=await tokenDigest(token);
+  raw.prepare("INSERT INTO subscriptions(id,owner_telegram_id,state,expires_at,max_bytes,used_bytes) VALUES('sub-1','200','active',4000000,100000000,0)").run();
+  raw.prepare("INSERT INTO subscription_tokens(token_hash,subscription_id,expires_at) VALUES(?,'sub-1',4000000)").run(hash);
+  const req=new Request('https://v2.example.test/api/v2/subscription',{headers:{authorization:'Bearer '+token}});
+  const protectedEnv={...env,SUBSCRIPTION_API_ENABLED:'true',SUBSCRIPTION_CREDENTIAL_KEY:'A'.repeat(43)};
+  raw.prepare("UPDATE customers SET state='suspended' WHERE telegram_id='200'").run();
+  assert.equal((await getSubscription(req,protectedEnv,1000000)).status,403);
+  raw.prepare("UPDATE customers SET state='active' WHERE telegram_id='200'").run();
+  // Valid owner passes token check but must still have a verified node route.
+  assert.equal((await getSubscription(req,protectedEnv,1000000)).status,503);
+  raw.close();
+});
