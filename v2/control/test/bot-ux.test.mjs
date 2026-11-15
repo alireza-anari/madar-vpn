@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { botMenu,botPage } from '../src/bot-ux.mjs';
+import { botMenu,adminMenu,supportMenu,sellerMenu,botPage,faMoney,faGB,faStatus,faDate } from '../src/bot-ux.mjs';
 import {toBotMessage} from '../src/telegram.mjs';
 
 test('all menu callbacks lead to a meaningful supported page',()=>{
@@ -61,4 +61,14 @@ test('bot menus are Persian-only, compact and visually consistent',()=>{
   const page=botPage('home','en');
   assert.match(page.text,/🌐  مــدار/);
   assert.doesNotMatch(page.text,/[A-Za-z]{3,}/);
+});
+
+test('manager, seller and support menus use Persian labels and local display formats',()=>{
+  for(const menu of [adminMenu(),sellerMenu(),supportMenu()]){
+    for(const button of menu.inline_keyboard.flat())assert.doesNotMatch(button.text,/[A-Za-z]{3,}/);
+  }
+  assert.equal(faGB(30),'۳۰ گیگابایت');
+  assert.equal(faMoney(300000,'IRT'),'۳۰۰٬۰۰۰ تومان');
+  assert.equal(faStatus('receipt_submitted'),'رسید ارسال شده');
+  assert.match(faDate('2026-11-15'),/۱۴۰۵/);
 });
