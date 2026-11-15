@@ -655,7 +655,10 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
       return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
     const result=await nodeAdminAction(db,e.actorId,key==='admin:nodes'?'/nodes':key,e.inputText);
     if(key==='admin:nodes')return adminResponse(result.text,e.locale,[
-      [{text:'➕ افزودن سرور',callback_data:'v2:admin:node:new'}],
+      [
+        {text:'➕ افزودن سرور',callback_data:'v2:admin:node:new'},
+        {text:'🧪 آزمون سرورها',callback_data:'v2:admin:node:trials'},
+      ],
     ]);
     return adminResponse(result.text,e.locale);
   }
