@@ -1,5 +1,6 @@
 import {issueTrialLink,enqueueAutoNode} from './node-auto.mjs';
 import {issueCarrierLink} from './carrier-subscription.mjs';
+import {adminConfigAction} from './bot-config.mjs';
 import {adminDashboard,adminPanelAction,customerTicketAction,consumePanelInput,notifySupport,staffTicketDetails} from './bot-panels.mjs';
 import {beginNodeWizard,cancelNodeWizard,consumeNodeWizard} from './node-wizard.mjs';
 import { nodeAdminAction,nodeOverview,nodeDetails,nodeManagement,nodeFromRef } from './node-admin.mjs';
@@ -625,6 +626,11 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
     if(!await grantStaffRole(db,e,role,id))
       return adminResponse('⚠️ شناسه تلگرام معتبر نیست. دستور را همراه شناسه عددی بفرستید.',e.locale);
     return adminResponse('✅ دسترسی '+faRole(role)+' برای شناسه '+id+' فعال شد.',e.locale);
+  }
+  if(key==='admin:configs'||key.startsWith('admin:configs:')){
+    if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
+      return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
+    return adminConfigAction(env,e,nowMs);
   }
   if(/^admin:nodes:(all|ready|setup|attention|quarantine|archive):[0-9]{1,4}$/.test(key)){
     if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
