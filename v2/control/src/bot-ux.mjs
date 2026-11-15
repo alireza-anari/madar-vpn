@@ -36,6 +36,8 @@ const states={
   dispatching:'در حال ارسال دستور',dispatched:'دستور ارسال شد',
   failed:'ناموفق',disabled:'غیرفعال',revoked:'لغوشده',
   reserved:'رزروشده',accepted:'پذیرفته‌شده',
+  fulfilled:'تحویل داده شده',cancelled:'لغو شده',refunded:'وجه بازگردانده شد',
+  quarantined:'قرنطینه‌شده',retired:'خارج از سرویس',released:'آزاد شده',
 };
 export function faStatus(value) {
   const key=String(value??'').toLowerCase();
@@ -147,7 +149,7 @@ export function statusSymbol(state){
     pending:'🟡',receipt_submitted:'🟡',waiting:'🟡',
     provisioning:'🟠',enrolling:'🟠',open:'🔵',
     rejected:'🔴',failed:'🔴',suspended:'🔴',degraded:'🟠',
-    expired:'⚪',closed:'⚪',disabled:'⚪'})[state]??'🔹';
+    expired:'⚪',closed:'⚪',disabled:'⚪',fulfilled:'✅',cancelled:'⚪',refunded:'⚪',quarantined:'🔴',retired:'⚪'})[state]??'🔹';
 }
 
 const pages={
