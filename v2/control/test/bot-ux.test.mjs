@@ -24,7 +24,7 @@ test('no false advertising of live VPN or payment readiness',()=>{
 });
 test('validates Telegram updates and displays localized help',()=>{
   assert.equal(toBotMessage({update_id:1,message:{chat:{id:'not an integer'},text:'/start'}}),null);
-  assert.equal(toBotMessage({update_id:1,message:{chat:{id:123,type:'private'},from:{id:123},text:'x'.repeat(300)}}),null);
+  assert.equal(toBotMessage({update_id:1,message:{chat:{id:123,type:'private'},from:{id:123},text:'x'.repeat(2001)}}),null);
   const msg=toBotMessage({update_id:2,message:{chat:{id:123,type:'private'},from:{id:123,language_code:'en-US'},text:'/help'}});
   assert.match(msg.text,/Help/);
 });
@@ -35,4 +35,20 @@ test('private Telegram identity enforced for all customer and admin entrypoints'
   assert.equal(toBotMessage({...base,message:{...base.message,chat:{id:123,type:'group'}}}),null);
   assert.equal(toBotMessage({...base,message:{...base.message,from:{id:456}}}),null);
   assert.equal(toBotMessage({...base,message:{...base.message,from:{id:123,is_bot:true}}}),null);
+});
+
+test('support and plan messages may exceed callback limits, typed callbacks cannot impersonate buttons',()=>{
+  const long='شرح مشکل و اتصال اینترنت '.repeat(25);
+  const note=toBotMessage({update_id:901,message:{chat:{id:123,type:'private'},from:{id:123},text:long}});
+  assert.ok(note);
+  assert.equal(note.inputText,long);
+  assert.equal(note.key,'شرح');
+  const forged=toBotMessage({update_id:902,message:{chat:{id:123,type:'private'},from:{id:123},text:'v2:admin:home'}});
+  assert.ok(forged);
+  assert.equal(forged.key,'v2:admin:home');
+  assert.notEqual(forged.key,'admin:home');
+  const invalidCallback=toBotMessage({update_id:903,callback_query:{
+    from:{id:123},data:'v2:'+('x'.repeat(300)),message:{chat:{id:123,type:'private'}}
+  }});
+  assert.equal(invalidCallback,null);
 });
