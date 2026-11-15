@@ -47,14 +47,18 @@ export function faRole(value) {
   return ({seller:'فروشنده',support:'پشتیبان',admin:'مدیر'})[value]??String(value??'');
 }
 export function panelHeading(icon,title,subtitle='') {
-  return [icon+'  '+title,'━━━━━━━━━━━━━━━━━━',subtitle].filter(Boolean).join('\n');
+  return [icon+'  '+title,subtitle].filter(Boolean).join('\n');
 }
 export function panelRow(icon,label,value) { return icon+' '+label+': '+value; }
 export function frameMessage(content) {
   const body=String(content??'').trim();
-  if(body.startsWith('🌐  مــدار\n━━━━━━━━━━━━━━━━━━'))return body;
-  return '🌐  مــدار\n━━━━━━━━━━━━━━━━━━\n'+body+'\n━━━━━━━━━━━━━━━━━━';
+  if(body.startsWith('🌐  مــدار\n'))return body;
+  return '🌐  مــدار\n'+body;
 }
+
+/** The image is a public, non-sensitive visual asset; all live counts stay in the caption. */
+export const BRAND_BANNER_URL='https://raw.githubusercontent.com/alireza-anari/madar-vpn/rewrite/madar-v2-20261110/apps/sales-bot/public/madar-logo.png';
+
 
 const customerMenu={inline_keyboard:[
   [
