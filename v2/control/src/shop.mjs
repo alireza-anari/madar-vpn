@@ -591,8 +591,8 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
       ...plans.map(x=>x.id+'  |  '+x.title_fa+'  |  '+(x.active?'فعال':'غیرفعال')+'  |  '+money(x.price_amount,x.price_currency)),
       'پلن‌های تازه غیرفعال ساخته می‌شوند. فعال‌سازی فقط پس از تأیید ظرفیت و امکان صدور مجاز است.'),e.locale,[
         [{text:'➕ ساخت پلن جدید',callback_data:'v2:admin:plan:new'}],
-        ...plans.map(x=>[{text:(x.active?'🔴 غیرفعال‌سازی ':'🟢 فعال‌سازی ')+x.id,
-          callback_data:'v2:plan:'+(x.active?'off:':'on:')+x.id}]),
+        ...plans.map(x=>[{text:(x.active?'🔴 غیرفعال‌سازی ':'🟢 فعال‌سازی ')+x.title_fa.slice(0,16),
+          callback_data:'v2:admin:plan:confirm:'+(x.active?'off:':'on:')+x.id}]),
       ]);
   }
   if(key==='/node_add_auto') {
@@ -642,6 +642,29 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
     return adminResponse(result[0]?.meta?.changes===1
       ?'✅ پلن با موفقیت و در وضعیت غیرفعال ثبت شد.'
       :'ℹ️ این شناسه پلن قبلاً ثبت شده است؛ تغییری ایجاد نشد.',e.locale);
+  }
+  if(key.startsWith('admin:plan:confirm:')){
+    if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
+      return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
+    const m=key.match(/^admin:plan:confirm:(on|off):([a-zA-Z0-9_-]{2,30})$/);
+    if(!m)return adminResponse('⚠️ شناسه پلن معتبر نیست.',e.locale);
+    const [,mode,id]=m;
+    const plan=await db.prepare(
+      'SELECT id,title_fa,active,price_amount,price_currency FROM plans WHERE id=?'
+    ).bind(id).first();
+    if(!plan)return adminResponse('پلن موردنظر پیدا نشد.',e.locale);
+    if(Boolean(plan.active)===(mode==='on'))
+      return adminResponse('این پلن از قبل در وضعیت انتخاب‌شده قرار دارد.',e.locale,
+        [[{text:'🛍 فهرست پلن‌ها',callback_data:'v2:admin:plans'}]]);
+    return adminResponse(
+      '⚠️  تأیید تغییر پلن\n━━━━━━━━━━━━━━━━━━\n'+
+      'پلن: '+plan.title_fa+'\nقیمت: '+money(plan.price_amount,plan.price_currency)+
+      '\nوضعیت کنونی: '+(plan.active?'فعال':'غیرفعال')+
+      '\nوضعیت درخواستی: '+(mode==='on'?'فعال':'غیرفعال')+
+      '\n\nبرای جلوگیری از تغییر ناخواسته، تصمیم خود را تأیید کنید.',e.locale,[
+      [{text:'✅ تأیید تغییر وضعیت',callback_data:'v2:plan:'+mode+':'+id}],
+      [{text:'↩️ انصراف',callback_data:'v2:admin:plans'}],
+    ]);
   }
   if(key.startsWith('plan:on:')||key.startsWith('plan:off:')) {
     if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
