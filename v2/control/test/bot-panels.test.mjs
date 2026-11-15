@@ -111,6 +111,7 @@ test('staff grants and revokes require admin, with session expiry and admin prot
 test('bot language stays Persian for every Telegram device locale',async()=>{
   const {env,raw,event}=fixture();
   const home=await resolveBotAction(env,event(100,'/start','/start',25));
+  assert.match(home.text,/پیشخوان مدیریت/);
   assert.ok(home.replyMarkup.inline_keyboard.flat().some(b=>b.callback_data==='v2:admin:home'));
   const lang=await resolveBotAction(env,event(200,'lang:en',null,26));
   assert.match(lang.text,/زبان ربات مدار فارسی است/);
