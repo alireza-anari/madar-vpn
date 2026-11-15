@@ -46,7 +46,7 @@ test('owner-only dashboard shows real counts with actions but no payment shortcu
   assert.doesNotMatch(a.text,/━━━━━━━━/);
   const keys=a.replyMarkup.inline_keyboard.flat().map(x=>x.callback_data);
   for(const required of ['v2:admin:nodes','v2:admin:plans','v2:admin:queue',
-    'v2:admin:staff','v2:admin:customers','v2:admin:tickets'])
+    'v2:admin:staff','v2:admin:customers','v2:admin:tickets','v2:admin:configs'])
     assert.ok(keys.includes(required));
   assert.ok(keys.includes('v2:customer:home')); // Admin dashboard preview only.
   assert.ok(!keys.includes('v2:admin:node:new'));
