@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { botMenu,adminMenu,supportMenu,sellerMenu,botPage,faMoney,faGB,faStatus,faDate } from '../src/bot-ux.mjs';
+import { botMenu,adminMenu,supportMenu,sellerMenu,botPage,faMoney,faGB,faStatus,faDate,usageMeter,sectionNavigation,frameMessage } from '../src/bot-ux.mjs';
 import {toBotMessage} from '../src/telegram.mjs';
 
 test('all menu callbacks lead to a meaningful supported page',()=>{
@@ -74,4 +74,25 @@ test('manager, seller and support menus use Persian labels and local display for
   assert.equal(faMoney(300000,'IRT'),'۳۰۰٬۰۰۰ تومان');
   assert.equal(faStatus('receipt_submitted'),'رسید ارسال شده');
   assert.match(faDate('2026-11-15'),/۱۴۰۵/);
+});
+
+test('contextual navigation stays focused and quota progress is safe',()=>{
+  const admin=sectionNavigation('admin').flat();
+  assert.equal(admin.length,2);
+  assert.ok(admin.some(b=>b.callback_data==='v2:admin:home'));
+  assert.ok(!admin.some(b=>b.callback_data==='v2:admin:plans'));
+  assert.equal(usageMeter(5,10),'▰▰▰▰▰▱▱▱▱▱  ۵۰٪');
+  assert.match(usageMeter(0,0),/نامشخص/);
+  assert.equal(usageMeter(-3,100),'▱▱▱▱▱▱▱▱▱▱  ۰٪');
+});
+
+test('Telegram native styling highlights the brand and section without parsing user HTML',async()=>{
+  const {brandedEntities}=await import('../src/index.mjs');
+  const text=frameMessage('🛠  پیشخوان مدیریت مدار\nمشتریان: ۳');
+  const entities=brandedEntities(text);
+  assert.equal(entities.length,2);
+  assert.equal(entities[0].type,'bold');
+  assert.equal(text.slice(entities[0].offset,entities[0].offset+entities[0].length),'🌐  مــدار');
+  assert.equal(text.slice(entities[1].offset,entities[1].offset+entities[1].length),'🛠  پیشخوان مدیریت مدار');
+  assert.deepEqual(brandedEntities('plain text'),[]);
 });
