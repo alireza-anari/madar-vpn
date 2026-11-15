@@ -273,6 +273,10 @@ export default {
     const oldDays=(n)=>Math.floor((now-n*86400000)/1000);
     await env.DB.prepare('DELETE FROM node_nonces WHERE created_ms<?')
       .bind(now-10*60*1000).run();
+    // Expire private conversation input state independently of Telegram inbox
+    // retention. Never retain an abandoned admin/customer wizard indefinitely.
+    await env.DB.prepare('DELETE FROM v2_bot_input_sessions WHERE expires_ms<?')
+      .bind(now).run();
     await env.DB.prepare(
       "DELETE FROM telegram_inbox WHERE state IN ('done','dead') " +
       "AND created_at<datetime(?,'unixepoch')"
