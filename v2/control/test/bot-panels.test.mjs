@@ -216,8 +216,9 @@ test('customer order details are account-scoped and show the next action',async(
 test('the new admin plan and receipt flows require confirmation before changing records',async()=>{
   const {env,raw,event}=fixture();
   raw.exec("INSERT INTO plans(id,title_fa,title_en,price_amount,price_currency,quota_bytes,duration_days,active) VALUES('monthly','اشتراک یک‌ماهه','Monthly',300000,'IRT',32212254720,30,1)");
-  raw.exec("INSERT INTO orders(id,customer_telegram_id,plan_id,idempotency_key,quoted_amount,quoted_currency,state) VALUES('order-demo','200','monthly','order-test','300000','IRT','receipt_submitted')");
+  raw.exec("INSERT INTO orders(id,customer_telegram_id,plan_id,idempotency_key,quoted_amount,quoted_currency) VALUES('order-demo','200','monthly','order-test','300000','IRT')");
   raw.exec("INSERT INTO receipts(id,order_id,telegram_file_id,upload_by_telegram_id) VALUES('receipt-1','order-demo','telegram-photo-test','200')");
+  raw.exec("UPDATE orders SET state='receipt_submitted' WHERE id='order-demo'");
   const plan=await resolveBotAction(env,event(100,'admin:plans',null,110));
   assert.ok(plan.replyMarkup.inline_keyboard.flat().some(b=>b.callback_data==='v2:admin:plan:confirm:off:monthly'));
   const caution=await resolveBotAction(env,event(100,'admin:plan:confirm:off:monthly',null,111));
