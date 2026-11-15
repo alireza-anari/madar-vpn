@@ -46,6 +46,10 @@ export function faStatus(value) {
 export function faRole(value) {
   return ({seller:'فروشنده',support:'پشتیبان',admin:'مدیر'})[value]??String(value??'');
 }
+export function panelHeading(icon,title,subtitle='') {
+  return [icon+'  '+title,'━━━━━━━━━━━━━━━━━━',subtitle].filter(Boolean).join('\n');
+}
+export function panelRow(icon,label,value) { return icon+' '+label+': '+value; }
 export function frameMessage(content) {
   const body=String(content??'').trim();
   if(body.startsWith('🌐  مــدار\n━━━━━━━━━━━━━━━━━━'))return body;
@@ -55,40 +59,40 @@ export function frameMessage(content) {
 const customerMenu={inline_keyboard:[
   [
     {text:'🛍 خرید اشتراک',callback_data:'v2:plans'},
-    {text:'👤 اشتراک من',callback_data:'v2:my'},
+    {text:'📦 اشتراک‌های من',callback_data:'v2:my'},
   ],
   [
     {text:'🧾 سفارش‌های من',callback_data:'v2:orders'},
-    {text:'💬 درخواست‌های پشتیبانی',callback_data:'v2:customer:tickets'},
+    {text:'💬 پشتیبانی',callback_data:'v2:customer:tickets'},
   ],
   [
     {text:'📶 وضعیت سرویس',callback_data:'v2:status'},
-    {text:'❓ راهنما',callback_data:'v2:help'},
+    {text:'📘 راهنمای اتصال',callback_data:'v2:help'},
   ],
   [
     {text:'🔐 حریم خصوصی',callback_data:'v2:privacy'},
-    {text:'🏠 خانه',callback_data:'v2:home'},
+    {text:'🏠 خانه',callback_data:'v2:customer:home'},
   ],
 ]};
 const managerMenu={inline_keyboard:[
   [
-    {text:'➕ افزودن سرور',callback_data:'v2:admin:node:new'},
+    {text:'📊 پیشخوان مدیریت',callback_data:'v2:admin:home'},
     {text:'🖥 مدیریت سرورها',callback_data:'v2:admin:nodes'},
   ],
   [
-    {text:'🧪 لینک‌های آزمایشی',callback_data:'v2:admin:node:trials'},
-    {text:'🛍 مدیریت پلن‌ها',callback_data:'v2:admin:plans'},
+    {text:'➕ افزودن سرور',callback_data:'v2:admin:node:new'},
+    {text:'🧪 آزمون سرورها',callback_data:'v2:admin:node:trials'},
   ],
   [
+    {text:'🛍 مدیریت پلن‌ها',callback_data:'v2:admin:plans'},
     {text:'🧾 بررسی رسیدها',callback_data:'v2:admin:queue'},
+  ],
+  [
+    {text:'👥 مشتریان',callback_data:'v2:admin:customers'},
     {text:'💬 صندوق پشتیبانی',callback_data:'v2:admin:tickets'},
   ],
   [
-    {text:'👥 مدیریت مشتریان',callback_data:'v2:admin:customers'},
     {text:'🧑‍💼 کارکنان و فروشندگان',callback_data:'v2:admin:staff'},
-  ],
-  [
-    {text:'🏠 خانه',callback_data:'v2:home'},
   ],
 ]};
 const sellerMenuMarkup={inline_keyboard:[
@@ -98,12 +102,12 @@ const sellerMenuMarkup={inline_keyboard:[
   ],
   [
     {text:'🔒 لغو لینک‌های قبلی',callback_data:'v2:seller:revoke'},
-    {text:'🏠 خانه',callback_data:'v2:home'},
+    {text:'🏠 خانه',callback_data:'v2:customer:home'},
   ],
 ]};
 const supportMenuMarkup={inline_keyboard:[
   [{text:'💬 صندوق پشتیبانی',callback_data:'v2:admin:tickets'}],
-  [{text:'🏠 خانه',callback_data:'v2:home'}],
+  [{text:'🏠 خانه مشتری',callback_data:'v2:customer:home'}],
 ]};
 export function botMenu() { return structuredClone(customerMenu); }
 export function adminMenu() { return structuredClone(managerMenu); }
@@ -122,7 +126,7 @@ export function sectionNavigation(role='customer'){
        {text:'👤 نمای مشتری',callback_data:'v2:customer:home'}],
     ],
     seller:[
-      [{text:'↩️ پیشخوان فروشنده',callback_data:'v2:seller:home'},
+      [{text:'↩️ پنل فروشنده',callback_data:'v2:seller:home'},
        {text:'🏠 خانه',callback_data:'v2:customer:home'}],
     ],
     support:[
@@ -137,7 +141,8 @@ export function usageMeter(usedBytes,maxBytes){
   if(!Number.isFinite(max)||max<=0)return 'حجم اشتراک نامشخص است';
   const safeUsed=Number.isFinite(used)?Math.max(0,used):0;
   const ratio=Math.min(1,safeUsed/max),filled=Math.round(ratio*10);
-  const percent=new Intl.NumberFormat('fa-IR',{maximumFractionDigits:0}).format(safeUsed/max*100);
+  const percent=new Intl.NumberFormat('fa-IR',{maximumFractionDigits:0})
+    .format(Math.min(100,Math.max(0,safeUsed/max*100)));
   return '▰'.repeat(filled)+'▱'.repeat(10-filled)+'  '+percent+'٪';
 }
 export function shortCode(value,max=10){
@@ -153,12 +158,12 @@ export function statusSymbol(state){
 }
 
 const pages={
-  home:'🌐 به مدار خوش آمدید\n\nاز منوی پایین می‌توانید اشتراک، سفارش‌ها و درخواست‌های پشتیبانی خود را مدیریت کنید.\n\n⛔ فروش عمومی تا تکمیل آزمون‌های اتصال و کنترل مصرف غیرفعال است. لطفاً پرداختی انجام ندهید.',
-  plans:'🛍  خرید اشتراک\n\nفروش عمومی غیرفعال است. پس از تأیید پرداخت، ظرفیت سرورها و کنترل سهمیه، پلن‌ها در همین بخش منتشر می‌شوند.\n\nاشتراک‌های نسخه قبلی شما مستقل و محفوظ هستند.',
-  my:'👤  اشتراک من\n\nوضعیت اشتراک، میزان مصرف، تاریخ انقضا و لینک اتصال در این بخش نمایش داده می‌شود.',
+  home:'🌐 به مدار خوش آمدید\n\nاز اینجا می‌توانید اشتراک بخرید، وضعیت سرویس و سفارش‌ها را ببینید و با پشتیبانی در ارتباط باشید.\n\n⛔ فروش عمومی تا تأیید آزمون اتصال و کنترل مصرف غیرفعال است. لطفاً فعلاً پرداختی انجام ندهید.',
+  plans:'🛍  انتخاب اشتراک\n\nفروش عمومی غیرفعال است. بسته‌ها پس از تأیید ظرفیت و کنترل مصرف در این بخش منتشر می‌شوند.\n\nاشتراک‌های نسخه قبلی شما مستقل و محفوظ هستند.',
+  my:'📦  اشتراک‌های من\n\nوضعیت، حجم مصرفی، تاریخ پایان و لینک اتصال اشتراک‌های شما در این بخش نمایش داده می‌شود.',
   status:'📶  وضعیت سرویس\n\nمدار در مرحله آزمون نهایی قرار دارد. مسیرهای تأییدنشده هنوز آماده استفاده نیستند؛ فقط مسیرهایی که آزمون واقعی اتصال را گذرانده باشند فعال می‌شوند.',
   support:'💬  پشتیبانی\n\nبرای ثبت درخواست، دکمه «شروع درخواست پشتیبانی» را بزنید و مشکل را در یک پیام توضیح دهید.\n\n🔐 رمز عبور، اطلاعات بانکی یا کلید خصوصی ارسال نکنید.',
-  help:'❓  راهنمای استفاده\n\n۱. از «خرید اشتراک» پلن‌های فعال را ببینید.\n۲. از «اشتراک من» وضعیت و حجم مصرفی را بررسی کنید.\n۳. در «سفارش‌های من» نتیجه بررسی رسید را ببینید.\n۴. برای پیگیری مشکل از «پشتیبانی» استفاده کنید.\n\nبرای بازگشت به منوی اصلی، «خانه» را بزنید.',
+  help:'📘  راهنمای استفاده\n\n۱. از «خرید اشتراک» بسته موردنظر را انتخاب کنید.\n۲. پس از ثبت سفارش، رسید پرداخت را در همین ربات بفرستید.\n۳. نتیجه بررسی را در «سفارش‌های من» دنبال کنید.\n۴. لینک اتصال و حجم مصرفی در «اشتراک‌های من» قرار می‌گیرد.\n۵. برای پیگیری مشکل از «پشتیبانی» استفاده کنید.',
   privacy:'🔐  حریم خصوصی\n\nمدار فقط اطلاعات ضروری برای مدیریت حساب، سفارش و پشتیبانی را نگهداری می‌کند.\n\nرمز عبور، اطلاعات کارت بانکی، کلید خصوصی و اطلاعات ورود سرور را در گفت‌وگو ارسال نکنید.',
   orders:'🧾  سفارش‌های من\n\nآخرین سفارش‌ها، مبلغ و وضعیت بررسی رسید در این بخش نمایش داده می‌شود.',
   tickets:'💬  درخواست‌های پشتیبانی من\n\nدرخواست‌های ثبت‌شده و پاسخ‌های پشتیبانی را از این بخش دنبال کنید.',
@@ -166,7 +171,8 @@ const pages={
   unknown:'این گزینه شناخته نشد. برای نمایش منوی اصلی، «خانه» را انتخاب کنید.',
 };
 export function botPage(page) {
-  const resolved=page==='customer:tickets'?'tickets':page;
+  const resolved=page==='customer:tickets'?'tickets':
+    (page==='customer:home'||page==='admin:home')?'home':page;
   const body=Object.hasOwn(pages,resolved)?pages[resolved]:pages.unknown;
   return {text:frameMessage(body),replyMarkup:botMenu()};
 }

@@ -9,7 +9,7 @@ import { handleSeller, linkSellerOnStart, grantStaffRole } from './referrals.mjs
  * update ID or by a state-qualified SQL transition. No unattended payment or
  * config issuance takes place from this module.
  */
-import { botMenu,botPage,adminMenu,sellerMenu,supportMenu,frameMessage,faNumber,faMoney,faGB,faDate,faStatus,faRole,sectionNavigation,usageMeter,statusSymbol,shortCode } from './bot-ux.mjs';
+import { botMenu,botPage,adminMenu,sellerMenu,supportMenu,frameMessage,faNumber,faMoney,faGB,faDate,faStatus,faRole,sectionNavigation,usageMeter,statusSymbol,shortCode,panelHeading } from './bot-ux.mjs';
 
 const ORDER_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{1,48}$/;
 const PLAN_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{1,30}$/;
@@ -76,23 +76,25 @@ async function listPlans(db, env, locale, nowMs) {
   const plans = (await db.prepare(
     'SELECT id,title_fa,price_amount,price_currency,quota_bytes,duration_days FROM plans WHERE active=1 ORDER BY price_amount,id LIMIT 12'
   ).all()).results ?? [];
-  if (!plans.length) return response(t('🛍 هنوز پلنی برای فروش منتشر نشده است.', '🛍 No plans have been published yet.', locale), locale);
+  if (!plans.length) return response(
+    panelHeading('🛍','فروشگاه اشتراک','بسته مناسب خود را در این بخش انتخاب کنید')+
+    '\n\nدر حال حاضر بسته فعالی برای خرید منتشر نشده است.\n\nاشتراک‌های نسخه قبلی شما مستقل و محفوظ هستند.',
+    locale);
   const items = [];
   const buttons = [];
   for (const p of plans) {
     const label = p.title_fa;
-    const details = faNumber(p.duration_days) + ' روز · ' + faGB(p.quota_bytes / 1073741824);
-    items.push('┌ ' + label + '\n│ مدت: ' + details + '\n└ هزینه: ' + money(p.price_amount, p.price_currency));
+    items.push('┌ '+label+'\n│ ⏱ مدت: '+faNumber(p.duration_days)+' روز\n│ 📦 حجم: '+faGB(p.quota_bytes / 1073741824)+
+      '\n└ 💳 قیمت: '+money(p.price_amount,p.price_currency));
     if (salesConfigured(env) && await availableForSale(db, p, nowMs)) {
-      buttons.push([{text:t('خرید ','Buy ',locale) + label.slice(0,24),callback_data:'v2:buy:' + p.id}]);
+      buttons.push([{text:'🛒 خرید · '+label.slice(0,18),callback_data:'v2:buy:'+p.id}]);
     }
   }
   const warning = buttons.length
-    ? t('فقط پس از پرداخت و تأیید رسید توسط مدیر، سفارش بررسی می‌شود. صدور کانفیگ منوط به آماده‌شدن نود است.',
-        'Receipt review is manual. A configuration is issued only after node provisioning succeeds.',locale)
-    : t('فعلاً فروش فعال نیست یا سرور تأییدشده با ظرفیت کافی موجود نیست؛ پرداخت نکنید.',
-        'Sales are disabled or no verified server has enough capacity; do not pay.',locale);
-  return response(line('🛍  پلن‌های مدار','━━━━━━━━━━━━━━━━━━',...items,'',warning),locale,buttons);
+    ? 'پس از پرداخت، تصویر رسید را ارسال کنید. فعال‌سازی فقط بعد از تأیید مدیر و آماده‌سازی سرور انجام می‌شود.'
+    : '⛔ فروش فعلاً غیرفعال است یا ظرفیت تأییدشده کافی نیست؛ لطفاً پرداخت نکنید.';
+  return response(panelHeading('🛍','انتخاب اشتراک','بسته‌ها را از نظر حجم، مدت و قیمت مقایسه کنید')+
+    '\n\n'+items.join('\n\n──────────────\n\n')+'\n\n'+warning,locale,buttons);
 }
 
 async function pendingOrder(db,id) {
@@ -182,14 +184,17 @@ async function myOrders(db,e) {
   const orders=(await db.prepare(
     'SELECT id,state,quoted_amount,quoted_currency FROM orders WHERE customer_telegram_id=? ORDER BY created_at DESC LIMIT 5'
   ).bind(e.actorId).all()).results ?? [];
-  if (!orders.length)return response('🧾  سفارش‌های من\n\nهنوز سفارشی ثبت نکرده‌اید.\nبرای شروع، پلن‌های موجود را بررسی کنید.',e.locale);
-  return response(line('🧾  پیگیری سفارش‌ها','━━━━━━━━━━━━━━━━━━',
-    ...orders.map((o,i)=>(
-      faNumber(i+1)+'.  '+statusSymbol(o.state)+' '+faStatus(o.state)+
-      '\n     '+money(o.quoted_amount,o.quoted_currency)+
-      '\n     کد پیگیری: '+shortCode(o.id)
-    )),'','برای دیدن جزئیات و مرحله بعد، سفارش را انتخاب کنید.'),e.locale,
-    orders.map(o=>[{text:statusSymbol(o.state)+' مشاهده سفارش '+shortCode(o.id,8),
+  if (!orders.length)return response(
+    panelHeading('🧾','سفارش‌های من','پیگیری خریدها و وضعیت پرداخت')+
+    '\n\nهنوز سفارشی ثبت نکرده‌اید.\nبرای شروع، بسته‌های فعال را بررسی کنید.',
+    e.locale,[[{text:'🛍 مشاهده بسته‌ها',callback_data:'v2:plans'}]]);
+  return response(panelHeading('🧾','پیگیری سفارش‌ها','آخرین سفارش‌های ثبت‌شده در حساب شما')+
+    '\n\n'+orders.map((o,i)=>(
+      faNumber(i+1)+'. '+statusSymbol(o.state)+' '+faStatus(o.state)+
+      '\n💳 مبلغ: '+money(o.quoted_amount,o.quoted_currency)+
+      '\n🔎 کد پیگیری: '+shortCode(o.id,18)
+    )).join('\n\n──────────────\n\n'),
+    e.locale,orders.map(o=>[{text:'👁 مشاهده · '+shortCode(o.id,10),
       callback_data:'v2:orders:view:'+o.id}]));
 }
 
@@ -204,20 +209,22 @@ async function orderDetails(db,e,id){
     receipt_submitted:'⏳ رسید دریافت شده و در صف بررسی مدیر است. نیازی به ارسال دوباره نیست.',
     approved:'✅ رسید تأیید شده است. آماده‌سازی اشتراک به تأیید سرور بستگی دارد.',
     provisioning:'⚙️ در حال آماده‌سازی سرویس هستیم. وضعیت را از همین صفحه پیگیری کنید.',
-    fulfilled:'✅ سفارش تحویل داده شده است. جزئیات اتصال را در «اشتراک من» ببینید.',
-    cancelled:'سفارش لغو شده است. برای سفارش جدید به بخش پلن‌ها برگردید.',
+    fulfilled:'✅ سفارش تحویل داده شده است. جزئیات اتصال را در «اشتراک‌های من» ببینید.',
+    cancelled:'سفارش لغو شده است. برای سفارش جدید به بخش بسته‌ها برگردید.',
     refunded:'وجه این سفارش بازگردانده شده است. برای پیگیری از پشتیبانی کمک بگیرید.',
     rejected:'❌ رسید تأیید نشده است. برای پیگیری درخواست پشتیبانی ثبت کنید.'
   }[order.state]??'برای پیگیری وضعیت از بخش پشتیبانی استفاده کنید.';
-  return response(line(
-    '🧾  جزئیات سفارش','━━━━━━━━━━━━━━━━━━',
-    'کد پیگیری: '+order.id,
-    'وضعیت: '+statusSymbol(order.state)+' '+faStatus(order.state),
-    'مبلغ: '+money(order.quoted_amount,order.quoted_currency),
-    'تاریخ ثبت: '+faDate(order.created_at),'',
-    'مرحله بعد','──────────────',step
-  ),e.locale,[
-    [{text:'🔄 تازه‌سازی وضعیت سفارش',callback_data:'v2:orders:view:'+id}],
+  const stage=({pending:1,receipt_submitted:2,approved:3,provisioning:4,fulfilled:5})[order.state]??0;
+  const stages=['ثبت سفارش','ارسال رسید','بررسی پرداخت','آماده‌سازی سرویس','تحویل اشتراک'];
+  const timeline=stages.map((label,i)=>(stage>i?'🟢 ':'⚪ ')+label).join('\n');
+  return response(panelHeading('🧾','جزئیات سفارش','پیگیری مرحله‌به‌مرحله')+
+    '\n\n🔎 کد پیگیری: '+order.id+
+    '\nوضعیت: '+statusSymbol(order.state)+' '+faStatus(order.state)+
+    '\n💳 مبلغ: '+money(order.quoted_amount,order.quoted_currency)+
+    '\n📅 تاریخ ثبت: '+faDate(order.created_at)+
+    '\n\nروند سفارش\n'+timeline+
+    '\n\nمرحله بعد\n'+step,e.locale,[
+    [{text:'🔄 تازه‌سازی وضعیت',callback_data:'v2:orders:view:'+id}],
     [{text:'🧾 سفارش‌های من',callback_data:'v2:orders'},
      {text:'💬 پشتیبانی',callback_data:'v2:customer:tickets'}]
   ]);
@@ -227,23 +234,28 @@ async function mySubscriptions(db,e,env) {
   const rows=(await db.prepare(
     'SELECT id,state,expires_at,max_bytes,used_bytes FROM subscriptions WHERE owner_telegram_id=? ORDER BY expires_at DESC LIMIT 5'
   ).bind(e.actorId).all()).results??[];
-  if (!rows.length)return response('👤  اشتراک‌های من\n\nهنوز اشتراک فعالی در مدار V2 ندارید.\nاشتراک نسخه قبلی شما مستقل و محفوظ است.',e.locale,[
-    [{text:'🛍 مشاهده پلن‌ها',callback_data:'v2:plans'},
-     {text:'🧾 پیگیری سفارش',callback_data:'v2:orders'}]
-  ]);
+  if (!rows.length)return response(
+    panelHeading('📦','اشتراک‌های من','وضعیت و اطلاعات اتصال سرویس شما')+
+    '\n\nهنوز اشتراک فعالی در مدار V2 ندارید.\nاشتراک نسخه قبلی شما مستقل و محفوظ است.',
+    e.locale,[[
+      {text:'🛍 مشاهده بسته‌ها',callback_data:'v2:plans'},
+      {text:'🧾 پیگیری سفارش',callback_data:'v2:orders'}
+    ]]);
   const buttons=env.SUBSCRIPTION_LINKS_ENABLED==='true'?
     rows.filter(x=>x.state==='active').map(x=>[{
-      text:'🔗 دریافت لینک دو اپراتور · '+shortCode(x.id,8),
+      text:'🔗 دریافت لینک اتصال · '+shortCode(x.id,8),
       callback_data:'v2:my:link:'+x.id,
     }]):[];
-  return response(line('👤  اشتراک‌های من','━━━━━━━━━━━━━━━━━━',
-    ...rows.map((x,i)=>(
-      faNumber(i+1)+'.  '+statusSymbol(x.state)+' '+faStatus(x.state)+
-      '\nاشتراک: '+shortCode(x.id)+
-      '\nمصرف: '+faGB(x.used_bytes/1073741824)+' از '+faGB(x.max_bytes/1073741824)+
+  return response(panelHeading('📦','اشتراک‌های من','مصرف، اعتبار و لینک اتصال')+
+    '\n\n'+rows.map((x,i)=>(
+      faNumber(i+1)+'. '+statusSymbol(x.state)+' '+faStatus(x.state)+
+      '\nشناسه: '+shortCode(x.id,18)+
+      '\n📊 مصرف: '+faGB(x.used_bytes/1073741824)+' از '+faGB(x.max_bytes/1073741824)+
       '\n'+usageMeter(x.used_bytes,x.max_bytes)+
-      '\nتاریخ پایان: '+faDate(x.expires_at)+'\n'
-    )),'🔐 لینک اتصال مخصوص حساب شماست و حجم هر دو اپراتور مشترک است.'),e.locale,[
+      '\n📅 پایان اعتبار: '+faDate(x.expires_at)
+    )).join('\n\n──────────────\n\n')+
+    '\n\n🔐 لینک اتصال خصوصی است؛ حجم دو مسیر همراه اول و ایرانسل مشترک محاسبه می‌شود.',
+    e.locale,[
       ...buttons,
       [{text:'🧾 سفارش‌های من',callback_data:'v2:orders'},
        {text:'💬 پشتیبانی',callback_data:'v2:customer:tickets'}]
@@ -255,7 +267,8 @@ async function beginSupport(db,e,nowMs) {
     "INSERT INTO customer_sessions(telegram_id,mode,expires_ms) VALUES(?,'support',?) " +
     "ON CONFLICT(telegram_id) DO UPDATE SET mode='support',expires_ms=excluded.expires_ms"
   ).bind(e.actorId,nowMs+10*60*1000).run();
-  return response('💬  ثبت درخواست پشتیبانی\n━━━━━━━━━━━━━━━━━━\nموضوع و شرح مشکل خود را در یک پیام توضیح دهید. تا ۱۰ دقیقه فرصت دارید.\n\n🔐 رمز عبور، اطلاعات کارت بانکی یا کلید خصوصی ارسال نکنید.',e.locale);
+  return response(panelHeading('💬','ثبت درخواست پشتیبانی','تیم مدار در کنار شماست')+
+    '\n\nموضوع و شرح مشکل را در یک پیام بنویسید.\nمهلت ارسال: ۱۰ دقیقه.\n\n🔐 رمز عبور، اطلاعات بانکی یا کلید خصوصی ارسال نکنید.',e.locale);
 }
 
 async function maybeRecordSupport(db,e,env,nowMs) {
@@ -292,10 +305,13 @@ async function adminQueue(db,e) {
     "AND EXISTS(SELECT 1 FROM receipts r WHERE r.order_id=o.id AND r.state='pending') " +
     "ORDER BY o.created_at LIMIT 8"
   ).all()).results??[];
-  if(!queue.length)return adminResponse('✅ هیچ رسیدی در صف بررسی نیست.',e.locale);
-  return adminResponse('🧾  رسیدهای منتظر بررسی\n━━━━━━━━━━━━━━━━━━\n'+
-    queue.map(x=>'شناسه: '+x.id.slice(0,8)+'…  |  مبلغ: '+money(x.quoted_amount,x.quoted_currency)+
-      '\nمشتری: '+x.customer_telegram_id).join('\n\n'),
+  if(!queue.length)return adminResponse(
+    panelHeading('🧾','بررسی پرداخت‌ها','صندوق رسیدهای ارسالی')+
+    '\n\n✅ رسیدی برای بررسی باقی نمانده است.',e.locale);
+  return adminResponse(panelHeading('🧾','صندوق بررسی پرداخت','رسیدهای منتظر تصمیم مدیر')+
+    '\n\n'+queue.map((x,i)=>faNumber(i+1)+'. سفارش '+shortCode(x.id,16)+
+      '\n👤 مشتری: '+x.customer_telegram_id+
+      '\n💳 مبلغ: '+money(x.quoted_amount,x.quoted_currency)).join('\n\n──────────────\n\n'),
     e.locale,queue.map(x=>[
       {text:'👁 بررسی رسید · '+shortCode(x.id,8),callback_data:'v2:admin:receipt:'+x.id}
     ]));
@@ -310,9 +326,10 @@ async function adminReceipt(db,e,id) {
   ).bind(id).first();
   if(!receipt)return adminResponse('رسید برای بررسی در دسترس نیست.',e.locale);
   return {
-    text:frameMessage('🧾  بررسی رسید پرداخت\n━━━━━━━━━━━━━━━━━━\nشناسه سفارش: '+id+
-      '\nمبلغ: '+money(receipt.quoted_amount,receipt.quoted_currency)+
-      '\nتصویر رسید را بررسی کنید و سپس نتیجه را ثبت کنید.'),
+    text:frameMessage(panelHeading('🧾','بررسی رسید پرداخت','تصویر و مبلغ سفارش را با دقت تطبیق دهید')+
+      '\n\n🔎 شناسه سفارش: '+id+
+      '\n💳 مبلغ: '+money(receipt.quoted_amount,receipt.quoted_currency)+
+      '\n\nپس از بررسی تصویر، تصمیم خود را ثبت کنید.'),
     photoId:receipt.telegram_file_id,
     replyMarkup:{inline_keyboard:[
       [{text:'✅ تأیید رسید',callback_data:'v2:admin:review:approve:'+id},
@@ -367,12 +384,16 @@ async function supportInbox(env,e) {
     "SELECT id,customer_telegram_id,subject,state FROM support_tickets " +
     "WHERE state IN ('open','waiting') ORDER BY created_at LIMIT 8"
   ).all()).results??[];
-  if(!queue.length)return staffResponse('✅ درخواست پشتیبانی بازی در صف نیست.',e,env);
-  return staffResponse('💬  صندوق پشتیبانی\n━━━━━━━━━━━━━━━━━━\n'+queue.map(x=>
-    x.id+'  |  '+faStatus(x.state)+'\nمشتری: '+x.customer_telegram_id+'\nموضوع: '+x.subject.slice(0,80)
-  ).join('\n\n'),e,env,queue.map(x=>[
-    {text:'💬 مشاهده '+shortCode(x.id,10),callback_data:'v2:ticket:view:'+x.id},
-  ]));
+  if(!queue.length)return staffResponse(
+    panelHeading('💬','صندوق پشتیبانی','مدیریت گفت‌وگوهای مشتریان')+
+    '\n\n✅ درخواست بازِ پشتیبانی در صف نیست.',e,env);
+  return staffResponse(panelHeading('💬','صندوق پشتیبانی','درخواست‌های نیازمند پاسخ')+
+    '\n\n'+queue.map((x,i)=>faNumber(i+1)+'. '+statusSymbol(x.state)+' '+faStatus(x.state)+
+      '\nکد: '+x.id+'  ·  مشتری: '+x.customer_telegram_id+
+      '\nموضوع: '+x.subject.slice(0,80)).join('\n\n──────────────\n\n'),
+    e,env,queue.map(x=>[
+      {text:'💬 مشاهده · '+shortCode(x.id,10),callback_data:'v2:ticket:view:'+x.id},
+    ]));
 }
 
 async function staffCanReply(db,e,env) {
@@ -455,30 +476,39 @@ async function closeSupport(db,e,id,nowMs,env) {
 
 async function personalizedHome(env,e,customerView=false) {
   const isAdmin=adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId);
+  if(isAdmin&&!customerView)return adminDashboard(env,e);
   const seller=await isStaff(env.DB,e,'seller');
   const supportAgent=await isStaff(env.DB,e,'support');
-  const active=(await env.DB.prepare(
-    "SELECT COUNT(*) AS n FROM subscriptions WHERE owner_telegram_id=? AND state='active' AND expires_at>?"
-  ).bind(e.actorId,Date.now()).first())?.n??0;
-  const greeting='🌐 به مدار خوش آمدید';
-  const customer=await env.DB.prepare('SELECT state FROM customers WHERE telegram_id=?')
-    .bind(e.actorId).first();
-  const state=active>0
-    ?'اشتراک‌های فعال شما: '+faNumber(active)
-    :'در حال حاضر اشتراک فعالی در این نسخه ندارید.';
+  const [active,customer,latestOrder]=await Promise.all([
+    env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM subscriptions WHERE owner_telegram_id=? AND state='active' AND expires_at>?"
+    ).bind(e.actorId,Date.now()).first(),
+    env.DB.prepare('SELECT state FROM customers WHERE telegram_id=?').bind(e.actorId).first(),
+    env.DB.prepare(
+      'SELECT id,state FROM orders WHERE customer_telegram_id=? ORDER BY created_at DESC LIMIT 1'
+    ).bind(e.actorId).first(),
+  ]);
+  const activeCount=Number(active?.n??0);
+  const greeting=isAdmin&&!customerView?'🛠 خوش آمدید، مدیر مدار':'🌐 به مدار خوش آمدید';
+  const state=activeCount>0
+    ?'🟢 اشتراک‌های فعال شما: '+faNumber(activeCount)
+    :'📦 در حال حاضر اشتراک فعالی در این نسخه ندارید.';
+  const orderHint=latestOrder
+    ?'🧾 آخرین سفارش: '+faStatus(latestOrder.state)+' · '+shortCode(latestOrder.id,14)
+    :'🧾 هنوز سفارشی ثبت نکرده‌اید.';
   const safety=!salesConfigured(env)
     ?'⛔ فروش عمومی هنوز فعال نشده است؛ تا تأیید اتصال، ظرفیت و کنترل مصرف، هیچ پرداختی انجام ندهید.'
-    :'برای مشاهده پیشنهادها، بخش خرید اشتراک را انتخاب کنید.';
+    :'برای مشاهده بسته‌ها، بخش خرید اشتراک را انتخاب کنید.';
   const restriction=customer?.state==='suspended'
     ?'\n⛔ حساب شما تعلیق شده است؛ دسترسی به پشتیبانی همچنان برقرار است.':'';
   const menu=customerView?botMenu():isAdmin?adminMenu():supportAgent?supportMenu():seller?sellerMenu():botMenu();
   const quick=[
-    ...(isAdmin?[[{text:'🛠 پیشخوان مدیریت',callback_data:'v2:admin:home'}]]:[]),
+    ...(isAdmin?[[{text:'📊 پیشخوان مدیریت',callback_data:'v2:admin:home'}]]:[]),
     ...(isAdmin&&!customerView?[[{text:'👤 مشاهده نمای مشتری',callback_data:'v2:customer:home'}]]:[]),
     ...(seller?[[{text:'🧑‍💼 ورود به پنل فروشنده',callback_data:'v2:seller:home'}]]:[]),
-
   ];
-  return {text:frameMessage(greeting+'\n\n'+state+'\n'+safety+restriction),
+  return {text:frameMessage(panelHeading('🌐','پنل کاربری مدار','مدیریت اشتراک، سفارش و پشتیبانی')+
+    '\n\n'+greeting+'\n'+state+'\n'+orderHint+'\n\n'+safety+restriction),
     replyMarkup:{inline_keyboard:[...quick,...menu.inline_keyboard]}};
 }
 
@@ -487,10 +517,10 @@ async function liveServiceStatus(env,e,nowMs) {
     "SELECT COUNT(*) AS n FROM nodes n WHERE n.lifecycle='ready' AND EXISTS("+
     "SELECT 1 FROM routes r WHERE r.node_id=n.id AND r.state='ready' AND r.verified_ms BETWEEN ? AND ?)"
   ).bind(nowMs-600000,nowMs).first())?.n??0;
-  return response('📶  وضعیت سرویس مدار\n━━━━━━━━━━━━━━━━━━\n'+
-    (ready>0?'مسیرهای دارای تأیید تازه در ۱۰ دقیقه اخیر: '+faNumber(ready):
-      'در حال حاضر هیچ مسیری با تأیید تازه برای فروش عمومی وجود ندارد.')+'\n\n'+
-    'نصب آزمایشی و دریافت لینک تست به‌تنهایی به معنی آماده‌بودن سرویس پولی نیست.',e.locale);
+  return response(panelHeading('📶','وضعیت سرویس مدار','پایش مسیرهای تأییدشده')+
+    '\n\n'+(ready>0?'🟢 مسیرهای دارای تأیید تازه در ۱۰ دقیقه اخیر: '+faNumber(ready):
+      '🟠 در حال حاضر مسیر تأییدشده تازه‌ای برای فروش عمومی وجود ندارد.')+
+    '\n\nنصب آزمایشی یا دریافت لینک تست به‌تنهایی به معنی آماده‌بودن سرویس پولی نیست.',e.locale);
 }
 
 /** The caller must already validate the Telegram webhook and sender identity. */
@@ -587,9 +617,12 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
     const plans=(await db.prepare(
       'SELECT id,title_fa,active,price_amount,price_currency FROM plans ORDER BY id LIMIT 12'
     ).all()).results??[];
-    return adminResponse(line('🛍  مدیریت پلن‌ها','━━━━━━━━━━━━━━━━━━',
-      ...plans.map(x=>x.id+'  |  '+x.title_fa+'  |  '+(x.active?'فعال':'غیرفعال')+'  |  '+money(x.price_amount,x.price_currency)),
-      'پلن‌های تازه غیرفعال ساخته می‌شوند. فعال‌سازی فقط پس از تأیید ظرفیت و امکان صدور مجاز است.'),e.locale,[
+    return adminResponse(panelHeading('🛍','مدیریت پلن‌ها','قیمت‌گذاری و انتشار بسته‌ها')+
+      '\n\n'+(plans.map(x=>statusSymbol(x.active?'active':'disabled')+' '+x.title_fa+
+        '\nشناسه: '+x.id+'  ·  '+(x.active?'فعال':'غیرفعال')+
+        '\n💳 '+money(x.price_amount,x.price_currency)).join('\n\n──────────────\n\n')||
+        'هنوز پلنی ثبت نشده است.')+
+      '\n\nپلن تازه ابتدا غیرفعال ساخته می‌شود؛ انتشار فقط پس از تأیید ظرفیت و صدور مجاز است.',e.locale,[
         [{text:'➕ ساخت پلن جدید',callback_data:'v2:admin:plan:new'}],
         ...plans.map(x=>[{text:(x.active?'🔴 غیرفعال‌سازی ':'🟢 فعال‌سازی ')+x.title_fa.slice(0,16),
           callback_data:'v2:admin:plan:confirm:'+(x.active?'off:':'on:')+x.id}]),
