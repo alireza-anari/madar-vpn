@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { verifyTelegramSecret,toBotMessage } from '../src/telegram.mjs';
+import { dispatchOutbox } from '../src/index.mjs';
 import worker from '../src/index.mjs';
+
 test('rejects missing and mismatched webhook credentials', async () => {
   assert.equal(await verifyTelegramSecret('wrong','correct'),false);
   assert.equal(await verifyTelegramSecret('correct','correct'),true);
@@ -15,6 +17,73 @@ test('bounded bot parsing does not fake paid VPN issuance', () => {
   assert.equal(msg.chatId,'456');
   assert.match(msg.text,/به مدار خوش آمدید/);
   assert.equal(toBotMessage({update_id:-1}),null);
+});
+test('callback parsing keeps the owning Telegram message for in-place navigation',()=>{
+  const text=toBotMessage({update_id:124,callback_query:{
+    id:'callback-1',data:'v2:my',from:{id:456},
+    message:{message_id:77,chat:{id:456,type:'private'},text:'پنل مدار'},
+  }});
+  assert.equal(text.messageId,77);
+  assert.equal(text.editKind,'text');
+  const photo=toBotMessage({update_id:125,callback_query:{
+    id:'callback-2',data:'v2:admin:review:approve:order-1',from:{id:456},
+    message:{message_id:78,chat:{id:456,type:'private'},caption:'رسید',photo:[{file_id:'photo-id'}]},
+  }});
+  assert.equal(photo.messageId,78);
+  assert.equal(photo.editKind,'caption');
+});
+function outboxFixture(row){
+  let state='pending';
+  const DB={prepare(sql){
+    return {bind(...args){return {
+      async all(){
+        if(sql.includes('FROM telegram_outbox'))return {results:state==='pending'?[row]:[]};
+        return {results:[]};
+      },
+      async run(){
+        if(sql.includes("SET state='leased'")){state='leased';return {meta:{changes:1}};}
+        if(sql.includes("SET state='sent'")){state='sent';return {meta:{changes:1}};}
+        if(sql.includes("SET state=?")){state='pending';return {meta:{changes:1}};}
+        return {meta:{changes:1}};
+      },
+    };}};
+  }};
+  return {DB,getState:()=>state};
+}
+test('outbox edits an existing text panel instead of adding another chat message',async()=>{
+  const fixture=outboxFixture({
+    id:1,chat_id:'456',body:'🌐  مــدار\n━━━━━━━━━━━━━━━━━━\n📦 اشتراک‌های من',
+    attempts:0,reply_markup:JSON.stringify({inline_keyboard:[]}),
+    media_file_id:null,edit_message_id:77,edit_kind:'text',
+  });
+  const original=globalThis.fetch,calls=[];
+  globalThis.fetch=async(url,init)=>{
+    calls.push({method:String(url).split('/').pop(),payload:JSON.parse(init.body)});
+    return new Response(JSON.stringify({ok:true,result:{message_id:77}}),{status:200});
+  };
+  try{await dispatchOutbox({DB:fixture.DB,BOT_TOKEN:'test-token'},1000);}
+  finally{globalThis.fetch=original;}
+  assert.equal(calls.length,1);
+  assert.equal(calls[0].method,'editMessageText');
+  assert.equal(calls[0].payload.message_id,77);
+  assert.equal(calls[0].payload.chat_id,'456');
+  assert.equal(fixture.getState(),'sent');
+});
+test('outbox treats an unchanged Telegram panel as successfully delivered on retry',async()=>{
+  const fixture=outboxFixture({
+    id:2,chat_id:'456',body:'🌐  مــدار\n━━━━━━━━━━━━━━━━━━\n📦 اشتراک‌های من',
+    attempts:1,reply_markup:JSON.stringify({inline_keyboard:[]}),
+    media_file_id:null,edit_message_id:77,edit_kind:'text',
+  });
+  const original=globalThis.fetch,calls=[];
+  globalThis.fetch=async(url,init)=>{
+    calls.push(String(url).split('/').pop());
+    return new Response(JSON.stringify({ok:false,description:'Bad Request: message is not modified'}),{status:400});
+  };
+  try{await dispatchOutbox({DB:fixture.DB,BOT_TOKEN:'test-token'},2000);}
+  finally{globalThis.fetch=original;}
+  assert.deepEqual(calls,['editMessageText']);
+  assert.equal(fixture.getState(),'sent');
 });
 test('readiness fails closed without required bindings', async () => {
   const response=await worker.fetch(new Request('https://localhost/health/ready'),{},{});

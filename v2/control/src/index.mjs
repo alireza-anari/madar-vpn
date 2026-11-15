@@ -42,12 +42,20 @@ async function readJson(request) {
   finally {reader.releaseLock();}
 }
 
+async function telegramCall(env,method,payload) {
+  try {
+    const response=await fetch('https://api.telegram.org/bot'+env.BOT_TOKEN+'/'+method,{
+      method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify(payload),signal:AbortSignal.timeout(12000),
+    });
+    const data=await response.json().catch(()=>null);
+    return {ok:response.ok&&data?.ok===true,description:String(data?.description??'')};
+  } catch {
+    return {ok:false,description:''};
+  }
+}
 async function telegram(env,method,payload) {
-  const response=await fetch('https://api.telegram.org/bot'+env.BOT_TOKEN+'/'+method,{
-    method:'POST',headers:{'content-type':'application/json'},
-    body:JSON.stringify(payload),signal:AbortSignal.timeout(12000),
-  });
-  return response.ok && (await response.json()).ok===true;
+  return (await telegramCall(env,method,payload)).ok;
 }
 
 /** A per-chat ordered durable inbox. A failed update is retried without
@@ -76,10 +84,14 @@ export async function processInbox(env,nowMs=Date.now()) {
       // idempotent action but cannot add a second outgoing reply.
       await env.DB.prepare(
         "INSERT OR IGNORE INTO telegram_outbox " +
-        "(update_id,chat_id,body,reply_markup,media_file_id,state,due_ms) VALUES (?,?,?,?,?,'pending',?)"
+        "(update_id,chat_id,body,reply_markup,media_file_id,edit_message_id,edit_kind,state,due_ms) "+
+        "VALUES (?,?,?,?,?,?,?,'pending',?)"
       ).bind(item.update_id,event.chatId,msg.text.slice(0,3800),
         msg.replyMarkup?JSON.stringify(msg.replyMarkup):null,
-        msg.photoId??null,nowMs).run();
+        msg.photoId??null,
+        msg.photoId?null:(Number.isSafeInteger(event.messageId)?event.messageId:null),
+        msg.photoId?null:(event.editKind==='caption'?'caption':event.editKind==='text'?'text':null),
+        nowMs).run();
       await env.DB.prepare(
         "UPDATE telegram_inbox SET state='done',lease_until_ms=0,event_json='{}' " +
         "WHERE update_id=? AND state='leased'"
@@ -109,7 +121,7 @@ export function brandedEntities(body){
 /** Every table is a compile-time constant; never interpolate user data as SQL. */
 async function deliverTable(env,name,nowMs,withPhoto) {
   const rows=(await env.DB.prepare(
-    'SELECT id,chat_id,body,attempts'+(withPhoto?',reply_markup,media_file_id':'')+
+    'SELECT id,chat_id,body,attempts'+(withPhoto?',reply_markup,media_file_id,edit_message_id,edit_kind':'')+
     ' FROM '+name+" WHERE (state='pending' AND due_ms<=?) OR "+
     "(state='leased' AND lease_until_ms<=?) ORDER BY id LIMIT 20"
   ).bind(nowMs,nowMs).all()).results??[];
@@ -125,12 +137,32 @@ async function deliverTable(env,name,nowMs,withPhoto) {
       const media=withPhoto && typeof item.media_file_id==='string' && item.media_file_id.length>0;
       const displayBody=media?item.body.slice(0,1024):item.body;
       const entities=brandedEntities(displayBody);
-      sent=await telegram(env,media?'sendPhoto':'sendMessage',{
+      const sendPayload={
         chat_id:item.chat_id,
         ...(media?{photo:item.media_file_id,caption:displayBody}:{text:displayBody}),
         ...(entities.length?{[media?'caption_entities':'entities']:entities}:{}),
         ...(markup?{reply_markup:markup}:{}),
-      });
+      };
+      let editAttempted=false;
+      if(withPhoto&&item.edit_message_id&&!media) {
+        const caption=item.edit_kind==='caption';
+        if(!caption||displayBody.length<=1024) {
+          editAttempted=true;
+          const method=caption?'editMessageCaption':'editMessageText';
+          const field=caption?'caption':'text';
+          const editPayload={
+            chat_id:item.chat_id,message_id:item.edit_message_id,[field]:displayBody,
+            ...(entities.length?{[caption?'caption_entities':'entities']:entities}:{}),
+            reply_markup:markup??{inline_keyboard:[]},
+          };
+          const edited=await telegramCall(env,method,editPayload);
+          sent=edited.ok||/message is not modified/i.test(edited.description);
+          if(!sent&&/message to edit not found|message can't be edited|there is no text in the message to edit|message_id_invalid|message caption is too long|message is too long/i.test(edited.description))
+            sent=await telegram(env,'sendMessage',{chat_id:item.chat_id,text:displayBody,
+              ...(entities.length?{entities}:{}),...(markup?{reply_markup:markup}:{})});
+        }
+      }
+      if(!editAttempted)sent=await telegram(env,media?'sendPhoto':'sendMessage',sendPayload);
     } catch { /* retry; no credentials, content or chat IDs in logs */ }
     if(sent) {
       await env.DB.prepare('UPDATE '+name+" SET state='sent',lease_until_ms=0 "+
@@ -165,6 +197,7 @@ async function receive(request,env,ctx) {
   const minimal={
     updateId:event.updateId,chatId:event.chatId,actorId:event.actorId,
     locale:event.locale,key:event.key,inputText:event.inputText,photoId:event.photoId,
+    messageId:event.messageId,editKind:event.editKind,
   };
   const payload=JSON.stringify(minimal);
   if(payload.length>8192) return json({error:'too_large'},413);

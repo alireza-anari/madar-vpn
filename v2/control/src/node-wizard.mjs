@@ -1,8 +1,8 @@
 import {enqueueAutoNode,parseAutoNode} from './node-auto.mjs';
-import {adminMenu,frameMessage} from './bot-ux.mjs';
+import {adminMenu,frameMessage,panelHeading} from './bot-ux.mjs';
 
 /** راهنمای افزودن امن سرور؛ رمز و کلید خصوصی هرگز در تلگرام دریافت نمی‌شود. */
-const prompt='🖥  افزودن خودکار سرور در مدار V2\n━━━━━━━━━━━━━━━━━━\n'+
+const prompt=panelHeading('🖥','افزودن خودکار سرور','راه‌اندازی امن از داخل پنل مدیریت')+'\n\n'+
   'اطلاعات زیر را به همین ترتیب و با علامت | از هم جدا کنید:\n'+
   'شناسه فنی | ارائه‌دهنده | منطقه | سقف کاربر | ظرفیت گیگابایت | نشانی IP\n\n'+
   'نمونه سرور آزمایشی:\n'+
@@ -20,9 +20,9 @@ export function newNodePrompt() {
 
 export async function beginNodeWizard(db,actor,nowMs,env=null) {
   if(env?.RUNNER_ENROLLMENT_ENABLED==='true')return {
-    text:frameMessage('🖥  افزودن امن سرور\n━━━━━━━━━━━━━━━━━━\n'+
-      'فرم امن را باز کنید؛ بررسی اتصال و نصب توسط اجراکننده انجام می‌شود.\n'+
-      'رمز عبور یا کلید خصوصی را در پیام تلگرام ارسال نکنید.'),
+    text:frameMessage(panelHeading('🖥','افزودن امن سرور','فرایند نصب خودکار و کنترل‌شده')+
+      '\n\nفرم امن را باز کنید؛ بررسی اتصال و نصب توسط اجراکننده انجام می‌شود.\n'+
+      '🔐 رمز عبور یا کلید خصوصی را در پیام تلگرام ارسال نکنید.'),
     replyMarkup:{inline_keyboard:[
       [{text:'🔒 باز کردن فرم امن افزودن سرور',web_app:{url:'https://madar-v2-staging.alirezaanari117.workers.dev/enroll'}}],
       ...adminMenu().inline_keyboard,

@@ -1,5 +1,5 @@
 /** پنل‌های فارسی مدیریت و مشتری در ربات مدار V2. */
-import {adminMenu,frameMessage,faNumber,faStatus,faRole,statusSymbol,sectionNavigation,shortCode} from './bot-ux.mjs';
+import {adminMenu,frameMessage,faNumber,faStatus,faRole,statusSymbol,sectionNavigation,shortCode,panelHeading} from './bot-ux.mjs';
 
 const NAT=/^[0-9]{1,20}$/;
 const TICKET=/^tg-[0-9]{1,20}$/;
@@ -32,31 +32,43 @@ export async function adminDashboard(env,e) {
     count(db,"SELECT COUNT(*) AS n FROM nodes WHERE lifecycle='ready'"),
     count(db,"SELECT COUNT(*) AS n FROM subscriptions WHERE state='active'")
   ]);
-  const items=[
+  const salesReady=env.SHOP_ENABLED==='true'&&env.PROVISIONING_ENABLED==='true'&&
+    typeof env.PAYMENT_INSTRUCTIONS==='string'&&env.PAYMENT_INSTRUCTIONS.trim().length>=12&&
+    env.PAYMENT_INSTRUCTIONS.length<=700;
+  const alerts=[
     receipts>0?'🧾 '+faNumber(receipts)+' رسید منتظر بررسی':null,
     tickets>0?'💬 '+faNumber(tickets)+' درخواست پشتیبانی باز':null,
     ready===0?'🖥 هنوز سرور آماده فروش وجود ندارد':null,
   ].filter(Boolean);
   const body=[
-    '🛠  پیشخوان مدیریت مدار',
-    '━━━━━━━━━━━━━━━━━━',
-    '📊 نمای کلی سامانه',
-    '👥 مشتریان: '+faNumber(customers)+'    🔗 اشتراک‌های فعال: '+faNumber(subs),
-    '🧾 سفارش‌های باز: '+faNumber(orders)+'    📥 رسیدها: '+faNumber(receipts),
-    '💬 گفت‌وگوهای باز: '+faNumber(tickets),
-    '🖥 سرورها: '+faNumber(nodes)+'  |  نصب‌شده: '+faNumber(installed)+'  |  آماده: '+faNumber(ready),
+    panelHeading('📊','پیشخوان مدیریت','مرکز کنترل و پایش مدار'),
     '',
-    '🎯 نیازمند پیگیری',
-    ...(items.length?items:['✅ مورد فوری در صف مدیریت ثبت نشده است.']),
+    'شاخص‌های کلیدی',
+    '👥 مشتریان: '+faNumber(customers)+'   ·   🔗 اشتراک‌های فعال: '+faNumber(subs),
+    '🧾 سفارش‌های باز: '+faNumber(orders)+'   ·   رسیدهای دریافتی: '+faNumber(receipts),
+    '💬 درخواست‌های باز پشتیبانی: '+faNumber(tickets),
+    '',
+    'زیرساخت و ظرفیت',
+    '🖥 سرورها: '+faNumber(nodes)+'   ·   نصب‌شده: '+faNumber(installed)+'   ·   آماده: '+faNumber(ready),
+    '🛒 وضعیت فروش عمومی: '+(salesReady?'آماده بررسی':'غیرفعال'),
+    '',
+    'نیازمند اقدام',
+    ...(alerts.length?alerts:['✅ مورد فوری در صف مدیریت ثبت نشده است.']),
     '',
     ready>0
-      ?'⚠️ آماده‌بودن سرور به‌تنهایی مجوز فروش نیست؛ آزمون اتصال و سهمیه باید تأیید شود.'
+      ?'🛡 آماده‌بودن سرور به‌تنهایی مجوز فروش نیست؛ آزمون مسیر و ظرفیت باید تأیید شده باشد.'
       :'⛔ فروش عمومی تا تأیید مسیر و ظرفیت غیرفعال است.',
     '',
-    'بخش موردنظر را از دکمه‌های زیر انتخاب کنید.'
+    'برای ادامه، یکی از بخش‌های مدیریت را انتخاب کنید.'
   ].join('\n');
-  // فقط در صفحه اصلی مدیر، منوی کامل نمایش داده می‌شود.
-  return {text:frameMessage(body),replyMarkup:adminMenu()};
+  const urgent=[];
+  if(receipts>0)urgent.push([{text:'🧾 بررسی رسیدها · '+faNumber(receipts),callback_data:'v2:admin:queue'}]);
+  if(tickets>0)urgent.push([{text:'💬 درخواست‌های باز · '+faNumber(tickets),callback_data:'v2:admin:tickets'}]);
+  return {text:frameMessage(body),replyMarkup:{inline_keyboard:[
+    ...urgent,
+    [{text:'👤 مشاهده نمای مشتری',callback_data:'v2:customer:home'}],
+    ...adminMenu().inline_keyboard
+  ]}};
 }
 
 export async function customerTickets(env,e,page=0) {
@@ -67,8 +79,7 @@ export async function customerTickets(env,e,page=0) {
   ).bind(e.actorId,pageIndex*6).all()).results??[];
   const visible=rows.slice(0,6),next=rows.length>6;
   if(!visible.length)return panel(
-    '💬  پشتیبانی مدار\n\nدرخواستی برای نمایش وجود ندارد.\n'+
-    'برای صحبت با پشتیبانی، «ثبت درخواست جدید» را انتخاب کنید.',
+    panelHeading('💬','پشتیبانی مدار','همراه شما برای حل مشکل'),
     e.locale,[button('➕ ثبت درخواست جدید','support')]);
   const controls=visible.map(x=>button(
     statusSymbol(x.state)+' '+shortCode(x.id,12)+' · '+faStatus(x.state),
@@ -79,11 +90,11 @@ export async function customerTickets(env,e,page=0) {
   if(pages.length)controls.push(pages);
   controls.push(button('➕ درخواست جدید','support'));
   return panel(
-    '💬  درخواست‌های پشتیبانی من\n━━━━━━━━━━━━━━━━━━\n'+
-    'صفحه '+faNumber(pageIndex+1)+'\n\n'+
+    panelHeading('💬','درخواست‌های پشتیبانی','گفت‌وگوهای شما با تیم مدار')+
+    '\nصفحه '+faNumber(pageIndex+1)+'\n\n'+
     visible.map((x,i)=>
       faNumber(pageIndex*6+i+1)+'. '+statusSymbol(x.state)+' '+faStatus(x.state)+
-      '\n'+x.subject.slice(0,85)+'\nکد: '+x.id
+      '\n'+x.subject.slice(0,85)+'\nکد پیگیری: '+x.id
     ).join('\n\n──────────────\n\n'),
     e.locale,controls);
 }
@@ -102,13 +113,13 @@ async function thread(env,e,id,ownerOnly) {
   const messages=rows.reverse().map(x=>
     (x.role==='customer'?'👤 شما':'🧑‍💼 پشتیبانی')+'\n'+x.body.slice(0,600));
   const controls=ticket.state==='closed'
-    ?[button('💬 ثبت درخواست جدید','support')]
-    :[button('✉️ پاسخ به این درخواست','customer:ticket:reply:'+id)];
-  controls.push(button('📋 بازگشت به درخواست‌های من','customer:tickets'));
+    ?[button('➕ ثبت درخواست جدید','support')]
+    :[button('✉️ پاسخ به درخواست','customer:ticket:reply:'+id)];
+  controls.push(button('📋 بازگشت به درخواست‌ها','customer:tickets'));
   return panel(
-    '💬  گفت‌وگوی پشتیبانی\n━━━━━━━━━━━━━━━━━━\n'+
-    'شناسه: '+ticket.id+'\nوضعیت: '+faStatus(ticket.state)+'\nموضوع: '+ticket.subject+
-    (messages.length?'\n\n'+messages.join('\n\n──────────────\n\n'):''),
+    panelHeading('💬','گفت‌وگوی پشتیبانی',ticket.subject.slice(0,90))+
+    '\nکد پیگیری: '+ticket.id+'\nوضعیت: '+statusSymbol(ticket.state)+' '+faStatus(ticket.state)+
+    (messages.length?'\n\n'+messages.join('\n\n──────────────\n\n'):'\n\nهنوز پیامی ثبت نشده است.'),
     e.locale,controls);
 }
 
@@ -131,16 +142,16 @@ export async function staffTicketDetails(env,e,id) {
   const conversation=messages.reverse().map(x=>
     (x.role==='customer'?'👤 مشتری':'🧑‍💼 پشتیبان')+'\n'+x.body.slice(0,600)).join('\n\n──────────────\n\n');
   return staffPanel(
-    '💬  جزئیات درخواست پشتیبانی\n━━━━━━━━━━━━━━━━━━\n'+
-    'شناسه: '+ticket.id+'\nمشتری: '+ticket.customer_telegram_id+
-    '\nوضعیت: '+faStatus(ticket.state)+'\nموضوع: '+ticket.subject+
-    (conversation?'\n\n'+conversation:''),
+    panelHeading('💬','جزئیات درخواست',ticket.subject.slice(0,90))+
+    '\nکد پیگیری: '+ticket.id+'\nشناسه مشتری: '+ticket.customer_telegram_id+
+    '\nوضعیت: '+statusSymbol(ticket.state)+' '+faStatus(ticket.state)+
+    (conversation?'\n\n'+conversation:'\n\nهنوز پیامی ثبت نشده است.'),
     [
       ...(ticket.state==='closed'?[]:[
         button('✉️ پاسخ به مشتری','ticket:reply:'+id),
         button('🔒 بستن درخواست','ticket:confirm-close:'+id)
       ]),
-      button('📋 بازگشت به صندوق پشتیبانی','admin:tickets'),
+      button('📋 بازگشت به صندوق','admin:tickets'),
     ],e.locale);
 }
 
@@ -200,8 +211,9 @@ export async function adminPanelAction(env,e,nowMs=Date.now()) {
     if(rows.length>6)pages.push({text:'بعدی ▶️',callback_data:'v2:admin:customers:'+(page+1)});
     if(pages.length)controls.push(pages);
     return adminPanel(
-      '👥  پرونده‌های مشتریان\n━━━━━━━━━━━━━━━━━━\n'+
-      'صفحه '+faNumber(page+1)+'  |  حساب‌های تعلیق‌شده: '+faNumber(suspended)+'\n\n'+
+      '👥  مدیریت مشتریان\n━━━━━━━━━━━━━━━━━━\n'+
+      'صفحه '+faNumber(page+1)+'  |  حساب‌های تعلیق‌شده: '+faNumber(suspended)+'\n'+
+      'برای مشاهده جزئیات، یک مشتری را انتخاب کنید.\n\n'+
       (shown.map(x=>statusSymbol(x.state)+' '+x.telegram_id+'  ·  '+faStatus(x.state)).join('\n')||
         'در این صفحه مشتری‌ای وجود ندارد.'),
       controls,e.locale);
@@ -258,7 +270,8 @@ export async function adminPanelAction(env,e,nowMs=Date.now()) {
       "SELECT sr.telegram_id,sr.role FROM staff_roles sr JOIN customers c ON c.telegram_id=sr.telegram_id WHERE sr.role IN ('seller','support') ORDER BY sr.role,sr.telegram_id LIMIT 25"
     ).all()).results??[];
     return adminPanel(
-      '🧑‍💼  مدیریت کارکنان\n━━━━━━━━━━━━━━━━━━\n'+
+      '🧑‍💼  دسترسی همکاران\n━━━━━━━━━━━━━━━━━━\n'+
+      'نقش هر همکار را از فهرست زیر بررسی و مدیریت کنید.\n\n'+
       (rows.map(x=>'• '+faRole(x.role)+'  |  '+x.telegram_id).join('\n')||'هنوز همکار یا فروشنده‌ای ثبت نشده است.'),
       [
         button('➕ افزودن فروشنده','admin:staff:grant:seller'),

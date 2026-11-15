@@ -35,6 +35,10 @@ export function toBotMessage(update) {
   const photoId=typeof lastPhoto?.file_id==='string' ? lastPhoto.file_id :
     (/^image\/(jpeg|png|webp)$/.test(document?.mime_type??'') &&
      typeof document.file_id==='string' ? document.file_id : null);
+  const messageId=isCallback&&Number.isSafeInteger(event?.message_id)&&event.message_id>0
+    ?event.message_id:null;
+  const editKind=messageId
+    ?(Array.isArray(event?.photo)&&event.photo.length>0?'caption':'text'):null;
   const initialPage=key==='/start'?'home':key.startsWith('/')?key.slice(1):key;
   const page=botPage(initialPage || 'unknown',locale);
   return {
@@ -46,6 +50,8 @@ export function toBotMessage(update) {
     inputText:typeof update.message?.text==='string' ? update.message.text.slice(0,2000) : null,
     photoId:photoId && photoId.length>=5 && photoId.length<=512 ? photoId : null,
     callbackId:typeof update.callback_query?.id==='string' ? update.callback_query.id.slice(0,128) : null,
+    messageId,
+    editKind,
     // Compatibility with early V2 preview tests, before inbox processing:
     text:page.text,
     replyMarkup:page.replyMarkup,

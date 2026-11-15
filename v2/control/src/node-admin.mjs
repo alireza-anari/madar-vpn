@@ -1,5 +1,5 @@
 /** مدیریت فارسی سرورها و مسیرهای پیش‌نویس در محیط V2. */
-import {adminMenu,frameMessage,faStatus,faNumber} from './bot-ux.mjs';
+import {adminMenu,frameMessage,faStatus,faNumber,statusSymbol,panelHeading} from './bot-ux.mjs';
 
 const NODE_ID=/^[A-Za-z0-9][A-Za-z0-9_-]{1,63}$/;
 const PROVIDER=/^[A-Za-z0-9][A-Za-z0-9_.-]{1,63}$/;
@@ -138,14 +138,19 @@ export async function nodeOverview(db) {
     "COUNT(r.id) AS routes FROM nodes n LEFT JOIN routes r ON r.node_id=n.id "+
     "GROUP BY n.id ORDER BY n.created_at DESC,n.id LIMIT 30"
   ).all()).results??[];
-  if(!rows.length)return panel('هنوز سروری در مدار V2 ثبت نشده است. برای افزودن سرور از پنل مدیریت اقدام کنید.');
-  return panel('🖥  فهرست سرورهای مدار\n━━━━━━━━━━━━━━━━━━\n'+rows.map(n=>
-    n.id+'\nارائه‌دهنده: '+n.provider+'  |  منطقه: '+n.region+
-    '\nوضعیت: '+faStatus(n.lifecycle)+
-    '\nنسخه تنظیمات: '+faNumber(n.desired_revision)+
-    '  |  تأیید عامل: '+faNumber(n.acked_revision)+
-    '  |  مسیرها: '+faNumber(n.routes)
-  ).join('\n\n'));
+  if(!rows.length)return panel(
+    panelHeading('🖥','مدیریت سرورها','وضعیت نصب، مسیرها و آمادگی فروش')+
+    '\n\nهنوز سروری در مدار V2 ثبت نشده است. از دکمه «افزودن سرور» شروع کنید.');
+  return panel(panelHeading('🖥','مدیریت سرورها','وضعیت نصب و مسیرهای هر سرور')+
+    '\n\n'+rows.map(n=>
+      statusSymbol(n.lifecycle)+' '+n.id+
+      '\n🌍 ارائه‌دهنده: '+n.provider+'  ·  منطقه: '+n.region+
+      '\nوضعیت: '+faStatus(n.lifecycle)+
+      '\n⚙️ نسخه تنظیمات: '+faNumber(n.desired_revision)+
+      '  ·  تأیید عامل: '+faNumber(n.acked_revision)+
+      '\n🔀 مسیرهای ثبت‌شده: '+faNumber(n.routes)
+    ).join('\n\n──────────────\n\n')+
+    '\n\n🛡 فقط سرورهایی که آزمون واقعی مسیر و ظرفیت را گذرانده‌اند برای فروش مجاز هستند.');
 }
 
 export async function nodeAdminAction(db,actor,key,input) {
