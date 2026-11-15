@@ -40,6 +40,9 @@ test('owner-only dashboard shows real counts with actions but no payment shortcu
   assert.match(a.text,/مشتریان: ۳/);
   assert.match(a.text,/سرورها: ۱/);
   assert.match(a.text,/فروش عمومی/);
+  assert.match(a.photoId,/^https:\/\/raw\.githubusercontent\.com\//);
+  assert.ok(a.text.length<1024);
+  assert.doesNotMatch(a.text,/━━━━━━━━/);
   const keys=a.replyMarkup.inline_keyboard.flat().map(x=>x.callback_data);
   for(const required of ['v2:admin:plans','v2:admin:queue','v2:admin:staff','v2:admin:customers','v2:admin:node:trials'])
     assert.ok(keys.includes(required));
