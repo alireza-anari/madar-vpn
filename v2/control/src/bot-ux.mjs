@@ -96,9 +96,14 @@ const sellerMenu={inline_keyboard:[
     {text:'🏠 خانه',callback_data:'v2:home'},
   ],
 ]};
+const supportMenu={inline_keyboard:[
+  [{text:'💬 صندوق پشتیبانی',callback_data:'v2:admin:tickets'}],
+  [{text:'🏠 خانه',callback_data:'v2:home'}],
+]};
 export function botMenu() { return structuredClone(customerMenu); }
 export function adminMenu() { return structuredClone(managerMenu); }
 export function sellerMenu() { return structuredClone(sellerMenu); }
+export function supportMenu() { return structuredClone(supportMenu); }
 
 const pages={
   home:'🌐 به مدار خوش آمدید\n\nاز منوی پایین می‌توانید اشتراک، سفارش‌ها و درخواست‌های پشتیبانی خود را مدیریت کنید.\n\n⛔ فروش عمومی تا تکمیل آزمون‌های اتصال و کنترل مصرف غیرفعال است. لطفاً پرداختی انجام ندهید.',
