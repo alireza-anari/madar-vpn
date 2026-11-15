@@ -57,8 +57,8 @@ export function frameMessage(content) {
   return '🌐  مــدار\n'+body;
 }
 
-/** The image is a public, non-sensitive visual asset; all live counts stay in the caption. */
-export const BRAND_BANNER_URL='https://raw.githubusercontent.com/alireza-anari/madar-vpn/rewrite/madar-v2-20261110/apps/sales-bot/public/madar-logo.png';
+/** Locally hosted non-sensitive brand artwork; all live counts stay in the caption. */
+export const BRAND_BANNER_URL='https://madar-v2-staging.alirezaanari117.workers.dev/brand/banner.jpg';
 
 
 const customerMenu={inline_keyboard:[
