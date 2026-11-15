@@ -187,16 +187,24 @@ export async function adminPanelAction(env,e,nowMs=Date.now()) {
       'پلن ابتدا غیرفعال ثبت می‌شود. برای لغو، /cancel را بفرستید.',
       [],e.locale);
   }
-  if(key==='admin:customers'){
+  if(key==='admin:customers'||/^admin:customers:[0-9]{1,4}$/.test(key)){
+    const page=key==='admin:customers'?0:Math.min(1000,Number(key.slice('admin:customers:'.length)));
     const rows=(await db.prepare(
-      'SELECT telegram_id,state,locale,created_at FROM customers ORDER BY created_at DESC,telegram_id DESC LIMIT 12'
-    ).all()).results??[];
+      'SELECT telegram_id,state,locale,created_at FROM customers ORDER BY created_at DESC,telegram_id DESC LIMIT 7 OFFSET ?'
+    ).bind(page*6).all()).results??[];
+    const shown=rows.slice(0,6);
     const suspended=await count(db,"SELECT COUNT(*) AS n FROM customers WHERE state='suspended'");
+    const controls=shown.map(x=>button('👤 '+x.telegram_id+' · '+faStatus(x.state),'admin:customer:'+x.telegram_id));
+    const pages=[];
+    if(page>0)pages.push({text:'◀️ قبلی',callback_data:'v2:admin:customers:'+(page-1)});
+    if(rows.length>6)pages.push({text:'بعدی ▶️',callback_data:'v2:admin:customers:'+(page+1)});
+    if(pages.length)controls.push(pages);
     return adminPanel(
-      '👥  مدیریت مشتریان\n━━━━━━━━━━━━━━━━━━\n'+
-      'تعداد حساب‌های تعلیق‌شده: '+faNumber(suspended)+'\n\n'+
-      (rows.map(x=>'• '+x.telegram_id+'  |  '+faStatus(x.state)).join('\n')||'هنوز مشتری‌ای ثبت نشده است.'),
-      rows.map(x=>button('👤 مشاهده '+x.telegram_id,'admin:customer:'+x.telegram_id)),e.locale);
+      '👥  پرونده‌های مشتریان\n━━━━━━━━━━━━━━━━━━\n'+
+      'صفحه '+faNumber(page+1)+'  |  حساب‌های تعلیق‌شده: '+faNumber(suspended)+'\n\n'+
+      (shown.map(x=>statusSymbol(x.state)+' '+x.telegram_id+'  ·  '+faStatus(x.state)).join('\n')||
+        'در این صفحه مشتری‌ای وجود ندارد.'),
+      controls,e.locale);
   }
   if(key.startsWith('admin:customer:')){
     const tail=key.slice('admin:customer:'.length);
