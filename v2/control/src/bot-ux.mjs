@@ -198,11 +198,16 @@ export function contextualKeyboard(key,markup,{isAdmin=false}={}){
     return {...markup,inline_keyboard:markup.inline_keyboard.map(row=>row.filter(
       b=>!String(b.text??'').includes('نمای مشتری'))).filter(row=>row.length>0)};
   }
-  const target=parentPage(key,isAdmin);
+  const source=markup.inline_keyboard;
+  // Text replies from a wizard have no callback key; honor the secure
+  // wizard's explicit return destination instead of guessing a global home.
+  const typedBack=key==='text'?source.flat().find(b=>
+    String(b.text??'').startsWith('↩️')&&
+    /^v2:[a-zA-Z0-9:_-]{1,64}$/.test(String(b.callback_data??''))):null;
+  const target=typedBack?typedBack.callback_data.slice(3):parentPage(key,isAdmin);
   const backData='v2:'+target;
   const rootAdmin=new Set(adminMenu().inline_keyboard.flat().map(b=>b.callback_data));
   const rootCustomer=new Set(botMenu().inline_keyboard.flat().map(b=>b.callback_data));
-  const source=markup.inline_keyboard;
   const isFullAdminMenu=source.flat().filter(b=>rootAdmin.has(b.callback_data)).length>=4;
   const isFullCustomerMenu=source.flat().filter(b=>rootCustomer.has(b.callback_data)).length>=4;
   const rows=source.map(row=>row.filter(button=>{
