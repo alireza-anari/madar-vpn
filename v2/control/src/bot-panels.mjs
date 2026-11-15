@@ -35,11 +35,6 @@ export async function adminDashboard(env,e) {
   const salesReady=env.SHOP_ENABLED==='true'&&env.PROVISIONING_ENABLED==='true'&&
     typeof env.PAYMENT_INSTRUCTIONS==='string'&&env.PAYMENT_INSTRUCTIONS.trim().length>=12&&
     env.PAYMENT_INSTRUCTIONS.length<=700;
-  const alerts=[
-    receipts>0?'🧾 '+faNumber(receipts)+' رسید منتظر بررسی':null,
-    tickets>0?'💬 '+faNumber(tickets)+' درخواست پشتیبانی باز':null,
-    ready===0?'🖥 هنوز سرور آماده فروش وجود ندارد':null,
-  ].filter(Boolean);
   // Keep this overview short. Telegram photo captions use the user's native
   // small text size; dense reports become unreadable on narrow mobile screens.
   const actionNeeded=receipts>0
@@ -65,11 +60,7 @@ export async function adminDashboard(env,e) {
     '🛒 فروش عمومی: '+(salesReady?'در حال پیکربندی':'غیرفعال'),
     actionNeeded
   ].join('\n');
-  const urgent=[];
-  if(receipts>0)urgent.push([{text:'🧾 بررسی رسیدها · '+faNumber(receipts),callback_data:'v2:admin:queue'}]);
-  if(tickets>0)urgent.push([{text:'💬 درخواست‌های باز · '+faNumber(tickets),callback_data:'v2:admin:tickets'}]);
   return {text:frameMessage(body),photoId:BRAND_BANNER_URL,replyMarkup:{inline_keyboard:[
-    ...urgent,
     [{text:'👤 مشاهده نمای مشتری',callback_data:'v2:customer:home'}],
     ...adminMenu().inline_keyboard
   ]}};
