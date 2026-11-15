@@ -852,41 +852,6 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
     if(!await staffCanReply(db,e,env))return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
     return staffTicketDetails(env,e,key.slice('ticket:view:'.length));
   }
-  if(key.startsWith('ticket:confirm-reopen:')||key.startsWith('ticket:reopen:')){
-    if(!await staffCanReply(db,e,env))
-      return staffResponse('⛔ دسترسی به این بخش مجاز نیست.',e,env);
-    const confirmed=key.startsWith('ticket:reopen:');
-    const id=key.slice(confirmed?'ticket:reopen:'.length:'ticket:confirm-reopen:'.length);
-    if(!/^tg-[0-9]{1,20}$/.test(id))
-      return staffResponse('⚠️ شناسه درخواست معتبر نیست.',e,env);
-    const ticket=await db.prepare(
-      'SELECT id,state,customer_telegram_id,subject FROM support_tickets WHERE id=?'
-    ).bind(id).first();
-    if(!ticket||ticket.state!=='closed')
-      return staffResponse('این درخواست بسته نیست یا قبلاً بازگشایی شده است.',e,env);
-    if(!confirmed)return staffResponse(
-      '⚠️ تأیید بازگشایی درخواست\n\nکد: '+id+
-      '\nموضوع: '+ticket.subject.slice(0,100)+
-      '\n\nآیا می‌خواهید گفت‌وگو دوباره فعال شود؟',e,env,[
-        [{text:'✅ تأیید بازگشایی',callback_data:'v2:ticket:reopen:'+id}],
-        [{text:'↩️ انصراف',callback_data:'v2:ticket:view:'+id}],
-      ]);
-    const updated=await db.prepare(
-      "UPDATE support_tickets SET state='open' WHERE id=? AND state='closed'"
-    ).bind(id).run();
-    if(updated.meta?.changes!==1)
-      return staffResponse('این درخواست هم‌زمان تغییر کرده است؛ صفحه را تازه کنید.',e,env);
-    await db.batch([
-      db.prepare("INSERT OR IGNORE INTO audit_events(event_id,actor_id,object_type,object_id,verb) "+
-        "VALUES(?,?,?,?,?)").bind('support:reopen:'+e.updateId,e.actorId,'support_ticket',id,'reopen'),
-      db.prepare("INSERT OR IGNORE INTO telegram_notifications(id,chat_id,body,state,due_ms) "+
-        "VALUES(?,?,?,'pending',?)").bind('support:reopen:'+e.updateId,ticket.customer_telegram_id,
-          '💬 درخواست پشتیبانی '+id+' بازگشایی شد. می‌توانید پاسخ دهید.',nowMs),
-    ]);
-    return staffResponse('✅ درخواست بازگشایی شد.',e,env,[
-      [{text:'💬 مشاهده گفت‌وگو',callback_data:'v2:ticket:view:'+id}],
-    ]);
-  }
   if(key.startsWith('ticket:confirm-close:')){
     if(!await staffCanReply(db,e,env))
       return staffResponse('⛔ دسترسی به این بخش مجاز نیست.',e,env);
