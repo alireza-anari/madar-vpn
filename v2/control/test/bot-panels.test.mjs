@@ -124,7 +124,8 @@ test('bot language stays Persian for every Telegram device locale',async()=>{
   const {env,raw,event}=fixture();
   const home=await resolveBotAction(env,event(100,'/start','/start',25));
   assert.match(home.text,/پیشخوان مدیریت/);
-  assert.ok(home.replyMarkup.inline_keyboard.flat().some(b=>b.callback_data==='v2:admin:home'));
+  assert.ok(home.replyMarkup.inline_keyboard.flat().some(b=>b.callback_data==='v2:admin:nodes'));
+  assert.equal(home.replyMarkup.inline_keyboard.flat().filter(b=>b.text.includes('نمای مشتری')).length,1);
   const lang=await resolveBotAction(env,event(200,'lang:en',null,26));
   assert.match(lang.text,/زبان ربات مدار فارسی است/);
   assert.equal(raw.prepare("SELECT locale FROM customers WHERE telegram_id='200'").get().locale,'fa');
