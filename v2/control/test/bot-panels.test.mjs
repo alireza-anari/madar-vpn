@@ -521,7 +521,7 @@ test('support conversation history paginates privately and closed requests remai
   assert.doesNotMatch(staff.text,/پیام شماره 00/);
   const older=await resolveBotAction(env,event(300,'ticket:page:tg-800:2',null,801),1000001);
   assert.match(older.text,/صفحه ۳ از ۳/);
-  assert.match(older.text,/پیام شماره ۰۰/);
+  assert.match(older.text,/پیام شماره 00/);
   const customer=await resolveBotAction(env,event(200,'customer:ticket:tg-800',null,802),1000002);
   assert.match(customer.text,/صفحه ۱ از ۳/);
   const olderCustomer=await resolveBotAction(env,event(200,'customer:ticket:page:tg-800:1',null,803),1000003);
