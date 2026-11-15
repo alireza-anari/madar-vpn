@@ -29,9 +29,12 @@ export async function receiveSupportPhoto(env,e,nowMs=Date.now()){
   // Inbox crash/retry safety: once an image is support media, never save it as a receipt.
   const prior=await db.prepare("SELECT ticket_id,role FROM support_messages WHERE id=? AND telegram_file_id=?")
     .bind(id,e.photoId).first();
-  if(prior)return reply('✅ تصویر قبلاً به گفت‌وگوی پشتیبانی اضافه شده است.',[
+  if(prior){
+    if(prior.role==='customer')await notifySupport(env,e,prior.ticket_id,nowMs);
+    return reply('✅ تصویر قبلاً به گفت‌وگوی پشتیبانی اضافه شده است.',[
     button('💬 مشاهده گفت‌وگو',prior.role==='support'?'ticket:view:'+prior.ticket_id:
       'customer:ticket:'+prior.ticket_id)],prior.role==='support'?'support':'customer');
+  }
   const initial=await db.prepare(
     "SELECT expires_ms FROM customer_sessions WHERE telegram_id=? AND mode='support'"
   ).bind(e.actorId).first();
