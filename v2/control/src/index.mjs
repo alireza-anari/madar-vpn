@@ -7,8 +7,8 @@ import { getCarrierFeed } from './carrier-subscription.mjs';
 import { nodeRoute } from './node-control.mjs';
 import { toBotMessage, verifyTelegramSecret } from './telegram.mjs';
 import { resolveBotAction } from './shop.mjs';
-import {frameMessage} from './bot-ux.mjs';
-import {bannerImageResponse} from './brand-banner.mjs';
+import {frameMessage,BRAND_BANNER_URL} from './bot-ux.mjs';
+import {bannerImageResponse,brandBannerBytes} from './brand-banner.mjs';
 
 const json=(value,status=200)=>new Response(JSON.stringify(value),{
   status,headers:{
@@ -45,9 +45,20 @@ async function readJson(request) {
 
 async function telegramCall(env,method,payload) {
   try {
+    // Upload branded photos as multipart bytes: Telegram never needs to fetch a public URL.
+    const brandedPhoto=method==='sendPhoto'&&payload.photo===BRAND_BANNER_URL;
+    let form=null;
+    if(brandedPhoto){
+      form=new FormData();
+      form.append('chat_id',String(payload.chat_id));
+      form.append('photo',new Blob([brandBannerBytes()],{type:'image/jpeg'}),'madar-banner.jpg');
+      form.append('caption',String(payload.caption??''));
+      if(payload.caption_entities)form.append('caption_entities',JSON.stringify(payload.caption_entities));
+      if(payload.reply_markup)form.append('reply_markup',JSON.stringify(payload.reply_markup));
+    }
     const response=await fetch('https://api.telegram.org/bot'+env.BOT_TOKEN+'/'+method,{
-      method:'POST',headers:{'content-type':'application/json'},
-      body:JSON.stringify(payload),signal:AbortSignal.timeout(12000),
+      method:'POST',...(form?{}:{headers:{'content-type':'application/json'}}),
+      body:form??JSON.stringify(payload),signal:AbortSignal.timeout(12000),
     });
     const data=await response.json().catch(()=>null);
     return {ok:response.ok&&data?.ok===true,description:String(data?.description??'')};
