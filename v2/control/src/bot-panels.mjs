@@ -317,7 +317,7 @@ export async function consumePanelInput(env,e,nowMs=Date.now()) {
     if(parts.length!==5||!PLAN.test(id??'')||!title||title.length>64||
        !numeric.test(priceText??'')||!numeric.test(gbText??'')||!numeric.test(daysText??'')){
       return adminPanel(
-        '⚠️ فرمت واردشده معتبر نیست. قالب درست را دوباره بفرستید:\n'+
+        '⚠️ فرمت معتبر نیست. قالب درست را دوباره بفرستید:\n'+
         'شناسه فنی | نام پلن | قیمت تومان | حجم گیگابایت | مدت روز',
         [],e.locale);
     }
