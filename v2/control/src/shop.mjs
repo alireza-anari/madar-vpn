@@ -369,9 +369,7 @@ async function supportInbox(env,e) {
   return staffResponse('💬  صندوق پشتیبانی\n━━━━━━━━━━━━━━━━━━\n'+queue.map(x=>
     x.id+'  |  '+faStatus(x.state)+'\nمشتری: '+x.customer_telegram_id+'\nموضوع: '+x.subject.slice(0,80)
   ).join('\n\n'),e,env,queue.map(x=>[
-    {text:'👁 مشاهده',callback_data:'v2:ticket:view:'+x.id},
-    {text:'✉ پاسخ',callback_data:'v2:ticket:reply:'+x.id},
-    {text:'✓ بستن',callback_data:'v2:ticket:close:'+x.id},
+    {text:'💬 مشاهده '+shortCode(x.id,10),callback_data:'v2:ticket:view:'+x.id},
   ]));
 }
 
@@ -733,6 +731,25 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
   if(key.startsWith('ticket:view:')) {
     if(!await staffCanReply(db,e,env))return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
     return staffTicketDetails(env,e,key.slice('ticket:view:'.length));
+  }
+  if(key.startsWith('ticket:confirm-close:')){
+    if(!await staffCanReply(db,e,env))
+      return staffResponse('⛔ دسترسی به این بخش مجاز نیست.',e,env);
+    const id=key.slice('ticket:confirm-close:'.length);
+    if(!/^tg-[0-9]{1,20}$/.test(id))
+      return staffResponse('⚠️ شناسه درخواست معتبر نیست.',e,env);
+    const ticket=await db.prepare(
+      'SELECT id,state,subject FROM support_tickets WHERE id=?'
+    ).bind(id).first();
+    if(!ticket||ticket.state==='closed')
+      return staffResponse('درخواست بسته شده یا در دسترس نیست.',e,env);
+    return staffResponse(
+      '⚠️  بستن گفت‌وگوی پشتیبانی\n━━━━━━━━━━━━━━━━━━\n'+
+      'شناسه: '+id+'\nموضوع: '+ticket.subject+
+      '\n\nبا بستن درخواست، امکان پاسخ در این گفت‌وگو متوقف می‌شود.',e,env,[
+      [{text:'✅ تأیید بستن درخواست',callback_data:'v2:ticket:close:'+id}],
+      [{text:'↩️ بازگشت به گفت‌وگو',callback_data:'v2:ticket:view:'+id}],
+    ]);
   }
   if (key.startsWith('ticket:reply:') || key.startsWith('ticket:close:')) {
     if(!await staffCanReply(db,e,env)) return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
