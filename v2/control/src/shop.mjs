@@ -295,9 +295,7 @@ async function adminQueue(db,e) {
     queue.map(x=>'شناسه: '+x.id.slice(0,8)+'…  |  مبلغ: '+money(x.quoted_amount,x.quoted_currency)+
       '\nمشتری: '+x.customer_telegram_id).join('\n\n'),
     e.locale,queue.map(x=>[
-      {text:'👁 مشاهده رسید',callback_data:'v2:admin:receipt:'+x.id},
-      {text:'✅ تأیید',callback_data:'v2:approve:'+x.id},
-      {text:'❌ رد رسید',callback_data:'v2:reject:'+x.id},
+      {text:'👁 بررسی رسید · '+shortCode(x.id,8),callback_data:'v2:admin:receipt:'+x.id}
     ]));
 }
 
@@ -315,9 +313,10 @@ async function adminReceipt(db,e,id) {
       '\nتصویر رسید را بررسی کنید و سپس نتیجه را ثبت کنید.'),
     photoId:receipt.telegram_file_id,
     replyMarkup:{inline_keyboard:[
-      [{text:'✅ تأیید رسید',callback_data:'v2:approve:'+id},
-       {text:'❌ رد رسید',callback_data:'v2:reject:'+id}],
-      ...adminMenu().inline_keyboard,
+      [{text:'✅ تأیید رسید',callback_data:'v2:admin:review:approve:'+id},
+       {text:'❌ رد رسید',callback_data:'v2:admin:review:reject:'+id}],
+      [{text:'↩️ صف بررسی رسیدها',callback_data:'v2:admin:queue'}],
+      ...sectionNavigation('admin'),
     ]},
   };
 }
@@ -718,6 +717,26 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
     const id=key.slice(action==='reply'?'ticket:reply:'.length:'ticket:close:'.length);
     if(!/^tg-[0-9]{1,20}$/.test(id)) return adminResponse('⚠️ شناسه درخواست معتبر نیست.',e.locale);
     return action==='reply' ? startTicketReply(db,e,id,nowMs,env) : closeSupport(db,e,id,nowMs,env);
+  }
+  if(key.startsWith('admin:review:')){
+    if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
+      return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
+    const m=key.match(/^admin:review:(approve|reject):([a-zA-Z0-9_-]{2,48})$/);
+    if(!m)return adminResponse('⚠️ شناسه رسید معتبر نیست.',e.locale);
+    const [,decision,id]=m;
+    const record=await db.prepare(
+      "SELECT id,state,quoted_amount,quoted_currency FROM orders WHERE id=?"
+    ).bind(id).first();
+    if(!record||record.state!=='receipt_submitted')
+      return adminResponse('این سفارش دیگر برای بررسی در دسترس نیست.',e.locale);
+    return adminResponse('⚠️  تأیید تصمیم درباره رسید\n━━━━━━━━━━━━━━━━━━\n'+
+      'کد سفارش: '+record.id+
+      '\nمبلغ: '+money(record.quoted_amount,record.quoted_currency)+
+      '\n\nتصمیم: '+(decision==='approve'?'✅ تأیید رسید پرداخت':'❌ رد رسید پرداخت')+
+      '\n\nاین اقدام در پرونده سفارش ثبت و به مشتری اطلاع داده می‌شود.',e.locale,[
+        [{text:'✅ بله، ثبت تصمیم',callback_data:'v2:'+decision+':'+id}],
+        [{text:'↩️ بازگشت بدون تغییر',callback_data:'v2:admin:receipt:'+id}],
+      ]);
   }
   if (key.startsWith('approve:') || key.startsWith('reject:')) {
     if (!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
