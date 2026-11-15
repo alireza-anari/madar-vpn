@@ -9,19 +9,23 @@ import { handleSeller, linkSellerOnStart, grantStaffRole } from './referrals.mjs
  * update ID or by a state-qualified SQL transition. No unattended payment or
  * config issuance takes place from this module.
  */
-import { botMenu, botPage } from './bot-ux.mjs';
+import { botMenu,botPage,adminMenu,sellerMenu,frameMessage,faNumber,faMoney,faGB,faDate,faStatus,faRole } from './bot-ux.mjs';
 
 const ORDER_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{1,48}$/;
 const PLAN_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{1,30}$/;
-const t = (fa, en, locale) => locale === 'en' ? en : fa;
+const t = (fa) => fa;
 const line = (...parts) => parts.filter(Boolean).join('\n');
-const response = (text, locale = 'fa', extra = []) => ({
-  text: text.slice(0, 3800),
-  replyMarkup: extra.length ? { inline_keyboard: [...extra, ...botMenu(locale).inline_keyboard] } : botMenu(locale),
+const response = (text, locale = 'fa', extra = [], audience = 'customer') => ({
+  text: frameMessage(String(text).slice(0, 3300)),
+  replyMarkup: {inline_keyboard:[
+    ...extra,
+    ...(audience==='admin'?adminMenu():audience==='seller'?sellerMenu():botMenu()).inline_keyboard
+  ]},
 });
+const adminResponse = (text,locale='fa',extra=[]) => response(text,locale,extra,'admin');
 
 function money(amount, currency) {
-  return Number(amount).toLocaleString('en-US') + ' ' + currency;
+  return faMoney(amount,currency);
 }
 
 export function adminAllowed(ids, userId) {
@@ -43,8 +47,9 @@ async function isCustomerActive(db, id) {
 
 async function upsertCustomer(db, e) {
   await db.prepare(
-    "INSERT OR IGNORE INTO customers(telegram_id,locale) VALUES (?,?)"
-  ).bind(e.actorId, e.locale).run();
+    "INSERT INTO customers(telegram_id,locale) VALUES (?,'fa') " +
+    "ON CONFLICT(telegram_id) DO UPDATE SET locale='fa'"
+  ).bind(e.actorId).run();
 }
 
 async function healthyNodeAvailable(db, quota, nowMs) {
@@ -67,16 +72,15 @@ export async function availableForSale(db, plan, nowMs) {
 
 async function listPlans(db, env, locale, nowMs) {
   const plans = (await db.prepare(
-    'SELECT id,title_fa,title_en,price_amount,price_currency,quota_bytes,duration_days FROM plans WHERE active=1 ORDER BY price_amount,id LIMIT 12'
+    'SELECT id,title_fa,price_amount,price_currency,quota_bytes,duration_days FROM plans WHERE active=1 ORDER BY price_amount,id LIMIT 12'
   ).all()).results ?? [];
   if (!plans.length) return response(t('🛍 هنوز پلنی برای فروش منتشر نشده است.', '🛍 No plans have been published yet.', locale), locale);
   const items = [];
   const buttons = [];
   for (const p of plans) {
-    const label = (locale === 'en' ? p.title_en : p.title_fa);
-    const details = p.duration_days + t(' روز · ', ' days · ', locale) +
-      (Math.round(p.quota_bytes / 1073741824 * 100) / 100) + ' GB';
-    items.push('• ' + label + ' — ' + details + ' — ' + money(p.price_amount, p.price_currency));
+    const label = p.title_fa;
+    const details = faNumber(p.duration_days) + ' روز · ' + faGB(p.quota_bytes / 1073741824);
+    items.push('┌ ' + label + '\n│ مدت: ' + details + '\n└ هزینه: ' + money(p.price_amount, p.price_currency));
     if (salesConfigured(env) && await availableForSale(db, p, nowMs)) {
       buttons.push([{text:t('خرید ','Buy ',locale) + label.slice(0,24),callback_data:'v2:buy:' + p.id}]);
     }
@@ -86,7 +90,7 @@ async function listPlans(db, env, locale, nowMs) {
         'Receipt review is manual. A configuration is issued only after node provisioning succeeds.',locale)
     : t('فعلاً فروش فعال نیست یا سرور تأییدشده با ظرفیت کافی موجود نیست؛ پرداخت نکنید.',
         'Sales are disabled or no verified server has enough capacity; do not pay.',locale);
-  return response(line(t('🛍 پلن‌های مدار','🛍 Madar plans',locale),...items,'',warning),locale,buttons);
+  return response(line('🛍  پلن‌های مدار','━━━━━━━━━━━━━━━━━━',...items,'',warning),locale,buttons);
 }
 
 async function pendingOrder(db,id) {
@@ -102,8 +106,8 @@ async function purchase(db,env,e,planId,nowMs) {
     'Checkout is disabled in this environment; do not pay.',e.locale),e.locale);
   if (!PLAN_ID.test(planId)) return response(t('پلن نامعتبر است.','Invalid plan.',e.locale),e.locale);
   const active=await pendingOrder(db,e.actorId);
-  if (active) return response(t('یک سفارش باز دارید: ','You already have an open order: ',e.locale) +
-    active.id + ' (' + active.state + ')',e.locale);
+  if (active) return response('ℹ️ یک سفارش باز دارید.\nشناسه: '+active.id+
+    '\nوضعیت: '+faStatus(active.state),e.locale);
   const p=await db.prepare('SELECT * FROM plans WHERE id=? AND active=1').bind(planId).first();
   if (!p) return response(t('پلن پیدا نشد.','Plan not found.',e.locale),e.locale);
   if (!await availableForSale(db,p,nowMs)) return response(t('فعلاً سرور آماده با ظرفیت کافی نداریم؛ هیچ پرداختی انجام ندهید.',
@@ -176,26 +180,27 @@ async function myOrders(db,e) {
   const orders=(await db.prepare(
     'SELECT id,state,quoted_amount,quoted_currency FROM orders WHERE customer_telegram_id=? ORDER BY created_at DESC LIMIT 5'
   ).bind(e.actorId).all()).results ?? [];
-  if (!orders.length) return response(t('هنوز سفارشی ندارید.','You have no orders yet.',e.locale),e.locale);
-  return response(line(t('🧾 سفارش‌های من','🧾 My orders',e.locale),
-    ...orders.map(o=>o.id.slice(0,8)+'… | '+money(o.quoted_amount,o.quoted_currency)+' | '+o.state)),e.locale);
+  if (!orders.length) return response('🧾 هنوز سفارشی برای شما ثبت نشده است.',e.locale);
+  return response(line('🧾  سفارش‌های من','━━━━━━━━━━━━━━━━━━',
+    ...orders.map(o=>'شناسه: '+o.id.slice(0,8)+'…  |  '+money(o.quoted_amount,o.quoted_currency)+
+      '\nوضعیت: '+faStatus(o.state))),e.locale);
 }
 
 async function mySubscriptions(db,e,env) {
   const rows=(await db.prepare(
     'SELECT id,state,expires_at,max_bytes,used_bytes FROM subscriptions WHERE owner_telegram_id=? ORDER BY expires_at DESC LIMIT 5'
   ).bind(e.actorId).all()).results??[];
-  if (!rows.length) return response(t('هنوز اشتراک فعال نسخه جدید ندارید. اشتراک قبلی شما مستقل باقی مانده است.',
-    'No V2 subscription yet; your existing V1 subscription is unaffected.',e.locale),e.locale);
+  if (!rows.length) return response('👤 هنوز اشتراکی در مدار نسخه جدید برای شما ثبت نشده است.\nاشتراک نسخه قبلی شما مستقل و محفوظ است.',e.locale);
   const buttons=env.SUBSCRIPTION_LINKS_ENABLED==='true'?
     rows.filter(x=>x.state==='active').map(x=>[{
-      text:t('🔗 دریافت یک لینک با دو مسیر','🔗 Get one link with two routes',e.locale),
+      text:'🔗 دریافت لینک اتصال دو اپراتور',
       callback_data:'v2:my:link:'+x.id,
     }]):[];
-  return response(line(t('👤 اشتراک‌های من','👤 My subscriptions',e.locale),
-    ...rows.map(x=>x.id.slice(0,8)+'… | '+x.state+' | '+new Date(x.expires_at).toISOString().slice(0,10)+
-      ' | '+(Math.round(x.used_bytes/1073741824*100)/100)+'/'+
-      (Math.round(x.max_bytes/1073741824*100)/100)+' GB')),e.locale,[
+  return response(line('👤  اشتراک‌های من','━━━━━━━━━━━━━━━━━━',
+    ...rows.map(x=>'شناسه: '+x.id.slice(0,8)+'…'+
+      '\nوضعیت: '+faStatus(x.state)+
+      '\nمصرف: '+faGB(x.used_bytes/1073741824)+' از '+faGB(x.max_bytes/1073741824)+
+      '\nانقضا: '+faDate(x.expires_at))),e.locale,[
       ...buttons,
       [{text:t('🧾 سفارش‌های من','🧾 My orders',e.locale),callback_data:'v2:orders'}],
       [{text:t('💬 تیکت‌های من','💬 My support tickets',e.locale),callback_data:'v2:customer:tickets'}]
@@ -207,8 +212,7 @@ async function beginSupport(db,e,nowMs) {
     "INSERT INTO customer_sessions(telegram_id,mode,expires_ms) VALUES(?,'support',?) " +
     "ON CONFLICT(telegram_id) DO UPDATE SET mode='support',expires_ms=excluded.expires_ms"
   ).bind(e.actorId,nowMs+10*60*1000).run();
-  return response(t('💬 موضوع مشکل خود را در یک پیام بنویسید؛ تا ۱۰ دقیقه امکان ثبت تیکت دارید. اطلاعات کارت یا رمز نفرستید.',
-    '💬 Send a short support issue within 10 minutes. Never send passwords or card details.',e.locale),e.locale);
+  return response('💬  ثبت درخواست پشتیبانی\n━━━━━━━━━━━━━━━━━━\nمشکل خود را در یک پیام توضیح دهید. تا ۱۰ دقیقه فرصت دارید.\n\n🔐 رمز عبور، اطلاعات کارت بانکی یا کلید خصوصی ارسال نکنید.',e.locale);
 }
 
 async function maybeRecordSupport(db,e,env,nowMs) {
@@ -216,7 +220,7 @@ async function maybeRecordSupport(db,e,env,nowMs) {
   const s=await db.prepare('SELECT mode,expires_ms FROM customer_sessions WHERE telegram_id=?').bind(e.actorId).first();
   if (!s || s.mode!=='support' || s.expires_ms<nowMs) return null;
   const subject=e.inputText.trim().slice(0,140);
-  if (!subject) return response(t('پیام خالی است.','The message is empty.',e.locale),e.locale);
+  if (!subject) return response('پیام نمی‌تواند خالی باشد.',e.locale);
   const ticketId='tg-'+e.updateId;
   await db.batch([
     db.prepare('INSERT OR IGNORE INTO support_tickets(id,customer_telegram_id,subject) VALUES(?,?,?)')
@@ -226,7 +230,9 @@ async function maybeRecordSupport(db,e,env,nowMs) {
     db.prepare('DELETE FROM customer_sessions WHERE telegram_id=?').bind(e.actorId),
   ]);
   await notifySupport(env,e,ticketId,nowMs);
-  return response(t('✅ درخواست پشتیبانی ثبت شد: ','✅ Support ticket created: ',e.locale)+ticketId,e.locale);
+  return response('✅ درخواست پشتیبانی شما ثبت شد.\nشناسه پیگیری: '+ticketId,e.locale,[[
+    {text:'💬 مشاهده درخواست',callback_data:'v2:customer:ticket:'+ticketId}
+  ]]);
 }
 
 async function isStaff(db,e,role) {
@@ -409,23 +415,24 @@ async function personalizedHome(env,e) {
   const active=(await env.DB.prepare(
     "SELECT COUNT(*) AS n FROM subscriptions WHERE owner_telegram_id=? AND state='active' AND expires_at>?"
   ).bind(e.actorId,Date.now()).first())?.n??0;
-  const greeting=t('🌐 مدار VPN — نسخه ۲','🌐 Madar VPN — V2',e.locale);
+  const greeting='🌐 به مدار خوش آمدید';
   const customer=await env.DB.prepare('SELECT state FROM customers WHERE telegram_id=?')
     .bind(e.actorId).first();
   const state=active>0
-    ?t('اشتراک‌های فعال شما: ','Your active subscriptions: ',e.locale)+active
-    :t('در حال حاضر اشتراک فعالی در این نسخه ندارید.','You have no active V2 subscription yet.',e.locale);
+    ?'اشتراک‌های فعال شما: '+faNumber(active)
+    :'در حال حاضر اشتراک فعالی در این نسخه ندارید.';
   const safety=!salesConfigured(env)
-    ?t('فروش عمومی هنوز فعال نشده است؛ تا تأیید اتصال، ظرفیت و سهمیه پرداخت نکنید.',
-      'Public checkout is disabled until connectivity, capacity and quota enforcement are verified.',e.locale)
-    :t('برای مشاهده پلن‌ها از منو استفاده کنید.','Choose Plans to view available offers.',e.locale);
+    ?'⛔ فروش عمومی هنوز فعال نشده است؛ تا تأیید اتصال، ظرفیت و کنترل مصرف، هیچ پرداختی انجام ندهید.'
+    :'برای مشاهده پیشنهادها، بخش خرید اشتراک را انتخاب کنید.';
   const restriction=customer?.state==='suspended'
-    ?t('\n⛔ حساب شما تعلیق شده است؛ برای پیگیری از بخش پشتیبانی استفاده کنید.',
-       '\n⛔ Your account is suspended; contact Support.',e.locale):'';
-  return response(greeting+'\n\n'+state+'\n'+safety+restriction,e.locale,[
-    ...(isAdmin?[[{text:'🛠 '+t('پنل مدیریت','Admin panel',e.locale),callback_data:'v2:admin:home'}]]:[]),
-    ...(seller?[[{text:'🧑‍💼 '+t('پنل فروشنده','Seller panel',e.locale),callback_data:'v2:seller:home'}]]:[]),
-  ]);
+    ?'\n⛔ حساب شما تعلیق شده است؛ دسترسی به پشتیبانی همچنان برقرار است.':'';
+  const menu=isAdmin?adminMenu():seller?sellerMenu():botMenu();
+  const quick=[
+    ...(isAdmin?[[{text:'🛠 ورود به پیشخوان مدیریت',callback_data:'v2:admin:home'}]]:[]),
+    ...(seller?[[{text:'🧑‍💼 ورود به پنل فروشنده',callback_data:'v2:seller:home'}]]:[]),
+  ];
+  return {text:frameMessage(greeting+'\n\n'+state+'\n'+safety+restriction),
+    replyMarkup:{inline_keyboard:[...quick,...menu.inline_keyboard]}};
 }
 
 async function liveServiceStatus(env,e,nowMs) {
@@ -433,12 +440,10 @@ async function liveServiceStatus(env,e,nowMs) {
     "SELECT COUNT(*) AS n FROM nodes n WHERE n.lifecycle='ready' AND EXISTS("+
     "SELECT 1 FROM routes r WHERE r.node_id=n.id AND r.state='ready' AND r.verified_ms BETWEEN ? AND ?)"
   ).bind(nowMs-600000,nowMs).first())?.n??0;
-  return response(t('📶 وضعیت مدار V2','📶 Madar V2 status',e.locale)+'\n\n'+
-    (ready>0?t('نودهای دارای تأیید مسیر در ۱۰ دقیقه اخیر: ','Nodes with recent verified routes: ',e.locale)+ready:
-      t('هنوز نودی برای فروش عمومی با تأیید تازه ثبت نشده است.',
-        'No node currently has fresh verification for public issuance.',e.locale))+'\n'+
-    t('نصب آزمایشی و لینک تست به معنی آماده‌بودن سرویس پولی نیست.',
-      'Trial installation does not establish paid-service readiness.',e.locale),e.locale);
+  return response('📶  وضعیت سرویس مدار\n━━━━━━━━━━━━━━━━━━\n'+
+    (ready>0?'مسیرهای دارای تأیید تازه در ۱۰ دقیقه اخیر: '+faNumber(ready):
+      'در حال حاضر هیچ مسیری با تأیید تازه برای فروش عمومی وجود ندارد.')+'\n\n'+
+    'نصب آزمایشی و دریافت لینک تست به‌تنهایی به معنی آماده‌بودن سرویس پولی نیست.',e.locale);
 }
 
 /** The caller must already validate the Telegram webhook and sender identity. */
@@ -446,9 +451,7 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
   const db=env.DB;
   if (!db || !e || !/^\d+$/.test(e.actorId??'')) throw new Error('invalid_event');
   await upsertCustomer(db,e);
-  const preferred=await db.prepare('SELECT locale FROM customers WHERE telegram_id=?')
-    .bind(e.actorId).first();
-  if(preferred?.locale==='fa'||preferred?.locale==='en')e={...e,locale:preferred.locale};
+  e={...e,locale:'fa'};
   const key=e.key??'';
   if (!await isCustomerActive(db,e.actorId) &&
       !['/start','home','support','/support','customer:tickets','/tickets','lang','/lang'].includes(key) &&
@@ -462,21 +465,10 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
           "SELECT 1 AS ok FROM v2_bot_input_sessions WHERE telegram_id=? AND mode='ticket_reply' AND expires_ms>?"
         ).bind(e.actorId,nowMs).first())
       )))
-    return response(t('حساب شما تعلیق شده است. پشتیبانی همچنان در دسترس است.',
-      'Account suspended. Support remains available.',e.locale),e.locale);
+    return response('⛔ حساب شما تعلیق شده است. برای پیگیری همچنان می‌توانید از بخش پشتیبانی استفاده کنید.',e.locale);
 
-  if(key==='lang'||key==='/lang')return response(
-    '🌐 زبان ربات را انتخاب کنید / Choose your language',e.locale,[
-      [{text:'🇮🇷 فارسی',callback_data:'v2:lang:fa'},
-       {text:'🇬🇧 English',callback_data:'v2:lang:en'}],
-    ]);
-  if(key==='lang:fa'||key==='lang:en'){
-    const locale=key.slice(5);
-    await db.prepare('UPDATE customers SET locale=? WHERE telegram_id=?')
-      .bind(locale,e.actorId).run();
-    e={...e,locale};
-    return personalizedHome(env,e);
-  }
+  if(key==='lang'||key==='/lang'||key==='lang:fa'||key==='lang:en')
+    return response('🌐 زبان ربات مدار فارسی است و همه پیام‌ها به زبان فارسی نمایش داده می‌شوند.',e.locale);
   if(key==='/start'){
     const referral=await linkSellerOnStart(db,e,nowMs);
     const home=await personalizedHome(env,e);
