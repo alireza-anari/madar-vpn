@@ -567,9 +567,15 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
   if (key==='admin:node:new' || key==='admin:node:cancel') {
     if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
       return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
-    const panel=key==='admin:node:new'
-      ?await beginNodeWizard(db,e.actorId,nowMs,env)
-      :await cancelNodeWizard(db,e.actorId);
+    if(key==='admin:node:cancel'){
+      await cancelNodeWizard(db,e.actorId);
+      const overview=await nodeAdminAction(db,e.actorId,'/nodes',null);
+      return adminResponse(overview.text,e.locale,[[
+        {text:'➕ افزودن سرور',callback_data:'v2:admin:node:new'},
+        {text:'🧪 آزمون سرورها',callback_data:'v2:admin:node:trials'},
+      ]]);
+    }
+    const panel=await beginNodeWizard(db,e.actorId,nowMs,env);
     return adminResponse(panel.text,e.locale,panel.replyMarkup?.inline_keyboard??[]);
   }
   if(adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) {
@@ -613,6 +619,10 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
   if(key==='admin:plans') {
     if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
       return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
+    // A back button from the plan wizard abandons the unsaved draft.
+    if(Number.isSafeInteger(e.messageId)&&e.messageId>0)
+      await db.prepare("DELETE FROM v2_bot_input_sessions WHERE telegram_id=? AND mode='plan_draft'")
+        .bind(e.actorId).run();
     const plans=(await db.prepare(
       'SELECT id,title_fa,active,price_amount,price_currency FROM plans ORDER BY id LIMIT 12'
     ).all()).results??[];
