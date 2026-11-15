@@ -1,5 +1,6 @@
 /** پنل‌های فارسی مدیریت و مشتری در ربات مدار V2. */
 import {adminMenu,frameMessage,faNumber,faStatus,faRole,statusSymbol,sectionNavigation,shortCode,panelHeading,BRAND_BANNER_URL} from './bot-ux.mjs';
+import {planWizardAction,planWizardInput} from './plan-wizard.mjs';
 
 const NAT=/^[0-9]{1,20}$/;
 const TICKET=/^tg-[0-9]{1,20}$/;
@@ -189,20 +190,13 @@ export async function customerTicketAction(env,e,nowMs=Date.now()) {
 export async function adminPanelAction(env,e,nowMs=Date.now()) {
   const key=e.key??'';
   if(!key.startsWith('admin:customers')&&!key.startsWith('admin:customer:')&&
-     !key.startsWith('admin:staff')&&!key.startsWith('admin:plan:new'))return null;
+     !key.startsWith('admin:staff')&&
+     !['admin:plan:new','admin:plan:back','admin:plan:cancel','admin:plan:save'].includes(key))
+    return null;
   if(!idAdmin(env,e.actorId))return adminPanel('⛔ دسترسی به این بخش مجاز نیست.',[],e.locale);
   const db=env.DB;
-  if(key==='admin:plan:new'){
-    await startSession(db,e,'plan_draft',null,nowMs);
-    return adminPanel(
-      '🛍  ساخت پلن جدید\n━━━━━━━━━━━━━━━━━━\n'+
-      'اطلاعات را در یک پیام و به ترتیب زیر بفرستید:\n\n'+
-      'شناسه فنی | نام پلن | قیمت به تومان | حجم به گیگابایت | مدت به روز\n\n'+
-      'نمونه:\nmahane-30 | اشتراک یک‌ماهه | ۳۰۰۰۰۰ | ۳۰ | ۳۰\n\n'+
-      'شناسه فنی باید کوتاه و با حروف انگلیسی باشد؛ نام پلن فارسی است.\n'+
-      'پلن ابتدا غیرفعال ثبت می‌شود. برای لغو، /cancel را بفرستید.',
-      [],e.locale);
-  }
+  if(['admin:plan:new','admin:plan:back','admin:plan:cancel','admin:plan:save'].includes(key))
+    return planWizardAction(db,e,nowMs);
   if(key==='admin:customers'||/^admin:customers:[0-9]{1,4}$/.test(key)){
     const page=key==='admin:customers'?0:Math.min(1000,Number(key.slice('admin:customers:'.length)));
     const rows=(await db.prepare(
@@ -300,7 +294,7 @@ export async function adminPanelAction(env,e,nowMs=Date.now()) {
 }
 
 export async function adminPlanNewButton(db,e,nowMs) {
-  await startSession(db,e,'plan_draft',null,nowMs);
+  return planWizardAction(db,e,nowMs);
 }
 
 export async function notifySupport(env,e,ticketId,nowMs=Date.now()) {
@@ -352,35 +346,7 @@ export async function consumePanelInput(env,e,nowMs=Date.now()) {
       [button('💬 مشاهده گفت‌وگو','customer:ticket:'+ticket.id)]);
   }
   if(!idAdmin(env,e.actorId))return adminPanel('⛔ دسترسی به این بخش مجاز نیست.',[],e.locale);
-  if(session.mode==='plan_draft'){
-    const parts=raw.trim().split('|').map(x=>x.trim());
-    const [id,title,priceText,gbText,daysText]=parts;
-    const numeric=/^(0|[1-9][0-9]*)$/;
-    if(parts.length!==5||!PLAN.test(id??'')||!title||title.length>64||
-       !numeric.test(priceText??'')||!numeric.test(gbText??'')||!numeric.test(daysText??'')){
-      return adminPanel(
-        '⚠️ فرمت معتبر نیست. قالب درست را دوباره بفرستید:\n'+
-        'شناسه فنی | نام پلن | قیمت تومان | حجم گیگابایت | مدت روز',
-        [],e.locale);
-    }
-    const price=Number(priceText),gbCount=Number(gbText),days=Number(daysText);
-    if(!Number.isSafeInteger(price)||price>100000000000||
-       !Number.isSafeInteger(gbCount)||gbCount<1||gbCount>2000||
-       !Number.isSafeInteger(days)||days<1||days>366)
-      return adminPanel('⚠️ قیمت، حجم یا مدت خارج از محدوده مجاز است.',[],e.locale);
-    const r=await db.prepare(
-      'INSERT OR IGNORE INTO plans(id,title_fa,title_en,price_amount,price_currency,quota_bytes,duration_days,active) VALUES(?,?,?,?,?,?,?,0)'
-    ).bind(id,title,title,price,'IRT',gbCount*1073741824,days).run();
-    await db.batch([
-      db.prepare('DELETE FROM v2_bot_input_sessions WHERE telegram_id=?').bind(e.actorId),
-      db.prepare('INSERT OR IGNORE INTO audit_events(event_id,actor_id,object_type,object_id,verb) VALUES(?,?,?,?,?)')
-        .bind('plan:bot:'+e.updateId,e.actorId,'plan',id,'create:disabled'),
-    ]);
-    return adminPanel(
-      r.meta?.changes===1?'✅ پلن غیرفعال ثبت شد: '+title:
-        'ℹ️ این شناسه پلن قبلاً ثبت شده است؛ تغییری ایجاد نشد.',
-      [button('🛍 بازگشت به مدیریت پلن‌ها','admin:plans')],e.locale);
-  }
+  if(session.mode==='plan_draft')return planWizardInput(db,e,session,nowMs);
   const match=session.mode.match(/^(grant|revoke)_(seller|support)$/);
   if(match){
     const id=raw.trim(),mode=match[1],role=match[2];
