@@ -152,6 +152,9 @@ test('support staff can inspect conversations but customers cannot inspect staff
   const view=await staffTicketDetails(env,event(300,'ticket:view:tg-22'),'tg-22');
   assert.match(view.text,/یک سوال دارم/);
   assert.ok(view.replyMarkup.inline_keyboard.flat().some(x=>x.callback_data==='v2:ticket:reply:tg-22'));
+  const supportKeys=view.replyMarkup.inline_keyboard.flat().map(x=>x.callback_data);
+  assert.ok(supportKeys.includes('v2:admin:tickets'));
+  assert.ok(!supportKeys.includes('v2:admin:customers'));
   const denied=await staffTicketDetails(env,event(200,'ticket:view:tg-22'),'tg-22');
   assert.match(denied.text,/دسترسی به این بخش مجاز نیست/);
   raw.close();
@@ -179,5 +182,16 @@ test('customer messages are branded and customer panel never exposes English lab
   assert.match(home.text,/🌐  مــدار/);
   assert.doesNotMatch(home.text,/[A-Za-z]{3,}/);
   assert.ok(home.replyMarkup.inline_keyboard.flat().some(x=>x.text==='🛍 خرید اشتراک'));
+  raw.close();
+});
+
+test('support agents see a focused Persian support menu from home',async()=>{
+  const {env,raw,event}=fixture();
+  raw.exec("INSERT INTO staff_roles(telegram_id,role,granted_by) VALUES('300','support','100')");
+  const home=await resolveBotAction(env,event(300,'/start','/start',91));
+  assert.match(home.text,/به مدار خوش آمدید/);
+  const keys=home.replyMarkup.inline_keyboard.flat().map(x=>x.callback_data);
+  assert.ok(keys.includes('v2:admin:tickets'));
+  assert.ok(!keys.includes('v2:admin:customers'));
   raw.close();
 });
