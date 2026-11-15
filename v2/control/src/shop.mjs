@@ -454,9 +454,14 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
       !['/start','home','support','/support','customer:tickets','/tickets','lang','/lang'].includes(key) &&
       !key.startsWith('lang:') && !key.startsWith('customer:ticket:') &&
       !key.startsWith('customer:ticket:reply:') &&
-      !(typeof e.inputText==='string' && !!(await db.prepare(
-        "SELECT 1 AS ok FROM customer_sessions WHERE telegram_id=? AND mode='support' AND expires_ms>?"
-      ).bind(e.actorId,nowMs).first())))
+      !(typeof e.inputText==='string' && (
+        !!(await db.prepare(
+          "SELECT 1 AS ok FROM customer_sessions WHERE telegram_id=? AND mode='support' AND expires_ms>?"
+        ).bind(e.actorId,nowMs).first()) ||
+        !!(await db.prepare(
+          "SELECT 1 AS ok FROM v2_bot_input_sessions WHERE telegram_id=? AND mode='ticket_reply' AND expires_ms>?"
+        ).bind(e.actorId,nowMs).first())
+      )))
     return response(t('حساب شما تعلیق شده است. پشتیبانی همچنان در دسترس است.',
       'Account suspended. Support remains available.',e.locale),e.locale);
 
