@@ -49,16 +49,7 @@ export async function adminDashboard(env,e) {
     '',
     'از گزینه‌های زیر برای مدیریت بخش‌های مدار استفاده کنید.'
   ].join('\n');
-  return adminPanel(body,[
-    button('➕ افزودن خودکار سرور','admin:node:new'),
-    button('🧪 لینک آزمایشی دو اپراتور','admin:node:trials'),
-    button('🖥 مدیریت سرورها','admin:nodes'),
-    button('🛍 مدیریت پلن‌ها','admin:plans'),
-    button('🧾 بررسی رسیدها','admin:queue'),
-    button('💬 صندوق پشتیبانی','admin:tickets'),
-    button('👥 مدیریت مشتریان','admin:customers'),
-    button('🧑‍💼 کارکنان و فروشندگان','admin:staff'),
-  ],e.locale);
+  return adminPanel(body,[],e.locale);
 }
 
 export async function customerTickets(env,e) {
