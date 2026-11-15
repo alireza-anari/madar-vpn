@@ -51,7 +51,8 @@ export function panelHeading(icon,title,subtitle='') {
 }
 export function panelRow(icon,label,value) { return icon+' '+label+': '+value; }
 export function frameMessage(content) {
-  const body=String(content??'').trim();
+  // Telegram wraps long decorative lines unpredictably in Persian RTL chats.
+  const body=String(content??'').replace(/^[━─═]{6,}\s*$/gm,'').replace(/\n{3,}/g,'\n\n').trim();
   if(body.startsWith('🌐  مــدار\n'))return body;
   return '🌐  مــدار\n'+body;
 }
