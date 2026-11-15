@@ -18,9 +18,14 @@ export function toBotMessage(update) {
   if (event?.chat?.type!=='private' || !Number.isSafeInteger(chatId) ||
       !Number.isSafeInteger(sender?.id) || sender.id!==chatId ||
       sender.is_bot===true) return null;
-  const raw=update.callback_query?.data ?? update.message?.text ?? '';
-  if (typeof raw!=='string' || raw.length>256) return null;
-  const key=raw.startsWith('v2:') ? raw.slice(3) : raw.trim().split(/\s+/)[0].split('@')[0];
+  const callback=update.callback_query?.data;
+  const isCallback=callback!==undefined;
+  const raw=isCallback?callback:(update.message?.text??'');
+  // Telegram button payloads are short; customer support and plan inputs
+  // need longer private messages. Never interpret typed text as a callback.
+  if(typeof raw!=='string'||raw.length>(isCallback?256:2000))return null;
+  const key=isCallback&&raw.startsWith('v2:')
+    ?raw.slice(3):raw.trim().split(/\s+/)[0].split('@')[0];
   const language=sender?.language_code;
   const locale=typeof language==='string' && language.startsWith('en')?'en':'fa';
   const photos=update.message?.photo;
