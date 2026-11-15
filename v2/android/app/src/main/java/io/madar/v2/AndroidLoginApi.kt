@@ -88,13 +88,16 @@ class AndroidLoginApi(origin: String) {
             conn.outputStream.use { it.write(bytes) }
             val status = conn.responseCode
             val stream = if (status in 200..299) conn.inputStream else conn.errorStream
-            val text = stream?.bufferedReader()?.use { reader ->
-                val buffer = CharArray(8193)
-                val count = reader.read(buffer)
-                if (count < 0) "" else {
-                    require(count < 8192)
-                    String(buffer, 0, count)
+            val text = stream?.use { input ->
+                val bytes = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(1024)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    require(bytes.size() + count <= 8192) { "LOGIN_RESPONSE_TOO_LARGE" }
+                    bytes.write(buffer, 0, count)
                 }
+                bytes.toString(Charsets.UTF_8.name())
             }.orEmpty()
             return status to (if (text.isBlank()) JSONObject() else JSONObject(text))
         } finally { conn.disconnect() }
