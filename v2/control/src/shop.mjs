@@ -182,10 +182,43 @@ async function myOrders(db,e) {
   const orders=(await db.prepare(
     'SELECT id,state,quoted_amount,quoted_currency FROM orders WHERE customer_telegram_id=? ORDER BY created_at DESC LIMIT 5'
   ).bind(e.actorId).all()).results ?? [];
-  if (!orders.length) return response('🧾 هنوز سفارشی برای شما ثبت نشده است.',e.locale);
-  return response(line('🧾  سفارش‌های من','━━━━━━━━━━━━━━━━━━',
-    ...orders.map(o=>'شناسه: '+o.id.slice(0,8)+'…  |  '+money(o.quoted_amount,o.quoted_currency)+
-      '\nوضعیت: '+faStatus(o.state))),e.locale);
+  if (!orders.length)return response('🧾  سفارش‌های من\n\nهنوز سفارشی ثبت نکرده‌اید.\nبرای شروع، پلن‌های موجود را بررسی کنید.',e.locale);
+  return response(line('🧾  پیگیری سفارش‌ها','━━━━━━━━━━━━━━━━━━',
+    ...orders.map((o,i)=>(
+      faNumber(i+1)+'.  '+statusSymbol(o.state)+' '+faStatus(o.state)+
+      '\n     '+money(o.quoted_amount,o.quoted_currency)+
+      '\n     کد پیگیری: '+shortCode(o.id)
+    )),'','برای دیدن جزئیات و مرحله بعد، سفارش را انتخاب کنید.'),e.locale,
+    orders.map(o=>[{text:statusSymbol(o.state)+' مشاهده سفارش '+shortCode(o.id,8),
+      callback_data:'v2:orders:view:'+o.id}]));
+}
+
+async function orderDetails(db,e,id){
+  if(!ORDER_ID.test(id))return response('⚠️ شناسه سفارش معتبر نیست.',e.locale);
+  const order=await db.prepare(
+    'SELECT id,state,quoted_amount,quoted_currency,created_at FROM orders WHERE id=? AND customer_telegram_id=?'
+  ).bind(id,e.actorId).first();
+  if(!order)return response('این سفارش در حساب شما پیدا نشد.',e.locale);
+  const step={
+    pending:'📷 تصویر رسید پرداخت را همین‌جا در ربات بفرستید. پیش از پرداخت، اطلاعات سفارش را بررسی کنید.',
+    receipt_submitted:'⏳ رسید دریافت شده و در صف بررسی مدیر است. نیازی به ارسال دوباره نیست.',
+    approved:'✅ رسید تأیید شده است. آماده‌سازی اشتراک به تأیید سرور بستگی دارد.',
+    provisioning:'⚙️ در حال آماده‌سازی سرویس هستیم. وضعیت را از همین صفحه پیگیری کنید.',
+    active:'✅ سفارش فعال شده است. جزئیات اتصال در «اشتراک من» قرار دارد.',
+    rejected:'❌ رسید تأیید نشده است. برای پیگیری درخواست پشتیبانی ثبت کنید.'
+  }[order.state]??'برای پیگیری وضعیت از بخش پشتیبانی استفاده کنید.';
+  return response(line(
+    '🧾  جزئیات سفارش','━━━━━━━━━━━━━━━━━━',
+    'کد پیگیری: '+order.id,
+    'وضعیت: '+statusSymbol(order.state)+' '+faStatus(order.state),
+    'مبلغ: '+money(order.quoted_amount,order.quoted_currency),
+    'تاریخ ثبت: '+faDate(order.created_at),'',
+    'مرحله بعد','──────────────',step
+  ),e.locale,[
+    [{text:'🔄 تازه‌سازی وضعیت سفارش',callback_data:'v2:orders:view:'+id}],
+    [{text:'🧾 سفارش‌های من',callback_data:'v2:orders'},
+     {text:'💬 پشتیبانی',callback_data:'v2:customer:tickets'}]
+  ]);
 }
 
 async function mySubscriptions(db,e,env) {
@@ -650,6 +683,7 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
     ),e.locale);
   }
   if (key==='orders' || key==='/orders') return myOrders(db,e);
+  if (key.startsWith('orders:view:')) return orderDetails(db,e,key.slice('orders:view:'.length));
   if (key==='status' || key==='/status') return liveServiceStatus(env,e,nowMs);
   if (key==='privacy' || key==='/privacy') return botPage('privacy',e.locale);
   if (key==='help' || key==='/help') return botPage('help',e.locale);
