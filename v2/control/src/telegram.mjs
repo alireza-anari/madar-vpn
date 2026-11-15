@@ -47,7 +47,8 @@ export function toBotMessage(update) {
     chatId:String(chatId),
     key,
     locale,
-    inputText:typeof update.message?.text==='string' ? update.message.text.slice(0,2000) : null,
+    inputText:typeof (update.message?.text??update.message?.caption)==='string' ?
+      (update.message.text??update.message.caption).slice(0,2000) : null,
     photoId:photoId && photoId.length>=5 && photoId.length<=512 ? photoId : null,
     callbackId:typeof update.callback_query?.id==='string' ? update.callback_query.id.slice(0,128) : null,
     messageId,
