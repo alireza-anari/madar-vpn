@@ -124,7 +124,7 @@ test('bot language stays Persian for every Telegram device locale',async()=>{
 test('suspension needs confirmation and never blocks the support path',async()=>{
   const {env,raw,event}=fixture();
   const prompt=await adminPanelAction(env,event(100,'admin:customer:suspend:200',null,40),1000);
-  assert.match(prompt.text,/مطمئنی/);
+  assert.match(prompt.text,/مطمئن هستید/);
   assert.equal(raw.prepare("SELECT state FROM customers WHERE telegram_id='200'").get().state,'active');
   const done=await adminPanelAction(env,event(100,'admin:customer:confirm:suspend:200',null,41),1001);
   assert.match(done.text,/تعلیق‌شده/);
