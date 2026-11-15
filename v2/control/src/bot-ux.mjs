@@ -46,8 +46,8 @@ export function faRole(value) {
 }
 export function frameMessage(content) {
   const body=String(content??'').trim();
-  if(body.startsWith('🌐  مــدار\\n━━━━━━━━━━━━━━━━━━'))return body;
-  return '🌐  مــدار\\n━━━━━━━━━━━━━━━━━━\\n'+body+'\\n━━━━━━━━━━━━━━━━━━';
+  if(body.startsWith('🌐  مــدار\n━━━━━━━━━━━━━━━━━━'))return body;
+  return '🌐  مــدار\n━━━━━━━━━━━━━━━━━━\n'+body+'\n━━━━━━━━━━━━━━━━━━';
 }
 
 const customerMenu={inline_keyboard:[
