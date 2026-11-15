@@ -225,20 +225,26 @@ async function mySubscriptions(db,e,env) {
   const rows=(await db.prepare(
     'SELECT id,state,expires_at,max_bytes,used_bytes FROM subscriptions WHERE owner_telegram_id=? ORDER BY expires_at DESC LIMIT 5'
   ).bind(e.actorId).all()).results??[];
-  if (!rows.length) return response('👤 هنوز اشتراکی در مدار نسخه جدید برای شما ثبت نشده است.\nاشتراک نسخه قبلی شما مستقل و محفوظ است.',e.locale);
+  if (!rows.length)return response('👤  اشتراک‌های من\n\nهنوز اشتراک فعالی در مدار V2 ندارید.\nاشتراک نسخه قبلی شما مستقل و محفوظ است.',e.locale,[
+    [{text:'🛍 مشاهده پلن‌ها',callback_data:'v2:plans'},
+     {text:'🧾 پیگیری سفارش',callback_data:'v2:orders'}]
+  ]);
   const buttons=env.SUBSCRIPTION_LINKS_ENABLED==='true'?
     rows.filter(x=>x.state==='active').map(x=>[{
-      text:'🔗 دریافت لینک اتصال دو اپراتور',
+      text:'🔗 دریافت لینک دو اپراتور · '+shortCode(x.id,8),
       callback_data:'v2:my:link:'+x.id,
     }]):[];
   return response(line('👤  اشتراک‌های من','━━━━━━━━━━━━━━━━━━',
-    ...rows.map(x=>'شناسه: '+x.id.slice(0,8)+'…'+
-      '\nوضعیت: '+faStatus(x.state)+
+    ...rows.map((x,i)=>(
+      faNumber(i+1)+'.  '+statusSymbol(x.state)+' '+faStatus(x.state)+
+      '\nاشتراک: '+shortCode(x.id)+
       '\nمصرف: '+faGB(x.used_bytes/1073741824)+' از '+faGB(x.max_bytes/1073741824)+
-      '\nانقضا: '+faDate(x.expires_at))),e.locale,[
+      '\n'+usageMeter(x.used_bytes,x.max_bytes)+
+      '\nتاریخ پایان: '+faDate(x.expires_at)+'\n'
+    )),'🔐 لینک اتصال مخصوص حساب شماست و حجم هر دو اپراتور مشترک است.'),e.locale,[
       ...buttons,
-      [{text:t('🧾 سفارش‌های من','🧾 My orders',e.locale),callback_data:'v2:orders'}],
-      [{text:t('💬 تیکت‌های من','💬 My support tickets',e.locale),callback_data:'v2:customer:tickets'}]
+      [{text:'🧾 سفارش‌های من',callback_data:'v2:orders'},
+       {text:'💬 پشتیبانی',callback_data:'v2:customer:tickets'}]
     ]);
 }
 
