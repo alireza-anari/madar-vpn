@@ -6,7 +6,7 @@ const TICKET=/^tg-[0-9]{1,20}$/;
 const PLAN=/^[a-zA-Z0-9][a-zA-Z0-9_-]{1,30}$/;
 const panel=(s,locale='fa',buttons=[],audience='customer')=>({
   text:frameMessage(String(s).slice(0,3300)),
-  replyMarkup:{inline_keyboard:[...buttons,...(audience==='admin'?adminMenu():botMenu()).inline_keyboard]},
+  replyMarkup:{inline_keyboard:[...buttons,...(audience==='admin'?adminMenu():audience==='support'?supportMenu():botMenu()).inline_keyboard]},
 });
 const adminPanel=(s,buttons=[],locale='fa')=>panel(s,locale,buttons,'admin');
 const supportPanel=(s,buttons=[],locale='fa')=>panel(s,locale,buttons,'support');
