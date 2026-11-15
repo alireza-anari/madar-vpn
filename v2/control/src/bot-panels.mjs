@@ -138,7 +138,7 @@ export async function staffTicketDetails(env,e,id) {
     [
       ...(ticket.state==='closed'?[]:[
         button('✉️ پاسخ به مشتری','ticket:reply:'+id),
-        button('✅ بستن درخواست','ticket:close:'+id)
+        button('🔒 بستن درخواست','ticket:confirm-close:'+id)
       ]),
       button('📋 بازگشت به صندوق پشتیبانی','admin:tickets'),
     ],e.locale);
