@@ -102,7 +102,7 @@ async function thread(env,e,id,ownerOnly) {
 }
 
 export async function staffTicketDetails(env,e,id) {
-  if(!TICKET.test(id))return staffPanel('⚠️ شناسه درخواست معتبر نیست.',[],e.locale);
+  if(!TICKET.test(id))return panel('⚠️ شناسه درخواست معتبر نیست.',e.locale);
   const db=env.DB;
   const isAdministrator=idAdmin(env,e.actorId);
   const authorized=isAdministrator||!!(await db.prepare(
