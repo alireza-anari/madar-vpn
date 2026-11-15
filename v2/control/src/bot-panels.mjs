@@ -1,5 +1,5 @@
 /** پنل‌های فارسی مدیریت و مشتری در ربات مدار V2. */
-import {adminMenu,frameMessage,faNumber,faStatus,faRole,statusSymbol,sectionNavigation,shortCode,panelHeading} from './bot-ux.mjs';
+import {adminMenu,frameMessage,faNumber,faStatus,faRole,statusSymbol,sectionNavigation,shortCode,panelHeading,BRAND_BANNER_URL} from './bot-ux.mjs';
 
 const NAT=/^[0-9]{1,20}$/;
 const TICKET=/^tg-[0-9]{1,20}$/;
@@ -41,30 +41,25 @@ export async function adminDashboard(env,e) {
     ready===0?'🖥 هنوز سرور آماده فروش وجود ندارد':null,
   ].filter(Boolean);
   const body=[
-    panelHeading('📊','پیشخوان مدیریت','مرکز کنترل و پایش مدار'),
+    panelHeading('📊','پیشخوان مدیریت','مرکز کنترل مدار'),
     '',
-    'شاخص‌های کلیدی',
-    '👥 مشتریان: '+faNumber(customers)+'   ·   🔗 اشتراک‌های فعال: '+faNumber(subs),
-    '🧾 سفارش‌های باز: '+faNumber(orders)+'   ·   رسیدهای دریافتی: '+faNumber(receipts),
-    '💬 درخواست‌های باز پشتیبانی: '+faNumber(tickets),
+    '👥 مشتریان: '+faNumber(customers),
+    '🔗 اشتراک‌های فعال: '+faNumber(subs),
+    '🧾 سفارش‌های باز: '+faNumber(orders),
+    '📩 رسیدهای در صف: '+faNumber(receipts),
+    '💬 پشتیبانی باز: '+faNumber(tickets),
     '',
-    'زیرساخت و ظرفیت',
-    '🖥 سرورها: '+faNumber(nodes)+'   ·   نصب‌شده: '+faNumber(installed)+'   ·   آماده: '+faNumber(ready),
-    '🛒 وضعیت فروش عمومی: '+(salesReady?'پیکربندی شده':'غیرفعال'),
+    '🖥 سرورها: '+faNumber(nodes),
+    '🛠 نصب‌شده: '+faNumber(installed),
+    '✅ آماده: '+faNumber(ready),
     '',
-    'نیازمند اقدام',
-    ...(alerts.length?alerts:['✅ مورد فوری در صف مدیریت ثبت نشده است.']),
-    '',
-    ready>0
-      ?'🛡 آماده‌بودن سرور به‌تنهایی مجوز فروش نیست؛ آزمون مسیر و ظرفیت باید تأیید شده باشد.'
-      :'⛔ فروش عمومی تا تأیید مسیر و ظرفیت غیرفعال است.',
-    '',
-    'برای ادامه، یکی از بخش‌های مدیریت را انتخاب کنید.'
+    '🛒 فروش عمومی: '+(salesReady?'پیکربندی شده':'غیرفعال'),
+    ...(alerts.length?['','⚠️ نیازمند رسیدگی',...alerts]:['','✅ مورد فوری در صف نیست']),
   ].join('\n');
   const urgent=[];
   if(receipts>0)urgent.push([{text:'🧾 بررسی رسیدها · '+faNumber(receipts),callback_data:'v2:admin:queue'}]);
   if(tickets>0)urgent.push([{text:'💬 درخواست‌های باز · '+faNumber(tickets),callback_data:'v2:admin:tickets'}]);
-  return {text:frameMessage(body),replyMarkup:{inline_keyboard:[
+  return {text:frameMessage(body),photoId:BRAND_BANNER_URL,replyMarkup:{inline_keyboard:[
     ...urgent,
     [{text:'👤 مشاهده نمای مشتری',callback_data:'v2:customer:home'}],
     ...adminMenu().inline_keyboard
