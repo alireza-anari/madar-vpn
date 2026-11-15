@@ -50,7 +50,7 @@ export async function adminDashboard(env,e) {
     '',
     'زیرساخت و ظرفیت',
     '🖥 سرورها: '+faNumber(nodes)+'   ·   نصب‌شده: '+faNumber(installed)+'   ·   آماده: '+faNumber(ready),
-    '🛒 وضعیت فروش عمومی: '+(salesReady?'آماده بررسی':'غیرفعال'),
+    '🛒 وضعیت فروش عمومی: '+(salesReady?'پیکربندی شده':'غیرفعال'),
     '',
     'نیازمند اقدام',
     ...(alerts.length?alerts:['✅ مورد فوری در صف مدیریت ثبت نشده است.']),
