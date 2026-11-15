@@ -343,7 +343,8 @@ export async function nodeManagement(db,actor,ref,operation,apply=false,updateId
   ]);
   if(results[0]?.meta?.changes!==1)
     return panel('⏳ وضعیت سرور هم‌زمان تغییر کرد؛ لطفاً صفحه سرور را تازه‌سازی کنید.');
-  return {text:frameMessage('✅ وضعیت سرور '+n.id+' تغییر کرد: '+faStatus(t.to)+
+  return {text:frameMessage('✅ '+(operation==='retire'?'سرور بایگانی شد: ':'وضعیت سرور تغییر کرد: ')+n.id+
+    '\nوضعیت جدید: '+faStatus(t.to)+
     '\n\nاین تغییر به معنای تأیید اتصال یا حذف VPS نیست.'),
     replyMarkup:{inline_keyboard:[nodeButton('🖥 مشاهده سرور','admin:node:view:'+ref)]}};
 }
