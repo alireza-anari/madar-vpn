@@ -132,25 +132,217 @@ export async function addRoute(db,actor,input) {
     ' به‌صورت پیش‌نویس ثبت شد.\nتا تأیید عامل امضاشده و موفقیت آزمون ترافیک واقعی، فروش این مسیر مجاز نیست.');
 }
 
-export async function nodeOverview(db) {
-  const rows=(await db.prepare(
-    "SELECT n.id,n.provider,n.region,n.lifecycle,n.desired_revision,n.acked_revision,"+
-    "COUNT(r.id) AS routes FROM nodes n LEFT JOIN routes r ON r.node_id=n.id "+
-    "GROUP BY n.id ORDER BY n.created_at DESC,n.id LIMIT 30"
-  ).all()).results??[];
-  if(!rows.length)return panel(
-    panelHeading('🖥','مدیریت سرورها','وضعیت نصب، مسیرها و آمادگی فروش')+
-    '\n\nهنوز سروری در مدار V2 ثبت نشده است. از دکمه «افزودن سرور» شروع کنید.');
-  return panel(panelHeading('🖥','مدیریت سرورها','وضعیت نصب و مسیرهای هر سرور')+
-    '\n\n'+rows.map(n=>
-      statusSymbol(n.lifecycle)+' '+n.id+
-      '\n🌍 ارائه‌دهنده: '+n.provider+'  ·  منطقه: '+n.region+
-      '\nوضعیت: '+faStatus(n.lifecycle)+
-      '\n⚙️ نسخه تنظیمات: '+faNumber(n.desired_revision)+
-      '  ·  تأیید عامل: '+faNumber(n.acked_revision)+
-      '\n🔀 مسیرهای ثبت‌شده: '+faNumber(n.routes)
-    ).join('\n\n──────────────\n\n')+
-    '\n\n🛡 فقط سرورهایی که آزمون واقعی مسیر و ظرفیت را گذرانده‌اند برای فروش مجاز هستند.');
+const NODE_REF=/^[a-f0-9]{24}$/;
+const PAGE_SIZE=6;
+const FILTERS={
+  all:{title:'همه',sql:'1=1'},
+  ready:{title:'آماده',sql:"lifecycle='ready'"},
+  setup:{title:'در حال نصب',sql:"lifecycle IN ('enrolling','provisioning')"},
+  attention:{title:'نیازمند بررسی',sql:"lifecycle='degraded'"},
+  quarantine:{title:'قرنطینه',sql:"lifecycle='quarantined'"},
+  archive:{title:'بایگانی',sql:"lifecycle='retired'"},
+};
+const statusOrder="CASE lifecycle WHEN 'ready' THEN 0 WHEN 'enrolling' THEN 1 "+
+  "WHEN 'provisioning' THEN 2 WHEN 'degraded' THEN 3 WHEN 'quarantined' THEN 4 ELSE 5 END";
+const nodeButton=(text,key)=>[{text,callback_data:'v2:'+key}];
+const short=(value,max=32)=>String(value).length>max?String(value).slice(0,max-1)+'…':String(value);
+const formatCount=(n)=>faNumber(Number(n??0));
+
+/** Stable short callback identifiers also work for a 64-character node ID. */
+export async function nodeUiRef(id){
+  if(!NODE_ID.test(String(id??'')))return null;
+  const digest=new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(id)));
+  return Array.from(digest.slice(0,12),b=>b.toString(16).padStart(2,'0')).join('');
+}
+async function resolveNodeRef(db,ref){
+  if(!NODE_REF.test(String(ref??'')))return null;
+  // Fail closed on ambiguity or unusually large node registries.
+  const list=(await db.prepare("SELECT id FROM nodes ORDER BY id LIMIT 5001").all()).results??[];
+  if(list.length>5000)return null;
+  let result=null;
+  for(const row of list){
+    if(await nodeUiRef(row.id)!==ref)continue;
+    if(result)return null;
+    result=row.id;
+  }
+  return result;
+}
+async function countNodes(db,sql){
+  const row=await db.prepare(sql).first();
+  return Number(row?.n??0);
+}
+function filterMenu(filter){
+  const f=(name,title)=>({text:(filter===name?'✅ ':'')+title,callback_data:'v2:admin:nodes:'+name+':0'});
+  return [
+    [f('all','همه'),f('ready','آماده'),f('setup','در حال نصب')],
+    [f('attention','نیازمند بررسی'),f('quarantine','قرنطینه'),f('archive','بایگانی')],
+  ];
+}
+/** Overview is intentionally short: each node gets one separate Telegram button. */
+export async function nodeOverview(db,{filter='all',page=0}={}){
+  if(!Object.hasOwn(FILTERS,filter))filter='all';
+  page=Number.isSafeInteger(page)&&page>=0&&page<=1000?page:0;
+  const sql=FILTERS[filter].sql;
+  const [total,ready,setup,attention,quarantine,archived,filtered]=await Promise.all([
+    countNodes(db,'SELECT COUNT(*) AS n FROM nodes'),
+    countNodes(db,"SELECT COUNT(*) AS n FROM nodes WHERE lifecycle='ready'"),
+    countNodes(db,"SELECT COUNT(*) AS n FROM nodes WHERE lifecycle IN ('enrolling','provisioning')"),
+    countNodes(db,"SELECT COUNT(*) AS n FROM nodes WHERE lifecycle='degraded'"),
+    countNodes(db,"SELECT COUNT(*) AS n FROM nodes WHERE lifecycle='quarantined'"),
+    countNodes(db,"SELECT COUNT(*) AS n FROM nodes WHERE lifecycle='retired'"),
+    countNodes(db,'SELECT COUNT(*) AS n FROM nodes WHERE '+sql),
+  ]);
+  const maxPage=Math.max(0,Math.ceil(filtered/PAGE_SIZE)-1);
+  page=Math.min(page,maxPage);
+  const list=(await db.prepare(
+    'SELECT id,provider,region,lifecycle FROM nodes WHERE '+sql+
+    ' ORDER BY '+statusOrder+',created_at DESC,id LIMIT ? OFFSET ?'
+  ).bind(PAGE_SIZE,page*PAGE_SIZE).all()).results??[];
+  const text=panelHeading('🖥','مدیریت سرورها','هر سرور یک صفحه اختصاصی دارد')+
+    '\n\n📊 کل: '+formatCount(total)+'  |  ✅ آماده: '+formatCount(ready)+
+    '\n🛠 نصب: '+formatCount(setup)+'  |  ⚠️ بررسی: '+formatCount(attention)+
+    '\n🔴 قرنطینه: '+formatCount(quarantine)+'  |  🗄 بایگانی: '+formatCount(archived)+
+    '\n\n🔎 فیلتر: '+FILTERS[filter].title+' · صفحه '+formatCount(page+1)+
+    ' از '+formatCount(maxPage+1)+
+    '\n\n'+(list.length?'برای مدیریت، نام سرور را انتخاب کنید.':'در این دسته سروری وجود ندارد.');
+  const items=[];
+  for(const n of list){
+    const ref=await nodeUiRef(n.id);
+    items.push(nodeButton(statusSymbol(n.lifecycle)+' '+short(n.id,33)+' · '+faStatus(n.lifecycle),
+      'admin:node:view:'+ref));
+  }
+  const pages=[];
+  if(page>0)pages.push({text:'◀️ قبلی',callback_data:'v2:admin:nodes:'+filter+':'+(page-1)});
+  if(page<maxPage)pages.push({text:'بعدی ▶️',callback_data:'v2:admin:nodes:'+filter+':'+(page+1)});
+  return {text:frameMessage(text),replyMarkup:{inline_keyboard:[
+    ...filterMenu(filter),
+    ...items,
+    ...(pages.length?[pages]:[]),
+    nodeButton('➕ افزودن سرور','admin:node:new'),
+    nodeButton('🧪 آزمون سرورها','admin:node:trials'),
+    ...sectionNavigation('admin'),
+  ]}};
+}
+
+async function nodeRecord(db,ref){
+  const id=await resolveNodeRef(db,ref);
+  if(!id)return null;
+  return db.prepare(
+    'SELECT id,provider,region,lifecycle,user_limit,byte_limit,desired_revision,acked_revision FROM nodes WHERE id=?'
+  ).bind(id).first();
+}
+async function activeAllocations(db,id){
+  const row=await db.prepare(
+    "SELECT COUNT(*) AS n, COALESCE(SUM(quota_bytes),0) AS bytes FROM node_allocations "+
+    "WHERE node_id=? AND state IN ('reserved','active')"
+  ).bind(id).first();
+  return {n:Number(row?.n??0),bytes:Number(row?.bytes??0)};
+}
+function quotaLabel(value){
+  return formatCount((Number(value??0)/1073741824).toFixed(1))+' گیگابایت';
+}
+function managementButtons(node,ref,active){
+  if(node.lifecycle==='retired')return [];
+  if(node.lifecycle==='quarantined')return [
+    nodeButton('🔄 بازگردانی به بررسی','admin:node:confirm:restore:'+ref),
+    ...(active===0?[nodeButton('🗄 بایگانی سرور','admin:node:confirm:retire:'+ref)]:[]),
+  ];
+  return [
+    nodeButton('🛡 قرنطینه سرور','admin:node:confirm:quarantine:'+ref),
+    ...(['enrolling','provisioning','degraded'].includes(node.lifecycle)&&active===0?
+      [nodeButton('🗄 بایگانی سرور','admin:node:confirm:retire:'+ref)]:[]),
+  ];
+}
+export async function nodeDetails(db,ref,actor){
+  const n=await nodeRecord(db,ref);
+  if(!n)return panel('⚠️ سرور یافت نشد یا لینک انتخاب منقضی شده است.');
+  const [alloc,job,routes,variants]=await Promise.all([
+    activeAllocations(db,n.id),
+    db.prepare('SELECT state,owner_id FROM node_bootstrap_jobs WHERE node_id=?').bind(n.id).first(),
+    db.prepare("SELECT id,transport,state,listen_port,operator_hint FROM routes WHERE node_id=? ORDER BY id LIMIT 16").bind(n.id).all(),
+    db.prepare("SELECT cv.operator,cv.port,cv.published,cv.verified_ms FROM route_carrier_variants cv "+
+      "JOIN routes r ON r.id=cv.route_id WHERE r.node_id=? ORDER BY cv.operator LIMIT 10").bind(n.id).all(),
+  ]);
+  const routeRows=routes.results??[],variantRows=variants.results??[];
+  const routeText=routeRows.length?routeRows.map(r=>
+    statusSymbol(r.state)+' '+r.transport.toUpperCase()+
+    (r.operator_hint?' · '+(r.operator_hint==='mci'?'همراه اول':'ایرانسل'):'')+
+    (r.listen_port?' :'+formatCount(r.listen_port):'')+
+    ' · '+faStatus(r.state)).join('\n'):'هنوز مسیری ثبت نشده است.';
+  const carriers=variantRows.map(v=>
+    (v.operator==='mci'?'همراه اول':'ایرانسل')+
+    ' :'+formatCount(v.port)+' · '+(v.published&&v.verified_ms?'منتشر و تأییدشده':'آزمایشی')).join('\n');
+  const text=panelHeading('🖥','پرونده سرور',n.id)+
+    '\n\n🌍 ارائه‌دهنده: '+n.provider+
+    '\n📍 منطقه: '+n.region+
+    '\n'+statusSymbol(n.lifecycle)+' وضعیت: '+faStatus(n.lifecycle)+
+    '\n⚙️ نصب: '+(job?faStatus(job.state):'ثبت نشده')+
+    '\n👤 ظرفیت: '+formatCount(alloc.n)+' / '+formatCount(n.user_limit)+
+    '\n📦 حجم تخصیص‌یافته: '+quotaLabel(alloc.bytes)+' / '+quotaLabel(n.byte_limit)+
+    '\n🔄 نسخه: '+formatCount(n.acked_revision)+' از '+formatCount(n.desired_revision)+
+    '\n\n🔀 مسیرهای سرور\n'+routeText+
+    (carriers?'\n\n📱 مسیرهای اپراتورها\n'+carriers:'')+
+    '\n\n🔐 تغییر وضعیت فقط پس از تأیید انجام می‌شود؛ این بخش به VPS فرمان حذف نمی‌دهد.';
+  const buttons=[
+    nodeButton('🔄 تازه‌سازی همین سرور','admin:node:view:'+ref),
+    ...(job?.state==='installed'&&job.owner_id===actor&&n.lifecycle!=='retired'&&n.lifecycle!=='quarantined'?
+      [nodeButton('🧪 لینک تست این سرور','admin:node:trialref:'+ref)]:[]),
+    ...managementButtons(n,ref,alloc.n),
+    nodeButton('↩️ فهرست سرورها','admin:nodes'),
+  ];
+  return {text:frameMessage(text),replyMarkup:{inline_keyboard:buttons}};
+}
+const transition={
+  quarantine:{to:'quarantined',from:['enrolling','provisioning','ready','degraded'],label:'قرنطینه'},
+  restore:{to:'degraded',from:['quarantined'],label:'بازگردانی به بررسی'},
+  retire:{to:'retired',from:['enrolling','provisioning','degraded','quarantined'],label:'بایگانی'},
+};
+export async function nodeManagement(db,actor,ref,operation,apply=false,updateId=null){
+  const t=transition[operation];
+  if(!t)return panel('⚠️ عملیات مدیریت سرور شناخته نشد.');
+  const n=await nodeRecord(db,ref);
+  if(!n)return panel('⚠️ سرور پیدا نشد.');
+  const alloc=await activeAllocations(db,n.id);
+  if(!t.from.includes(n.lifecycle) || (operation==='retire'&&alloc.n>0))
+    return {text:frameMessage('⛔ تغییر وضعیت مجاز نیست. وضعیت سرور یا اشتراک‌های تخصیص‌یافته را بررسی کنید.'),
+      replyMarkup:{inline_keyboard:[nodeButton('↩️ پرونده سرور','admin:node:view:'+ref)]}};
+  if(!apply){
+    const description=operation==='quarantine'
+      ?'قرنطینه، سرور را از فهرست آماده خارج می‌کند و ممکن است بر سرویس‌های فعال اثر بگذارد.'
+      :operation==='restore'
+        ?'سرور فقط به وضعیت «نیازمند بررسی» بازمی‌گردد؛ آماده فروش نمی‌شود.'
+        :'سرور در مدار بایگانی می‌شود؛ VPS و فایل‌ها حذف نمی‌شوند.';
+    return {text:frameMessage(panelHeading('⚠️','تأیید '+t.label,n.id)+
+      '\n\nوضعیت فعلی: '+faStatus(n.lifecycle)+
+      '\nاشتراک‌های تخصیص‌یافته: '+formatCount(alloc.n)+
+      '\n\n'+description+
+      '\n\nبرای انجام این تغییر، تأیید را انتخاب کنید.'),
+      replyMarkup:{inline_keyboard:[
+        nodeButton('✅ تأیید '+t.label,'admin:node:apply:'+operation+':'+ref),
+        nodeButton('↩️ انصراف','admin:node:view:'+ref),
+      ]}};
+  }
+  if(!Number.isSafeInteger(updateId)||updateId<0)
+    return panel('⛔ درخواست تغییر معتبر نیست.');
+  const allowed=t.from.map(x=>"'"+x+"'").join(',');
+  const sql="UPDATE nodes SET lifecycle=? WHERE id=? AND lifecycle IN ("+allowed+")"+
+    (operation==='retire'?
+      " AND NOT EXISTS (SELECT 1 FROM node_allocations WHERE node_id=? AND state IN ('reserved','active'))":'');
+  const params=operation==='retire'?[t.to,n.id,n.id]:[t.to,n.id];
+  const results=await db.batch([
+    db.prepare(sql).bind(...params),
+    db.prepare("INSERT OR IGNORE INTO audit_events(event_id,actor_id,object_type,object_id,verb) "+
+      "SELECT ?,?,'node',?,? WHERE EXISTS (SELECT 1 FROM nodes WHERE id=? AND lifecycle=?)")
+      .bind('node:management:'+updateId,actor,n.id,'lifecycle:'+operation,n.id,t.to),
+  ]);
+  if(results[0]?.meta?.changes!==1)
+    return panel('⏳ وضعیت سرور هم‌زمان تغییر کرد؛ لطفاً صفحه سرور را تازه‌سازی کنید.');
+  return {text:frameMessage('✅ وضعیت سرور '+n.id+' تغییر کرد: '+faStatus(t.to)+
+    '\n\nاین تغییر به معنای تأیید اتصال یا حذف VPS نیست.'),
+    replyMarkup:{inline_keyboard:[nodeButton('🖥 مشاهده سرور','admin:node:view:'+ref)]}};
+}
+export async function nodeFromRef(db,ref){
+  return nodeRecord(db,ref);
 }
 
 export async function nodeAdminAction(db,actor,key,input) {
