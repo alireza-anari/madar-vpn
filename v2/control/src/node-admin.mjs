@@ -1,5 +1,5 @@
 /** مدیریت فارسی سرورها و مسیرهای پیش‌نویس در محیط V2. */
-import {adminMenu,frameMessage,faStatus,faNumber,statusSymbol,panelHeading} from './bot-ux.mjs';
+import {sectionNavigation,frameMessage,faStatus,faNumber,statusSymbol,panelHeading} from './bot-ux.mjs';
 
 const NODE_ID=/^[A-Za-z0-9][A-Za-z0-9_-]{1,63}$/;
 const PROVIDER=/^[A-Za-z0-9][A-Za-z0-9_.-]{1,63}$/;
@@ -10,7 +10,7 @@ const MAX_GB=200000;
 const gbToBytes=n=>n*1073741824;
 
 function panel(message) {
-  return {text:frameMessage(message),replyMarkup:adminMenu()};
+  return {text:frameMessage(message),replyMarkup:{inline_keyboard:sectionNavigation('admin')}};
 }
 
 export function parseNodeAdd(input) {
