@@ -146,6 +146,13 @@ export function parentPage(key,isAdmin=false){
   if(key==='admin:node:new')return 'admin:node:cancel';
   if(key==='admin:node:cancel')return 'admin:home'; // Cancellation lands on server overview.
   if(key==='admin:node:trials')return 'admin:nodes';
+  if(/^admin:nodes:(all|ready|setup|attention|quarantine|archive):[0-9]{1,4}$/.test(key))
+    return 'admin:nodes';
+  if(/^admin:node:(confirm|apply):(quarantine|restore|retire):[a-f0-9]{24}$/.test(key))
+    return 'admin:node:view:'+key.slice(-24);
+  if(/^admin:node:trialref:[a-f0-9]{24}$/.test(key))
+    return 'admin:node:view:'+key.slice(-24);
+  if(/^admin:node:view:[a-f0-9]{24}$/.test(key))return 'admin:nodes';
   if(key.startsWith('admin:node:trial:'))return 'admin:node:trials';
   if(key==='admin:nodes'||key==='/nodes'||key==='/node_add'||key==='/node_route')return 'admin:home';
   if(key.startsWith('admin:plan:')||key.startsWith('plan:'))return 'admin:plans';
