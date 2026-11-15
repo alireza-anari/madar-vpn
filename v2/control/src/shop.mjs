@@ -633,13 +633,13 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
       'هر دو مسیر تأییدشده هنوز آماده نیستند؛ لینکی صادر نشد.',
       'Both verified carrier routes are not yet ready; no link was issued.',e.locale),e.locale);
     return response(line(
-      t('🔗 لینک اشتراک مدار — شامل دو مسیر همراه اول و ایرانسل',
-        '🔗 Madar subscription — contains MCI and Irancell routes',e.locale),
+      '🔗  لینک اشتراک مدار',
+      '━━━━━━━━━━━━━━━━━━',
+      'این لینک شامل دو مسیر جداگانه برای همراه اول و ایرانسل است:',
       link.url,'',
-      t('در v2rayNG از Subscription settings لینک را اضافه و سپس Update subscription را بزنید. لینک را خصوصی نگه دارید.',
-        'Add this URL under v2rayNG Subscription settings, then Update subscription. Keep the link private.',e.locale),
-      t('یک اشتراک، یک حجم و یک تاریخ انقضا برای هر دو مسیر.',
-        'One subscription, shared quota and shared expiration for both routes.',e.locale)
+      'در برنامه v2rayNG وارد بخش «تنظیمات اشتراک» شوید، لینک را اضافه کنید و سپس «به‌روزرسانی اشتراک» را بزنید.',
+      '🔐 این لینک خصوصی است؛ آن را برای دیگران ارسال نکنید.',
+      'یک اشتراک، یک حجم مصرف و یک تاریخ انقضا برای هر دو مسیر.'
     ),e.locale);
   }
   if (key==='orders' || key==='/orders') return myOrders(db,e);
@@ -649,31 +649,31 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
   if (key==='support' || key==='/support') return beginSupport(db,e,nowMs);
   if (key.startsWith('buy:')) return purchase(db,env,e,key.slice(4),nowMs);
   if (key==='admin:queue') {
-    if (!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) return response('Access denied',e.locale);
+    if (!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
     return adminQueue(db,e);
   }
   if (key.startsWith('admin:receipt:')) {
-    if (!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) return response('Access denied',e.locale);
+    if (!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
     return adminReceipt(db,e,key.slice('admin:receipt:'.length));
   }
   if (key==='admin:tickets') {
     if (!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId) &&
-      !await isStaff(db,e,'support')) return response('Access denied',e.locale);
+      !await isStaff(db,e,'support')) return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
     return supportInbox(db,e);
   }
   if(key.startsWith('ticket:view:')) {
-    if(!await staffCanReply(db,e,env))return response('Access denied',e.locale);
+    if(!await staffCanReply(db,e,env))return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
     return staffTicketDetails(env,e,key.slice('ticket:view:'.length));
   }
   if (key.startsWith('ticket:reply:') || key.startsWith('ticket:close:')) {
-    if(!await staffCanReply(db,e,env)) return response('Access denied',e.locale);
+    if(!await staffCanReply(db,e,env)) return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
     const action=key.startsWith('ticket:reply:')?'reply':'close';
     const id=key.slice(action==='reply'?'ticket:reply:'.length:'ticket:close:'.length);
-    if(!/^tg-[0-9]{1,20}$/.test(id)) return response('Invalid ticket ID',e.locale);
+    if(!/^tg-[0-9]{1,20}$/.test(id)) return adminResponse('⚠️ شناسه درخواست معتبر نیست.',e.locale);
     return action==='reply' ? startTicketReply(db,e,id,nowMs) : closeSupport(db,e,id,nowMs);
   }
   if (key.startsWith('approve:') || key.startsWith('reject:')) {
-    if (!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) return response('Access denied',e.locale);
+    if (!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
     const [action,id]=key.split(':');
     return adminDecision(db,e,action,id);
   }
