@@ -188,7 +188,7 @@ export function parentPage(key,isAdmin=false){
   if(key.startsWith('admin:customers'))return 'admin:home';
   if(key.startsWith('admin:staff:'))return 'admin:staff';
   if(key==='admin:staff')return 'admin:home';
-  if(key==='admin:tickets')return isAdmin?'admin:home':'customer:home';
+  if(key==='admin:tickets')return isAdmin?'admin:home':'home'; // Staff goes to their dedicated support home.
   if(key.startsWith('ticket:view:'))return 'admin:tickets';
   if(key.startsWith('ticket:')){
     const id=key.split(':').at(-1);
