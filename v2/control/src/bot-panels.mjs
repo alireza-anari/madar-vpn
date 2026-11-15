@@ -67,6 +67,10 @@ export async function adminDashboard(env,e) {
 }
 
 export async function customerTickets(env,e,page=0) {
+  // Leaving the support composer with Back must not send the next free text as a ticket.
+  if(Number.isSafeInteger(e.messageId)&&e.messageId>0)
+    await env.DB.prepare("DELETE FROM customer_sessions WHERE telegram_id=? AND mode='support'")
+      .bind(e.actorId).run();
   const pageIndex=Number.isInteger(page)&&page>=0&&page<=1000?page:0;
   const rows=(await env.DB.prepare(
     'SELECT id,subject,state,created_at FROM support_tickets WHERE customer_telegram_id=? '+
@@ -102,6 +106,9 @@ async function thread(env,e,id,ownerOnly) {
     (ownerOnly?' AND customer_telegram_id=?':'')
   ).bind(...(ownerOnly?[id,e.actorId]:[id])).first();
   if(!ticket)return panel('درخواست موردنظر پیدا نشد.',e.locale);
+  if(ownerOnly&&Number.isSafeInteger(e.messageId)&&e.messageId>0)
+    await db.prepare("DELETE FROM v2_bot_input_sessions WHERE telegram_id=? AND mode='ticket_reply'")
+      .bind(e.actorId).run();
   const rows=(await db.prepare(
     'SELECT role,body,created_at FROM support_messages WHERE ticket_id=? ORDER BY created_at DESC,id DESC LIMIT 8'
   ).bind(id).all()).results??[];
@@ -126,6 +133,9 @@ export async function staffTicketDetails(env,e,id) {
     "SELECT 1 AS ok FROM staff_roles sr JOIN customers c ON c.telegram_id=sr.telegram_id WHERE sr.telegram_id=? AND sr.role='support' AND c.state='active'"
   ).bind(e.actorId).first());
   if(!authorized)return panel('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
+  if(Number.isSafeInteger(e.messageId)&&e.messageId>0)
+    await db.prepare("DELETE FROM support_staff_sessions WHERE telegram_id=?")
+      .bind(e.actorId).run();
   const staffPanel=isAdministrator?adminPanel:supportPanel;
   const ticket=await db.prepare(
     'SELECT id,customer_telegram_id,state,subject FROM support_tickets WHERE id=?'
@@ -261,6 +271,9 @@ export async function adminPanelAction(env,e,nowMs=Date.now()) {
       buttons,e.locale);
   }
   if(key==='admin:staff'){
+    if(Number.isSafeInteger(e.messageId)&&e.messageId>0)
+      await db.prepare("DELETE FROM v2_bot_input_sessions WHERE telegram_id=? AND mode IN ('grant_seller','grant_support','revoke_seller','revoke_support')")
+        .bind(e.actorId).run();
     const rows=(await db.prepare(
       "SELECT sr.telegram_id,sr.role FROM staff_roles sr JOIN customers c ON c.telegram_id=sr.telegram_id WHERE sr.role IN ('seller','support') ORDER BY sr.role,sr.telegram_id LIMIT 25"
     ).all()).results??[];
