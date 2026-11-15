@@ -1,30 +1,35 @@
 import {enqueueAutoNode,parseAutoNode} from './node-auto.mjs';
-/** Phone-friendly, owner-only node enrollment via Telegram without shell commands.
- * A node is always recorded as enrolling, NEVER activated for paid issuance.
- */
-import { parseNodeAdd, enrollNode } from './node-admin.mjs';
+import {adminMenu,frameMessage} from './bot-ux.mjs';
 
-const prompt='🖥 افزودن خودکار سرور در مدار V2\n\n' +
-  'این ۶ مقدار را با | جدا کن:\n' +
-  'شناسه | ارائه‌دهنده | منطقه | سقف کاربر | سقف حجم گیگ | IP\n\n' +
-  'مثال برای سرور آزمایشی فعلی:\n' +
-  'test-aria01|arianet|eu|20|500|86.54.42.66\n\n' +
-  'پس از ثبت، ربات نصب خودکار را به اجراکننده امن واگذار می‌کند.\n' +
-  'رمز SSH یا کلید خصوصی را در تلگرام ارسال نکن.\n' +
-  'برای لغو «انصراف» را بزن.';
+/** راهنمای افزودن امن سرور؛ رمز و کلید خصوصی هرگز در تلگرام دریافت نمی‌شود. */
+const prompt='🖥  افزودن خودکار سرور در مدار V2\n━━━━━━━━━━━━━━━━━━\n'+
+  'اطلاعات زیر را به همین ترتیب و با علامت | از هم جدا کنید:\n'+
+  'شناسه فنی | ارائه‌دهنده | منطقه | سقف کاربر | ظرفیت گیگابایت | نشانی IP\n\n'+
+  'نمونه سرور آزمایشی:\n'+
+  'test-aria01 | arianet | eu | 20 | 500 | 86.54.42.66\n\n'+
+  'پس از ثبت، درخواست نصب به اجراکننده امن ارسال می‌شود.\n'+
+  '🔐 رمز عبور یا کلید خصوصی را در تلگرام نفرستید.\n'+
+  'برای لغو، دکمه «انصراف» را بزنید.';
+
 export function newNodePrompt() {
-  return {text:prompt,replyMarkup:{inline_keyboard:[
+  return {text:frameMessage(prompt),replyMarkup:{inline_keyboard:[
     [{text:'❌ انصراف',callback_data:'v2:admin:node:cancel'}],
+    ...adminMenu().inline_keyboard,
   ]}};
 }
 
 export async function beginNodeWizard(db,actor,nowMs,env=null) {
   if(env?.RUNNER_ENROLLMENT_ENABLED==='true')return {
-    text:'🖥 افزودن خودکار سرور مدار V2\nفرم امن را باز کن؛ اتصال و نصب توسط اجراکننده انجام می‌شود. رمز یا کلید را در پیام تلگرام نفرست.',
-    replyMarkup:{inline_keyboard:[[{text:'🔒 افزودن سرور',web_app:{url:'https://madar-v2-staging.alirezaanari117.workers.dev/enroll'}}]]}
+    text:frameMessage('🖥  افزودن امن سرور\n━━━━━━━━━━━━━━━━━━\n'+
+      'فرم امن را باز کنید؛ بررسی اتصال و نصب توسط اجراکننده انجام می‌شود.\n'+
+      'رمز عبور یا کلید خصوصی را در پیام تلگرام ارسال نکنید.'),
+    replyMarkup:{inline_keyboard:[
+      [{text:'🔒 باز کردن فرم امن افزودن سرور',web_app:{url:'https://madar-v2-staging.alirezaanari117.workers.dev/enroll'}}],
+      ...adminMenu().inline_keyboard,
+    ]}
   };
   await db.prepare(
-    "INSERT INTO admin_node_sessions(telegram_id,mode,expires_ms) VALUES(?,'add',?) " +
+    "INSERT INTO admin_node_sessions(telegram_id,mode,expires_ms) VALUES(?,'add',?) "+
     "ON CONFLICT(telegram_id) DO UPDATE SET mode='add',expires_ms=excluded.expires_ms"
   ).bind(actor,nowMs+10*60*1000).run();
   return newNodePrompt();
@@ -33,33 +38,37 @@ export async function beginNodeWizard(db,actor,nowMs,env=null) {
 export async function cancelNodeWizard(db,actor) {
   await db.prepare('DELETE FROM admin_node_sessions WHERE telegram_id=?')
     .bind(actor).run();
-  return {text:'✅ ثبت سرور لغو شد.'};
+  return {text:frameMessage('✅ فرایند افزودن سرور لغو شد.'),replyMarkup:adminMenu()};
 }
 
 export async function consumeNodeWizard(db,actor,input,nowMs,env=null) {
-  if(typeof input!=='string'||!input.trim()||input.startsWith('/')||
-     input.startsWith('v2:'))return null;
+  if(typeof input!=='string'||!input.trim()||input.startsWith('/')||input.startsWith('v2:'))return null;
   const session=await db.prepare(
     'SELECT mode,expires_ms FROM admin_node_sessions WHERE telegram_id=?'
   ).bind(actor).first();
   if(!session||session.mode!=='add')return null;
   if(session.expires_ms<nowMs) {
     await db.prepare('DELETE FROM admin_node_sessions WHERE telegram_id=?').bind(actor).run();
-    return {text:'⌛ مهلت ثبت سرور تمام شد. از پنل مدیریت دوباره شروع کنید.'};
+    return {text:frameMessage('⌛ مهلت ثبت سرور به پایان رسید. از پنل مدیریت دوباره شروع کنید.'),replyMarkup:adminMenu()};
   }
   const parsed=parseAutoNode(input.trim());
-  if(!parsed)
-    return {text:'⚠️ اطلاعات معتبر نیست. شش مقدار را طبق نمونه ارسال کن.\n\n'+prompt};
-  if(!env)
-    return {text:'⚠️ اجرای خودکار تنظیم نشده است؛ هیچ سروری ثبت نشد.'};
+  if(!parsed)return {text:frameMessage('⚠️ اطلاعات واردشده معتبر نیست. شش مقدار را مطابق نمونه ارسال کنید.\n\n'+prompt),replyMarkup:adminMenu()};
+  if(!env)return {text:frameMessage('⚠️ اجرای خودکار تنظیم نشده است؛ هیچ سروری ثبت نشد.'),replyMarkup:adminMenu()};
   const result=await enqueueAutoNode(env,actor,input.trim(),nowMs);
-  if(result.error)
-    return {text:'⚠️ ثبت سرور انجام نشد: '+result.error+'. وضعیت سرورهای موجود را بررسی کن.'};
+  if(result.error) {
+    const errors={
+      bad_input:'اطلاعات سرور معتبر نیست.',
+      not_ready:'پایگاه داده آماده نیست.',
+      automation_not_configured:'اتصال اجراکننده امن کامل نشده است.',
+      already_exists:'این شناسه سرور قبلاً ثبت شده است.',
+    };
+    return {text:frameMessage('⚠️ ثبت سرور انجام نشد.\n'+(errors[result.error]??'خطای پیش‌بینی‌نشده؛ تنظیمات را بررسی کنید.')),replyMarkup:adminMenu()};
+  }
   await db.prepare('DELETE FROM admin_node_sessions WHERE telegram_id=?')
     .bind(actor).run();
   const status=result.dispatched
-    ?'🚀 دستور نصب امن به اجراکننده ارسال شد. از بخش سرورها وضعیت را بررسی کن.'
-    :'⏸ سرور ثبت شد ولی مجوز اجرای امن هنوز تنظیم نشده است؛ نصب اجرا نشد.';
-  return {text:'✅ سرور '+parsed.id+' ثبت شد.\n'+status+
-    '\n\n🔒 تا تأیید واقعی مسیرها، صدور کانفیگ برای فروش بسته است.'};
+    ?'🚀 درخواست نصب امن به اجراکننده ارسال شد. وضعیت را از بخش «مدیریت سرورها» پیگیری کنید.'
+    :'⏸ سرور ثبت شد، اما دسترسی امن اجراکننده هنوز برقرار نیست؛ نصب آغاز نشد.';
+  return {text:frameMessage('✅ سرور '+parsed.id+' ثبت شد.\n'+status+
+    '\n\n🔒 تا تأیید واقعی مسیرها، صدور کانفیگ برای فروش غیرفعال می‌ماند.'),replyMarkup:adminMenu()};
 }
