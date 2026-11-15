@@ -92,6 +92,33 @@ async function thread(env,e,id,ownerOnly) {
     (messages.length?'\n\n'+messages.join('\n\n'):''),e.locale,controls);
 }
 
+export async function staffTicketDetails(env,e,id) {
+  if(!TICKET.test(id))return panel('Invalid ticket',e.locale);
+  const db=env.DB;
+  const authorized=idAdmin(env,e.actorId)||!!(await db.prepare(
+    "SELECT 1 AS ok FROM staff_roles sr JOIN customers c ON c.telegram_id=sr.telegram_id WHERE sr.telegram_id=? AND sr.role='support' AND c.state='active'"
+  ).bind(e.actorId).first());
+  if(!authorized)return panel('Access denied',e.locale);
+  const ticket=await db.prepare(
+    'SELECT id,customer_telegram_id,state,subject FROM support_tickets WHERE id=?'
+  ).bind(id).first();
+  if(!ticket)return panel('Ticket not found',e.locale);
+  const messages=(await db.prepare(
+    'SELECT role,body,created_at FROM support_messages WHERE ticket_id=? ORDER BY created_at DESC,id DESC LIMIT 12'
+  ).bind(id).all()).results??[];
+  const conversation=messages.reverse().map(x=>
+    (x.role==='customer'?'👤 ':'🧑‍💼 ')+x.body.slice(0,600)).join('\n\n');
+  return panel('💬 '+ticket.id+' · '+ticket.state+
+    '\n'+lang('مشتری: ','Customer: ',e.locale)+ticket.customer_telegram_id+
+    '\n'+ticket.subject+(conversation?'\n\n'+conversation:''),e.locale,[
+      ...(ticket.state==='closed'?[]:[
+        button('✉️ '+lang('پاسخ','Reply',e.locale),'ticket:reply:'+id),
+        button('✅ '+lang('بستن','Close',e.locale),'ticket:close:'+id)
+      ]),
+      button('📋 '+lang('صندوق پشتیبانی','Support inbox',e.locale),'admin:tickets'),
+  ]);
+}
+
 async function startSession(db,e,mode,context,nowMs) {
   await db.prepare(
     'INSERT INTO v2_bot_input_sessions(telegram_id,mode,context_id,expires_ms) VALUES(?,?,?,?) '+
