@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS android_login_challenges (
   verifier_hash TEXT NOT NULL CHECK(length(verifier_hash) = 64),
   telegram_id TEXT REFERENCES customers(telegram_id),
   state TEXT NOT NULL DEFAULT 'pending'
-    CHECK(state IN ('pending','approved','redeeming','used','failed')),
+    CHECK(state IN ('pending','approved','rejected','redeeming','used','failed')),
   created_ms INTEGER NOT NULL,
   expires_ms INTEGER NOT NULL
 );
