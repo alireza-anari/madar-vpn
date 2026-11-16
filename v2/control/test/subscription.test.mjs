@@ -66,6 +66,47 @@ test('subscription API still refuses to publish a route-less subscription token'
   assert.equal((await response.json()).error,'no_verified_routes');
 });
 
+test('signed-in Telegram account without a subscription receives no VPN routes',async()=>{
+  const token='A'.repeat(43);
+  const reads=[];
+  const env={
+    SUBSCRIPTION_API_ENABLED:'true',SUBSCRIPTION_CREDENTIAL_KEY:key,
+    DB:{prepare(sql){reads.push(sql);return {bind(){
+      return {first:async()=>sql.includes('FROM android_app_sessions a JOIN customers c')
+        ?{telegram_id:'1234567'}:null};
+    }};}},
+  };
+  const response=await getSubscription(new Request('https://api.madar.test/api/v2/subscription',{
+    headers:{authorization:'Bearer '+token},
+  }),env,1_900_000_000_000);
+  assert.equal(response.status,403);
+  assert.equal((await response.json()).error,'subscription_inactive');
+  assert.equal(reads.some(x=>x.includes('FROM node_allocations')),false);
+});
+
+test('an identity session with a paid plan still needs freshly verified routes',async()=>{
+  const token='B'.repeat(43);
+  const env={
+    SUBSCRIPTION_API_ENABLED:'true',SUBSCRIPTION_CREDENTIAL_KEY:key,
+    DB:{prepare(sql){return {bind(){
+      return {
+        first:async()=>{
+          if(sql.includes('FROM android_app_sessions a JOIN customers c'))return {telegram_id:'1234567'};
+          if(sql.includes('FROM subscriptions WHERE owner_telegram_id=?'))
+            return {id:'sub-1',state:'active',expires_at:1_900_003_600_000,max_bytes:1000,used_bytes:0};
+          return null;
+        },
+        all:async()=>({results:[]}),
+      };
+    }};}},
+  };
+  const response=await getSubscription(new Request('https://api.madar.test/api/v2/subscription',{
+    headers:{authorization:'Bearer '+token},
+  }),env,1_900_000_000_000);
+  assert.equal(response.status,503);
+  assert.equal((await response.json()).error,'no_verified_routes');
+});
+
 test('credential decryption refuses incorrect key size and invalid ciphertext',async()=>{
   await assert.rejects(unwrapClientUuid({nonce_b64:'AAAAAAAAAAAAAAAA',
     ciphertext_b64:'AAAAAAAAAAAAAAAAAAAAAA'},'short'));

@@ -178,6 +178,19 @@ class SchemaTests(unittest.TestCase):
                 (telegram_id,channel_id,activated_ms,last_verified_ms)
                 VALUES(?,?,?,?)""",('999','-1001234567890',1000,1000))
 
+    def test_android_identity_session_is_linked_to_verified_customer(self):
+        self.db.execute("INSERT INTO customers(telegram_id) VALUES('101')")
+        self.db.execute("""INSERT INTO android_app_sessions
+            (token_hash,telegram_id,created_ms,expires_ms) VALUES(?,?,?,?)""",
+            ('B'*64,'101',1000,2000))
+        self.db.execute("UPDATE android_app_sessions SET revoked=1 WHERE telegram_id='101'")
+        row=self.db.execute("""SELECT revoked FROM android_app_sessions WHERE telegram_id='101'""").fetchone()
+        self.assertEqual(row,(1,))
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute("""INSERT INTO android_app_sessions
+                (token_hash,telegram_id,created_ms,expires_ms) VALUES(?,?,?,?)""",
+                ('C'*64,'999',1000,2000))
+
     def test_android_login_otp_is_short_lived_and_attempt_limited(self):
         self.db.execute("INSERT INTO customers(telegram_id) VALUES('101')")
         self.db.execute("""INSERT INTO android_login_challenges

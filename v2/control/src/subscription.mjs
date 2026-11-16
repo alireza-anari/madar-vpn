@@ -1,3 +1,4 @@
+import {findAppSession} from './android-account.mjs';
 /** Revocable token-authenticated V2 subscription API, no bearer tokens in URLs.
  * Delivers structured VLESS route metadata, never server private keys.
  */
@@ -91,13 +92,22 @@ export async function getSubscription(request,env,nowMs=Date.now()) {
   const token=header.slice(7);
   const hash=await tokenDigest(token);
   if(!hash) return json({error:'unauthorized'},401);
-  const active=await env.DB.prepare(
-    "SELECT s.id,s.state,s.expires_at,s.max_bytes,s.used_bytes " +
-    "FROM subscription_tokens t JOIN subscriptions s ON s.id=t.subscription_id " +
-    "JOIN customers c ON c.telegram_id=s.owner_telegram_id " +
-    "WHERE t.token_hash=? AND t.revoked=0 AND t.expires_at>? " +
-    "AND s.state='active' AND c.state='active' AND s.expires_at>? LIMIT 1"
-  ).bind(hash,nowMs,nowMs).first();
+  // App identity sessions can exist without a subscription. Subscription
+  // entitlement is resolved from the verified owner, never from client input.
+  const owner=await findAppSession(env.DB,hash,nowMs);
+  const active=owner
+    ?await env.DB.prepare(
+      "SELECT id,state,expires_at,max_bytes,used_bytes FROM subscriptions " +
+      "WHERE owner_telegram_id=? AND state='active' AND expires_at>? " +
+      "ORDER BY expires_at DESC LIMIT 1"
+    ).bind(owner,nowMs).first()
+    :await env.DB.prepare(
+      "SELECT s.id,s.state,s.expires_at,s.max_bytes,s.used_bytes " +
+      "FROM subscription_tokens t JOIN subscriptions s ON s.id=t.subscription_id " +
+      "JOIN customers c ON c.telegram_id=s.owner_telegram_id " +
+      "WHERE t.token_hash=? AND t.revoked=0 AND t.expires_at>? " +
+      "AND s.state='active' AND c.state='active' AND s.expires_at>? LIMIT 1"
+    ).bind(hash,nowMs,nowMs).first();
   if(!active) return json({error:'subscription_inactive'},403);
   if(active.max_bytes<=0 || active.used_bytes>=active.max_bytes)
     return json({error:'quota_exhausted'},403);
