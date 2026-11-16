@@ -83,7 +83,7 @@ export async function activeRoutes(db,subId,nowMs) {
 
 export async function getSubscription(request,env,nowMs=Date.now()) {
   if(request.method!=='GET') return json({error:'method_not_allowed'},405);
-  if(env.SUBSCRIPTION_API_ENABLED!=='true') return json({error:'service_not_ready'},503);
+  if(env.SUBSCRIPTION_API_ENABLED!=='true' && env.SUBSCRIPTION_API_ENABLED_SECRET!=='true') return json({error:'service_not_ready'},503);
   if(!env.DB || !env.SUBSCRIPTION_CREDENTIAL_KEY)
     return json({error:'service_not_ready'},503);
   const header=request.headers.get('authorization')??'';
@@ -143,7 +143,7 @@ export async function wrapClientUuid(uuid,keyText) {
  * The token is returned once and never persisted in plaintext.
  */
 export async function issueActiveToken(env,subId,nowMs=Date.now()) {
-  if(!env.DB || env.SUBSCRIPTION_API_ENABLED!=='true' ||
+  if(!env.DB || (env.SUBSCRIPTION_API_ENABLED!=='true' && env.SUBSCRIPTION_API_ENABLED_SECRET!=='true') ||
      !env.SUBSCRIPTION_CREDENTIAL_KEY || typeof subId!=='string' || subId.length>80)
     return null;
   const row=await env.DB.prepare(
