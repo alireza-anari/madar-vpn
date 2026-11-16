@@ -64,6 +64,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontFamily
@@ -386,7 +388,7 @@ private fun Header() {
 private fun BrandMark(diameter: Dp) {
     // Draw the Madar mark as a native vector so it stays crisp and has no
     // opaque square bitmap background on the dark app surface.
-    Canvas(Modifier.size(diameter)) {
+    Canvas(Modifier.size(diameter).semantics { contentDescription = "لوگوی مدار" }) {
         val sx = size.width / 100f
         val sy = size.height / 100f
         val stroke = size.minDimension * 0.065f
