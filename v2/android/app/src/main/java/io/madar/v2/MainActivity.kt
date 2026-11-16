@@ -463,6 +463,7 @@ private fun ProfilePage(telegramId: String?, subscription: SubscriptionSnapshot?
     onSupport: () -> Unit, onLogout: () -> Unit) {
     var guide by remember { mutableStateOf(false) }
     var faq by remember { mutableStateOf(false) }
+    var about by remember { mutableStateOf(false) }
     Text("پروفایل و پشتیبانی", fontSize = 25.sp, fontWeight = FontWeight.Bold)
     PanelCard {
         Text("◯  حساب تلگرام", fontWeight = FontWeight.Bold, fontSize = 18.sp)
@@ -491,7 +492,13 @@ private fun ProfilePage(telegramId: String?, subscription: SubscriptionSnapshot?
         Text("۳. یک بار دکمه اتصال را لمس کنید.")
         Text("۴. حجم و زمان باقی‌مانده را در تب مصرف ببینید.")
     }
-    ActionRow("ⓘ", "درباره مدار", "VPN اختصاصی مشترکان مدار", {})
+    ActionRow("ⓘ", "درباره مدار", "VPN اختصاصی مشترکان مدار", { about = !about })
+    if (about) PanelCard {
+        Text("مدار VPN", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        Text("اتصال امن و هوشمند با انتخاب خودکار مسیرهای تأییدشده.",
+            color = Muted, fontSize = 13.sp)
+        InfoLine("نسخه اپ", BuildConfig.VERSION_NAME)
+    }
     ActionRow("⇥", "خروج از حساب", "پاک‌کردن نشست و لغو دسترسی این دستگاه", onLogout)
 }
 
