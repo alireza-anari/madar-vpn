@@ -72,7 +72,22 @@ class AndroidLoginApi(origin: String) {
         }
     } catch (_: Exception) { LoginFinishResult.Error("NETWORK_ERROR") }
 
-    private fun post(path: String, json: JSONObject): Pair<Int, JSONObject> {
+    /** Revoke this device's bearer token server-side during logout. */
+    fun logout(token: String): Boolean {
+        if (!SubscriptionTokenFormat.isValid(token)) return false
+        return try {
+            val (status, payload) = post(
+                "/api/v2/android/logout", JSONObject(), token
+            )
+            status == 200 && payload.optString("status") == "signed_out"
+        } catch (_: Exception) { false }
+    }
+
+    private fun post(
+        path: String,
+        json: JSONObject,
+        bearerToken: String? = null
+    ): Pair<Int, JSONObject> {
         val conn = URL(base + path).openConnection() as HttpURLConnection
         try {
             conn.requestMethod = "POST"
@@ -83,6 +98,8 @@ class AndroidLoginApi(origin: String) {
             conn.doOutput = true
             conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
             conn.setRequestProperty("Accept", "application/json")
+            if (bearerToken != null)
+                conn.setRequestProperty("Authorization", "Bearer $bearerToken")
             val bytes = json.toString().toByteArray(Charsets.UTF_8)
             require(bytes.size <= 512)
             conn.outputStream.use { it.write(bytes) }
