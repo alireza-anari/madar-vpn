@@ -1,4 +1,5 @@
 import {issueActiveToken,tokenDigest} from './subscription.mjs';
+import {isBotActivated,checkAndActivateBot,activationPrompt,activationUnavailableReply} from './bot-activation.mjs';
 
 const ID=/^[A-Za-z0-9_-]{24}$/;
 const BOT=/^[A-Za-z][A-Za-z0-9_]{4,31}$/;
@@ -129,8 +130,8 @@ export async function androidLoginRoute(request,env,now=Date.now()){
     const hash=await tokenDigest(verifier);
     await env.DB.prepare(
       "INSERT INTO android_login_challenges(id,verifier_hash,created_ms,expires_ms) VALUES(?,?,?,?)"
-    ).bind(id,hash,now,now+300000).run();
-    return json({id,verifier,expires_at:now+300000,
+    ).bind(id,hash,now,now+600000).run();
+    return json({id,verifier,expires_at:now+600000,
       login_url:'https://t.me/'+botUsername(env)+'?start=app_'+id});
   }
   if(route==='/api/v2/android/login/verify' || route==='/api/v2/android/login/complete'){
@@ -208,28 +209,52 @@ async function body(request){
 /** Only invoke on updates verified with the Telegram webhook secret.
  * The bot sends an OTP only to the private Telegram account that owns the active subscription. */
 export async function approveAndroidLogin(env,event,now=Date.now()){
-  if(!event || event.key!=='/start')return null;
-  const match=/^\/start(?:@[A-Za-z0-9_]+)?\s+app_([A-Za-z0-9_-]{24})\s*$/
-    .exec(event.inputText??'');
-  if(!match)return null;
-  const reply=(message)=>({text:'🌐  مــدار\n\n'+message,replyMarkup:null});
+  if(!event)return null;
+  const startMatch=event.key==='/start'
+    ?/^\\/start(?:@[A-Za-z0-9_]+)?\\s+app_([A-Za-z0-9_-]{24})\\s*$/.exec(event.inputText??'')
+    :null;
+  const callbackMatch=typeof event.key==='string'
+    ?/^app:activate:([A-Za-z0-9_-]{24})$/.exec(event.key)
+    :null;
+  if(!startMatch&&!callbackMatch)return null;
+  const reply=(message,replyMarkup=null)=>({
+    text:'🌐  مــدار\n\n'+message,replyMarkup
+  });
   if(!enabled(env))return reply('ورود به اپ در این محیط هنوز فعال نیست.');
-  if(!/^\d{5,20}$/.test(event.actorId??'') ||
+  if(!/^\\d{5,20}$/.test(event.actorId??'') ||
      (event.chatId!==undefined && event.chatId!==event.actorId))
     return reply('درخواست ورود نامعتبر است.');
 
-  const id=match[1];
+  const id=(startMatch??callbackMatch)[1];
   const challenge=await readChallenge(env,id);
   if(!challenge || expired(challenge.expires_ms,now))return reply(expiredOrUsed());
 
-  // Telegram can redeliver the same update after an interrupted outbox write.
-  // Re-send the same code only to the same Telegram account, never mint a new one.
+  // Telegram may retry the same update after the outbox was committed.
+  // Re-send the same OTP only to the Telegram account already bound to it.
   if(challenge.state==='code_sent' && challenge.telegram_id===event.actorId &&
      !expired(challenge.otp_expires_ms,now)){
     const code=await decryptOtp(env,id,challenge);
     return reply(code?otpMessage(code):expiredOrUsed());
   }
   if(challenge.state!=='pending')return reply(expiredOrUsed());
+
+  // A bot account is activated only after the user is confirmed as a member
+  // of the official Madar announcement channel.
+  if(!await isBotActivated(env.DB,event.actorId)){
+    const activation=await checkAndActivateBot(env,event.actorId,now);
+    if(activation.state==='not_member'){
+      const prompt=activationPrompt(env,'v2:app:activate:'+id,'app');
+      return reply(prompt.text,prompt.replyMarkup);
+    }
+    if(activation.state==='unconfigured'){
+      const prompt=activationPrompt(env,'v2:app:activate:'+id,'app');
+      return reply(prompt.text,prompt.replyMarkup);
+    }
+    if(activation.state!=='activated'){
+      const retry=activationUnavailableReply(env,'v2:app:activate:'+id);
+      return reply(retry.text,retry.replyMarkup);
+    }
+  }
 
   const sub=await env.DB.prepare(
     "SELECT s.id FROM subscriptions s JOIN customers c ON c.telegram_id=s.owner_telegram_id " +
@@ -242,12 +267,9 @@ export async function approveAndroidLogin(env,event,now=Date.now()){
       "WHERE id=? AND state='pending' AND expires_ms>?"
     ).bind(id,now).run();
     return reply(rejected.meta?.changes===1
-      ?'برای ورود به اپ، اشتراک فعال با حجم باقی‌مانده لازم است.'
+      ?'ربات مدار برای حساب شما فعال شد؛ اما برای ورود به اپ به اشتراک فعال با حجم باقی‌مانده نیاز دارید.'
       :expiredOrUsed());
   }
-
-  // Identity verification is independent of route readiness. Token redemption
-  // below still requires a usable credential and a freshly verified route.
 
   const code=newOtp();
   const codeHash=await otpHash(env,id,code);
