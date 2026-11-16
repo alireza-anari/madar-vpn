@@ -58,24 +58,27 @@ class AndroidLoginApi(origin: String) {
     fun verify(
         challenge: TelegramLoginChallenge,
         code: String
-    ): LoginFinishResult = try {
-        if (!code.matches(Regex("^\\d{6}$"))) return LoginFinishResult.Error("invalid_code")
-        val body = JSONObject()
-            .put("id", challenge.id)
-            .put("verifier", challenge.verifier)
-            .put("code", code)
-        val (status, payload) = post("/api/v2/android/login/verify", body)
-        when (status) {
-            202 -> LoginFinishResult.Pending
-            200 -> {
-                val token = payload.getString("access_token")
-                if (!SubscriptionTokenFormat.isValid(token))
-                    LoginFinishResult.Error("INVALID_LOGIN")
-                else LoginFinishResult.Authorized(token)
+    ): LoginFinishResult {
+        if (!code.matches(Regex("^\\d{6}$")))
+            return LoginFinishResult.Error("invalid_code")
+        return try {
+            val body = JSONObject()
+                .put("id", challenge.id)
+                .put("verifier", challenge.verifier)
+                .put("code", code)
+            val (status, payload) = post("/api/v2/android/login/verify", body)
+            when (status) {
+                202 -> LoginFinishResult.Pending
+                200 -> {
+                    val token = payload.getString("access_token")
+                    if (!SubscriptionTokenFormat.isValid(token))
+                        LoginFinishResult.Error("INVALID_LOGIN")
+                    else LoginFinishResult.Authorized(token)
+                }
+                else -> LoginFinishResult.Error(payload.optString("error", "LOGIN_FAILED"))
             }
-            else -> LoginFinishResult.Error(payload.optString("error", "LOGIN_FAILED"))
-        }
-    } catch (_: Exception) { LoginFinishResult.Error("NETWORK_ERROR") }
+        } catch (_: Exception) { LoginFinishResult.Error("NETWORK_ERROR") }
+    }
 
     /** Revoke this device's bearer token server-side during logout. */
     fun logout(token: String): Boolean {
