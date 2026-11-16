@@ -68,12 +68,15 @@ class FakeDB {
   }
 }
 const url='https://madar-v2.test/api/v2/android/login/';
-const post=(name,value,extraHeaders={})=>new Request(url+name,{method:'POST',
-  headers:{'content-type':'application/json','cf-connecting-ip':'203.0.113.10',...extraHeaders},
-  body:JSON.stringify(value)});
+const post=(name,value,extraHeaders={})=>new Request(
+  name==='logout'?'https://madar-v2.test/api/v2/android/logout':url+name,
+  {method:'POST',
+    headers:{'content-type':'application/json','cf-connecting-ip':'203.0.113.10',...extraHeaders},
+    body:JSON.stringify(value)});
 const enabled=(db)=>({DB:db,ANDROID_LOGIN_ENABLED:'true',
   SUBSCRIPTION_API_ENABLED:'true',BOT_USERNAME:'MadarTestBot',
-  TELEGRAM_WEBHOOK_SECRET:'T'.repeat(48),\n  SUBSCRIPTION_CREDENTIAL_KEY:'A'.repeat(43)});
+  TELEGRAM_WEBHOOK_SECRET:'T'.repeat(48),
+  SUBSCRIPTION_CREDENTIAL_KEY:'A'.repeat(43)});
 
 test('mobile authorization is fail-closed without explicit configuration',async()=>{
   const r=await androidLoginRoute(post('start',{}),{},1000);
