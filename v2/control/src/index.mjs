@@ -7,8 +7,9 @@ import {androidLoginRoute,approveAndroidLogin,purgeAndroidLogins} from './androi
 import { getCarrierFeed } from './carrier-subscription.mjs';
 import { nodeRoute } from './node-control.mjs';
 import { toBotMessage, verifyTelegramSecret } from './telegram.mjs';
-import { resolveBotAction } from './shop.mjs';
-import {frameMessage} from './bot-ux.mjs';
+import { resolveBotAction,adminAllowed } from './shop.mjs';
+import {frameMessage,BRAND_BANNER_URL,styleInlineKeyboard,contextualKeyboard} from './bot-ux.mjs';
+import {bannerImageResponse,brandBannerBytes} from './brand-banner.mjs';
 import {channelActivationConfigured} from './bot-activation.mjs';
 
 const json=(value,status=200)=>new Response(JSON.stringify(value),{
@@ -46,9 +47,20 @@ async function readJson(request) {
 
 async function telegramCall(env,method,payload) {
   try {
+    // Upload the bundled Madar artwork directly; Telegram never needs to fetch a URL.
+    const brandedPhoto=method==='sendPhoto'&&payload.photo===BRAND_BANNER_URL;
+    let form=null;
+    if(brandedPhoto){
+      form=new FormData();
+      form.append('chat_id',String(payload.chat_id));
+      form.append('photo',new Blob([brandBannerBytes()],{type:'image/jpeg'}),'madar-banner.jpg');
+      form.append('caption',String(payload.caption??''));
+      if(payload.caption_entities)form.append('caption_entities',JSON.stringify(payload.caption_entities));
+      if(payload.reply_markup)form.append('reply_markup',JSON.stringify(payload.reply_markup));
+    }
     const response=await fetch('https://api.telegram.org/bot'+env.BOT_TOKEN+'/'+method,{
-      method:'POST',headers:{'content-type':'application/json'},
-      body:JSON.stringify(payload),signal:AbortSignal.timeout(12000),
+      method:'POST',...(form?{}:{headers:{'content-type':'application/json'}}),
+      body:form??JSON.stringify(payload),signal:AbortSignal.timeout(12000),
     });
     const data=await response.json().catch(()=>null);
     return {ok:response.ok&&data?.ok===true,description:String(data?.description??'')};
@@ -82,6 +94,9 @@ export async function processInbox(env,nowMs=Date.now()) {
       if(event.updateId!==item.update_id) throw new Error('inbox_id_mismatch');
       const reply=(await approveAndroidLogin(env,event,nowMs))??await resolveBotAction(env,event,nowMs);
       const msg=reply??{text:frameMessage('⚠️ پاسخ مناسبی دریافت نشد. لطفاً دوباره تلاش کنید.'),replyMarkup:null};
+      const pageKeyboard=msg.replyMarkup?styleInlineKeyboard(contextualKeyboard(
+        event.key,msg.replyMarkup,{isAdmin:adminAllowed(env.ADMIN_TELEGRAM_IDS,event.actorId)}
+      )):null;
       // This insert precedes marking inbox done. A crash will re-run the
       // idempotent action but cannot add a second outgoing reply.
       await env.DB.prepare(
@@ -89,7 +104,7 @@ export async function processInbox(env,nowMs=Date.now()) {
         "(update_id,chat_id,body,reply_markup,media_file_id,edit_message_id,edit_kind,state,due_ms) "+
         "VALUES (?,?,?,?,?,?,?,'pending',?)"
       ).bind(item.update_id,event.chatId,msg.text.slice(0,3800),
-        msg.replyMarkup?JSON.stringify(msg.replyMarkup):null,
+        pageKeyboard?JSON.stringify(pageKeyboard):null,
         msg.photoId??null,
         msg.photoId?null:(Number.isSafeInteger(event.messageId)?event.messageId:null),
         msg.photoId?null:(event.editKind==='caption'?'caption':event.editKind==='text'?'text':null),
@@ -267,6 +282,7 @@ export default {
     if(path.startsWith('/api/runner/')){
       try{return await runnerApi(request,env);}catch{return json({error:'TEMPORARY_FAILURE'},503);}
     }
+    if(request.method==='GET' && path==='/brand/banner.jpg')return bannerImageResponse();
     if(request.method==='GET' && path==='/health/bot')return telegramBindingStatus(env);
     if(request.method==='GET' && path==='/health/live')
       return json({status:'alive',service:'madar-v2'});

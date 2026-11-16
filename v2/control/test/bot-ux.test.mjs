@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { botMenu,adminMenu,supportMenu,sellerMenu,botPage,faMoney,faGB,faStatus,faDate,usageMeter,sectionNavigation,frameMessage } from '../src/bot-ux.mjs';
+import { botMenu,adminMenu,supportMenu,sellerMenu,botPage,faMoney,faGB,faStatus,faDate,usageMeter,sectionNavigation,frameMessage,styleInlineKeyboard,contextualKeyboard,parentPage } from '../src/bot-ux.mjs';
 import {toBotMessage} from '../src/telegram.mjs';
 
 test('all menu callbacks lead to a meaningful supported page',()=>{
@@ -78,7 +78,7 @@ test('manager, seller and support menus use Persian labels and local display for
 
 test('contextual navigation stays focused and quota progress is safe',()=>{
   const admin=sectionNavigation('admin').flat();
-  assert.equal(admin.length,2);
+  assert.equal(admin.length,1);
   assert.ok(admin.some(b=>b.callback_data==='v2:admin:home'));
   assert.ok(!admin.some(b=>b.callback_data==='v2:admin:plans'));
   assert.equal(usageMeter(5,10),'▰▰▰▰▰▱▱▱▱▱  ۵۰٪');
@@ -95,4 +95,20 @@ test('Telegram native styling highlights the brand and section without parsing u
   assert.equal(text.slice(entities[0].offset,entities[0].offset+entities[0].length),'🌐  مــدار');
   assert.equal(text.slice(entities[1].offset,entities[1].offset+entities[1].length),'🛠  پیشخوان مدیریت مدار');
   assert.deepEqual(brandedEntities('plain text'),[]);
+});
+
+
+test('Telegram buttons receive safe semantic accents and contextual back navigation',()=>{
+  const original=adminMenu();
+  const styled=styleInlineKeyboard(original).inline_keyboard.flat();
+  assert.equal(styled.find(b=>b.callback_data==='v2:admin:nodes').style,'primary');
+  const add=styleInlineKeyboard({inline_keyboard:[[
+    {text:'➕ افزودن سرور',callback_data:'v2:admin:node:new'}
+  ]]});
+  assert.equal(add.inline_keyboard[0][0].style,'success');
+  const scoped=contextualKeyboard('admin:node:new',{inline_keyboard:[[
+    {text:'❌ انصراف',callback_data:'v2:admin:node:cancel'}
+  ]]},{isAdmin:true});
+  assert.equal(scoped.inline_keyboard.at(-1)[0].callback_data,'v2:admin:node:cancel');
+  assert.equal(parentPage('admin:node:new',true),'admin:node:cancel');
 });
