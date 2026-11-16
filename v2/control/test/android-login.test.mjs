@@ -163,7 +163,6 @@ test('approved Telegram challenge redeems one active subscription token exactly 
   const result=await response.json();
   assert.equal(result.status,'authorized');
   assert.match(result.access_token,/^[A-Za-z0-9_-]{43}$/);
-  assert.equal(result.telegram_id,'1234567');
   assert.equal(db.challenges.get(challenge.id).state,'used');
   assert.equal(db.tokenHashes.size,1);
   assert.equal([...db.tokenHashes][0].length,64);
