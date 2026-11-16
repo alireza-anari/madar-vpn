@@ -12,7 +12,7 @@
     "SUBSCRIPTION_LINKS_ENABLED": "false",
     "V2_BOT_AUTO_ACTIVATE": "true",
     "ANDROID_LOGIN_ENABLED": "false",
-    "BOT_USERNAME": "",
+    "BOT_USERNAME": "Madar_v2_bot",
     "ADMIN_TELEGRAM_IDS": ""
   },
   "keep_vars": true,
