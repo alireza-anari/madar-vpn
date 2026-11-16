@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {androidLoginRoute,approveAndroidLogin} from '../src/android-login.mjs';
 
 class FakeDB {
-  constructor(){this.challenges=new Map();this.queries=[];this.rates=new Map();this.revoked=new Set();this.tokenHashes=new Set();}
+  constructor(){this.challenges=new Map();this.queries=[];this.rates=new Map();this.revoked=new Set();this.tokenHashes=new Set();this.hasSubscription=true;}
   prepare(sql){
     this.queries.push(sql);
     return {bind:(...args)=>({
@@ -36,6 +36,13 @@ class FakeDB {
             created_ms:args[2],expires_ms:args[3],state:'pending',telegram_id:null});
           return {meta:{changes:1}};
         }
+        if(sql.includes("SET state='rejected'")){
+          const row=this.challenges.get(args[0]);
+          if(row && row.state==='pending' && row.expires_ms>args[1]){
+            row.state='rejected';return {meta:{changes:1}};
+          }
+          return {meta:{changes:0}};
+        }
         if(sql.includes("SET state='approved'")){
           const row=this.challenges.get(args[1]);
           if(row && row.state==='pending' && row.expires_ms>args[2]){
@@ -52,7 +59,7 @@ class FakeDB {
         }
         if(sql.includes('JOIN subscription_credentials c ON c.subscription_id=s.id'))
           return {id:'sub-for-active-customer',expires_at:1_900_003_600_000};
-        if(sql.includes('FROM subscriptions'))return {id:'sub-for-active-customer'};
+        if(sql.includes('FROM subscriptions'))return this.hasSubscription?{id:'sub-for-active-customer'}:null;
         return null;
       },
       all:async()=>{
@@ -126,6 +133,21 @@ test('an expired challenge cannot be approved or completed',async()=>{
   const result=await androidLoginRoute(post('complete',{
     id:challenge.id,verifier:challenge.verifier}),env,after);
   assert.equal(result.status,410);
+});
+
+test('missing active subscription rejects the challenge and stops client polling',async()=>{
+  const now=1_900_000_000_000,db=new FakeDB(),env=enabled(db);
+  db.hasSubscription=false;
+  const started=await androidLoginRoute(post('start',{}),env,now);
+  const challenge=await started.json();
+  const reply=await approveAndroidLogin(env,{
+    key:'/start',inputText:'/start app_'+challenge.id,actorId:'1234567'},now+1000);
+  assert.match(reply.text,/اشتراک فعال/);
+  assert.equal(db.challenges.get(challenge.id).state,'rejected');
+  const completed=await androidLoginRoute(post('complete',{
+    id:challenge.id,verifier:challenge.verifier}),env,now+2000);
+  assert.equal(completed.status,403);
+  assert.equal((await completed.json()).error,'subscription_not_ready');
 });
 
 test('challenge creation is throttled per HMACed client IP window',async()=>{
