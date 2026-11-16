@@ -165,6 +165,19 @@ class SchemaTests(unittest.TestCase):
         row=self.db.execute("SELECT closed_at FROM support_tickets WHERE id='tg-77'").fetchone()
         self.assertTrue(row[0], 'closure date must be stamped')
 
+    def test_bot_activation_requires_a_known_customer_and_records_channel_verification(self):
+        self.db.execute("INSERT INTO customers(telegram_id) VALUES('101')")
+        self.db.execute("""INSERT INTO telegram_bot_activations
+            (telegram_id,channel_id,activated_ms,last_verified_ms)
+            VALUES(?,?,?,?)""",('101','-1001234567890',1000,2000))
+        row=self.db.execute("""SELECT channel_id,activated_ms,last_verified_ms
+            FROM telegram_bot_activations WHERE telegram_id='101'""").fetchone()
+        self.assertEqual(row,('-1001234567890',1000,2000))
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute("""INSERT INTO telegram_bot_activations
+                (telegram_id,channel_id,activated_ms,last_verified_ms)
+                VALUES(?,?,?,?)""",('999','-1001234567890',1000,1000))
+
     def test_android_login_otp_is_short_lived_and_attempt_limited(self):
         self.db.execute("INSERT INTO customers(telegram_id) VALUES('101')")
         self.db.execute("""INSERT INTO android_login_challenges
