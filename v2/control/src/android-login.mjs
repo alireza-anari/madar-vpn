@@ -10,7 +10,27 @@ const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:
   'x-content-type-options':'nosniff','referrer-policy':'no-referrer',
 }});
 const enabled=env=>env.ANDROID_LOGIN_ENABLED==='true' &&
-  env.SUBSCRIPTION_API_ENABLED==='true' && !!env.DB && BOT.test(env.BOT_USERNAME??'');
+  env.SUBSCRIPTION_API_ENABLED==='true' && !!env.DB &&
+  typeof env.TELEGRAM_WEBHOOK_SECRET==='string' && env.TELEGRAM_WEBHOOK_SECRET.length>=32 &&
+  BOT.test(env.BOT_USERNAME??'');
+async function clientDigest(request,env){
+  const ip=(request.headers.get('cf-connecting-ip')??'unknown').trim().slice(0,64)||'unknown';
+  const key=await crypto.subtle.importKey('raw',
+    new TextEncoder().encode(env.TELEGRAM_WEBHOOK_SECRET),
+    {name:'HMAC',hash:'SHA-256'},false,['sign']);
+  const mac=new Uint8Array(await crypto.subtle.sign('HMAC',key,new TextEncoder().encode(ip)));
+  return Array.from(mac).map(x=>x.toString(16).padStart(2,'0')).join('');
+}
+async function allowChallengeStart(request,env,now){
+  const digest=await clientDigest(request,env);
+  const windowStart=Math.floor(now/300000)*300000;
+  const result=await env.DB.prepare(
+    'INSERT INTO android_login_rate_limits(ip_hash,window_start_ms,request_count) VALUES(?,?,1) '+
+    'ON CONFLICT(ip_hash,window_start_ms) DO UPDATE SET request_count=request_count+1 '+
+    'WHERE request_count<10'
+  ).bind(digest,windowStart).run();
+  return result.meta?.changes===1;
+}
 const expired=(time,now)=>!Number.isSafeInteger(time)||time<=now;
 async function body(request){
   if(!/^application\/json(?:;|$)/i.test(request.headers.get('content-type')??''))
@@ -28,12 +48,28 @@ async function body(request){
 /** The Android app receives a private verifier, while Telegram sees ONLY the
  * public challenge id. Telegram webhook authentication is performed upstream. */
 export async function androidLoginRoute(request,env,now=Date.now()){
-  if(!enabled(env))return json({error:'not_ready'},503);
   const route=new URL(request.url).pathname;
   if(request.method!=='POST')return json({error:'method_not_allowed'},405);
+  if(route==='/api/v2/android/logout'){
+    if(!env.DB || env.SUBSCRIPTION_API_ENABLED!=='true')
+      return json({error:'not_ready'},503);
+    const payload=await body(request);
+    if(!payload || Object.keys(payload).length)return json({error:'bad_request'},400);
+    const header=request.headers.get('authorization')??'';
+    if(!header.startsWith('Bearer '))return json({error:'unauthorized'},401);
+    const digest=await tokenDigest(header.slice(7));
+    if(!digest)return json({error:'unauthorized'},401);
+    await env.DB.prepare(
+      'UPDATE subscription_tokens SET revoked=1 WHERE token_hash=?'
+    ).bind(digest).run();
+    return json({status:'signed_out'});
+  }
+  if(!enabled(env))return json({error:'not_ready'},503);
   const payload=await body(request);
   if(!payload)return json({error:'bad_request'},400);
   if(route==='/api/v2/android/login/start'){
+    if(!await allowChallengeStart(request,env,now))
+      return json({error:'rate_limited'},429);
     if(Object.keys(payload).length)return json({error:'bad_request'},400);
     const id=random(18),verifier=random(32);
     const hash=await tokenDigest(verifier);
@@ -102,5 +138,7 @@ export async function approveAndroidLogin(env,event,now=Date.now()){
 
 export async function purgeAndroidLogins(db,now=Date.now()){
   await db.prepare('DELETE FROM android_login_challenges WHERE expires_ms<?')
+    .bind(now-86400000).run();
+  await db.prepare('DELETE FROM android_login_rate_limits WHERE window_start_ms<?')
     .bind(now-86400000).run();
 }
