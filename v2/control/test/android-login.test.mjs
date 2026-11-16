@@ -6,7 +6,7 @@ class FakeDB {
   constructor(){
     this.challenges=new Map();this.queries=[];this.rates=new Map();
     this.revoked=new Set();this.tokenHashes=new Set();
-    this.hasSubscription=true;this.hasCredential=true;this.hasRoutes=true;this.activations=new Set();
+    this.hasSubscription=true;this.hasCredential=true;this.hasRoutes=true;this.activations=new Set();this.customerActive=true;this.sessions=new Map();
   }
   prepare(sql){
     this.queries.push(sql);
@@ -23,6 +23,17 @@ class FakeDB {
           const key=args[0]+':'+args[1],count=this.rates.get(key)??0;
           if(count>=30)return {meta:{changes:0}};
           this.rates.set(key,count+1);return {meta:{changes:1}};
+        }
+        if(sql.startsWith('UPDATE android_app_sessions')){
+          this.revoked.add(args[0]);
+          const record=this.sessions.get(args[0]);
+          if(record)record.revoked=1;
+          return {meta:{changes:record?1:0}};
+        }
+        if(sql.startsWith('INSERT INTO android_app_sessions')){
+          this.sessions.set(args[0],{telegram_id:args[1],expires_ms:args[3],revoked:0});
+          this.tokenHashes.add(args[0]);
+          return {meta:{changes:1}};
         }
         if(sql.startsWith('UPDATE subscription_tokens')){
           this.revoked.add(args[0]);return {meta:{changes:1}};
@@ -87,6 +98,10 @@ class FakeDB {
         return {meta:{changes:0}};
       },
       first:async()=>{
+        if(sql.includes('FROM customers c JOIN telegram_bot_activations'))
+          return this.activations.has(args[0]) && this.customerActive ?{telegram_id:args[0]}:null;
+        if(sql.includes('SELECT state FROM customers WHERE telegram_id=?'))
+          return {state:this.customerActive?'active':'suspended'};
         if(sql.includes('FROM telegram_bot_activations'))
           return this.activations.has(args[0])?{active:1}:null;
         if(sql.includes('FROM subscription_credentials WHERE subscription_id=?'))
@@ -178,7 +193,7 @@ test('isolated protected flags enable challenge creation without overwriting Wor
     'https://t.me/MadarTestBot?start=app_'+challenge.id);
 });
 
-test('Telegram sends a one-time code only to the subscribed private account',async()=>{
+test('Telegram sends a one-time code only to the channel-activated private account',async()=>{
   const db=new FakeDB(),env=enabled(db);
   const challenge=await begin(env);
   const pending=await androidLoginRoute(post('verify',verify(challenge,'123456')),env,now+500);
@@ -271,15 +286,16 @@ test('an expired challenge cannot issue or redeem a code',async()=>{
   assert.equal((await response.json()).error,'expired');
 });
 
-test('missing active subscription rejects the challenge',async()=>{
+test('activated user without an active VPN subscription can enter the app',async()=>{
   const db=new FakeDB(),env=enabled(db),challenge=await begin(env);
   db.hasSubscription=false;
   const reply=await requestCode(env,challenge);
-  assert.match(reply.text,/اشتراک فعال/);
-  assert.equal(db.challenges.get(challenge.id).state,'rejected');
-  const response=await androidLoginRoute(post('verify',verify(challenge,'123456')),env,now+2000);
-  assert.equal(response.status,403);
-  assert.equal((await response.json()).error,'subscription_inactive');
+  assert.match(reply.text,/کد تأیید ورود/);
+  assert.equal(db.challenges.get(challenge.id).state,'code_sent');
+  const response=await androidLoginRoute(post('verify',verify(challenge,codeFrom(reply))),env,now+2000);
+  assert.equal(response.status,200);
+  assert.equal((await response.json()).status,'authorized');
+  assert.equal(db.tokenHashes.size,1);
 });
 
 test('an active subscriber can sign in during a route outage, without receiving unverified routes',async()=>{
@@ -295,19 +311,20 @@ test('an active subscriber can sign in during a route outage, without receiving 
   assert.equal(db.tokenHashes.size,1);
 });
 
-test('OTP can be delivered to an active subscriber, but missing credentials prevent token redemption',async()=>{
+test('identity login is independent from VPN provisioning and subscription credentials',async()=>{
   const db=new FakeDB(),env=enabled(db),challenge=await begin(env);
   db.hasCredential=false;
+  delete env.SUBSCRIPTION_CREDENTIAL_KEY;
+  delete env.SUBSCRIPTION_API_ENABLED;
   const reply=await requestCode(env,challenge);
   const code=codeFrom(reply);
-  assert.equal(db.challenges.get(challenge.id).state,'code_sent');
   const response=await androidLoginRoute(post('verify',verify(challenge,code)),env,now+2000);
-  assert.equal(response.status,403);
-  assert.equal((await response.json()).error,'subscription_not_ready');
-  assert.equal(db.challenges.get(challenge.id).state,'failed');
+  assert.equal(response.status,200);
+  assert.equal((await response.json()).status,'authorized');
+  assert.equal(db.challenges.get(challenge.id).state,'used');
 });
 
-test('a valid code redeems exactly one active subscription token',async()=>{
+test('a valid code redeems exactly one revocable Android identity token',async()=>{
   const db=new FakeDB(),env=enabled(db),challenge=await begin(env);
   const reply=await requestCode(env,challenge);
   const code=codeFrom(reply);
@@ -325,6 +342,14 @@ test('a valid code redeems exactly one active subscription token',async()=>{
   assert.equal(replay.status,410);
   assert.equal((await replay.json()).error,'already_used');
   assert.equal(db.tokenHashes.size,1);
+});
+
+test('suspended Telegram customer does not receive an OTP even if previously activated',async()=>{
+  const db=new FakeDB(),env=enabled(db),challenge=await begin(env);
+  db.customerActive=false;
+  const reply=await requestCode(env,challenge);
+  assert.match(reply.text,/حساب شما تعلیق شده/);
+  assert.equal(db.challenges.get(challenge.id).state,'pending');
 });
 
 test('challenge creation is throttled per HMACed client IP window',async()=>{
