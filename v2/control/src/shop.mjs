@@ -554,8 +554,15 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
   });
   if(key==='activation:check'){
     const activation=await checkAndActivateBot(env,e.actorId,nowMs);
-    if(activation.state==='activated')
-      return response('✅ عضویت شما در کانال اطلاع‌رسانی تأیید شد و ربات مدار برای حساب شما فعال است. اکنون می‌توانید به اپ مدار برگردید و ورود را انجام دهید.',e.locale);
+    if(activation.state==='activated'){
+      const home=await personalizedHome(env,e);
+      const body=home.text
+        .replace(/^🌐  مــدار\\n━━━━━━━━━━━━━━━━━━\\n/,'')
+        .replace(/\\n━━━━━━━━━━━━━━━━━━$/,'');
+      return {...home,text:frameMessage(
+        '✅ عضویت شما در کانال اطلاع‌رسانی تأیید شد و ربات مدار برای حساب شما فعال است. اکنون می‌توانید به اپ مدار برگردید و ورود را انجام دهید.\\n\\n'+body
+      )};
+    }
     if(activation.state==='not_member')
       return botActivationReply(activationPrompt(env,'v2:activation:check','bot'));
     if(activation.state==='unconfigured')
