@@ -19,7 +19,7 @@ sealed interface LoginStartResult {
 
 sealed interface LoginFinishResult {
     data object Pending : LoginFinishResult
-    data class Authorized(val token: String, val telegramId: String) : LoginFinishResult
+    data class Authorized(val token: String) : LoginFinishResult
     data class Error(val code: String) : LoginFinishResult
 }
 
@@ -62,11 +62,9 @@ class AndroidLoginApi(origin: String) {
             202 -> LoginFinishResult.Pending
             200 -> {
                 val token = payload.getString("access_token")
-                val telegramId = payload.getString("telegram_id")
-                if (!SubscriptionTokenFormat.isValid(token) ||
-                    !telegramId.matches(Regex("^[0-9]{5,20}$")))
+                if (!SubscriptionTokenFormat.isValid(token))
                     LoginFinishResult.Error("INVALID_LOGIN")
-                else LoginFinishResult.Authorized(token, telegramId)
+                else LoginFinishResult.Authorized(token)
             }
             else -> LoginFinishResult.Error(payload.optString("error", "LOGIN_FAILED"))
         }
