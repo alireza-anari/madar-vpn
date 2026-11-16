@@ -52,6 +52,19 @@ jobs:
           curl -fsS --retry 2 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
             "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/madar-v2-staging/settings" |
             jq -e --arg db "$DB_ID" '.success == true and any(.result.bindings[]; .type=="d1" and .name=="DB" and .id==$db)' >/dev/null
+      - name: Set isolated Android login feature bindings
+        run: |
+          set -euo pipefail
+          payload='{"secrets":{
+            "ANDROID_LOGIN_ENABLED_SECRET":{"name":"ANDROID_LOGIN_ENABLED_SECRET","type":"secret_text","text":"true"},
+            "SUBSCRIPTION_API_ENABLED_SECRET":{"name":"SUBSCRIPTION_API_ENABLED_SECRET","type":"secret_text","text":"true"},
+            "BOT_USERNAME_SECRET":{"name":"BOT_USERNAME_SECRET","type":"secret_text","text":"Madar_v2_bot"}
+          }}'
+          curl -fsS -X PATCH \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/madar-v2-staging/secrets-bulk" \
+            --data "$payload" | jq -e '.success == true' >/dev/null
       - uses: pnpm/action-setup@v4
         with:
           version: 12.9.1
