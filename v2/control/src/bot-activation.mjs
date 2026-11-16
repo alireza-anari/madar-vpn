@@ -19,7 +19,7 @@ export function channelActivationConfigured(env){
 }
 
 export async function isBotActivated(db,telegramId){
-  if(!db||!/^\d{5,20}$/.test(String(telegramId??'')))return false;
+  if(!db||!/^\d{1,20}$/.test(String(telegramId??'')))return false;
   const row=await db.prepare(
     'SELECT 1 AS active FROM telegram_bot_activations WHERE telegram_id=?'
   ).bind(String(telegramId)).first();
