@@ -1,11 +1,10 @@
 package io.madar.v2
 
 import android.security.NetworkSecurityPolicy
-import androidx.compose.ui.test.assertExists
-import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onAllNodesWithText
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -20,10 +19,10 @@ class MadarLoginScreenTest {
 
     @Test
     fun firstScreenUsesMadarBrandAndTelegramLogin() {
-        compose.onNodeWithText("مدار VPN").assertExists()
-        compose.onNodeWithContentDescription("لوگوی مدار").assertExists()
-        compose.onNodeWithText("ورود با تلگرام", substring = true).assertExists()
-        compose.onNodeWithText("بدون کپی کانفیگ، بدون انتخاب سرور").assertExists()
+        compose.onNodeWithText("مدار VPN").fetchSemanticsNode()
+        compose.onNodeWithContentDescription("لوگوی مدار").fetchSemanticsNode()
+        compose.onNodeWithText("ورود با تلگرام", substring = true).fetchSemanticsNode()
+        compose.onNodeWithText("بدون کپی کانفیگ، بدون انتخاب سرور").fetchSemanticsNode()
     }
 
     @Test
@@ -36,8 +35,8 @@ class MadarLoginScreenTest {
 
     @Test
     fun loginScreenDoesNotExposeManualConfigurationOrCarrierFields() {
-        compose.onNodeWithText("وارد کردن لینک", substring = true).assertDoesNotExist()
-        compose.onNodeWithText("انتخاب اپراتور", substring = true).assertDoesNotExist()
-        compose.onNodeWithText("انتخاب سرور").assertDoesNotExist()
+        assertTrue(compose.onAllNodesWithText("وارد کردن لینک", substring = true).fetchSemanticsNodes().isEmpty())
+        assertTrue(compose.onAllNodesWithText("انتخاب اپراتور", substring = true).fetchSemanticsNodes().isEmpty())
+        assertTrue(compose.onAllNodesWithText("انتخاب سرور").fetchSemanticsNodes().isEmpty())
     }
 }
