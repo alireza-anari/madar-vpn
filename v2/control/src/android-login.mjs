@@ -89,6 +89,8 @@ export async function androidLoginRoute(request,env,now=Date.now()){
     if(!row)return json({error:'invalid_challenge'},403);
     if(expired(row.expires_ms,now))return json({error:'expired'},410);
     if(row.state==='pending')return json({status:'pending'},202);
+    if(row.state==='rejected'||row.state==='failed')
+      return json({error:'subscription_not_ready'},403);
     if(row.state!=='approved')return json({error:'already_used'},410);
     const claimed=await env.DB.prepare(
       "UPDATE android_login_challenges SET state='redeeming' " +
@@ -126,7 +128,15 @@ export async function approveAndroidLogin(env,event,now=Date.now()){
     "WHERE s.owner_telegram_id=? AND c.state='active' AND s.state='active' " +
     "AND s.expires_at>? AND s.max_bytes>s.used_bytes LIMIT 1"
   ).bind(event.actorId,now).first();
-  if(!sub)return reply('برای ورود به اپ باید اشتراک فعال داشته باشید.');
+  if(!sub){
+    const rejected=await env.DB.prepare(
+      "UPDATE android_login_challenges SET state='rejected' " +
+      "WHERE id=? AND state='pending' AND expires_ms>?"
+    ).bind(match[1],now).run();
+    return reply(rejected.meta?.changes===1
+      ?'برای ورود به اپ باید اشتراک فعال داشته باشید.'
+      :'⏱ این درخواست منقضی شده یا قبلاً استفاده شده است. دوباره از داخل اپ تلاش کنید.');
+  }
   const updated=await env.DB.prepare(
     "UPDATE android_login_challenges SET state='approved',telegram_id=? " +
     "WHERE id=? AND state='pending' AND expires_ms>?"
