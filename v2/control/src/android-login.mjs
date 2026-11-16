@@ -139,7 +139,7 @@ export async function approveAndroidLogin(env,event,now=Date.now()){
   const sub=await env.DB.prepare(
     "SELECT s.id FROM subscriptions s JOIN customers c ON c.telegram_id=s.owner_telegram_id " +
     "WHERE s.owner_telegram_id=? AND c.state='active' AND s.state='active' " +
-    "AND s.expires_at>? AND s.max_bytes>s.used_bytes LIMIT 1"
+    "AND s.expires_at>? AND s.max_bytes>s.used_bytes ORDER BY s.expires_at DESC LIMIT 1"
   ).bind(event.actorId,now).first();
   if(!sub){
     const rejected=await env.DB.prepare(
