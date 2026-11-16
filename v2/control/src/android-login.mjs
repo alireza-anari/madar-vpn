@@ -85,14 +85,6 @@ function sameText(a,b){
 function newOtp(){
   return String(crypto.getRandomValues(new Uint32Array(1))[0]%1000000).padStart(6,'0');
 }
-async function loginReadiness(env,subscriptionId,now){
-  const credential=await env.DB.prepare(
-    'SELECT key_version FROM subscription_credentials WHERE subscription_id=?'
-  ).bind(subscriptionId).first();
-  if(!credential || credential.key_version!==1)return 'credential';
-  const routes=await activeRoutes(env.DB,subscriptionId,now);
-  return routes.length?'ready':'route';
-}
 const expiredOrUsed=()=> '⏱ این درخواست منقضی شده یا قبلاً استفاده شده است. دوباره از داخل اپ تلاش کنید.';
 const otpMessage=code=>'🔐 کد تأیید ورود به اپ مدار\n\n' +
   'کد ورود شما:\n\n' +
@@ -254,17 +246,8 @@ export async function approveAndroidLogin(env,event,now=Date.now()){
       :expiredOrUsed());
   }
 
-  const readiness=await loginReadiness(env,sub.id,now);
-  if(readiness!=='ready'){
-    const failed=await env.DB.prepare(
-      "UPDATE android_login_challenges SET state='failed' " +
-      "WHERE id=? AND state='pending' AND expires_ms>?"
-    ).bind(id,now).run();
-    const message=readiness==='route'
-      ?'اشتراک شما فعال است، اما هنوز مسیر اتصال تأییدشده‌ای آماده نیست. کمی بعد دوباره تلاش کنید یا با پشتیبانی مدار تماس بگیرید.'
-      :'اشتراک شما فعال است، اما اطلاعات اتصال آن کامل نیست. لطفاً با پشتیبانی مدار تماس بگیرید.';
-    return reply(failed.meta?.changes===1?message:expiredOrUsed());
-  }
+  // Identity verification is independent of route readiness. Token redemption
+  // below still requires a usable credential and a freshly verified route.
 
   const code=newOtp();
   const codeHash=await otpHash(env,id,code);
