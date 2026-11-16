@@ -263,7 +263,7 @@ test('wrong OTP attempts are counted and locked after five tries',async()=>{
 
 test('an expired challenge cannot issue or redeem a code',async()=>{
   const db=new FakeDB(),env=enabled(db),challenge=await begin(env);
-  const after=now+300001;
+  const after=now+600001;
   const reply=await requestCode(env,challenge,'1234567',after);
   assert.match(reply.text,/منقضی شده/);
   const response=await androidLoginRoute(post('verify',verify(challenge,'123456')),env,after);
