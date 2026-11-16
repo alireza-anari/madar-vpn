@@ -9,10 +9,12 @@ const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:
   'cache-control':'private, no-store','pragma':'no-cache',
   'x-content-type-options':'nosniff','referrer-policy':'no-referrer',
 }});
-const enabled=env=>env.ANDROID_LOGIN_ENABLED==='true' &&
-  env.SUBSCRIPTION_API_ENABLED==='true' && !!env.DB &&
+const subscriptionApiEnabled=env=>env.SUBSCRIPTION_API_ENABLED==='true' ||
+  env.SUBSCRIPTION_API_ENABLED_SECRET==='true';
+const enabled=env=>(env.ANDROID_LOGIN_ENABLED==='true' ||
+  env.ANDROID_LOGIN_ENABLED_SECRET==='true') && subscriptionApiEnabled(env) && !!env.DB &&
   typeof env.TELEGRAM_WEBHOOK_SECRET==='string' && env.TELEGRAM_WEBHOOK_SECRET.length>=32 &&
-  BOT.test(env.BOT_USERNAME??'');
+  BOT.test(env.BOT_USERNAME??env.BOT_USERNAME_SECRET??'');
 async function clientDigest(request,env){
   const ip=(request.headers.get('cf-connecting-ip')??'unknown').trim().slice(0,64)||'unknown';
   const key=await crypto.subtle.importKey('raw',
@@ -51,7 +53,7 @@ export async function androidLoginRoute(request,env,now=Date.now()){
   const route=new URL(request.url).pathname;
   if(request.method!=='POST')return json({error:'method_not_allowed'},405);
   if(route==='/api/v2/android/logout'){
-    if(!env.DB || env.SUBSCRIPTION_API_ENABLED!=='true')
+    if(!env.DB || !subscriptionApiEnabled(env))
       return json({error:'not_ready'},503);
     const payload=await body(request);
     if(!payload || Object.keys(payload).length)return json({error:'bad_request'},400);
