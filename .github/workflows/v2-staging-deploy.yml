@@ -73,4 +73,8 @@ jobs:
           test "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/telegram/webhook")" = 401
           status="$(curl -sS -o /dev/null -w '%{http_code}' "$BASE_URL/health/ready")"
           test "$status" = 503 -o "$status" = 200
+          login="$(curl -fsS --retry 2 -H 'content-type: application/json' -X POST -d '{}' "$BASE_URL/api/v2/android/login/start")"
+          echo "$login" | jq -e '.id | test("^[A-Za-z0-9_-]{24}$")' >/dev/null
+          echo "$login" | jq -e '.verifier | test("^[A-Za-z0-9_-]{43}$")' >/dev/null
+          echo "$login" | jq -e '.login_url | startswith("https://t.me/Madar_v2_bot?start=app_")' >/dev/null
           echo STAGING_RELEASE_VERIFIED
