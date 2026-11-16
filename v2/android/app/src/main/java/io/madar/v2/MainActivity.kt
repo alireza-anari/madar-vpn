@@ -705,7 +705,7 @@ private fun ConnectionPage(
         )
         StatusPill(
             when (state) {
-                ConnectionState.Idle -> if (canConnect) "آماده اتصال" else "اشتراک در دسترس نیست"
+                ConnectionState.Idle -> if (canConnect) "آماده اتصال" else if (error == "SERVER_UNAVAILABLE") "در انتظار مسیر اتصال" else "اشتراک در دسترس نیست"
                 is ConnectionState.Dialing -> "در حال برقراری مسیر امن"
                 is ConnectionState.TestingTraffic -> "در حال بررسی عبور داده"
                 is ConnectionState.Connected -> "متصل و تأییدشده"
@@ -757,7 +757,7 @@ private fun ConnectionPage(
             when (error) {
                 "SUBSCRIPTION_UNAVAILABLE" -> "اشتراک فعال ندارید یا دسترسی آن لغو شده است."
                 "SUBSCRIPTION_EXPIRED_OR_EMPTY" -> "حجم یا زمان اشتراک به پایان رسیده است."
-                "SERVER_UNAVAILABLE" -> "سرویس اشتراک فعلاً در دسترس نیست."
+                "SERVER_UNAVAILABLE" -> "حساب شما تأیید شد، اما مسیر اتصال هنوز آماده یا تازه‌تأیید نشده است. بعداً دوباره تلاش کنید."
                 else -> "در حال بررسی اشتراک و مسیرهای تأییدشده…"
             },
             color = Muted, fontSize = 11.sp, lineHeight = 18.sp
