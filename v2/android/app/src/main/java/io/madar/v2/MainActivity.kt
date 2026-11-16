@@ -225,8 +225,10 @@ fun MadarHome(onConnect: () -> Unit, onDisconnect: () -> Unit) {
                                         if (finish.code != "NETWORK_ERROR") {
                                             loginError = when (finish.code) {
                                                 "subscription_not_ready" ->
-                                                    "اشتراک فعال است، اما مسیر اتصال هنوز آماده نیست. کمی بعد دوباره تلاش کنید."
-                                                "expired" -> "مهلت ورود تمام شد."
+                                                    "اشتراک فعال است، اما مسیر یا اطلاعات اتصال هنوز آماده نیست. کمی بعد دوباره تلاش کنید."
+                                                "subscription_inactive" ->
+                                                    "برای ورود به اپ، اشتراک فعال با حجم باقی‌مانده لازم است."
+                                                "expired" -> "مهلت ورود تمام شد. از داخل اپ دوباره تلاش کنید."
                                                 else -> "ورود تأیید نشد. دوباره تلاش کنید."
                                             }
                                             break
