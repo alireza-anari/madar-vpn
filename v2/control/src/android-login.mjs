@@ -1,4 +1,4 @@
-import {issueActiveToken,tokenDigest} from './subscription.mjs';
+import {activeRoutes,issueActiveToken,tokenDigest} from './subscription.mjs';
 
 const ID=/^[A-Za-z0-9_-]{24}$/;
 const BOT=/^[A-Za-z][A-Za-z0-9_]{4,31}$/;
@@ -15,6 +15,7 @@ const botUsername=env=>env.BOT_USERNAME??env.BOT_USERNAME_SECRET??'';
 const enabled=env=>(env.ANDROID_LOGIN_ENABLED==='true' ||
   env.ANDROID_LOGIN_ENABLED_SECRET==='true') && subscriptionApiEnabled(env) && !!env.DB &&
   typeof env.TELEGRAM_WEBHOOK_SECRET==='string' && env.TELEGRAM_WEBHOOK_SECRET.length>=32 &&
+  typeof env.SUBSCRIPTION_CREDENTIAL_KEY==='string' && /^[A-Za-z0-9_-]{43}$/.test(env.SUBSCRIPTION_CREDENTIAL_KEY) &&
   BOT.test(botUsername(env));
 async function clientDigest(request,env){
   const ip=(request.headers.get('cf-connecting-ip')??'unknown').trim().slice(0,64)||'unknown';
@@ -35,6 +36,15 @@ async function allowChallengeStart(request,env,now){
   return result.meta?.changes===1;
 }
 const expired=(time,now)=>!Number.isSafeInteger(time)||time<=now;
+
+async function loginReadiness(env,subscriptionId,now){
+  const credential=await env.DB.prepare(
+    'SELECT key_version FROM subscription_credentials WHERE subscription_id=?'
+  ).bind(subscriptionId).first();
+  if(!credential || credential.key_version!==1)return 'credential';
+  const routes=await activeRoutes(env.DB,subscriptionId,now);
+  return routes.length?'ready':'route';
+}
 async function body(request){
   if(!/^application\/json(?:;|$)/i.test(request.headers.get('content-type')??''))
     return null;
@@ -92,8 +102,8 @@ export async function androidLoginRoute(request,env,now=Date.now()){
     if(!row)return json({error:'invalid_challenge'},403);
     if(expired(row.expires_ms,now))return json({error:'expired'},410);
     if(row.state==='pending')return json({status:'pending'},202);
-    if(row.state==='rejected'||row.state==='failed')
-      return json({error:'subscription_not_ready'},403);
+    if(row.state==='rejected')return json({error:'subscription_inactive'},403);
+    if(row.state==='failed')return json({error:'subscription_not_ready'},403);
     if(row.state!=='approved')return json({error:'already_used'},410);
     const claimed=await env.DB.prepare(
       "UPDATE android_login_challenges SET state='redeeming' " +
@@ -137,7 +147,22 @@ export async function approveAndroidLogin(env,event,now=Date.now()){
       "WHERE id=? AND state='pending' AND expires_ms>?"
     ).bind(match[1],now).run();
     return reply(rejected.meta?.changes===1
-      ?'برای ورود به اپ باید اشتراک فعال داشته باشید.'
+      ?'برای ورود به اپ، اشتراک فعال با حجم باقی‌مانده لازم است.'
+      :'⏱ این درخواست منقضی شده یا قبلاً استفاده شده است. دوباره از داخل اپ تلاش کنید.');
+  }
+  // Do not tell Telegram that login succeeded unless the same prerequisites
+  // needed to mint a token and serve at least one verified route are present.
+  const readiness=await loginReadiness(env,sub.id,now);
+  if(readiness!=='ready'){
+    const failed=await env.DB.prepare(
+      "UPDATE android_login_challenges SET state='failed' " +
+      "WHERE id=? AND state='pending' AND expires_ms>?"
+    ).bind(match[1],now).run();
+    const message=readiness==='route'
+      ?'اشتراک شما فعال است، اما هنوز مسیر اتصال تأییدشده‌ای آماده نیست. کمی بعد دوباره تلاش کنید یا با پشتیبانی مدار تماس بگیرید.'
+      :'اشتراک شما فعال است، اما اطلاعات اتصال آن کامل نیست. لطفاً با پشتیبانی مدار تماس بگیرید.';
+    return reply(failed.meta?.changes===1
+      ?message
       :'⏱ این درخواست منقضی شده یا قبلاً استفاده شده است. دوباره از داخل اپ تلاش کنید.');
   }
   const updated=await env.DB.prepare(
