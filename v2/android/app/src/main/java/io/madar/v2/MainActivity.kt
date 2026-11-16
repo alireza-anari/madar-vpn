@@ -273,15 +273,15 @@ fun MadarHome(onConnect: () -> Unit, onDisconnect: () -> Unit) {
                         loginError = when (finish.code) {
                             "invalid_code" -> "کد واردشده اشتباه است. دوباره بررسی کنید."
                             "too_many_attempts" -> "تعداد تلاش‌ها بیش از حد مجاز است. درخواست ورود جدید بسازید."
-                            "subscription_inactive" -> "برای ورود، اشتراک فعال با حجم باقی‌مانده لازم است."
-                            "subscription_not_ready" -> "اشتراک فعال است، اما مسیر یا اطلاعات اتصال هنوز آماده نیست."
+                            "subscription_inactive" -> "حساب شما برای ورود آماده نیست. از ربات مدار کمک بگیرید."
+                            "account_not_ready" -> "فعال‌سازی حساب تکمیل نشده است. عضویت کانال و وضعیت حساب را در ربات بررسی کنید."
                             "expired" -> "مهلت کد تمام شد. درخواست ورود جدید بسازید."
                             "already_used" -> "این درخواست قبلاً استفاده شده است. درخواست ورود جدید بسازید."
                             else -> "تأیید کد انجام نشد. اتصال اینترنت را بررسی و دوباره تلاش کنید."
                         }
                         if (finish.code in setOf(
                                 "too_many_attempts", "subscription_inactive",
-                                "subscription_not_ready", "expired", "already_used",
+                                "account_not_ready", "expired", "already_used",
                                 "invalid_challenge"
                             )) {
                             loginChallenge = null
@@ -605,7 +605,7 @@ private fun LoginPage(
             )
             Text(
                 if (challenge == null)
-                    "برای ورود، ربات مدار را فعال کنید. عضویت در کانال اطلاع‌رسانی مدار الزامی است؛ پس از تأیید عضویت، کد ورود برایتان ارسال می‌شود."
+                    "برای ورود کافی است ربات مدار را فعال کنید و عضو کانال اطلاع‌رسانی باشید. داشتن اشتراک VPN برای ورود الزامی نیست."
                 else
                     "در تلگرام روی «Start» بزنید. اگر هنوز فعال نشده‌اید، عضو کانال مدار شوید و «بررسی عضویت و ادامه» را بزنید. سپس کد ۶ رقمی را اینجا وارد کنید.",
                 color = Muted, fontSize = 13.sp, lineHeight = 22.sp
