@@ -1,4 +1,5 @@
-import {issueActiveToken,tokenDigest} from './subscription.mjs';
+import {tokenDigest} from './subscription.mjs';
+import {issueAppSession,revokeAppSession} from './android-account.mjs';
 import {isBotActivated,checkAndActivateBot,activationPrompt,activationUnavailableReply} from './bot-activation.mjs';
 
 const ID=/^[A-Za-z0-9_-]{24}$/;
@@ -23,10 +24,8 @@ const subscriptionApiEnabled=env=>env.SUBSCRIPTION_API_ENABLED==='true' ||
   env.SUBSCRIPTION_API_ENABLED_SECRET==='true';
 const botUsername=env=>env.BOT_USERNAME??env.BOT_USERNAME_SECRET??'';
 const enabled=env=>(env.ANDROID_LOGIN_ENABLED==='true' ||
-  env.ANDROID_LOGIN_ENABLED_SECRET==='true') && subscriptionApiEnabled(env) && !!env.DB &&
+  env.ANDROID_LOGIN_ENABLED_SECRET==='true') && !!env.DB &&
   typeof env.TELEGRAM_WEBHOOK_SECRET==='string' && env.TELEGRAM_WEBHOOK_SECRET.length>=32 &&
-  typeof env.SUBSCRIPTION_CREDENTIAL_KEY==='string' &&
-  /^[A-Za-z0-9_-]{43}$/.test(env.SUBSCRIPTION_CREDENTIAL_KEY) &&
   BOT.test(botUsername(env));
 async function clientDigest(request,env){
   const ip=(request.headers.get('cf-connecting-ip')??'unknown').trim().slice(0,64)||'unknown';
@@ -106,7 +105,7 @@ export async function androidLoginRoute(request,env,now=Date.now()){
   const route=new URL(request.url).pathname;
   if(request.method!=='POST')return json({error:'method_not_allowed'},405);
   if(route==='/api/v2/android/logout'){
-    if(!env.DB || !subscriptionApiEnabled(env))
+    if(!env.DB)
       return json({error:'not_ready'},503);
     const payload=await body(request);
     if(!payload || Object.keys(payload).length)return json({error:'bad_request'},400);
@@ -114,6 +113,8 @@ export async function androidLoginRoute(request,env,now=Date.now()){
     if(!header.startsWith('Bearer '))return json({error:'unauthorized'},401);
     const digest=await tokenDigest(header.slice(7));
     if(!digest)return json({error:'unauthorized'},401);
+    await revokeAppSession(env.DB,digest);
+    // Older subscription-scoped tokens remain revocable during the migration.
     await env.DB.prepare(
       'UPDATE subscription_tokens SET revoked=1 WHERE token_hash=?'
     ).bind(digest).run();
@@ -177,16 +178,13 @@ export async function androidLoginRoute(request,env,now=Date.now()){
       "AND expires_ms>? AND otp_expires_ms>?"
     ).bind(id,verifierHash,row.otp_hash,now,now).run();
     if(claimed.meta?.changes!==1)return json({error:'already_used'},410);
-    const subscription=await env.DB.prepare(
-      "SELECT s.id FROM subscriptions s JOIN customers c ON c.telegram_id=s.owner_telegram_id " +
-      "WHERE s.owner_telegram_id=? AND s.state='active' AND c.state='active' " +
-      "AND s.expires_at>? AND s.max_bytes>s.used_bytes ORDER BY s.expires_at DESC LIMIT 1"
-    ).bind(row.telegram_id,now).first();
-    const issued=subscription?await issueActiveToken(env,subscription.id,now):null;
+    // Telegram identity is sufficient for entering the app. VPN entitlement
+    // is checked separately by the subscription endpoint on every request.
+    const issued=await issueAppSession(env,row.telegram_id,now);
     await env.DB.prepare(
       "UPDATE android_login_challenges SET state=? WHERE id=? AND state='redeeming'"
     ).bind(issued?'used':'failed',id).run();
-    if(!issued)return json({error:'subscription_not_ready'},403);
+    if(!issued)return json({error:'account_not_ready'},403);
     return json({status:'authorized',
       access_token:issued.token,expires_at:issued.expires_at});
   }
@@ -207,7 +205,7 @@ async function body(request){
 }
 
 /** Only invoke on updates verified with the Telegram webhook secret.
- * The bot sends an OTP only to the private Telegram account that owns the active subscription. */
+ * A bot-activated Telegram identity can receive an OTP without a paid VPN subscription. */
 export async function approveAndroidLogin(env,event,now=Date.now()){
   if(!event)return null;
   const startMatch=event.key==='/start'
@@ -256,20 +254,11 @@ export async function approveAndroidLogin(env,event,now=Date.now()){
     }
   }
 
-  const sub=await env.DB.prepare(
-    "SELECT s.id FROM subscriptions s JOIN customers c ON c.telegram_id=s.owner_telegram_id " +
-    "WHERE s.owner_telegram_id=? AND c.state='active' AND s.state='active' " +
-    "AND s.expires_at>? AND s.max_bytes>s.used_bytes LIMIT 1"
-  ).bind(event.actorId,now).first();
-  if(!sub){
-    const rejected=await env.DB.prepare(
-      "UPDATE android_login_challenges SET state='rejected' " +
-      "WHERE id=? AND state='pending' AND expires_ms>?"
-    ).bind(id,now).run();
-    return reply(rejected.meta?.changes===1
-      ?'ربات مدار برای حساب شما فعال شد؛ اما برای ورود به اپ به اشتراک فعال با حجم باقی‌مانده نیاز دارید.'
-      :expiredOrUsed());
-  }
+  const customer=await env.DB.prepare(
+    "SELECT state FROM customers WHERE telegram_id=?"
+  ).bind(event.actorId).first();
+  if(customer?.state!=='active')
+    return reply('⛔ حساب شما تعلیق شده است. برای پیگیری از پشتیبانی مدار استفاده کنید.');
 
   const code=newOtp();
   const codeHash=await otpHash(env,id,code);
