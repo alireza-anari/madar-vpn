@@ -165,5 +165,25 @@ class SchemaTests(unittest.TestCase):
         row=self.db.execute("SELECT closed_at FROM support_tickets WHERE id='tg-77'").fetchone()
         self.assertTrue(row[0], 'closure date must be stamped')
 
+    def test_android_login_otp_is_short_lived_and_attempt_limited(self):
+        self.db.execute("INSERT INTO customers(telegram_id) VALUES('101')")
+        self.db.execute("""INSERT INTO android_login_challenges
+            (id,verifier_hash,telegram_id,state,created_ms,expires_ms)
+            VALUES(?,?,?,?,?,?)""",
+            ('A'*24,'B'*64,'101','pending',1000,301000))
+        self.db.execute("""UPDATE android_login_challenges SET
+            state='code_sent',otp_hash=?,otp_nonce=?,otp_ciphertext=?,
+            otp_expires_ms=?,otp_attempts=5 WHERE id=?""",
+            ('C'*64,'D'*16,'E'*30,181000,'A'*24))
+        row=self.db.execute("""SELECT state,otp_hash,otp_expires_ms,otp_attempts
+            FROM android_login_challenges WHERE id=?""",('A'*24,)).fetchone()
+        self.assertEqual(row,('code_sent','C'*64,181000,5))
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute("UPDATE android_login_challenges SET otp_attempts=6 WHERE id='"+
+                            'A'*24+"'")
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute("UPDATE android_login_challenges SET state='unknown' WHERE id='"+
+                            'A'*24+"'")
+
 if __name__=='__main__':
     unittest.main()
