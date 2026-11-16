@@ -105,7 +105,7 @@ export async function androidLoginRoute(request,env,now=Date.now()){
       'UPDATE android_login_challenges SET state=? WHERE id=? AND state=\'redeeming\''
     ).bind(issued?'used':'failed',id).run();
     if(!issued)return json({error:'subscription_not_ready'},403);
-    return json({status:'authorized',telegram_id:row.telegram_id,
+    return json({status:'authorized',
       access_token:issued.token,expires_at:issued.expires_at});
   }
   return json({error:'not_found'},404);
