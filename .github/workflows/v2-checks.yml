@@ -3,7 +3,7 @@ name: Madar V2 isolated checks
 on:
   push:
     branches: ['rewrite/**']
-    paths: ['v2/**', '.github/workflows/v2-checks.yml']
+    paths: ['v2/**', '.github/workflows/v2-checks.yml', '.github/workflows/v2-staging-deploy.yml']
   pull_request:
     paths: ['v2/**', '.github/workflows/v2-checks.yml']
   workflow_dispatch:
@@ -197,6 +197,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: madar-v2-ux-preview-debug-apk
-          path: v2/android/app/build/outputs/apk/debug/app-debug.apk
+          path: v2/android/app/build/outputs/apk/debug/*.apk
           retention-days: 7
           if-no-files-found: error

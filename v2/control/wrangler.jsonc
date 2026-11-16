@@ -8,9 +8,11 @@
   "vars": {
     "SHOP_ENABLED": "false",
     "PROVISIONING_ENABLED": "false",
-    "SUBSCRIPTION_API_ENABLED": "false",
+    "SUBSCRIPTION_API_ENABLED": "true",
     "SUBSCRIPTION_LINKS_ENABLED": "false",
     "V2_BOT_AUTO_ACTIVATE": "true",
+    "ANDROID_LOGIN_ENABLED": "true",
+    "BOT_USERNAME": "Madar_v2_bot",
     "ADMIN_TELEGRAM_IDS": ""
   },
   "keep_vars": true,

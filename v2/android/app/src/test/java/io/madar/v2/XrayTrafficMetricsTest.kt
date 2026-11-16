@@ -25,4 +25,15 @@ class XrayTrafficMetricsTest {
             JSONObject("""{"outbound>>>madar-proxy>>>traffic>>>uplink":123,"outbound>>>madar-proxy>>>traffic>>>downlink":456}""")))
         assertFalse(XrayTrafficMetrics.hasBidirectionalProxyTraffic(JSONObject("{}")))
     }
+
+    @Test fun measuresRealByteDeltaInMegabitsPerSecond() {
+        val before = TrafficCounters(uploadBytes=1000, downloadBytes=2000)
+        val after = TrafficCounters(uploadBytes=1_001_000, downloadBytes=2_002_000)
+        val speed = XrayTrafficMetrics.rate(before, after, 1000)
+        assertTrue(kotlin.math.abs(speed.uploadMbps - 8.0) < 0.01)
+        assertTrue(kotlin.math.abs(speed.downloadMbps - 16.0) < 0.01)
+        assertTrue(XrayTrafficMetrics.rate(after, before, 1000) == LiveSpeed())
+        assertTrue(XrayTrafficMetrics.rate(before, after, 0) == LiveSpeed())
+    }
+
 }

@@ -36,4 +36,23 @@ class CarrierRoutesTest {
         assertTrue(CarrierOperator.fromCode("mci") == CarrierOperator.MCI)
         assertNull(CarrierOperator.fromCode("unknown"))
     }
+
+    @Test fun oneTapPicksVerifiedRoutesWithoutManualServerSelection() {
+        assertEquals(listOf(mci, wss, irancell),
+            CarrierRoutes.selectAutomatic(snapshot, CarrierOperator.MCI))
+        assertEquals(listOf(irancell, mci, wss),
+            CarrierRoutes.selectAutomatic(snapshot, CarrierOperator.IRANCELL))
+        assertEquals(listOf(irancell, mci, wss),
+            CarrierRoutes.selectAutomatic(snapshot))
+    }
+
+    @Test fun operatorDetectionIsOptionalNotAConnectionBlocker() {
+        assertEquals(CarrierOperator.MCI, CarrierRoutes.detectCarrier("43211"))
+        assertEquals(CarrierOperator.IRANCELL, CarrierRoutes.detectCarrier("43235"))
+        assertNull(CarrierRoutes.detectCarrier(null))
+        assertNull(CarrierRoutes.detectCarrier("00000"))
+        assertEquals(3, CarrierRoutes.selectAutomatic(snapshot,
+            CarrierRoutes.detectCarrier(null)).size)
+    }
+
 }

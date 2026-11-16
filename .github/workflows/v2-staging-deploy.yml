@@ -1,6 +1,9 @@
 name: Madar V2 guarded staging release
 
 on:
+  push:
+    branches: ['rewrite/madar-v2-20261110']
+    paths: ['v2/**', '.github/workflows/v2-staging-deploy.yml']
   workflow_dispatch:
     inputs:
       target:
@@ -17,7 +20,7 @@ concurrency:
 
 jobs:
   deploy:
-    if: github.ref == 'refs/heads/rewrite/madar-v2-20261110' && inputs.target == 'madar-v2-staging'
+    if: github.ref == 'refs/heads/rewrite/madar-v2-20261110' && (github.event_name == 'push' || inputs.target == 'madar-v2-staging')
     runs-on: ubuntu-latest
     environment: madar-v2-staging
     timeout-minutes: 30
@@ -49,6 +52,19 @@ jobs:
           curl -fsS --retry 2 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
             "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/madar-v2-staging/settings" |
             jq -e --arg db "$DB_ID" '.success == true and any(.result.bindings[]; .type=="d1" and .name=="DB" and .id==$db)' >/dev/null
+      - name: Set isolated Android login feature bindings
+        run: |
+          set -euo pipefail
+          payload='{"secrets":{
+            "ANDROID_LOGIN_ENABLED_SECRET":{"name":"ANDROID_LOGIN_ENABLED_SECRET","type":"secret_text","text":"true"},
+            "SUBSCRIPTION_API_ENABLED_SECRET":{"name":"SUBSCRIPTION_API_ENABLED_SECRET","type":"secret_text","text":"true"},
+            "BOT_USERNAME_SECRET":{"name":"BOT_USERNAME_SECRET","type":"secret_text","text":"Madar_v2_bot"}
+          }}'
+          curl -fsS -X PATCH \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/madar-v2-staging/secrets-bulk" \
+            --data "$payload" | jq -e '.success == true' >/dev/null
       - uses: pnpm/action-setup@v4
         with:
           version: 12.9.1
@@ -56,14 +72,22 @@ jobs:
         with:
           node-version: '24'
           cache: pnpm
-      - name: Install locked dependencies and deploy V2 only
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Apply pending migrations to isolated V2 D1 only
         run: |
-          pnpm install --frozen-lockfile
-          pnpm --filter @madar/sales-bot exec wrangler deploy --config ../../v2/control/wrangler.jsonc
+          set -euo pipefail
+          pnpm --filter @madar/sales-bot exec wrangler d1 migrations apply madar-v2-staging-db --remote --config ../../v2/control/wrangler.jsonc
+      - name: Deploy V2 Worker only
+        run: pnpm --filter @madar/sales-bot exec wrangler deploy --config ../../v2/control/wrangler.jsonc
       - name: Verify live and unauthenticated webhook rejection
         run: |
           curl -fsS --retry 3 --retry-delay 2 "$BASE_URL/health/live" | jq -e '.status=="alive" and .service=="madar-v2"' >/dev/null
           test "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/telegram/webhook")" = 401
           status="$(curl -sS -o /dev/null -w '%{http_code}' "$BASE_URL/health/ready")"
           test "$status" = 503 -o "$status" = 200
+          login="$(curl -fsS --retry 2 -H 'content-type: application/json' -X POST -d '{}' "$BASE_URL/api/v2/android/login/start")"
+          echo "$login" | jq -e '.id | test("^[A-Za-z0-9_-]{24}$")' >/dev/null
+          echo "$login" | jq -e '.verifier | test("^[A-Za-z0-9_-]{43}$")' >/dev/null
+          echo "$login" | jq -e '.login_url | startswith("https://t.me/Madar_v2_bot?start=app_")' >/dev/null
           echo STAGING_RELEASE_VERIFIED

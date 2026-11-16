@@ -8,6 +8,8 @@ import android.content.pm.ServiceInfo
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
+import android.telephony.TelephonyManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -24,6 +26,7 @@ import kotlinx.coroutines.withContext
 class MadarVpnService : VpnService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var connectJob: Job? = null
+    private var speedJob: Job? = null
     @Volatile private var tunnel: ParcelFileDescriptor? = null
     @Volatile private var engine: NativeTunnelEngine? = null
 
@@ -55,11 +58,15 @@ class MadarVpnService : VpnService() {
             currentCoroutineContext().ensureActive()
             val snapshot = (result as? SubscriptionResult.Available)?.snapshot
                 ?: throw IllegalStateException("SUBSCRIPTION_UNAVAILABLE")
-            val carrier = CarrierSelectionStore(this).read()
-                ?: throw IllegalStateException("CARRIER_NOT_SELECTED")
-            val carrierRoutes = CarrierRoutes.select(snapshot, carrier)
+            // The user does not select operators, servers, links or configs.
+            // If SIM detection is unavailable, all verified routes are tried.
+            val simOperator = runCatching {
+                (getSystemService(TELEPHONY_SERVICE) as TelephonyManager).simOperator
+            }.getOrNull()
+            val carrierRoutes = CarrierRoutes.selectAutomatic(
+                snapshot, CarrierRoutes.detectCarrier(simOperator))
             if (carrierRoutes.isEmpty())
-                throw IllegalStateException("CARRIER_ROUTE_UNAVAILABLE")
+                throw IllegalStateException("NO_VERIFIED_ROUTE")
 
             val descriptor = establishTunnel()
                 ?: throw IllegalStateException("VPN_PERMISSION_OR_TUN_FAILED")
@@ -96,6 +103,7 @@ class MadarVpnService : VpnService() {
                 if (traffic) {
                     activeIndex = index
                     VpnStatus.update(ConnectionState.Connected(route.id))
+                    startSpeedSampling(native)
                     updateNotification("Connected · " + route.transport.uppercase())
                     return true
                 }
@@ -160,7 +168,27 @@ class MadarVpnService : VpnService() {
             .establish()
     }
 
+    private fun startSpeedSampling(native: LibXrayNativeEngine) {
+        speedJob?.cancel()
+        speedJob = scope.launch {
+            var previous: TrafficCounters? = null
+            var lastTime = 0L
+            while (isActive) {
+                delay(2000)
+                val current = native.trafficCounters()
+                val now = SystemClock.elapsedRealtime()
+                if (current != null && previous != null) {
+                    VpnStatus.updateSpeed(XrayTrafficMetrics.rate(previous, current, now - lastTime))
+                }
+                previous = current
+                lastTime = now
+            }
+        }
+    }
+
     private fun stopTunnelResources() {
+        speedJob?.cancel()
+        speedJob = null
         runCatching { engine?.stop() }
         engine = null
         runCatching { tunnel?.close() }
