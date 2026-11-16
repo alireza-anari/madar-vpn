@@ -3,7 +3,7 @@ name: Madar V2 isolated checks
 on:
   push:
     branches: ['rewrite/**']
-    paths: ['v2/**', '.github/workflows/v2-checks.yml']
+    paths: ['v2/**', '.github/workflows/v2-checks.yml', '.github/workflows/v2-staging-deploy.yml']
   pull_request:
     paths: ['v2/**', '.github/workflows/v2-checks.yml']
   workflow_dispatch:
