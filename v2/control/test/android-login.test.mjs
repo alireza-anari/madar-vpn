@@ -6,12 +6,19 @@ class FakeDB {
   constructor(){
     this.challenges=new Map();this.queries=[];this.rates=new Map();
     this.revoked=new Set();this.tokenHashes=new Set();
-    this.hasSubscription=true;this.hasCredential=true;this.hasRoutes=true;
+    this.hasSubscription=true;this.hasCredential=true;this.hasRoutes=true;this.activations=new Set();
   }
   prepare(sql){
     this.queries.push(sql);
     return {bind:(...args)=>({
       run:async()=>{
+        if(sql.startsWith('INSERT INTO customers'))return {meta:{changes:1}};
+        if(sql.startsWith('INSERT INTO telegram_bot_activations')){
+          this.activations.add(args[0]);return {meta:{changes:1}};
+        }
+        if(sql.startsWith('DELETE FROM telegram_bot_activations')){
+          this.activations.delete(args[0]);return {meta:{changes:1}};
+        }
         if(sql.startsWith('INSERT INTO android_login_rate_limits')){
           const key=args[0]+':'+args[1],count=this.rates.get(key)??0;
           if(count>=30)return {meta:{changes:0}};
@@ -80,6 +87,8 @@ class FakeDB {
         return {meta:{changes:0}};
       },
       first:async()=>{
+        if(sql.includes('FROM telegram_bot_activations'))
+          return this.activations.has(args[0])?{active:1}:null;
         if(sql.includes('FROM subscription_credentials WHERE subscription_id=?'))
           return this.hasCredential?{key_version:1}:null;
         if(sql.includes('FROM android_login_challenges')){
@@ -114,6 +123,8 @@ const post=(name,value,extraHeaders={})=>new Request(
     body:JSON.stringify(value)});
 const enabled=(db)=>({DB:db,ANDROID_LOGIN_ENABLED:'true',
   SUBSCRIPTION_API_ENABLED:'true',BOT_USERNAME:'MadarTestBot',
+  BOT_TOKEN:'123456:'+ 'B'.repeat(40),
+  MADAR_CHANNEL_ID:'-1001234567890',MADAR_CHANNEL_URL:'https://t.me/MadarChannel',
   TELEGRAM_WEBHOOK_SECRET:'T'.repeat(48),
   SUBSCRIPTION_CREDENTIAL_KEY:'A'.repeat(43)});
 const now=1_900_000_000_000;
@@ -122,10 +133,22 @@ async function begin(env,at=now){
   assert.equal(response.status,200);
   return response.json();
 }
-async function requestCode(env,challenge,actorId='1234567',at=now+1000){
-  return approveAndroidLogin(env,{
+async function withMembership(status,action){
+  const original=globalThis.fetch;
+  globalThis.fetch=async(url,init)=>new Response(JSON.stringify({
+    ok:true,result:typeof status==='string'?{status}:status,
+  }),{status:200});
+  try{return await action();}finally{globalThis.fetch=original;}
+}
+async function requestCode(env,challenge,actorId='1234567',at=now+1000,membership={status:'member'}){
+  return withMembership(membership,()=>approveAndroidLogin(env,{
     key:'/start',inputText:'/start app_'+challenge.id,actorId,chatId:actorId,
-  },at);
+  },at));
+}
+async function checkAppActivation(env,challenge,at=now+2000,membership={status:'member'}){
+  return withMembership(membership,()=>approveAndroidLogin(env,{
+    key:'app:activate:'+challenge.id,inputText:null,actorId:'1234567',chatId:'1234567',
+  },at));
 }
 function codeFrom(reply){
   const match=/\b(\d{6})\b/.exec(reply.text);
@@ -177,6 +200,49 @@ test('Telegram sends a one-time code only to the subscribed private account',asy
   const otherUser=await requestCode(env,challenge,'9999999',now+1200);
   assert.match(otherUser.text,/منقضی شده یا قبلاً استفاده شده/);
   assert.equal(db.challenges.get(challenge.id).telegram_id,'1234567');
+});
+
+test('unactivated user is guided to the channel and receives an OTP only after membership is confirmed',async()=>{
+  const db=new FakeDB(),env=enabled(db),challenge=await begin(env);
+  const prompt=await requestCode(env,challenge,'1234567',now+1000,{status:'left'});
+  assert.match(prompt.text,/عضو کانال اطلاع‌رسانی مدار شوید/);
+  assert.equal(prompt.replyMarkup.inline_keyboard[0][0].url,env.MADAR_CHANNEL_URL);
+  assert.equal(prompt.replyMarkup.inline_keyboard[1][0].callback_data,'v2:app:activate:'+challenge.id);
+  assert.equal(db.activations.has('1234567'),false);
+  assert.equal(db.challenges.get(challenge.id).state,'pending');
+  assert.equal(db.challenges.get(challenge.id).otp_hash,null);
+
+  const activated=await checkAppActivation(env,challenge,now+2000,{status:'member'});
+  assert.match(activated.text,/کد تأیید ورود/);
+  assert.equal(db.activations.has('1234567'),true);
+  assert.equal(db.challenges.get(challenge.id).state,'code_sent');
+  assert.equal(codeFrom(activated).length,6);
+});
+
+test('restricted channel member is accepted only when Telegram marks is_member true',async()=>{
+  const db=new FakeDB(),env=enabled(db),challenge=await begin(env);
+  const notMember=await requestCode(env,challenge,'1234567',now+1000,
+    {status:'restricted',is_member:false});
+  assert.match(notMember.text,/عضو کانال/);
+  assert.equal(db.activations.has('1234567'),false);
+  const member=await checkAppActivation(env,challenge,now+2000,
+    {status:'restricted',is_member:true});
+  assert.match(member.text,/کد تأیید ورود/);
+  assert.equal(db.activations.has('1234567'),true);
+});
+
+test('channel membership API outage fails closed and offers a retry action',async()=>{
+  const db=new FakeDB(),env=enabled(db),challenge=await begin(env);
+  const original=globalThis.fetch;
+  globalThis.fetch=async()=>new Response(JSON.stringify({ok:false,description:'Forbidden'}),{status:403});
+  let reply;
+  try{reply=await approveAndroidLogin(env,{
+    key:'/start',inputText:'/start app_'+challenge.id,actorId:'1234567',chatId:'1234567',
+  },now+1000);}finally{globalThis.fetch=original;}
+  assert.match(reply.text,/امکان بررسی عضویت/);
+  assert.equal(reply.replyMarkup.inline_keyboard[1][0].callback_data,'v2:app:activate:'+challenge.id);
+  assert.equal(db.activations.has('1234567'),false);
+  assert.equal(db.challenges.get(challenge.id).state,'pending');
 });
 
 test('wrong OTP attempts are counted and locked after five tries',async()=>{
