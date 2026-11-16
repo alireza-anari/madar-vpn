@@ -1,6 +1,9 @@
 name: Madar V2 guarded staging release
 
 on:
+  push:
+    branches: ['rewrite/madar-v2-20261110']
+    paths: ['v2/**', '.github/workflows/v2-staging-deploy.yml']
   workflow_dispatch:
     inputs:
       target:
@@ -17,7 +20,7 @@ concurrency:
 
 jobs:
   deploy:
-    if: github.ref == 'refs/heads/rewrite/madar-v2-20261110' && inputs.target == 'madar-v2-staging'
+    if: github.ref == 'refs/heads/rewrite/madar-v2-20261110' && (github.event_name == 'push' || inputs.target == 'madar-v2-staging')
     runs-on: ubuntu-latest
     environment: madar-v2-staging
     timeout-minutes: 30
@@ -56,10 +59,14 @@ jobs:
         with:
           node-version: '24'
           cache: pnpm
-      - name: Install locked dependencies and deploy V2 only
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Apply pending migrations to isolated V2 D1 only
         run: |
-          pnpm install --frozen-lockfile
-          pnpm --filter @madar/sales-bot exec wrangler deploy --config ../../v2/control/wrangler.jsonc
+          set -euo pipefail
+          pnpm --filter @madar/sales-bot exec wrangler d1 migrations apply madar-v2-staging-db --remote --config ../../v2/control/wrangler.jsonc
+      - name: Deploy V2 Worker only
+        run: pnpm --filter @madar/sales-bot exec wrangler deploy --config ../../v2/control/wrangler.jsonc
       - name: Verify live and unauthenticated webhook rejection
         run: |
           curl -fsS --retry 3 --retry-delay 2 "$BASE_URL/health/live" | jq -e '.status=="alive" and .service=="madar-v2"' >/dev/null
