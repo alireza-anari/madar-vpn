@@ -230,12 +230,21 @@ fun MadarHome(onConnect: () -> Unit, onDisconnect: () -> Unit) {
                             onConnect, onDisconnect)
                         1 -> UsagePage(snapshot, snapshotError)
                         else -> ProfilePage(telegramId, snapshot, openSupport) {
+                            val currentToken = tokenStore.read()
                             onDisconnect()
                             tokenStore.clear()
                             prefs.edit().clear().apply()
                             telegramId = null
                             snapshot = null
                             signedIn = false
+                            // Clear locally immediately; revoke the old bearer token
+                            // asynchronously so an offline logout never traps the user.
+                            if (currentToken != null) scope.launch(Dispatchers.IO) {
+                                runCatching {
+                                    AndroidLoginApi(BuildConfig.SUBSCRIPTION_API_ORIGIN)
+                                        .logout(currentToken)
+                                }
+                            }
                         }
                     }
                 }
@@ -483,7 +492,7 @@ private fun ProfilePage(telegramId: String?, subscription: SubscriptionSnapshot?
         Text("۴. حجم و زمان باقی‌مانده را در تب مصرف ببینید.")
     }
     ActionRow("ⓘ", "درباره مدار", "VPN اختصاصی مشترکان مدار", {})
-    ActionRow("⇥", "خروج از حساب", "پاک‌کردن نشست از دستگاه", onLogout)
+    ActionRow("⇥", "خروج از حساب", "پاک‌کردن نشست و لغو دسترسی این دستگاه", onLogout)
 }
 
 @Composable
