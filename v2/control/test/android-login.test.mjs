@@ -36,10 +36,11 @@ class FakeDB {
             created_ms:args[2],expires_ms:args[3],state:'pending',telegram_id:null});
           return {meta:{changes:1}};
         }
-        if(sql.includes("SET state='rejected'")){
+        if(sql.includes("SET state='rejected'") || sql.includes("SET state='failed'")){
           const row=this.challenges.get(args[0]);
+          const state=sql.includes("SET state='failed'")?'failed':'rejected';
           if(row && row.state==='pending' && row.expires_ms>args[1]){
-            row.state='rejected';return {meta:{changes:1}};
+            row.state=state;return {meta:{changes:1}};
           }
           return {meta:{changes:0}};
         }
@@ -164,7 +165,7 @@ test('missing active subscription rejects the challenge and stops client polling
   const completed=await androidLoginRoute(post('complete',{
     id:challenge.id,verifier:challenge.verifier}),env,now+2000);
   assert.equal(completed.status,403);
-  assert.equal((await completed.json()).error,'subscription_not_ready');
+  assert.equal((await completed.json()).error,'subscription_inactive');
 });
 
 test('active subscription without a verified route is not approved as a successful login',async()=>{
