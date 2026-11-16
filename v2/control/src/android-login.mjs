@@ -11,10 +11,11 @@ const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:
 }});
 const subscriptionApiEnabled=env=>env.SUBSCRIPTION_API_ENABLED==='true' ||
   env.SUBSCRIPTION_API_ENABLED_SECRET==='true';
+const botUsername=env=>env.BOT_USERNAME??env.BOT_USERNAME_SECRET??'';
 const enabled=env=>(env.ANDROID_LOGIN_ENABLED==='true' ||
   env.ANDROID_LOGIN_ENABLED_SECRET==='true') && subscriptionApiEnabled(env) && !!env.DB &&
   typeof env.TELEGRAM_WEBHOOK_SECRET==='string' && env.TELEGRAM_WEBHOOK_SECRET.length>=32 &&
-  BOT.test(env.BOT_USERNAME??env.BOT_USERNAME_SECRET??'');
+  BOT.test(botUsername(env));
 async function clientDigest(request,env){
   const ip=(request.headers.get('cf-connecting-ip')??'unknown').trim().slice(0,64)||'unknown';
   const key=await crypto.subtle.importKey('raw',
@@ -79,7 +80,7 @@ export async function androidLoginRoute(request,env,now=Date.now()){
       "INSERT INTO android_login_challenges(id,verifier_hash,created_ms,expires_ms) VALUES(?,?,?,?)"
     ).bind(id,hash,now,now+300000).run();
     return json({id,verifier,expires_at:now+300000,
-      login_url:'https://t.me/'+env.BOT_USERNAME+'?start=app_'+id});
+      login_url:'https://t.me/'+botUsername(env)+'?start=app_'+id});
   }
   if(route==='/api/v2/android/login/complete'){
     const id=payload.id,verifier=payload.verifier;
