@@ -19,6 +19,13 @@ class FakeDB {
         if(sql.startsWith('INSERT INTO subscription_tokens')){
           this.tokenHashes.add(args[0]);return {meta:{changes:1}};
         }
+        if(sql.includes("SET state='redeeming'")){
+          const row=this.challenges.get(args[0]);
+          if(row && row.state==='approved' && row.expires_ms>args[2]){
+            row.state='redeeming';return {meta:{changes:1}};
+          }
+          return {meta:{changes:0}};
+        }
         if(sql.includes("UPDATE android_login_challenges SET state=?")){
           const row=this.challenges.get(args[1]);
           if(row && row.state==='redeeming'){row.state=args[0];return {meta:{changes:1}};}
