@@ -100,6 +100,7 @@ test('bot activation check unlocks the customer menu after Telegram confirms mem
       inputText:null,updateId:701,locale:'fa',
     },Date.now());
     assert.match(reply.text,/ربات مدار برای حساب شما فعال است/);
+    assert.ok(reply.replyMarkup.inline_keyboard.flat().some(x=>x.callback_data==='v2:plans'));
     assert.equal(activated,true);
   }finally{globalThis.fetch=original;}
 });
