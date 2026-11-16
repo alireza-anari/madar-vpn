@@ -90,6 +90,21 @@ test('mobile authorization is fail-closed without explicit configuration',async(
   assert.equal(r.status,503);
   assert.equal((await r.json()).error,'not_ready');
 });
+test('isolated protected flags enable login without overwriting existing Worker vars',async()=>{
+  const db=new FakeDB(),env=enabled(db),now=1_900_000_000_000;
+  delete env.ANDROID_LOGIN_ENABLED;
+  delete env.SUBSCRIPTION_API_ENABLED;
+  delete env.BOT_USERNAME;
+  env.ANDROID_LOGIN_ENABLED_SECRET='true';
+  env.SUBSCRIPTION_API_ENABLED_SECRET='true';
+  env.BOT_USERNAME_SECRET='MadarTestBot';
+  const response=await androidLoginRoute(post('start',{}),env,now);
+  assert.equal(response.status,200);
+  const challenge=await response.json();
+  assert.equal(challenge.login_url,
+    'https://t.me/MadarTestBot?start=app_'+challenge.id);
+});
+
 test('public Telegram URL never contains the secret verifier',async()=>{
   const db=new FakeDB(),now=1_900_000_000_000;
   const env=enabled(db);
