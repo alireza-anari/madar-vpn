@@ -3,13 +3,13 @@ const API='https://api.telegram.org/bot';
 function channelConfig(env){
   const id=String(env.MADAR_CHANNEL_ID??'').trim();
   const url=String(env.MADAR_CHANNEL_URL??'').trim();
-  const validId=/^(?:-100\\d{5,20}|@[A-Za-z][A-Za-z0-9_]{4,31})$/.test(id);
+  const validId=/^(?:-100\d{5,20}|@[A-Za-z][A-Za-z0-9_]{4,31})$/.test(id);
   let validUrl=false;
   try{
     const parsed=new URL(url);
     validUrl=parsed.protocol==='https:'&&parsed.hostname==='t.me'&&
       !parsed.username&&!parsed.password&&!parsed.search&&!parsed.hash&&
-      /^\\/(?:[A-Za-z][A-Za-z0-9_]{4,31}|\\+[A-Za-z0-9_-]{8,}|joinchat\\/[A-Za-z0-9_-]{8,})\\/?$/.test(parsed.pathname);
+      /^\/(?:[A-Za-z][A-Za-z0-9_]{4,31}|\+[A-Za-z0-9_-]{8,}|joinchat\/[A-Za-z0-9_-]{8,})\/?$/.test(parsed.pathname);
   }catch{}
   return validId&&validUrl?{id,url}:null;
 }
@@ -19,7 +19,7 @@ export function channelActivationConfigured(env){
 }
 
 export async function isBotActivated(db,telegramId){
-  if(!db||!/^\\d{5,20}$/.test(String(telegramId??'')))return false;
+  if(!db||!/^\d{5,20}$/.test(String(telegramId??'')))return false;
   const row=await db.prepare(
     'SELECT 1 AS active FROM telegram_bot_activations WHERE telegram_id=?'
   ).bind(String(telegramId)).first();
@@ -29,7 +29,7 @@ export async function isBotActivated(db,telegramId){
 /** Check channel membership through Telegram and persist activation only on a
  * confirmed member status. The bot must be an administrator of the channel. */
 export async function checkAndActivateBot(env,telegramId,now=Date.now(),send=fetch){
-  if(!env.DB||!/^\\d{5,20}$/.test(String(telegramId??''))||
+  if(!env.DB||!/^\d{5,20}$/.test(String(telegramId??''))||
      typeof env.BOT_TOKEN!=='string'||env.BOT_TOKEN.length<20)
     return {state:'unavailable'};
   const config=channelConfig(env);
