@@ -211,7 +211,7 @@ async function body(request){
 export async function approveAndroidLogin(env,event,now=Date.now()){
   if(!event)return null;
   const startMatch=event.key==='/start'
-    ?/^\\/start(?:@[A-Za-z0-9_]+)?\\s+app_([A-Za-z0-9_-]{24})\\s*$/.exec(event.inputText??'')
+    ?/^\/start(?:@[A-Za-z0-9_]+)?\s+app_([A-Za-z0-9_-]{24})\s*$/.exec(event.inputText??'')
     :null;
   const callbackMatch=typeof event.key==='string'
     ?/^app:activate:([A-Za-z0-9_-]{24})$/.exec(event.key)
@@ -221,7 +221,7 @@ export async function approveAndroidLogin(env,event,now=Date.now()){
     text:'🌐  مــدار\n\n'+message,replyMarkup
   });
   if(!enabled(env))return reply('ورود به اپ در این محیط هنوز فعال نیست.');
-  if(!/^\\d{5,20}$/.test(event.actorId??'') ||
+  if(!/^\d{5,20}$/.test(event.actorId??'') ||
      (event.chatId!==undefined && event.chatId!==event.actorId))
     return reply('درخواست ورود نامعتبر است.');
 
