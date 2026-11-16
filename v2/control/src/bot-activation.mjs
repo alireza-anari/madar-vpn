@@ -90,9 +90,9 @@ export function activationPrompt(env,callbackData,context='bot'){
   };
 }
 
-export function activationUnavailableReply(){
+export function activationUnavailableReply(env,callbackData){
   return {
     text:'⚠️ در حال حاضر امکان بررسی عضویت در کانال وجود ندارد. چند لحظه دیگر دوباره «بررسی عضویت» را بزنید.',
-    replyMarkup:null,
+    replyMarkup:activationKeyboard(env,callbackData),
   };
 }
