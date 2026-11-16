@@ -43,6 +43,8 @@ android {
 
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2025.06.00"))
+    // The Android test configuration is separate from implementation; give it the Compose BOM too.
+    androidTestImplementation(platform("androidx.compose:compose-bom:2025.06.00"))
     implementation("androidx.activity:activity-compose:1.10.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation(files("libs/libXray.aar"))
