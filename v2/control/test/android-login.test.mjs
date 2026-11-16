@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {androidLoginRoute,approveAndroidLogin} from '../src/android-login.mjs';
 
 class FakeDB {
-  constructor(){this.challenges=new Map();this.queries=[];this.rates=new Map();this.revoked=new Set();this.tokenHashes=new Set();this.hasSubscription=true;}
+  constructor(){this.challenges=new Map();this.queries=[];this.rates=new Map();this.revoked=new Set();this.tokenHashes=new Set();this.hasSubscription=true;this.hasCredential=true;this.hasRoutes=true;}
   prepare(sql){
     this.queries.push(sql);
     return {bind:(...args)=>({
@@ -53,6 +53,8 @@ class FakeDB {
         return {meta:{changes:0}};
       },
       first:async()=>{
+        if(sql.includes('FROM subscription_credentials WHERE subscription_id=?'))
+          return this.hasCredential?{key_version:1}:null;
         if(sql.includes('FROM android_login_challenges')){
           const row=this.challenges.get(args[0]);
           return row?.verifier_hash===args[1]?row:null;
@@ -64,10 +66,10 @@ class FakeDB {
       },
       all:async()=>{
         if(sql.includes('FROM node_allocations a JOIN nodes n')){
-          return {results:[{route_id:'route:mci',transport:'reality',
+          return {results:this.hasRoutes?[{route_id:'route:mci',transport:'reality',
             operator_hint:'mci',host:'vpn.example.com',port:443,
             server_name:'www.cloudflare.com',ws_path:null,
-            reality_public_key:'A'.repeat(43),reality_short_id:'abcd'}]};
+            reality_public_key:'A'.repeat(43),reality_short_id:'abcd'}]:[]};
         }
         return {results:[]};
       },
@@ -159,6 +161,37 @@ test('missing active subscription rejects the challenge and stops client polling
     key:'/start',inputText:'/start app_'+challenge.id,actorId:'1234567'},now+1000);
   assert.match(reply.text,/اشتراک فعال/);
   assert.equal(db.challenges.get(challenge.id).state,'rejected');
+  const completed=await androidLoginRoute(post('complete',{
+    id:challenge.id,verifier:challenge.verifier}),env,now+2000);
+  assert.equal(completed.status,403);
+  assert.equal((await completed.json()).error,'subscription_not_ready');
+});
+
+test('active subscription without a verified route is not approved as a successful login',async()=>{
+  const now=1_900_000_000_000,db=new FakeDB(),env=enabled(db);
+  db.hasRoutes=false;
+  const started=await androidLoginRoute(post('start',{}),env,now);
+  const challenge=await started.json();
+  const reply=await approveAndroidLogin(env,{
+    key:'/start',inputText:'/start app_'+challenge.id,actorId:'1234567'},now+1000);
+  assert.match(reply.text,/مسیر اتصال تأییدشده‌ای آماده نیست/);
+  assert.equal(db.challenges.get(challenge.id).state,'failed');
+  const completed=await androidLoginRoute(post('complete',{
+    id:challenge.id,verifier:challenge.verifier}),env,now+2000);
+  assert.equal(completed.status,403);
+  assert.equal((await completed.json()).error,'subscription_not_ready');
+  assert.equal(db.tokenHashes.size,0);
+});
+
+test('active subscription without a usable credential is not approved',async()=>{
+  const now=1_900_000_000_000,db=new FakeDB(),env=enabled(db);
+  db.hasCredential=false;
+  const started=await androidLoginRoute(post('start',{}),env,now);
+  const challenge=await started.json();
+  const reply=await approveAndroidLogin(env,{
+    key:'/start',inputText:'/start app_'+challenge.id,actorId:'1234567'},now+1000);
+  assert.match(reply.text,/اطلاعات اتصال آن کامل نیست/);
+  assert.equal(db.challenges.get(challenge.id).state,'failed');
   const completed=await androidLoginRoute(post('complete',{
     id:challenge.id,verifier:challenge.verifier}),env,now+2000);
   assert.equal(completed.status,403);
