@@ -114,6 +114,7 @@ test('private Telegram user cannot mint another user subscription link',async()=
       run:async()=>({meta:{changes:1}}),
       first:async()=>{
         if(sql.includes('SELECT state FROM customers'))return {state:'active'};
+        if(sql.includes('FROM telegram_bot_activations'))return {active:1};
         if(sql.includes('FROM subscriptions WHERE id=? AND owner_telegram_id=?')) {
           issuedLookups++;
           return null;
