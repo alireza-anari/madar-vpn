@@ -500,7 +500,7 @@ private fun LoginPage(busy: Boolean, error: String?, onLogin: () -> Unit) {
         Row(verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Icon(Icons.Outlined.Lock, contentDescription = null, tint = Aqua, modifier = Modifier.size(16.dp))
-            Text("بدون کپی کانفیگ  •  بدون انتخاب سرور", color = Muted, fontSize = 11.sp)
+            Text("بدون کپی کانفیگ، بدون انتخاب سرور", color = Muted, fontSize = 11.sp)
         }
     }
 }
