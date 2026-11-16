@@ -216,27 +216,29 @@ test('missing active subscription rejects the challenge',async()=>{
   assert.equal((await response.json()).error,'subscription_inactive');
 });
 
-test('active subscription without a verified route is not approved for app login',async()=>{
+test('OTP delivery is independent of route readiness, but token redemption is not',async()=>{
   const db=new FakeDB(),env=enabled(db),challenge=await begin(env);
   db.hasRoutes=false;
   const reply=await requestCode(env,challenge);
-  assert.match(reply.text,/مسیر اتصال تأییدشده‌ای آماده نیست/);
-  assert.equal(db.challenges.get(challenge.id).state,'failed');
-  const response=await androidLoginRoute(post('verify',verify(challenge,'123456')),env,now+2000);
+  const code=codeFrom(reply);
+  assert.equal(db.challenges.get(challenge.id).state,'code_sent');
+  const response=await androidLoginRoute(post('verify',verify(challenge,code)),env,now+2000);
   assert.equal(response.status,403);
   assert.equal((await response.json()).error,'subscription_not_ready');
+  assert.equal(db.challenges.get(challenge.id).state,'failed');
   assert.equal(db.tokenHashes.size,0);
 });
 
-test('active subscription without a usable credential is not approved',async()=>{
+test('OTP can be delivered to an active subscriber, but missing credentials prevent token redemption',async()=>{
   const db=new FakeDB(),env=enabled(db),challenge=await begin(env);
   db.hasCredential=false;
   const reply=await requestCode(env,challenge);
-  assert.match(reply.text,/اطلاعات اتصال آن کامل نیست/);
-  assert.equal(db.challenges.get(challenge.id).state,'failed');
-  const response=await androidLoginRoute(post('verify',verify(challenge,'123456')),env,now+2000);
+  const code=codeFrom(reply);
+  assert.equal(db.challenges.get(challenge.id).state,'code_sent');
+  const response=await androidLoginRoute(post('verify',verify(challenge,code)),env,now+2000);
   assert.equal(response.status,403);
   assert.equal((await response.json()).error,'subscription_not_ready');
+  assert.equal(db.challenges.get(challenge.id).state,'failed');
 });
 
 test('a valid code redeems exactly one active subscription token',async()=>{
