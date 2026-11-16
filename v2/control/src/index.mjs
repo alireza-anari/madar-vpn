@@ -297,7 +297,7 @@ export default {
         'referrer-policy':'no-referrer','x-content-type-options':'nosniff',
       }});}
     }
-    if(path==='/api/v2/android/login/start' || path==='/api/v2/android/login/complete') {
+    if(path==='/api/v2/android/login/start' || path==='/api/v2/android/login/complete' || path==='/api/v2/android/logout') {
       try{return await androidLoginRoute(request,env);}
       catch{return json({error:'temporary_failure'},503);}
     }
