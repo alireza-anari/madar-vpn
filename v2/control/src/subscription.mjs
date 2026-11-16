@@ -148,7 +148,7 @@ export async function issueActiveToken(env,subId,nowMs=Date.now()) {
     return null;
   const row=await env.DB.prepare(
     "SELECT s.id,s.expires_at FROM subscriptions s " +
-    "JOIN subscription_credentials c ON c.subscription_id=s.id " +
+    "JOIN subscription_credentials c ON c.subscription_id=s.id AND c.key_version=1 " +
     "JOIN customers owner ON owner.telegram_id=s.owner_telegram_id " +
     "WHERE s.id=? AND s.state='active' AND owner.state='active' AND s.expires_at>? " +
     "AND s.max_bytes>0 AND s.used_bytes<s.max_bytes " +
