@@ -40,6 +40,72 @@ test('receipt alerts go only to explicitly configured distinct admin IDs',()=>{
   assert.deepEqual(validAdminIds(undefined),[]);
 });
 
+test('customer bot start requires confirmed Madar channel membership',async()=>{
+  const original=globalThis.fetch;
+  let activated=false;
+  const db={prepare(sql){
+    return {bind(...args){return {
+      run:async()=>{
+        if(sql.startsWith('INSERT INTO telegram_bot_activations'))activated=true;
+        if(sql.startsWith('DELETE FROM telegram_bot_activations'))activated=false;
+        return {meta:{changes:1}};
+      },
+      first:async()=>{
+        if(sql.includes('SELECT state FROM customers'))return {state:'active'};
+        if(sql.includes('FROM telegram_bot_activations'))return activated?{active:1}:null;
+        return null;
+      },
+    };}};
+  }};
+  const env={DB:db,BOT_TOKEN:'123456:'+ 'B'.repeat(40),
+    MADAR_CHANNEL_ID:'-1001234567890',MADAR_CHANNEL_URL:'https://t.me/MadarChannel'};
+  const event={actorId:'1234567',chatId:'1234567',key:'/start',
+    inputText:'/start',updateId:700,locale:'fa'};
+  globalThis.fetch=async()=>new Response(JSON.stringify({
+    ok:true,result:{status:'left'},
+  }),{status:200});
+  try{
+    const reply=await (await import('../src/shop.mjs')).resolveBotAction(env,event,nowForTest());
+    assert.match(reply.text,/عضویت در کانال اطلاع‌رسانی مدار الزامی است/);
+    assert.equal(reply.replyMarkup.inline_keyboard[0][0].url,env.MADAR_CHANNEL_URL);
+    assert.equal(reply.replyMarkup.inline_keyboard[1][0].callback_data,'v2:activation:check');
+    assert.equal(activated,false);
+  }finally{globalThis.fetch=original;}
+});
+
+test('bot activation check unlocks the customer menu after Telegram confirms membership',async()=>{
+  const original=globalThis.fetch;
+  let activated=false;
+  const db={prepare(sql){
+    return {bind(...args){return {
+      run:async()=>{
+        if(sql.startsWith('INSERT INTO telegram_bot_activations'))activated=true;
+        return {meta:{changes:1}};
+      },
+      first:async()=>{
+        if(sql.includes('SELECT state FROM customers'))return {state:'active'};
+        if(sql.includes('FROM telegram_bot_activations'))return activated?{active:1}:null;
+        return null;
+      },
+    };}};
+  }};
+  const env={DB:db,BOT_TOKEN:'123456:'+ 'B'.repeat(40),
+    MADAR_CHANNEL_ID:'-1001234567890',MADAR_CHANNEL_URL:'https://t.me/MadarChannel'};
+  globalThis.fetch=async()=>new Response(JSON.stringify({
+    ok:true,result:{status:'member'},
+  }),{status:200});
+  try{
+    const reply=await (await import('../src/shop.mjs')).resolveBotAction(env,{
+      actorId:'1234567',chatId:'1234567',key:'activation:check',
+      inputText:null,updateId:701,locale:'fa',
+    },Date.now());
+    assert.match(reply.text,/ربات مدار برای حساب شما فعال است/);
+    assert.equal(activated,true);
+  }finally{globalThis.fetch=original;}
+});
+
+function nowForTest(){return 1_900_000_000_000;}
+
 test('private Telegram user cannot mint another user subscription link',async()=>{
   const {resolveBotAction}=await import('../src/shop.mjs');
   let issuedLookups=0;
