@@ -557,10 +557,10 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
     if(activation.state==='activated'){
       const home=await personalizedHome(env,e);
       const body=home.text
-        .replace(/^🌐  مــدار\\n━━━━━━━━━━━━━━━━━━\\n/,'')
-        .replace(/\\n━━━━━━━━━━━━━━━━━━$/,'');
+        .replace(/^🌐  مــدار\n━━━━━━━━━━━━━━━━━━\n/,'')
+        .replace(/\n━━━━━━━━━━━━━━━━━━$/,'');
       return {...home,text:frameMessage(
-        '✅ عضویت شما در کانال اطلاع‌رسانی تأیید شد و ربات مدار برای حساب شما فعال است. اکنون می‌توانید به اپ مدار برگردید و ورود را انجام دهید.\\n\\n'+body
+        '✅ عضویت شما در کانال اطلاع‌رسانی تأیید شد و ربات مدار برای حساب شما فعال است. اکنون می‌توانید به اپ مدار برگردید و ورود را انجام دهید.\n\n'+body
       )};
     }
     if(activation.state==='not_member')
