@@ -1,4 +1,4 @@
-import {activeRoutes,issueActiveToken,tokenDigest} from './subscription.mjs';
+import {issueActiveToken,tokenDigest} from './subscription.mjs';
 
 const ID=/^[A-Za-z0-9_-]{24}$/;
 const BOT=/^[A-Za-z][A-Za-z0-9_]{4,31}$/;
