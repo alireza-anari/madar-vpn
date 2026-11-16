@@ -563,7 +563,8 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
     return botActivationReply(activationUnavailableReply(env,'v2:activation:check'));
   }
   if(key==='/start'){
-    if(!await isBotActivated(db,e.actorId)){
+    if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)&&
+       !await isBotActivated(db,e.actorId)){
       const activation=await checkAndActivateBot(env,e.actorId,nowMs);
       if(activation.state==='not_member'||activation.state==='unconfigured')
         return botActivationReply(activationPrompt(env,'v2:activation:check','bot'));
