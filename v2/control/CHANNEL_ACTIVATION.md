@@ -14,7 +14,12 @@ Set these non-secret variables for the V2 Worker:
 - `MADAR_CHANNEL_URL`: the channel's public URL or private invite URL, such as
   `https://t.me/YourChannel` or its official invite link.
 
-Do not guess either value. Use the exact official Madar announcement channel.
+For the current Madar staging environment, the official values are:
+
+- `MADAR_CHANNEL_ID=@MadarVPN_Official`
+- `MADAR_CHANNEL_URL=https://t.me/MadarVPN_Official`
+
+Do not guess either value in other environments; use the exact official Madar announcement channel.
 
 ## Bot permissions
 

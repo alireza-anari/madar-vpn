@@ -38,6 +38,7 @@ test('owner-only dashboard shows real counts with actions but no payment shortcu
   const {env,raw,event}=fixture();
   raw.exec("INSERT INTO nodes(id,provider,region,lifecycle,user_limit,byte_limit) VALUES('test-a','Webdade','test','provisioning',20,5000)");
   const a=await adminDashboard(env,event(100,'admin:home'));
+  assert.equal(a.photoId,'https://madar-v2-staging.alirezaanari117.workers.dev/brand/banner.jpg');
   assert.match(a.text,/مشتریان: ۳/);
   assert.match(a.text,/سرورها: ۱/);
   assert.match(a.text,/فروش عمومی/);

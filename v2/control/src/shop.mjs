@@ -9,7 +9,7 @@ import { handleSeller, linkSellerOnStart, grantStaffRole } from './referrals.mjs
  * update ID or by a state-qualified SQL transition. No unattended payment or
  * config issuance takes place from this module.
  */
-import { botMenu,botPage,adminMenu,sellerMenu,supportMenu,frameMessage,faNumber,faMoney,faGB,faDate,faStatus,faRole,sectionNavigation,usageMeter,statusSymbol,shortCode,panelHeading } from './bot-ux.mjs';
+import { botMenu,botPage,adminMenu,sellerMenu,supportMenu,frameMessage,faNumber,faMoney,faGB,faDate,faStatus,faRole,sectionNavigation,usageMeter,statusSymbol,shortCode,panelHeading,BRAND_BANNER_URL } from './bot-ux.mjs';
 import {isBotActivated,checkAndActivateBot,activationPrompt,activationUnavailableReply} from './bot-activation.mjs';
 
 const ORDER_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{1,48}$/;
@@ -510,6 +510,7 @@ async function personalizedHome(env,e,customerView=false) {
   ];
   return {text:frameMessage(panelHeading('🌐','پنل کاربری مدار','مدیریت اشتراک، سفارش و پشتیبانی')+
     '\n\n'+greeting+'\n'+state+'\n'+orderHint+'\n\n'+safety+restriction),
+    photoId:BRAND_BANNER_URL,
     replyMarkup:{inline_keyboard:[...quick,...menu.inline_keyboard]}};
 }
 

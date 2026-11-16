@@ -1,5 +1,5 @@
 /** پنل‌های فارسی مدیریت و مشتری در ربات مدار V2. */
-import {adminMenu,frameMessage,faNumber,faStatus,faRole,statusSymbol,sectionNavigation,shortCode,panelHeading} from './bot-ux.mjs';
+import {adminMenu,frameMessage,faNumber,faStatus,faRole,statusSymbol,sectionNavigation,shortCode,panelHeading,BRAND_BANNER_URL} from './bot-ux.mjs';
 
 const NAT=/^[0-9]{1,20}$/;
 const TICKET=/^tg-[0-9]{1,20}$/;
@@ -35,37 +35,32 @@ export async function adminDashboard(env,e) {
   const salesReady=env.SHOP_ENABLED==='true'&&env.PROVISIONING_ENABLED==='true'&&
     typeof env.PAYMENT_INSTRUCTIONS==='string'&&env.PAYMENT_INSTRUCTIONS.trim().length>=12&&
     env.PAYMENT_INSTRUCTIONS.length<=700;
-  const alerts=[
-    receipts>0?'🧾 '+faNumber(receipts)+' رسید منتظر بررسی':null,
-    tickets>0?'💬 '+faNumber(tickets)+' درخواست پشتیبانی باز':null,
-    ready===0?'🖥 هنوز سرور آماده فروش وجود ندارد':null,
-  ].filter(Boolean);
+  // Keep this overview short. Telegram photo captions use the user's native
+  // small text size; dense reports become unreadable on narrow mobile screens.
+  const actionNeeded=receipts>0
+    ?'🧾 '+faNumber(receipts)+' رسید در صف بررسی'
+    :tickets>0
+      ?'💬 '+faNumber(tickets)+' درخواست پشتیبانی باز'
+      :ready===0
+        ?'⚠️ سرور آماده وجود ندارد'
+        :'✅ مورد فوری در صف نیست';
   const body=[
-    panelHeading('📊','پیشخوان مدیریت','مرکز کنترل و پایش مدار'),
+    panelHeading('📊','پیشخوان مدیریت','خلاصه وضعیت مدار'),
     '',
-    'شاخص‌های کلیدی',
-    '👥 مشتریان: '+faNumber(customers)+'   ·   🔗 اشتراک‌های فعال: '+faNumber(subs),
-    '🧾 سفارش‌های باز: '+faNumber(orders)+'   ·   رسیدهای دریافتی: '+faNumber(receipts),
-    '💬 درخواست‌های باز پشتیبانی: '+faNumber(tickets),
+    '👥 مشتریان: '+faNumber(customers),
+    '🔗 اشتراک فعال: '+faNumber(subs),
+    '🧾 سفارش باز: '+faNumber(orders),
+    '📩 رسید در انتظار: '+faNumber(receipts),
+    '💬 پشتیبانی باز: '+faNumber(tickets),
     '',
-    'زیرساخت و ظرفیت',
-    '🖥 سرورها: '+faNumber(nodes)+'   ·   نصب‌شده: '+faNumber(installed)+'   ·   آماده: '+faNumber(ready),
-    '🛒 وضعیت فروش عمومی: '+(salesReady?'پیکربندی شده':'غیرفعال'),
+    '🖥 کل سرورها: '+faNumber(nodes),
+    '🛠 نصب‌شده: '+faNumber(installed),
+    '✅ وضعیت آماده: '+faNumber(ready),
     '',
-    'نیازمند اقدام',
-    ...(alerts.length?alerts:['✅ مورد فوری در صف مدیریت ثبت نشده است.']),
-    '',
-    ready>0
-      ?'🛡 آماده‌بودن سرور به‌تنهایی مجوز فروش نیست؛ آزمون مسیر و ظرفیت باید تأیید شده باشد.'
-      :'⛔ فروش عمومی تا تأیید مسیر و ظرفیت غیرفعال است.',
-    '',
-    'برای ادامه، یکی از بخش‌های مدیریت را انتخاب کنید.'
+    '🛒 فروش عمومی: '+(salesReady?'در حال پیکربندی':'غیرفعال'),
+    actionNeeded
   ].join('\n');
-  const urgent=[];
-  if(receipts>0)urgent.push([{text:'🧾 بررسی رسیدها · '+faNumber(receipts),callback_data:'v2:admin:queue'}]);
-  if(tickets>0)urgent.push([{text:'💬 درخواست‌های باز · '+faNumber(tickets),callback_data:'v2:admin:tickets'}]);
-  return {text:frameMessage(body),replyMarkup:{inline_keyboard:[
-    ...urgent,
+  return {text:frameMessage(body),photoId:BRAND_BANNER_URL,replyMarkup:{inline_keyboard:[
     [{text:'👤 مشاهده نمای مشتری',callback_data:'v2:customer:home'}],
     ...adminMenu().inline_keyboard
   ]}};
