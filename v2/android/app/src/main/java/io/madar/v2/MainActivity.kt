@@ -123,6 +123,16 @@ fun MadarHome(onConnect: () -> Unit, onDisconnect: () -> Unit) {
                 is SubscriptionResult.Unavailable -> {
                     snapshot = null
                     snapshotError = result.code
+                    // Server-confirmed expiry/revocation must not leave an
+                    // already-running tunnel alive. Transient failures do not
+                    // tear down a healthy session.
+                    if (result.code in setOf(
+                            "SUBSCRIPTION_UNAVAILABLE",
+                            "SUBSCRIPTION_EXPIRED_OR_EMPTY"
+                        ) && VpnStatus.state.value !is ConnectionState.Idle &&
+                        VpnStatus.state.value !is ConnectionState.Failed) {
+                        onDisconnect()
+                    }
                 }
             }
             delay(30000)
@@ -222,7 +232,7 @@ fun MadarHome(onConnect: () -> Unit, onDisconnect: () -> Unit) {
                         0 -> ConnectionPage(vpn, speed, snapshot, snapshotError,
                             onConnect, onDisconnect)
                         1 -> UsagePage(snapshot, snapshotError)
-                        else -> ProfilePage(snapshot, openSupport) {
+                        else -> ProfilePage(snapshot, snapshotError, openSupport) {
                             val currentToken = tokenStore.read()
                             onDisconnect()
                             tokenStore.clear()
@@ -362,9 +372,14 @@ private fun ConnectionPage(state: ConnectionState, speed: LiveSpeed,
             color = Muted, fontSize = 12.sp)
     }
     if (!canConnect && !connected) Text(
-        if (error == "SUBSCRIPTION_UNAVAILABLE") "اشتراک فعال ندارید."
-        else "در حال بررسی اشتراک و مسیرهای تأییدشده…",
-        color = Muted, fontSize = 12.sp)
+        when (error) {
+            "SUBSCRIPTION_UNAVAILABLE" -> "اشتراک فعال ندارید یا دسترسی آن لغو شده است."
+            "SUBSCRIPTION_EXPIRED_OR_EMPTY" -> "حجم یا زمان اشتراک به پایان رسیده است."
+            "SERVER_UNAVAILABLE" -> "سرویس اشتراک فعلاً در دسترس نیست."
+            else -> "در حال بررسی اشتراک و مسیرهای تأییدشده…"
+        },
+        color = Muted, fontSize = 12.sp
+    )
 }
 
 @Composable
@@ -450,7 +465,7 @@ private fun InfoLine(label: String, value: String) {
 }
 
 @Composable
-private fun ProfilePage(subscription: SubscriptionSnapshot?,
+private fun ProfilePage(subscription: SubscriptionSnapshot?, subscriptionError: String?,
     onSupport: () -> Unit, onLogout: () -> Unit) {
     var guide by remember { mutableStateOf(false) }
     var faq by remember { mutableStateOf(false) }
@@ -463,9 +478,17 @@ private fun ProfilePage(subscription: SubscriptionSnapshot?,
     }
     PanelCard {
         Text("✦  اشتراک من", fontWeight = FontWeight.Bold)
-        Text(if (subscription?.hasUsablePlan(System.currentTimeMillis()) == true)
-            "فعال · " + gb(max(0L, subscription.quotaBytes - subscription.usedBytes)) +
-                " گیگابایت باقی‌مانده" else "در حال بررسی اشتراک", color = Green)
+        Text(
+            when {
+                subscription?.hasUsablePlan(System.currentTimeMillis()) == true ->
+                    "فعال · " + gb(max(0L, subscription.quotaBytes - subscription.usedBytes)) +
+                        " گیگابایت باقی‌مانده"
+                subscriptionError == "SUBSCRIPTION_UNAVAILABLE" -> "اشتراک فعال نیست یا دسترسی لغو شده است"
+                subscriptionError == "SUBSCRIPTION_EXPIRED_OR_EMPTY" -> "حجم یا اعتبار اشتراک به پایان رسیده است"
+                else -> "در حال بررسی اشتراک"
+            },
+            color = if (subscription?.hasUsablePlan(System.currentTimeMillis()) == true) Green else Muted
+        )
     }
     ActionRow("☏", "پشتیبانی آنلاین", "ارتباط با ربات مدار", onSupport)
     ActionRow("?", "سؤالات متداول", "پاسخ به پرسش‌های رایج", { faq = !faq })
