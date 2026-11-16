@@ -95,12 +95,8 @@ private val MadarColors = darkColorScheme(
 fun MadarHome(onConnect: () -> Unit, onDisconnect: () -> Unit) {
     val context = LocalContext.current
     val tokenStore = remember(context) { SubscriptionTokenStore(context) }
-    val prefs = remember(context) {
-        context.getSharedPreferences("madar_v2_profile", android.content.Context.MODE_PRIVATE)
-    }
     val scope = rememberCoroutineScope()
     var signedIn by remember { mutableStateOf(tokenStore.read() != null) }
-    var telegramId by remember { mutableStateOf(prefs.getString("telegram_id", null)) }
     var loginBusy by remember { mutableStateOf(false) }
     var loginError by remember { mutableStateOf<String?>(null) }
     var snapshot by remember { mutableStateOf<SubscriptionSnapshot?>(null) }
@@ -163,9 +159,6 @@ fun MadarHome(onConnect: () -> Unit, onDisconnect: () -> Unit) {
                                     LoginFinishResult.Pending -> Unit
                                     is LoginFinishResult.Authorized -> {
                                         if (tokenStore.save(finish.token)) {
-                                            prefs.edit().putString("telegram_id", finish.telegramId)
-                                                .apply()
-                                            telegramId = finish.telegramId
                                             signedIn = true
                                             tab = 0
                                         } else loginError = "ذخیره امن نشست ممکن نشد."
@@ -229,12 +222,10 @@ fun MadarHome(onConnect: () -> Unit, onDisconnect: () -> Unit) {
                         0 -> ConnectionPage(vpn, speed, snapshot, snapshotError,
                             onConnect, onDisconnect)
                         1 -> UsagePage(snapshot, snapshotError)
-                        else -> ProfilePage(telegramId, snapshot, openSupport) {
+                        else -> ProfilePage(snapshot, openSupport) {
                             val currentToken = tokenStore.read()
                             onDisconnect()
                             tokenStore.clear()
-                            prefs.edit().clear().apply()
-                            telegramId = null
                             snapshot = null
                             signedIn = false
                             // Clear locally immediately; revoke the old bearer token
@@ -459,7 +450,7 @@ private fun InfoLine(label: String, value: String) {
 }
 
 @Composable
-private fun ProfilePage(telegramId: String?, subscription: SubscriptionSnapshot?,
+private fun ProfilePage(subscription: SubscriptionSnapshot?,
     onSupport: () -> Unit, onLogout: () -> Unit) {
     var guide by remember { mutableStateOf(false) }
     var faq by remember { mutableStateOf(false) }
@@ -467,8 +458,7 @@ private fun ProfilePage(telegramId: String?, subscription: SubscriptionSnapshot?
     Text("پروفایل و پشتیبانی", fontSize = 25.sp, fontWeight = FontWeight.Bold)
     PanelCard {
         Text("◯  حساب تلگرام", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-        Text(telegramId?.let { "شناسه تلگرام: $it" } ?: "حساب تأییدشده",
-            color = Muted, fontSize = 12.sp)
+        Text("حساب تلگرام تأییدشده", color = Muted, fontSize = 12.sp)
         Text("●  ورود تأییدشده", color = Green, fontSize = 12.sp)
     }
     PanelCard {
