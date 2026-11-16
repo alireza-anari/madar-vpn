@@ -56,9 +56,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -222,7 +225,7 @@ fun MadarHome(onConnect: () -> Unit, onDisconnect: () -> Unit) {
                                         if (finish.code != "NETWORK_ERROR") {
                                             loginError = when (finish.code) {
                                                 "subscription_not_ready" ->
-                                                    "اشتراک فعال و مسیر آماده‌ای پیدا نشد."
+                                                    "اشتراک فعال است، اما مسیر اتصال هنوز آماده نیست. کمی بعد دوباره تلاش کنید."
                                                 "expired" -> "مهلت ورود تمام شد."
                                                 else -> "ورود تأیید نشد. دوباره تلاش کنید."
                                             }
@@ -382,12 +385,48 @@ private fun Header() {
 
 @Composable
 private fun BrandMark(diameter: Dp) {
-    Image(
-        painter = painterResource(R.drawable.madar_logo),
-        contentDescription = "لوگوی مدار",
-        modifier = Modifier.size(diameter),
-        contentScale = ContentScale.Fit
-    )
+    // Draw the Madar mark as a native vector so it stays crisp and has no
+    // opaque square bitmap background on the dark app surface.
+    Canvas(Modifier.size(diameter)) {
+        val sx = size.width / 100f
+        val sy = size.height / 100f
+        val stroke = size.minDimension * 0.065f
+        val mark = Brush.linearGradient(listOf(Cyan, Aqua, Blue))
+        val shield = Path().apply {
+            moveTo(55f * sx, 13f * sy)
+            cubicTo(65f * sx, 19f * sy, 76f * sx, 22f * sy, 84f * sx, 24f * sy)
+            lineTo(84f * sx, 46f * sy)
+            cubicTo(84f * sx, 64f * sy, 72f * sx, 78f * sy, 55f * sx, 88f * sy)
+            cubicTo(39f * sx, 78f * sy, 27f * sx, 64f * sy, 27f * sx, 46f * sy)
+            lineTo(27f * sx, 24f * sy)
+            cubicTo(38f * sx, 22f * sy, 47f * sx, 18f * sy, 55f * sx, 13f * sy)
+            close()
+        }
+        drawPath(
+            shield, mark,
+            style = Stroke(width = stroke, cap = StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round)
+        )
+        drawLine(mark, Offset(5f * sx, 39f * sy), Offset(25f * sx, 39f * sy), stroke, StrokeCap.Round)
+        drawLine(mark, Offset(1f * sx, 51f * sy), Offset(23f * sx, 51f * sy), stroke, StrokeCap.Round)
+        drawLine(mark, Offset(8f * sx, 63f * sy), Offset(25f * sx, 63f * sy), stroke, StrokeCap.Round)
+        drawArc(
+            mark, startAngle = 180f, sweepAngle = 180f, useCenter = false,
+            topLeft = Offset(45f * sx, 34f * sy),
+            size = Size(21f * sx, 23f * sy),
+            style = Stroke(width = stroke * 0.82f, cap = StrokeCap.Round)
+        )
+        drawRoundRect(
+            mark, topLeft = Offset(42f * sx, 46f * sy),
+            size = Size(27f * sx, 25f * sy),
+            cornerRadius = CornerRadius(5f * sx, 5f * sy)
+        )
+        drawCircle(Color(0xFF041326), radius = 2.5f * sx, center = Offset(55.5f * sx, 55f * sy))
+        drawRoundRect(
+            Color(0xFF041326), topLeft = Offset(54f * sx, 56f * sy),
+            size = Size(3f * sx, 7f * sy),
+            cornerRadius = CornerRadius(1.5f * sx, 1.5f * sy)
+        )
+    }
 }
 
 @Composable
@@ -400,6 +439,7 @@ private fun MadarCard(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(25.dp),
         color = Color.Transparent,
+        contentColor = White,
         border = BorderStroke(
             1.dp,
             Brush.linearGradient(listOf(Color(0xFF24628B), Color(0xFF1A496C), Color(0xFF0C7892)))
