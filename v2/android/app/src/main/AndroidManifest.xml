@@ -10,7 +10,8 @@
         android:icon="@drawable/madar_logo"
         android:roundIcon="@drawable/madar_logo"
         android:supportsRtl="true"
-        android:usesCleartextTraffic="false">
+        android:usesCleartextTraffic="false"
+        android:networkSecurityConfig="@xml/network_security_config">
         <activity
             android:name=".MainActivity"
             android:exported="true">
