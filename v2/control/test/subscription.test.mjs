@@ -36,7 +36,7 @@ test('an active subscription can issue a sign-in token while route metadata is t
       return {
         first:async()=>sql.includes('SELECT s.id,s.expires_at')
           ?{id:'sub-1',expires_at:1_900_003_600_000}:null,
-        run:async()=>{if(sql.includes('INSERT INTO subscription_tokens'))inserted.push(args);return {meta:{changes:1};}},
+        run:async()=>{if(sql.includes('INSERT INTO subscription_tokens'))inserted.push(args);return {meta:{changes:1}};},
       };
     }};}},
   };
