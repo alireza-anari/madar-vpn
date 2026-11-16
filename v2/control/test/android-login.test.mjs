@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {androidLoginRoute,approveAndroidLogin} from '../src/android-login.mjs';
 
 class FakeDB {
-  constructor(){this.challenges=new Map();this.queries=[];this.rates=new Map();this.revoked=new Set();}
+  constructor(){this.challenges=new Map();this.queries=[];this.rates=new Map();this.revoked=new Set();this.tokenHashes=new Set();}
   prepare(sql){
     this.queries.push(sql);
     return {bind:(...args)=>({
@@ -15,6 +15,14 @@ class FakeDB {
         }
         if(sql.startsWith('UPDATE subscription_tokens')){
           this.revoked.add(args[0]);return {meta:{changes:1}};
+        }
+        if(sql.startsWith('INSERT INTO subscription_tokens')){
+          this.tokenHashes.add(args[0]);return {meta:{changes:1}};
+        }
+        if(sql.includes("UPDATE android_login_challenges SET state=?")){
+          const row=this.challenges.get(args[1]);
+          if(row && row.state==='redeeming'){row.state=args[0];return {meta:{changes:1}};}
+          return {meta:{changes:0}};
         }
         if(sql.startsWith('INSERT INTO android_login_challenges')){
           this.challenges.set(args[0],{id:args[0],verifier_hash:args[1],
@@ -35,8 +43,19 @@ class FakeDB {
           const row=this.challenges.get(args[0]);
           return row?.verifier_hash===args[1]?row:null;
         }
+        if(sql.includes('JOIN subscription_credentials c ON c.subscription_id=s.id'))
+          return {id:'sub-for-active-customer',expires_at:1_900_003_600_000};
         if(sql.includes('FROM subscriptions'))return {id:'sub-for-active-customer'};
         return null;
+      },
+      all:async()=>{
+        if(sql.includes('FROM node_allocations a JOIN nodes n')){
+          return {results:[{route_id:'route:mci',transport:'reality',
+            operator_hint:'mci',host:'vpn.example.com',port:443,
+            server_name:'www.cloudflare.com',ws_path:null,
+            reality_public_key:'A'.repeat(43),reality_short_id:'abcd'}]};
+        }
+        return {results:[]};
       },
     })};
   }
@@ -120,4 +139,28 @@ test('logout revokes the server token without revealing whether it existed',asyn
   assert.equal(db.revoked.size,1);
   const missing=await androidLoginRoute(post('logout',{}),env,1_900_000_000_000);
   assert.equal(missing.status,401);
+});
+
+test('approved Telegram challenge redeems one active subscription token exactly once',async()=>{
+  const now=1_900_000_000_000,db=new FakeDB(),env=enabled(db);
+  const started=await androidLoginRoute(post('start',{}),env,now);
+  const challenge=await started.json();
+  await approveAndroidLogin(env,{
+    key:'/start',inputText:'/start app_'+challenge.id,actorId:'1234567'},now+1000);
+  const response=await androidLoginRoute(post('complete',{
+    id:challenge.id,verifier:challenge.verifier}),env,now+2000);
+  assert.equal(response.status,200);
+  const result=await response.json();
+  assert.equal(result.status,'authorized');
+  assert.match(result.access_token,/^[A-Za-z0-9_-]{43}$/);
+  assert.equal(result.telegram_id,'1234567');
+  assert.equal(db.challenges.get(challenge.id).state,'used');
+  assert.equal(db.tokenHashes.size,1);
+  assert.equal([...db.tokenHashes][0].length,64);
+  assert.equal(JSON.stringify([...db.challenges.values()]).includes(result.access_token),false);
+
+  const replay=await androidLoginRoute(post('complete',{
+    id:challenge.id,verifier:challenge.verifier}),env,now+3000);
+  assert.equal(replay.status,410);
+  assert.equal(db.tokenHashes.size,1);
 });
