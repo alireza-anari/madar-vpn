@@ -250,10 +250,7 @@ fun MadarHome(onConnect: () -> Unit, onDisconnect: () -> Unit) {
     }
 
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
-        MaterialTheme(
-            colorScheme = MadarColors,
-            typography = Typography(defaultFontFamily = FontFamily.SansSerif)
-        ) {
+        MaterialTheme(colorScheme = MadarColors) {
             CompositionLocalProvider(
                 LocalTextStyle provides MaterialTheme.typography.bodyMedium.copy(
                     fontFamily = FontFamily.SansSerif
@@ -539,7 +536,7 @@ private fun ConnectionPage(
     val canConnect = subscription?.hasUsablePlan(System.currentTimeMillis()) == true
     Column(verticalArrangement = Arrangement.spacedBy(17.dp)) {
         ScreenHeading(
-            "MADAR SECURE NETWORK", "اتصال با یک لمس",
+            "شبکه امن مدار", "اتصال با یک لمس",
             "مدار به‌صورت خودکار مسیر مناسب را انتخاب می‌کند."
         )
         ConnectOrb(
@@ -707,7 +704,7 @@ private fun SpeedCard(label: String, value: Double, icon: ImageVector) {
 private fun UsagePage(subscription: SubscriptionSnapshot?, error: String?) {
     Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
         ScreenHeading(
-            "YOUR SUBSCRIPTION", "اشتراک و مصرف",
+            "اشتراک شما", "اشتراک و مصرف",
             "وضعیت حجم و اعتبار اشتراک خود را یک‌جا ببینید."
         )
         if (subscription == null) {
@@ -824,7 +821,7 @@ private fun ProfilePage(
     val active = subscription?.hasUsablePlan(System.currentTimeMillis()) == true
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         ScreenHeading(
-            "YOUR MADAR ACCOUNT", "پروفایل و پشتیبانی",
+            "حساب کاربری مدار", "پروفایل و پشتیبانی",
             "مدیریت حساب و راه‌های دریافت کمک."
         )
         MadarCard(padding = 20.dp) {
