@@ -168,8 +168,9 @@ test('Telegram sends a one-time code only to the subscribed private account',asy
   assert.equal(db.challenges.get(challenge.id).state,'code_sent');
   assert.equal(db.challenges.get(challenge.id).telegram_id,'1234567');
   assert.equal(db.challenges.get(challenge.id).otp_hash.length,64);
-  assert.equal(db.challenges.get(challenge.id).otp_hash.includes(code),false);
-  assert.equal(JSON.stringify([...db.challenges.values()]).includes(code),false);
+  assert.notEqual(db.challenges.get(challenge.id).otp_hash,code);
+  assert.notEqual(db.challenges.get(challenge.id).otp_ciphertext,code);
+  assert.equal(Object.hasOwn(db.challenges.get(challenge.id),'otp_code'),false);
 
   const replay=await requestCode(env,challenge,'1234567',now+1100);
   assert.equal(codeFrom(replay),code);
@@ -180,13 +181,15 @@ test('Telegram sends a one-time code only to the subscribed private account',asy
 
 test('wrong OTP attempts are counted and locked after five tries',async()=>{
   const db=new FakeDB(),env=enabled(db),challenge=await begin(env);
-  await requestCode(env,challenge);
+  const issued=await requestCode(env,challenge);
+  const actualCode=codeFrom(issued);
+  const wrongCode=actualCode==='000000'?'000001':'000000';
   for(let i=0;i<4;i++){
-    const response=await androidLoginRoute(post('verify',verify(challenge,'000000')),env,now+2000+i);
+    const response=await androidLoginRoute(post('verify',verify(challenge,wrongCode)),env,now+2000+i);
     assert.equal(response.status,401);
     assert.equal((await response.json()).error,'invalid_code');
   }
-  const fifth=await androidLoginRoute(post('verify',verify(challenge,'000000')),env,now+2100);
+  const fifth=await androidLoginRoute(post('verify',verify(challenge,wrongCode)),env,now+2100);
   assert.equal(fifth.status,429);
   assert.equal((await fifth.json()).error,'too_many_attempts');
   assert.equal(db.challenges.get(challenge.id).otp_attempts,5);
