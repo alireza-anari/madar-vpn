@@ -3,11 +3,19 @@ import assert from 'node:assert/strict';
 import {androidLoginRoute,approveAndroidLogin} from '../src/android-login.mjs';
 
 class FakeDB {
-  constructor(){this.challenges=new Map();this.queries=[];}
+  constructor(){this.challenges=new Map();this.queries=[];this.rates=new Map();this.revoked=new Set();}
   prepare(sql){
     this.queries.push(sql);
     return {bind:(...args)=>({
       run:async()=>{
+        if(sql.startsWith('INSERT INTO android_login_rate_limits')){
+          const key=args[0]+':'+args[1],count=this.rates.get(key)??0;
+          if(count>=10)return {meta:{changes:0}};
+          this.rates.set(key,count+1);return {meta:{changes:1}};
+        }
+        if(sql.startsWith('UPDATE subscription_tokens')){
+          this.revoked.add(args[0]);return {meta:{changes:1}};
+        }
         if(sql.startsWith('INSERT INTO android_login_challenges')){
           this.challenges.set(args[0],{id:args[0],verifier_hash:args[1],
             created_ms:args[2],expires_ms:args[3],state:'pending',telegram_id:null});
@@ -87,4 +95,27 @@ test('an expired challenge cannot be approved or completed',async()=>{
   const result=await androidLoginRoute(post('complete',{
     id:challenge.id,verifier:challenge.verifier}),env,after);
   assert.equal(result.status,410);
+});
+
+test('challenge creation is throttled per HMACed client IP window',async()=>{
+  const db=new FakeDB(),env=enabled(db),now=1_900_000_000_000;
+  for(let i=0;i<10;i++){
+    const response=await androidLoginRoute(post('start',{}),env,now+i);
+    assert.equal(response.status,200);
+  }
+  const limited=await androidLoginRoute(post('start',{}),env,now+11);
+  assert.equal(limited.status,429);
+  const otherIp=await androidLoginRoute(post('start',{},{
+    'cf-connecting-ip':'203.0.113.11'}),env,now+12);
+  assert.equal(otherIp.status,200);
+});
+test('logout revokes the server token without revealing whether it existed',async()=>{
+  const db=new FakeDB(),env=enabled(db),token='A'.repeat(43);
+  const response=await androidLoginRoute(post('logout',{},{
+    authorization:'Bearer '+token}),env,1_900_000_000_000);
+  assert.equal(response.status,200);
+  assert.equal((await response.json()).status,'signed_out');
+  assert.equal(db.revoked.size,1);
+  const missing=await androidLoginRoute(post('logout',{}),env,1_900_000_000_000);
+  assert.equal(missing.status,401);
 });
