@@ -10,6 +10,7 @@ import { handleSeller, linkSellerOnStart, grantStaffRole } from './referrals.mjs
  * config issuance takes place from this module.
  */
 import { botMenu,botPage,adminMenu,sellerMenu,supportMenu,frameMessage,faNumber,faMoney,faGB,faDate,faStatus,faRole,sectionNavigation,usageMeter,statusSymbol,shortCode,panelHeading } from './bot-ux.mjs';
+import {isBotActivated,checkAndActivateBot,activationPrompt,activationUnavailableReply} from './bot-activation.mjs';
 
 const ORDER_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{1,48}$/;
 const PLAN_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{1,30}$/;
@@ -546,11 +547,40 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
 
   if(key==='lang'||key==='/lang'||key==='lang:fa'||key==='lang:en')
     return response('🌐 زبان ربات مدار فارسی است و همه پیام‌ها به زبان فارسی نمایش داده می‌شوند.',e.locale);
+
+  const botActivationReply=prompt=>({
+    text:frameMessage(prompt.text),
+    replyMarkup:prompt.replyMarkup,
+  });
+  if(key==='activation:check'){
+    const activation=await checkAndActivateBot(env,e.actorId,nowMs);
+    if(activation.state==='activated')
+      return response('✅ عضویت شما در کانال اطلاع‌رسانی تأیید شد و ربات مدار برای حساب شما فعال است. اکنون می‌توانید به اپ مدار برگردید و ورود را انجام دهید.',e.locale);
+    if(activation.state==='not_member')
+      return botActivationReply(activationPrompt(env,'v2:activation:check','bot'));
+    if(activation.state==='unconfigured')
+      return botActivationReply(activationPrompt(env,'v2:activation:check','bot'));
+    return botActivationReply(activationUnavailableReply(env,'v2:activation:check'));
+  }
   if(key==='/start'){
+    if(!await isBotActivated(db,e.actorId)){
+      const activation=await checkAndActivateBot(env,e.actorId,nowMs);
+      if(activation.state==='not_member'||activation.state==='unconfigured')
+        return botActivationReply(activationPrompt(env,'v2:activation:check','bot'));
+      if(activation.state!=='activated')
+        return botActivationReply(activationUnavailableReply(env,'v2:activation:check'));
+    }
     const referral=await linkSellerOnStart(db,e,nowMs);
     const home=await personalizedHome(env,e);
     return referral?{...home,text:home.text+'\n\n'+referral}:home;
   }
+
+  // Until the user verifies channel membership, the customer bot menu remains
+  // locked behind the same activation step used by the Android app.
+  if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)&&
+     !await isBotActivated(db,e.actorId))
+    return botActivationReply(activationPrompt(env,'v2:activation:check','bot'));
+
   if(e.photoId)return storeReceipt(db,e,env);
   const customer=await customerTicketAction(env,e,nowMs);
   if(customer)return customer;
