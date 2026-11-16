@@ -20,4 +20,4 @@ This branch is NOT a production VPN release or a verified usable APK.
 5. Pass v2-control unit tests, Android build/tests, emulator TUN and physical carrier traffic tests for MCI and Irancell before distributing.
 6. Verify login expiry/replay safety, quota enforcement, logout token revocation, failover and traffic accounting against real backend.
 
-Never embed Telegram bot tokens, node private keys or Cloudflare secrets in the app. The Android token is stored under Android Keystore AES-GCM, and requests are HTTPS with redirects disabled.
+Never embed Telegram bot tokens, node private keys or Cloudflare secrets in the app. Challenge creation is HMAC-rate-limited per Cloudflare client IP; logout revokes the device's server-side token. The Android token is stored under Android Keystore AES-GCM, and requests are HTTPS with redirects disabled. Debug APKs are ABI-split (arm64-v8a, armeabi-v7a, x86_64) to avoid shipping all native runtimes in each download.
