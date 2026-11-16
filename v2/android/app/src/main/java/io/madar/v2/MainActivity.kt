@@ -24,6 +24,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -70,6 +71,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
@@ -147,6 +150,8 @@ fun MadarHome(onConnect: () -> Unit, onDisconnect: () -> Unit) {
     var signedIn by remember { mutableStateOf(tokenStore.read() != null) }
     var loginBusy by remember { mutableStateOf(false) }
     var loginError by remember { mutableStateOf<String?>(null) }
+    var loginChallenge by remember { mutableStateOf<TelegramLoginChallenge?>(null) }
+    var loginCode by rememberSaveable { mutableStateOf("") }
     var snapshot by remember { mutableStateOf<SubscriptionSnapshot?>(null) }
     var snapshotError by remember { mutableStateOf<String?>(null) }
     var tab by rememberSaveable { mutableIntStateOf(0) }
@@ -181,10 +186,24 @@ fun MadarHome(onConnect: () -> Unit, onDisconnect: () -> Unit) {
         }
     }
 
+    val openTelegramLogin: () -> Unit = {
+        val challenge = loginChallenge
+        if (challenge != null) {
+            val opened = runCatching {
+                context.startActivity(Intent(
+                    Intent.ACTION_VIEW, Uri.parse(challenge.url)
+                ))
+            }.isSuccess
+            if (!opened) loginError = "تلگرام باز نشد. دوباره تلاش کنید."
+        }
+    }
+
     val startTelegramLogin: () -> Unit = {
         if (!loginBusy) {
             loginBusy = true
             loginError = null
+            loginChallenge = null
+            loginCode = ""
             scope.launch {
                 val api = runCatching {
                     AndroidLoginApi(BuildConfig.SUBSCRIPTION_API_ORIGIN)
@@ -193,56 +212,83 @@ fun MadarHome(onConnect: () -> Unit, onDisconnect: () -> Unit) {
                     loginError = "ورود تلگرام هنوز پیکربندی نشده است."
                 } else when (val start = withContext(Dispatchers.IO) { api.start() }) {
                     is LoginStartResult.Error -> {
-                        loginError = if (start.code == "not_ready")
-                            "ورود تلگرام هنوز در سرور فعال نشده است."
-                        else "درخواست ورود انجام نشد. دوباره تلاش کنید."
+                        loginError = when (start.code) {
+                            "not_ready" -> "ورود تلگرام هنوز در سرور فعال نشده است."
+                            "rate_limited" -> "درخواست‌های ورود زیاد بوده است. چند دقیقه دیگر تلاش کنید."
+                            else -> "درخواست ورود انجام نشد. دوباره تلاش کنید."
+                        }
                     }
                     is LoginStartResult.Ready -> {
+                        loginChallenge = start.challenge
                         val opened = runCatching {
                             context.startActivity(Intent(
                                 Intent.ACTION_VIEW, Uri.parse(start.challenge.url)
                             ))
                         }.isSuccess
-                        if (!opened) {
-                            loginError = "لینک ورود را در تلگرام باز کنید."
-                        } else {
-                            while (isActive && System.currentTimeMillis() <
-                                start.challenge.expiresAtMs) {
-                                delay(2500)
-                                when (val finish = withContext(Dispatchers.IO) {
-                                    api.complete(start.challenge)
-                                }) {
-                                    LoginFinishResult.Pending -> Unit
-                                    is LoginFinishResult.Authorized -> {
-                                        if (tokenStore.save(finish.token)) {
-                                            signedIn = true
-                                            tab = 0
-                                        } else loginError = "ذخیره امن نشست ممکن نشد."
-                                        break
-                                    }
-                                    is LoginFinishResult.Error -> {
-                                        if (finish.code != "NETWORK_ERROR") {
-                                            loginError = when (finish.code) {
-                                                "subscription_not_ready" ->
-                                                    "اشتراک فعال است، اما مسیر یا اطلاعات اتصال هنوز آماده نیست. کمی بعد دوباره تلاش کنید."
-                                                "subscription_inactive" ->
-                                                    "برای ورود به اپ، اشتراک فعال با حجم باقی‌مانده لازم است."
-                                                "expired" -> "مهلت ورود تمام شد. از داخل اپ دوباره تلاش کنید."
-                                                else -> "ورود تأیید نشد. دوباره تلاش کنید."
-                                            }
-                                            break
-                                        }
-                                    }
-                                }
-                            }
-                            if (!signedIn && loginError == null)
-                                loginError = "مهلت ورود تمام شد. دوباره تلاش کنید."
+                        if (!opened) loginError = "تلگرام باز نشد. دکمه «باز کردن دوباره ربات» را بزنید."
+                    }
+                }
+                loginBusy = false
+            }
+        }
+    }
+
+    val verifyTelegramCode: () -> Unit = {
+        val challenge = loginChallenge
+        if (!loginBusy && challenge != null && loginCode.length == 6) {
+            loginBusy = true
+            loginError = null
+            scope.launch {
+                val api = runCatching {
+                    AndroidLoginApi(BuildConfig.SUBSCRIPTION_API_ORIGIN)
+                }.getOrNull()
+                if (api == null) {
+                    loginError = "ورود تلگرام هنوز پیکربندی نشده است."
+                } else when (val finish = withContext(Dispatchers.IO) {
+                    api.verify(challenge, loginCode)
+                }) {
+                    LoginFinishResult.Pending -> {
+                        loginError = "هنوز کدی دریافت نشده است. در تلگرام روی «Start» بزنید و سپس دوباره تلاش کنید."
+                    }
+                    is LoginFinishResult.Authorized -> {
+                        if (tokenStore.save(finish.token)) {
+                            signedIn = true
+                            tab = 0
+                            loginChallenge = null
+                            loginCode = ""
+                        } else loginError = "ذخیره امن نشست ممکن نشد."
+                    }
+                    is LoginFinishResult.Error -> {
+                        loginError = when (finish.code) {
+                            "invalid_code" -> "کد واردشده اشتباه است. دوباره بررسی کنید."
+                            "too_many_attempts" -> "تعداد تلاش‌ها بیش از حد مجاز است. درخواست ورود جدید بسازید."
+                            "subscription_inactive" -> "برای ورود، اشتراک فعال با حجم باقی‌مانده لازم است."
+                            "subscription_not_ready" -> "اشتراک فعال است، اما مسیر یا اطلاعات اتصال هنوز آماده نیست."
+                            "expired" -> "مهلت کد تمام شد. درخواست ورود جدید بسازید."
+                            "already_used" -> "این درخواست قبلاً استفاده شده است. درخواست ورود جدید بسازید."
+                            else -> "تأیید کد انجام نشد. اتصال اینترنت را بررسی و دوباره تلاش کنید."
+                        }
+                        if (finish.code in setOf(
+                                "too_many_attempts", "subscription_inactive",
+                                "subscription_not_ready", "expired", "already_used",
+                                "invalid_challenge"
+                            )) {
+                            loginChallenge = null
+                            loginCode = ""
+                        } else if (finish.code == "invalid_code") {
+                            loginCode = ""
                         }
                     }
                 }
                 loginBusy = false
             }
         }
+    }
+
+    val cancelTelegramLogin: () -> Unit = {
+        loginChallenge = null
+        loginCode = ""
+        loginError = null
     }
 
     val openSupport: () -> Unit = {
@@ -264,7 +310,19 @@ fun MadarHome(onConnect: () -> Unit, onDisconnect: () -> Unit) {
                     NeonBackdrop()
                     Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
                         if (!signedIn) {
-                            LoginPage(loginBusy, loginError, startTelegramLogin)
+                            LoginPage(
+                                challenge = loginChallenge,
+                                code = loginCode,
+                                busy = loginBusy,
+                                error = loginError,
+                                onStart = startTelegramLogin,
+                                onCodeChange = { value ->
+                                    loginCode = value.filter { it in '0'..'9' }.take(6)
+                                },
+                                onVerify = verifyTelegramCode,
+                                onOpenTelegram = openTelegramLogin,
+                                onCancel = cancelTelegramLogin
+                            )
                         } else {
                             Scaffold(
                                 modifier = Modifier.fillMaxSize(),
@@ -486,7 +544,17 @@ private fun StatusPill(label: String, tint: Color, icon: ImageVector? = null) {
 }
 
 @Composable
-private fun LoginPage(busy: Boolean, error: String?, onLogin: () -> Unit) {
+private fun LoginPage(
+    challenge: TelegramLoginChallenge?,
+    code: String,
+    busy: Boolean,
+    error: String?,
+    onStart: () -> Unit,
+    onCodeChange: (String) -> Unit,
+    onVerify: () -> Unit,
+    onOpenTelegram: () -> Unit,
+    onCancel: () -> Unit
+) {
     val transition = rememberInfiniteTransition(label = "login-logo")
     val pulse by transition.animateFloat(
         initialValue = 0.94f, targetValue = 1.04f,
@@ -520,15 +588,66 @@ private fun LoginPage(busy: Boolean, error: String?, onLogin: () -> Unit) {
         Text("دسترسی آزاد، امن و پایدار", color = Muted, fontSize = 14.sp)
         Spacer(Modifier.height(28.dp))
         MadarCard(padding = 22.dp) {
-            Text("ورود به حساب کاربری", fontSize = 21.sp, fontWeight = FontWeight.Bold)
             Text(
-                "با همان حساب تلگرامی وارد شوید که اشتراک مدار را با آن فعال کرده‌اید.",
+                if (challenge == null) "ورود به حساب کاربری" else "تأیید شماره تلگرام",
+                fontSize = 21.sp, fontWeight = FontWeight.Bold, color = White
+            )
+            Text(
+                if (challenge == null)
+                    "برای ورود، از ربات مدار یک کد یک‌بارمصرف دریافت کنید."
+                else
+                    "در تلگرام روی «Start» بزنید. ربات مدار کد ۶ رقمی را برای همین حساب می‌فرستد؛ سپس آن را در این قسمت وارد کنید.",
                 color = Muted, fontSize = 13.sp, lineHeight = 22.sp
             )
-            GradientButton(
-                label = if (busy) "در انتظار تأیید تلگرام…" else "ورود با تلگرام",
-                icon = Icons.Outlined.Send, enabled = !busy, onClick = onLogin
-            )
+            if (challenge == null) {
+                GradientButton(
+                    label = if (busy) "در حال ایجاد درخواست…" else "دریافت کد از تلگرام",
+                    icon = Icons.Outlined.Send, enabled = !busy, onClick = onStart
+                )
+            } else {
+                StatusPill("در انتظار کد یک‌بارمصرف", Aqua, Icons.Outlined.Lock)
+                OutlinedTextField(
+                    value = code,
+                    onValueChange = onCodeChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    enabled = !busy,
+                    label = { Text("کد تأیید ۶ رقمی") },
+                    placeholder = { Text("••••••", color = Muted) },
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Number,
+                        imeAction = ImeAction.Done
+                    ),
+                    textStyle = LocalTextStyle.current.copy(
+                        textAlign = TextAlign.Center,
+                        letterSpacing = 8.sp,
+                        fontSize = 23.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = White
+                    ),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = White,
+                        unfocusedTextColor = White,
+                        focusedBorderColor = Aqua,
+                        unfocusedBorderColor = Color(0xFF3C607D),
+                        focusedLabelColor = Aqua,
+                        unfocusedLabelColor = Muted,
+                        cursorColor = Aqua
+                    )
+                )
+                GradientButton(
+                    label = if (busy) "در حال بررسی کد…" else "تأیید کد و ورود",
+                    icon = Icons.Outlined.Lock,
+                    enabled = !busy && code.length == 6,
+                    onClick = onVerify
+                )
+                TextButton(onClick = onOpenTelegram, enabled = !busy) {
+                    Text("باز کردن دوباره ربات تلگرام", color = Aqua)
+                }
+                TextButton(onClick = onCancel, enabled = !busy) {
+                    Text("لغو و شروع مجدد", color = Muted)
+                }
+            }
             if (busy) CircularProgressIndicator(
                 color = Aqua, strokeWidth = 2.dp,
                 modifier = Modifier.align(Alignment.CenterHorizontally).size(25.dp)
@@ -541,7 +660,7 @@ private fun LoginPage(busy: Boolean, error: String?, onLogin: () -> Unit) {
         Row(verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Icon(Icons.Outlined.Lock, contentDescription = null, tint = Aqua, modifier = Modifier.size(16.dp))
-            Text("بدون کپی کانفیگ، بدون انتخاب سرور", color = Muted, fontSize = 11.sp)
+            Text("کد یک‌بارمصرف، بدون کپی کانفیگ و انتخاب سرور", color = Muted, fontSize = 11.sp)
         }
     }
 }
