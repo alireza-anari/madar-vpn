@@ -13,7 +13,7 @@
 ## Activation and safety
 This branch is NOT a production VPN release or a verified usable APK.
 
-1. Apply V2 migration 0016 to V2 D1 ONLY; never the V1 production database.
+1. Apply the V2 migration sequence 0016–0019 to V2 D1 ONLY; never the V1 production database. Confirm the live migration ledger and table schema before applying any pending migration.
 2. Deploy V2 Worker on isolated staging and provision a dedicated V2 Telegram bot.
 3. Set BOT_USERNAME to that bot's exact username, then enable SUBSCRIPTION_API_ENABLED and ANDROID_LOGIN_ENABLED only after verifying active subscriptions, encrypted credentials and tested routes.
 4. Provide the release SUBSCRIPTION_API_ORIGIN at build time (release currently deliberately blank), pin and build libXray AAR in existing CI.
