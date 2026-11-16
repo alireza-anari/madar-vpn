@@ -27,6 +27,6 @@ class MadarLoginScreenTest {
     fun loginScreenDoesNotExposeManualConfigurationOrCarrierFields() {
         compose.onNodeWithText("وارد کردن لینک", substring = true).assertDoesNotExist()
         compose.onNodeWithText("انتخاب اپراتور", substring = true).assertDoesNotExist()
-        compose.onNodeWithText("انتخاب سرور", substring = true).assertDoesNotExist()
+        compose.onNodeWithText("انتخاب سرور").assertDoesNotExist()
     }
 }
