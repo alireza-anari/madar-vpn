@@ -31,6 +31,16 @@ test('callback parsing keeps the owning Telegram message for in-place navigation
   }});
   assert.equal(photo.messageId,78);
   assert.equal(photo.editKind,'caption');
+  const appActivation=toBotMessage({update_id:126,callback_query:{
+    id:'callback-3',data:'v2:app:activate:AbCdEfGhIjKlMnOpQrStUvWx',from:{id:456},
+    message:{message_id:79,chat:{id:456,type:'private'},text:'عضویت در کانال'},
+  }});
+  assert.equal(appActivation.key,'app:activate:AbCdEfGhIjKlMnOpQrStUvWx');
+  const botActivation=toBotMessage({update_id:127,callback_query:{
+    id:'callback-4',data:'v2:activation:check',from:{id:456},
+    message:{message_id:80,chat:{id:456,type:'private'},text:'عضویت در کانال'},
+  }});
+  assert.equal(botActivation.key,'activation:check');
 });
 function outboxFixture(row){
   let state='pending';

@@ -23,8 +23,8 @@ sealed interface LoginFinishResult {
     data class Error(val code: String) : LoginFinishResult
 }
 
-/** No user-entered configuration. Telegram deep links contain only the public
- * challenge id. The private polling verifier stays on the device. */
+/** The bot receives only the public challenge id. The private verifier stays
+ * on this device and the six-digit Telegram OTP is submitted over HTTPS. */
 class AndroidLoginApi(origin: String) {
     private val base: String
     init {
@@ -55,20 +55,30 @@ class AndroidLoginApi(origin: String) {
         }
     } catch (_: Exception) { LoginStartResult.Error("NETWORK_ERROR") }
 
-    fun complete(challenge: TelegramLoginChallenge): LoginFinishResult = try {
-        val body = JSONObject().put("id", challenge.id).put("verifier", challenge.verifier)
-        val (status, payload) = post("/api/v2/android/login/complete", body)
-        when (status) {
-            202 -> LoginFinishResult.Pending
-            200 -> {
-                val token = payload.getString("access_token")
-                if (!SubscriptionTokenFormat.isValid(token))
-                    LoginFinishResult.Error("INVALID_LOGIN")
-                else LoginFinishResult.Authorized(token)
+    fun verify(
+        challenge: TelegramLoginChallenge,
+        code: String
+    ): LoginFinishResult {
+        if (!code.matches(Regex("^\\d{6}$")))
+            return LoginFinishResult.Error("invalid_code")
+        return try {
+            val body = JSONObject()
+                .put("id", challenge.id)
+                .put("verifier", challenge.verifier)
+                .put("code", code)
+            val (status, payload) = post("/api/v2/android/login/verify", body)
+            when (status) {
+                202 -> LoginFinishResult.Pending
+                200 -> {
+                    val token = payload.getString("access_token")
+                    if (!SubscriptionTokenFormat.isValid(token))
+                        LoginFinishResult.Error("INVALID_LOGIN")
+                    else LoginFinishResult.Authorized(token)
+                }
+                else -> LoginFinishResult.Error(payload.optString("error", "LOGIN_FAILED"))
             }
-            else -> LoginFinishResult.Error(payload.optString("error", "LOGIN_FAILED"))
-        }
-    } catch (_: Exception) { LoginFinishResult.Error("NETWORK_ERROR") }
+        } catch (_: Exception) { LoginFinishResult.Error("NETWORK_ERROR") }
+    }
 
     /** Revoke this device's bearer token server-side during logout. */
     fun logout(token: String): Boolean {

@@ -139,7 +139,9 @@ export async function wrapClientUuid(uuid,keyText) {
   return {nonce_b64:encode(nonce),ciphertext_b64:encode(encrypted),key_version:1};
 }
 
-/** Issue tokens only for *already active* and field-tested subscriptions.
+/** Issue a sign-in token only for an active subscription with a supported encrypted
+ * credential and active allocation. Route freshness is enforced by getSubscription,
+ * so a temporary route outage does not prevent the customer opening the app.
  * The token is returned once and never persisted in plaintext.
  */
 export async function issueActiveToken(env,subId,nowMs=Date.now()) {
@@ -148,13 +150,13 @@ export async function issueActiveToken(env,subId,nowMs=Date.now()) {
     return null;
   const row=await env.DB.prepare(
     "SELECT s.id,s.expires_at FROM subscriptions s " +
-    "JOIN subscription_credentials c ON c.subscription_id=s.id " +
+    "JOIN subscription_credentials c ON c.subscription_id=s.id AND c.key_version=1 " +
     "JOIN customers owner ON owner.telegram_id=s.owner_telegram_id " +
     "WHERE s.id=? AND s.state='active' AND owner.state='active' AND s.expires_at>? " +
     "AND s.max_bytes>0 AND s.used_bytes<s.max_bytes " +
     "AND EXISTS(SELECT 1 FROM node_allocations a WHERE a.subscription_id=s.id AND a.state='active')"
   ).bind(subId,nowMs).first();
-  if(!row || !(await activeRoutes(env.DB,subId,nowMs)).length) return null;
+  if(!row) return null;
   const entropy=crypto.getRandomValues(new Uint8Array(32));
   const token=btoa(String.fromCharCode(...entropy)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
   const hash=await tokenDigest(token);

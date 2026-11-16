@@ -18,11 +18,11 @@ class MadarLoginScreenTest {
     val compose = createAndroidComposeRule<MainActivity>()
 
     @Test
-    fun firstScreenUsesMadarBrandAndTelegramLogin() {
+    fun firstScreenUsesMadarBrandAndTelegramOtp() {
         compose.onNodeWithText("مدار VPN").fetchSemanticsNode()
         compose.onNodeWithContentDescription("لوگوی مدار").fetchSemanticsNode()
-        compose.onNodeWithText("ورود با تلگرام", substring = true).fetchSemanticsNode()
-        compose.onNodeWithText("بدون کپی کانفیگ، بدون انتخاب سرور").fetchSemanticsNode()
+        compose.onNodeWithText("دریافت کد از تلگرام", substring = true).fetchSemanticsNode()
+        compose.onNodeWithText("کد یک‌بارمصرف، بدون کپی کانفیگ و انتخاب سرور").fetchSemanticsNode()
     }
 
     @Test
