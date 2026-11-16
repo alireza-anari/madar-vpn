@@ -27,6 +27,7 @@ function database() {
 function fixture() {
   const {raw,DB}=database();
   raw.exec("INSERT INTO customers(telegram_id,locale) VALUES('100','fa'),('200','fa'),('300','en')");
+  raw.exec("INSERT INTO telegram_bot_activations(telegram_id,channel_id,activated_ms,last_verified_ms) VALUES('100','-1001234567890',1,1),('200','-1001234567890',1,1),('300','-1001234567890',1,1)");
   const env={DB,ADMIN_TELEGRAM_IDS:'100',SHOP_ENABLED:'false',PROVISIONING_ENABLED:'false'};
   const event=(id,key,inputText=null,updateId=5)=>({actorId:String(id),chatId:String(id),
     updateId,locale:'fa',key,inputText,photoId:null});
