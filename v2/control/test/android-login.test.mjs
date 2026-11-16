@@ -216,17 +216,17 @@ test('missing active subscription rejects the challenge',async()=>{
   assert.equal((await response.json()).error,'subscription_inactive');
 });
 
-test('OTP delivery is independent of route readiness, but token redemption is not',async()=>{
+test('an active subscriber can sign in during a route outage, without receiving unverified routes',async()=>{
   const db=new FakeDB(),env=enabled(db),challenge=await begin(env);
   db.hasRoutes=false;
   const reply=await requestCode(env,challenge);
   const code=codeFrom(reply);
   assert.equal(db.challenges.get(challenge.id).state,'code_sent');
   const response=await androidLoginRoute(post('verify',verify(challenge,code)),env,now+2000);
-  assert.equal(response.status,403);
-  assert.equal((await response.json()).error,'subscription_not_ready');
-  assert.equal(db.challenges.get(challenge.id).state,'failed');
-  assert.equal(db.tokenHashes.size,0);
+  assert.equal(response.status,200);
+  assert.equal((await response.json()).status,'authorized');
+  assert.equal(db.challenges.get(challenge.id).state,'used');
+  assert.equal(db.tokenHashes.size,1);
 });
 
 test('OTP can be delivered to an active subscriber, but missing credentials prevent token redemption',async()=>{
