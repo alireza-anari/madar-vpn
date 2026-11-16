@@ -71,7 +71,7 @@ export function activationKeyboard(env,callbackData){
   if(!config)return null;
   return {inline_keyboard:[
     [{text:'📢 عضویت در کانال اطلاع‌رسانی مدار',url:config.url}],
-    [{text:'✅ بررسی عضویت و ادامه',callback_data}],
+    [{text:'✅ بررسی عضویت و ادامه',callback_data:callbackData}],
   ]};
 }
 
