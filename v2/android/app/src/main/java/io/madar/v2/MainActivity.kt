@@ -88,6 +88,17 @@ import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.math.max
 
+private fun normalizeOtpInput(value: String): String = buildString {
+    for (char in value) {
+        val digit = when (char) {
+            in '۰'..'۹' -> ('0'.code + char.code - '۰'.code).toChar()
+            in '٠'..'٩' -> ('0'.code + char.code - '٠'.code).toChar()
+            else -> char
+        }
+        if (digit in '0'..'9' && length < 6) append(digit)
+    }
+}
+
 class MainActivity : ComponentActivity() {
     private val vpnConsent = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -317,7 +328,7 @@ fun MadarHome(onConnect: () -> Unit, onDisconnect: () -> Unit) {
                                 error = loginError,
                                 onStart = startTelegramLogin,
                                 onCodeChange = { value ->
-                                    loginCode = value.filter { it in '0'..'9' }.take(6)
+                                    loginCode = normalizeOtpInput(value)
                                 },
                                 onVerify = verifyTelegramCode,
                                 onOpenTelegram = openTelegramLogin,
