@@ -9,6 +9,7 @@ import { nodeRoute } from './node-control.mjs';
 import { toBotMessage, verifyTelegramSecret } from './telegram.mjs';
 import { resolveBotAction } from './shop.mjs';
 import {frameMessage} from './bot-ux.mjs';
+import {channelActivationConfigured} from './bot-activation.mjs';
 
 const json=(value,status=200)=>new Response(JSON.stringify(value),{
   status,headers:{
@@ -273,6 +274,8 @@ export default {
       if(!env.DB || !env.BOT_TOKEN || !env.TELEGRAM_WEBHOOK_SECRET ||
          !/^\d{5,20}(?:,\d{5,20})*$/.test(env.ADMIN_TELEGRAM_IDS??''))
         return json({status:'not_ready'},503);
+      if(!channelActivationConfigured(env))
+        return json({status:'not_ready',reason:'channel_activation_not_configured'},503);
       try {
         await env.DB.prepare('SELECT media_file_id FROM telegram_outbox LIMIT 1').first();
         await env.DB.prepare('SELECT event_json FROM telegram_inbox LIMIT 1').first();
