@@ -10,7 +10,7 @@ class FakeDB {
       run:async()=>{
         if(sql.startsWith('INSERT INTO android_login_rate_limits')){
           const key=args[0]+':'+args[1],count=this.rates.get(key)??0;
-          if(count>=10)return {meta:{changes:0}};
+          if(count>=30)return {meta:{changes:0}};
           this.rates.set(key,count+1);return {meta:{changes:1}};
         }
         if(sql.startsWith('UPDATE subscription_tokens')){
@@ -101,14 +101,14 @@ test('an expired challenge cannot be approved or completed',async()=>{
 
 test('challenge creation is throttled per HMACed client IP window',async()=>{
   const db=new FakeDB(),env=enabled(db),now=1_900_000_000_000;
-  for(let i=0;i<10;i++){
+  for(let i=0;i<30;i++){
     const response=await androidLoginRoute(post('start',{}),env,now+i);
     assert.equal(response.status,200);
   }
-  const limited=await androidLoginRoute(post('start',{}),env,now+11);
+  const limited=await androidLoginRoute(post('start',{}),env,now+31);
   assert.equal(limited.status,429);
   const otherIp=await androidLoginRoute(post('start',{},{
-    'cf-connecting-ip':'203.0.113.11'}),env,now+12);
+    'cf-connecting-ip':'203.0.113.11'}),env,now+32);
   assert.equal(otherIp.status,200);
 });
 test('logout revokes the server token without revealing whether it existed',async()=>{
