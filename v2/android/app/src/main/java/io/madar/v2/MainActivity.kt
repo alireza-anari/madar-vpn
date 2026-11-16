@@ -259,7 +259,7 @@ fun MadarHome(onConnect: () -> Unit, onDisconnect: () -> Unit) {
                     api.verify(challenge, loginCode)
                 }) {
                     LoginFinishResult.Pending -> {
-                        loginError = "هنوز کدی دریافت نشده است. در تلگرام روی «Start» بزنید و سپس دوباره تلاش کنید."
+                        loginError = "هنوز کدی دریافت نشده است. در تلگرام عضویت در کانال مدار را تأیید کنید؛ سپس دوباره کد را بررسی کنید."
                     }
                     is LoginFinishResult.Authorized -> {
                         if (tokenStore.save(finish.token)) {
@@ -605,9 +605,9 @@ private fun LoginPage(
             )
             Text(
                 if (challenge == null)
-                    "برای ورود، از ربات مدار یک کد یک‌بارمصرف دریافت کنید."
+                    "برای ورود، ربات مدار را فعال کنید. عضویت در کانال اطلاع‌رسانی مدار الزامی است؛ پس از تأیید عضویت، کد ورود برایتان ارسال می‌شود."
                 else
-                    "در تلگرام روی «Start» بزنید. ربات مدار کد ۶ رقمی را برای همین حساب می‌فرستد؛ سپس آن را در این قسمت وارد کنید.",
+                    "در تلگرام روی «Start» بزنید. اگر هنوز فعال نشده‌اید، عضو کانال مدار شوید و «بررسی عضویت و ادامه» را بزنید. سپس کد ۶ رقمی را اینجا وارد کنید.",
                 color = Muted, fontSize = 13.sp, lineHeight = 22.sp
             )
             if (challenge == null) {
@@ -616,7 +616,7 @@ private fun LoginPage(
                     icon = Icons.Outlined.Send, enabled = !busy, onClick = onStart
                 )
             } else {
-                StatusPill("در انتظار کد یک‌بارمصرف", Aqua, Icons.Outlined.Lock)
+                StatusPill("در انتظار فعال‌سازی ربات و کد ورود", Aqua, Icons.Outlined.Lock)
                 OutlinedTextField(
                     value = code,
                     onValueChange = onCodeChange,
