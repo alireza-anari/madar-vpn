@@ -21,3 +21,8 @@ This branch is NOT a production VPN release or a verified usable APK.
 6. Verify login expiry/replay safety, quota enforcement, logout token revocation, failover and traffic accounting against real backend.
 
 Never embed Telegram bot tokens, node private keys or Cloudflare secrets in the app. Challenge creation is HMAC-rate-limited per Cloudflare client IP; logout revokes the device's server-side token. The Android token is stored under Android Keystore AES-GCM, and requests are HTTPS with redirects disabled. Debug APKs are ABI-split (arm64-v8a, armeabi-v7a, x86_64) to avoid shipping all native runtimes in each download.
+
+## Current staging readiness (verified 2026-11-16)
+- The isolated `madar-v2-staging` Worker is alive and its health endpoint reports ready; the bound Telegram bot is the dedicated `@Madar_v2_bot`, with its webhook on the V2 Worker.
+- Do not enable Android login yet: the isolated D1 currently has 1 active customer but 0 subscriptions, 0 subscription credentials, 0 active node allocations, 0 published endpoints, and no node/route in ready state. `SUBSCRIPTION_API_ENABLED` is currently false.
+- The live D1 migration ledger records `0016_support_media.sql` and `0017_customer_trial_claims.sql`, but those exact source files are absent from the current base branch migration directory. Reconcile and restore their authoritative SQL before any staging deploy; the Android migrations are therefore numbered 0018 and 0019 and must not be applied until that lineage is reconciled.
