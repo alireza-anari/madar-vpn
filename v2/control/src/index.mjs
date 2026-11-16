@@ -127,9 +127,9 @@ export function brandedEntities(body){
   if(typeof body!=='string'||!body.startsWith('🌐  مــدار\n'))return [];
   const header='🌐  مــدار';
   const out=[{type:'bold',offset:0,length:header.length}];
-  const first=body.indexOf('\n'),second=body.indexOf('\n',first+1);
-  if(second<0)return out;
-  const start=second+1,end=body.indexOf('\n',start);
+  const first=body.indexOf('\n');
+  if(first<0)return out;
+  const start=first+1,end=body.indexOf('\n',start);
   const title=body.slice(start,end<0?body.length:end);
   if(title.length>0&&title.length<=85)out.push({type:'bold',offset:start,length:title.length});
   return out;
