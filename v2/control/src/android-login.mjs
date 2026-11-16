@@ -27,7 +27,7 @@ async function allowChallengeStart(request,env,now){
   const result=await env.DB.prepare(
     'INSERT INTO android_login_rate_limits(ip_hash,window_start_ms,request_count) VALUES(?,?,1) '+
     'ON CONFLICT(ip_hash,window_start_ms) DO UPDATE SET request_count=request_count+1 '+
-    'WHERE request_count<10'
+    'WHERE request_count<30'
   ).bind(digest,windowStart).run();
   return result.meta?.changes===1;
 }
