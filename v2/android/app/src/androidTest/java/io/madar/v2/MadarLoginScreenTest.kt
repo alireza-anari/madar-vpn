@@ -1,10 +1,13 @@
 package io.madar.v2
 
+import android.security.NetworkSecurityPolicy
 import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -21,6 +24,14 @@ class MadarLoginScreenTest {
         compose.onNodeWithContentDescription("لوگوی مدار").assertExists()
         compose.onNodeWithText("ورود با تلگرام", substring = true).assertExists()
         compose.onNodeWithText("بدون کپی کانفیگ، بدون انتخاب سرور").assertExists()
+    }
+
+    @Test
+    fun cleartextIsAllowedOnlyForLocalXrayMetrics() {
+        val policy = NetworkSecurityPolicy.getInstance()
+        assertTrue(policy.isCleartextTrafficPermitted("127.0.0.1"))
+        assertTrue(policy.isCleartextTrafficPermitted("localhost"))
+        assertFalse(policy.isCleartextTrafficPermitted("example.com"))
     }
 
     @Test
