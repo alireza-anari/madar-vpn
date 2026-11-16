@@ -1,6 +1,13 @@
 name: Madar V2 guarded staging release
 
 on:
+  # Deploy the isolated V2 staging Worker after validated code is merged to its
+  # dedicated release branch. Production/V1 workers are not targeted here.
+  push:
+    branches: ['rewrite/madar-v2-20261110']
+    paths:
+      - 'v2/**'
+      - '.github/workflows/v2-staging-deploy.yml'
   workflow_dispatch:
     inputs:
       target:
@@ -17,7 +24,7 @@ concurrency:
 
 jobs:
   deploy:
-    if: github.ref == 'refs/heads/rewrite/madar-v2-20261110' && inputs.target == 'madar-v2-staging'
+    if: github.ref == 'refs/heads/rewrite/madar-v2-20261110' && (github.event_name == 'push' || inputs.target == 'madar-v2-staging')
     runs-on: ubuntu-latest
     environment: madar-v2-staging
     timeout-minutes: 30
