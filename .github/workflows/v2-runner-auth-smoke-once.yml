@@ -1,0 +1,32 @@
+name: Temporary V2 runner authentication smoke check
+
+on:
+  push:
+    branches: ['rewrite/madar-v2-20261110']
+    paths: ['.github/workflows/v2-runner-auth-smoke-once.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: madar-v2-staging
+    steps:
+      - name: Verify the GitHub executor secret matches the Worker
+        env:
+          BASE_URL: https://madar-v2-staging.alirezaanari117.workers.dev
+          SERVICE_SECRET: ${{ secrets.MADAR_V2_RUNNER_SERVICE_SECRET }}
+          PRIVATE_KEY: ${{ secrets.MADAR_V2_RUNNER_PRIVATE_KEY_PEM }}
+        run: |
+          set -euo pipefail
+          test "${#SERVICE_SECRET}" -ge 32
+          test -n "$PRIVATE_KEY"
+          status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            --connect-timeout 5 --max-time 12 -X POST "$BASE_URL/api/runner/verify" \
+            -H "authorization: Bearer $SERVICE_SECRET" \
+            -H "content-type: application/json" --data '{}')"
+          test "$status" = "200"
+          python3 -m pip install --disable-pip-version-check cryptography==50.0.2
+          python3 -c 'import os; from cryptography.hazmat.primitives import serialization; k=serialization.load_pem_private_key(os.environ["PRIVATE_KEY"].encode(),password=None); assert k.key_size >= 2048; print("V2_RUNNER_CREDENTIALS_PRESENT_AND_VALID")'
