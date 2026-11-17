@@ -1,0 +1,25 @@
+name: One-time V2 public VPN port reachability check
+on:
+  push:
+    branches: ['rewrite/madar-v2-20261110']
+    paths: ['.github/workflows/v2-operator-port-smoke-once.yml']
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Probe public TCP reachability of staging node only
+        run: |
+          python3 - <<'PY'
+          import socket
+          host='16.16.197.151'
+          for port in (443,8443):
+              try:
+                  with socket.create_connection((host,port),timeout=7):
+                      print(f'PORT_{port}=TCP_OPEN',flush=True)
+              except OSError as exc:
+                  category='REFUSED' if isinstance(exc,ConnectionRefusedError) else 'TIMEOUT_OR_UNREACHABLE'
+                  print(f'PORT_{port}={category}',flush=True)
+          PY
