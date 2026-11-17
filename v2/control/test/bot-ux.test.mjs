@@ -65,8 +65,8 @@ test('bot menus are Persian-only, compact and visually consistent',()=>{
 
 test('manager, seller and support menus use Persian labels and local display formats',()=>{
   const manager=adminMenu();
-  assert.equal(manager.inline_keyboard.length,5);
-  assert.equal(manager.inline_keyboard.flat().length,9);
+  assert.equal(manager.inline_keyboard.length,4);
+  assert.equal(manager.inline_keyboard.flat().length,7);
   for(const menu of [manager,sellerMenu(),supportMenu()]){
     for(const button of menu.inline_keyboard.flat())assert.doesNotMatch(button.text,/[A-Za-z]{3,}/);
   }
@@ -97,18 +97,90 @@ test('Telegram native styling highlights the brand and section without parsing u
   assert.deepEqual(brandedEntities('plain text'),[]);
 });
 
-
-test('Telegram buttons receive safe semantic accents and contextual back navigation',()=>{
-  const original=adminMenu();
-  const styled=styleInlineKeyboard(original).inline_keyboard.flat();
-  assert.equal(styled.find(b=>b.callback_data==='v2:admin:nodes').style,'primary');
-  const add=styleInlineKeyboard({inline_keyboard:[[
+test('Telegram semantic button accents are restricted and do not change callback identity',()=>{
+  const menu=styleInlineKeyboard(adminMenu());
+  const all=menu.inline_keyboard.flat();
+  assert.equal(all.find(x=>x.callback_data==='v2:admin:nodes').style,'primary');
+  assert.ok(!all.some(x=>x.callback_data==='v2:admin:node:new'));
+  const serverMenu=styleInlineKeyboard({inline_keyboard:[[
     {text:'➕ افزودن سرور',callback_data:'v2:admin:node:new'}
   ]]});
-  assert.equal(add.inline_keyboard[0][0].style,'success');
-  const scoped=contextualKeyboard('admin:node:new',{inline_keyboard:[[
-    {text:'❌ انصراف',callback_data:'v2:admin:node:cancel'}
-  ]]},{isAdmin:true});
-  assert.equal(scoped.inline_keyboard.at(-1)[0].callback_data,'v2:admin:node:cancel');
-  assert.equal(parentPage('admin:node:new',true),'admin:node:cancel');
+  assert.equal(serverMenu.inline_keyboard[0][0].style,'success');
+  assert.equal(all.find(x=>x.callback_data==='v2:admin:customers').style,undefined);
+  const seller=styleInlineKeyboard(sellerMenu()).inline_keyboard.flat();
+  assert.equal(seller.find(x=>x.callback_data==='v2:seller:revoke').style,'danger');
+  const original=adminMenu();
+  assert.ok(original.inline_keyboard.flat().every(x=>x.style===undefined));
+  assert.deepEqual(menu.inline_keyboard.map(row=>row.map(x=>x.callback_data)),
+    original.inline_keyboard.map(row=>row.map(x=>x.callback_data)));
+});
+
+test('nested Telegram sections show only local actions plus one back button',()=>{
+  const adminRoot=adminMenu();
+  const view={text:'👤 مشاهده نمای مشتری',callback_data:'v2:customer:home'};
+  const root=contextualKeyboard('admin:home',{inline_keyboard:[[view],...adminRoot.inline_keyboard]},
+    {isAdmin:true});
+  assert.equal(root.inline_keyboard.flat().filter(x=>x.text.includes('نمای مشتری')).length,1);
+
+  const server=contextualKeyboard('admin:nodes',{inline_keyboard:[
+    [{text:'➕ افزودن سرور',callback_data:'v2:admin:node:new'},
+     {text:'🧪 آزمون سرورها',callback_data:'v2:admin:node:trials'}],
+    ...sectionNavigation('admin'),
+    [view],
+    ...adminRoot.inline_keyboard,
+  ]},{isAdmin:true});
+  const actions=server.inline_keyboard.flat();
+  assert.deepEqual(actions.map(x=>x.callback_data),[
+    'v2:admin:node:new','v2:admin:node:trials','v2:admin:home'
+  ]);
+  assert.equal(actions.at(-1).text,'↩️ بازگشت');
+  assert.ok(!actions.some(x=>x.text.includes('نمای مشتری')));
+  assert.ok(!actions.some(x=>x.callback_data==='v2:admin:plans'));
+
+  const wizard=contextualKeyboard('admin:node:new',{inline_keyboard:[
+    [{text:'❌ انصراف',callback_data:'v2:admin:node:cancel'}],
+    ...adminRoot.inline_keyboard,
+  ]},{isAdmin:true});
+  assert.deepEqual(wizard.inline_keyboard.flat().map(x=>x.callback_data),
+    ['v2:admin:node:cancel']);
+  const seller=contextualKeyboard('seller:orders',{inline_keyboard:[
+    ...sellerMenu().inline_keyboard,
+    ...sectionNavigation('seller')
+  ]});
+  assert.equal(seller.inline_keyboard.at(-1)[0].callback_data,'v2:seller:home');
+  assert.ok(seller.inline_keyboard.flat().length<=5);
+});
+
+test('back routes follow section hierarchy without self-links or customer preview',()=>{
+  assert.equal(parentPage('admin:customer:123',true),'admin:customers');
+  assert.equal(parentPage('admin:customer:suspend:123',true),'admin:customer:123');
+  assert.equal(parentPage('admin:customer:confirm:activate:123',true),'admin:customer:123');
+  assert.equal(parentPage('admin:receipt:order-1',true),'admin:queue');
+  assert.equal(parentPage('admin:review:approve:order-1',true),'admin:receipt:order-1');
+  assert.equal(parentPage('admin:plan:new',true),'admin:plans');
+  assert.equal(parentPage('admin:staff:grant:seller',true),'admin:staff');
+  assert.equal(parentPage('ticket:view:tg-19',true),'admin:tickets');
+  assert.equal(parentPage('ticket:page:tg-19:2',true),'ticket:view:tg-19');
+  assert.equal(parentPage('customer:ticket:page:tg-19:1'),'customer:ticket:tg-19');
+  assert.equal(parentPage('admin:tickets:closed:2',true),'admin:tickets');
+  assert.equal(parentPage('admin:configs',true),'admin:home');
+  assert.equal(parentPage('admin:configs:trials:0',true),'admin:configs');
+  assert.equal(parentPage('admin:configs:trial:'+'a'.repeat(24),true),'admin:configs:trials:0');
+  assert.equal(parentPage('customer:ticket:tg-19'),'customer:tickets');
+  assert.equal(parentPage('customer:ticket:reply:tg-19'),'customer:ticket:tg-19');
+  assert.equal(parentPage('orders:view:order-1'),'orders');
+  assert.equal(parentPage('my:link:sub-1'),'my');
+  const nested=contextualKeyboard('admin:receipt:order-1',{
+    inline_keyboard:[
+      [{text:'✅ تأیید رسید',callback_data:'v2:admin:review:approve:order-1'}],
+      ...sectionNavigation('admin')
+    ]
+  },{isAdmin:true}).inline_keyboard.flat();
+  assert.deepEqual(nested.map(x=>x.callback_data),[
+    'v2:admin:review:approve:order-1','v2:admin:queue'
+  ]);
+  const typed=contextualKeyboard('text',{inline_keyboard:[
+    [{text:'↩️ مدیریت سرورها',callback_data:'v2:admin:nodes'}]
+  ]},{isAdmin:true});
+  assert.equal(typed.inline_keyboard.flat()[0].callback_data,'v2:admin:nodes');
 });
