@@ -161,7 +161,7 @@ async function deliverTable(env,name,nowMs,withPhoto) {
         ...(markup?{reply_markup:markup}:{}),
       };
       let editAttempted=false;
-      if(withPhoto&&item.edit_message_id&&!media) {
+      if(withPhoto&&item.edit_message_id&&(!media||(item.media_file_id===BRAND_BANNER_URL&&item.edit_kind==='caption'))) {
         const caption=item.edit_kind==='caption';
         if(!caption||displayBody.length<=1024) {
           editAttempted=true;
