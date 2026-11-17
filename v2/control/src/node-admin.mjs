@@ -136,13 +136,14 @@ const NODE_REF=/^[a-f0-9]{24}$/;
 const PAGE_SIZE=6;
 const FILTERS={
   all:{title:'همه',sql:'1=1'},
-  ready:{title:'آماده',sql:"lifecycle='ready'"},
-  setup:{title:'در حال نصب',sql:"lifecycle IN ('enrolling','provisioning')"},
-  attention:{title:'نیازمند بررسی',sql:"lifecycle='degraded'"},
-  quarantine:{title:'قرنطینه',sql:"lifecycle='quarantined'"},
-  archive:{title:'بایگانی',sql:"lifecycle='retired'"},
+  ready:{title:'آماده',sql:"n.lifecycle='ready'"},
+  setup:{title:'در حال نصب',sql:"n.lifecycle IN ('enrolling','provisioning') AND NOT EXISTS (SELECT 1 FROM node_bootstrap_jobs j WHERE j.node_id=n.id AND j.state='installed')"},
+  testing:{title:'آماده آزمون',sql:"n.lifecycle='provisioning' AND EXISTS (SELECT 1 FROM node_bootstrap_jobs j WHERE j.node_id=n.id AND j.state='installed')"},
+  attention:{title:'نیازمند بررسی',sql:"n.lifecycle='degraded'"},
+  quarantine:{title:'قرنطینه',sql:"n.lifecycle='quarantined'"},
+  archive:{title:'بایگانی',sql:"n.lifecycle='retired'"},
 };
-const statusOrder="CASE lifecycle WHEN 'ready' THEN 0 WHEN 'enrolling' THEN 1 "+
+const statusOrder="CASE n.lifecycle WHEN 'ready' THEN 0 WHEN 'enrolling' THEN 1 "+
   "WHEN 'provisioning' THEN 2 WHEN 'degraded' THEN 3 WHEN 'quarantined' THEN 4 ELSE 5 END";
 const nodeButton=(text,key)=>[{text,callback_data:'v2:'+key}];
 const short=(value,max=32)=>String(value).length>max?String(value).slice(0,max-1)+'…':String(value);
@@ -175,32 +176,43 @@ function filterMenu(filter){
   const f=(name,title)=>({text:(filter===name?'✅ ':'')+title,callback_data:'v2:admin:nodes:'+name+':0'});
   return [
     [f('all','همه'),f('ready','آماده'),f('setup','در حال نصب')],
-    [f('attention','نیازمند بررسی'),f('quarantine','قرنطینه'),f('archive','بایگانی')],
+    [f('testing','آماده آزمون'),f('attention','نیازمند بررسی'),f('quarantine','قرنطینه')],
+    [f('archive','بایگانی')],
   ];
 }
+/** A completed installer is not a ready route: it is waiting for field tests. */
+export function nodeStatusPresentation(lifecycle,installState){
+  if(lifecycle==='provisioning'&&installState==='installed')
+    return {label:'آماده آزمون',symbol:'🧪'};
+  return {label:faStatus(lifecycle),symbol:statusSymbol(lifecycle)};
+}
+
 /** Overview is intentionally short: each node gets one separate Telegram button. */
 export async function nodeOverview(db,{filter='all',page=0}={}){
   if(!Object.hasOwn(FILTERS,filter))filter='all';
   page=Number.isSafeInteger(page)&&page>=0&&page<=1000?page:0;
   const sql=FILTERS[filter].sql;
-  const [total,ready,setup,attention,quarantine,archived,filtered]=await Promise.all([
+  const [total,ready,setup,testing,attention,quarantine,archived,filtered]=await Promise.all([
     countNodes(db,'SELECT COUNT(*) AS n FROM nodes'),
-    countNodes(db,"SELECT COUNT(*) AS n FROM nodes WHERE lifecycle='ready'"),
-    countNodes(db,"SELECT COUNT(*) AS n FROM nodes WHERE lifecycle IN ('enrolling','provisioning')"),
-    countNodes(db,"SELECT COUNT(*) AS n FROM nodes WHERE lifecycle='degraded'"),
-    countNodes(db,"SELECT COUNT(*) AS n FROM nodes WHERE lifecycle='quarantined'"),
-    countNodes(db,"SELECT COUNT(*) AS n FROM nodes WHERE lifecycle='retired'"),
-    countNodes(db,'SELECT COUNT(*) AS n FROM nodes WHERE '+sql),
+    countNodes(db,"SELECT COUNT(*) AS n FROM nodes n WHERE n.lifecycle='ready'"),
+    countNodes(db,'SELECT COUNT(*) AS n FROM nodes n WHERE '+FILTERS.setup.sql),
+    countNodes(db,'SELECT COUNT(*) AS n FROM nodes n WHERE '+FILTERS.testing.sql),
+    countNodes(db,"SELECT COUNT(*) AS n FROM nodes n WHERE n.lifecycle='degraded'"),
+    countNodes(db,"SELECT COUNT(*) AS n FROM nodes n WHERE n.lifecycle='quarantined'"),
+    countNodes(db,"SELECT COUNT(*) AS n FROM nodes n WHERE n.lifecycle='retired'"),
+    countNodes(db,'SELECT COUNT(*) AS n FROM nodes n WHERE '+sql),
   ]);
   const maxPage=Math.max(0,Math.ceil(filtered/PAGE_SIZE)-1);
   page=Math.min(page,maxPage);
   const list=(await db.prepare(
-    'SELECT id,provider,region,lifecycle FROM nodes WHERE '+sql+
-    ' ORDER BY '+statusOrder+',created_at DESC,id LIMIT ? OFFSET ?'
+    'SELECT n.id,n.provider,n.region,n.lifecycle,j.state AS install_state FROM nodes n '+
+    'LEFT JOIN node_bootstrap_jobs j ON j.node_id=n.id WHERE '+sql+
+    ' ORDER BY '+statusOrder+',n.created_at DESC,n.id LIMIT ? OFFSET ?'
   ).bind(PAGE_SIZE,page*PAGE_SIZE).all()).results??[];
   const text=panelHeading('🖥','مدیریت سرورها','هر سرور یک صفحه اختصاصی دارد')+
     '\n\n📊 کل: '+formatCount(total)+'  |  ✅ آماده: '+formatCount(ready)+
-    '\n🛠 نصب: '+formatCount(setup)+'  |  ⚠️ بررسی: '+formatCount(attention)+
+    '\n🛠 در حال نصب: '+formatCount(setup)+'  |  🧪 آماده آزمون: '+formatCount(testing)+
+    '\n⚠️ بررسی: '+formatCount(attention)+
     '\n🔴 قرنطینه: '+formatCount(quarantine)+'  |  🗄 بایگانی: '+formatCount(archived)+
     '\n\n🔎 فیلتر: '+FILTERS[filter].title+' · صفحه '+formatCount(page+1)+
     ' از '+formatCount(maxPage+1)+
@@ -208,7 +220,8 @@ export async function nodeOverview(db,{filter='all',page=0}={}){
   const items=[];
   for(const n of list){
     const ref=await nodeUiRef(n.id);
-    items.push(nodeButton(statusSymbol(n.lifecycle)+' '+short(n.id,33)+' · '+faStatus(n.lifecycle),
+    const status=nodeStatusPresentation(n.lifecycle,n.install_state);
+    items.push(nodeButton(status.symbol+' '+short(n.id,33)+' · '+status.label,
       'admin:node:view:'+ref));
   }
   const pages=[];
@@ -265,6 +278,8 @@ export async function nodeDetails(db,ref,actor){
       "JOIN routes r ON r.id=cv.route_id WHERE r.node_id=? ORDER BY cv.operator LIMIT 10").bind(n.id).all(),
   ]);
   const routeRows=routes.results??[],variantRows=variants.results??[];
+  const presentation=nodeStatusPresentation(n.lifecycle,job?.state);
+  const waitingForFieldTest=n.lifecycle==='provisioning'&&job?.state==='installed';
   const routeText=routeRows.length?routeRows.map(r=>
     statusSymbol(r.state)+' '+r.transport.toUpperCase()+
     (r.operator_hint?' · '+(r.operator_hint==='mci'?'همراه اول':'ایرانسل'):'')+
