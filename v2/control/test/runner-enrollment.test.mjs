@@ -352,3 +352,106 @@ test('read-only diagnosis is owner-bound to a failed install and cannot provisio
   assert.equal((await DB.prepare('SELECT COUNT(*) AS n FROM nodes').first()).n,0);
   DB.close();
 });
+
+test('failed install remains discoverable after new probe, cleanup requires a clean owner-bound diagnostic',async()=>{
+  const DB=database(),now=1000000,secret='s'.repeat(48);
+  const env={DB,BOT_TOKEN:'test-token',ADMIN_TELEGRAM_IDS:'123,456',
+    RUNNER_ENROLLMENT_ENABLED:'true',V2_EXECUTOR_BACKEND:'github-actions',
+    RUNNER_SERVICE_SECRET:secret,GITHUB_ACTIONS_DISPATCH_TOKEN:'g'.repeat(48),
+    RUNNER_PUBLIC_KEY:JSON.stringify({kid:'madar-v2-github-actions',
+      kty:'RSA',alg:'RSA-OAEP-256',e:'AQAB',n:'A'.repeat(512)})};
+  const owner=await initData('test-token',123,1000);
+  const other=await initData('test-token',456,1000);
+  const api=(path,data,auth=owner)=>enrollmentApi(new Request('https://v2/api/enrollment/'+path,{
+    method:data?'POST':'GET',
+    headers:{'x-telegram-init-data':auth,'content-type':'application/json'},
+    ...(data?{body:JSON.stringify(data)}:{})
+  }),env,now,async()=>true);
+  const id=crypto.randomUUID(),probeId=crypto.randomUUID(),fp='SHA256:'+'a'.repeat(43);
+  const old={nodeId:'test-aws01',provider:'aws',region:'eu-north-1',ip:'8.8.8.8',
+    port:22,username:'root',userLimit:20,capacityGb:500,mode:'fresh'};
+  const latest={...old,username:'ubuntu'};
+  await DB.prepare("INSERT INTO nodes(id,provider,region,lifecycle,user_limit,byte_limit) VALUES(?,'aws','eu-north-1','enrolling',20,536870912000)").bind(old.nodeId).run();
+  await DB.prepare("INSERT INTO node_bootstrap_jobs(id,node_id,ip,owner_id,mode,state,created_ms,updated_ms) VALUES(?,?,?,'123','fresh','failed',?,?)")
+    .bind(id,old.nodeId,old.ip,now-1000,now-500).run();
+  await DB.prepare("INSERT INTO v2_runner_jobs(id,owner_id,kind,spec_json,fingerprint,state,safe_code,created_ms,expires_ms) VALUES(?,'123','v2-install',?,?,'failed','REMOTE_INSTALL_FAILED',?,?)")
+    .bind(id,JSON.stringify(old),fp,now-1000,now+900000).run();
+  await DB.prepare("INSERT INTO v2_runner_jobs(id,owner_id,kind,spec_json,fingerprint,state,safe_code,created_ms,expires_ms) VALUES(?,'123','probe',?,?,'ready','OK',?,?)")
+    .bind(probeId,JSON.stringify(latest),fp,now-500,now+600000).run();
+  const recent=await (await api('recent')).json();
+  assert.equal(recent.job.id,probeId);
+  assert.equal(recent.failedInstall.id,id);
+  assert.equal(recent.failedInstall.safe_code,'REMOTE_INSTALL_FAILED');
+  assert.equal(JSON.stringify(recent).includes('encrypted_credentials'),false);
+  assert.equal((await (await api('recent',null,other)).json()).failedInstall,null);
+  const envelope={v:1,key:'A'.repeat(512),iv:'A'.repeat(16),data:'A'.repeat(64)};
+  const start=await api('install',{probeId,trust:true,fingerprint:fp,envelope});
+  assert.equal(start.status,409);
+  assert.equal((await start.json()).error,'NODE_ALREADY_EXISTS');
+  const attempt=await api('diagnose',{failedInstallId:id,trust:true,fingerprint:fp,envelope});
+  assert.equal(attempt.status,200);
+  const diagId=(await attempt.json()).id;
+  const diag=await DB.prepare('SELECT spec_json FROM v2_runner_jobs WHERE id=?').bind(diagId).first();
+  assert.equal(JSON.parse(diag.spec_json).username,'ubuntu');
+  assert.equal(JSON.parse(diag.spec_json).diagnostic,true);
+  const clear={failedInstallId:id,diagnosticId:diagId};
+  assert.equal((await api('clear-failed',clear)).status,409);
+  await DB.prepare("UPDATE v2_runner_jobs SET state='ready',safe_code='DIAG_EXISTING_VPN',encrypted_credentials=NULL WHERE id=?")
+    .bind(diagId).run();
+  assert.equal((await api('clear-failed',clear)).status,409);
+  await DB.prepare("UPDATE v2_runner_jobs SET safe_code='DIAG_PRECHECK_OK' WHERE id=?")
+    .bind(diagId).run();
+  assert.equal((await api('clear-failed',clear,other)).status,409);
+  const clean=await api('clear-failed',clear);
+  assert.equal(clean.status,200);
+  assert.equal((await clean.json()).status,'CLEARED');
+  assert.equal((await DB.prepare('SELECT COUNT(*) AS n FROM nodes').first()).n,0);
+  assert.equal((await DB.prepare('SELECT COUNT(*) AS n FROM node_bootstrap_jobs').first()).n,0);
+  assert.equal((await (await api('recent')).json()).failedInstall,null);
+  const retried=await api('install',{probeId,trust:true,fingerprint:fp,envelope});
+  assert.equal(retried.status,200);
+  assert.equal((await DB.prepare('SELECT COUNT(*) AS n FROM nodes').first()).n,1);
+  DB.close();
+});
+
+test('failed node cleanup refuses to delete when a route exists, even with a clean preflight',async()=>{
+  const DB=database(),now=1000000,secret='s'.repeat(48);
+  const env={DB,BOT_TOKEN:'test-token',ADMIN_TELEGRAM_IDS:'123',
+    RUNNER_ENROLLMENT_ENABLED:'true',V2_EXECUTOR_BACKEND:'github-actions',RUNNER_SERVICE_SECRET:secret};
+  const owner=await initData('test-token',123,1000);
+  const node='test-protect01',ip='8.8.8.8',fp='SHA256:'+'a'.repeat(43);
+  const failed=crypto.randomUUID(),diag=crypto.randomUUID();
+  const spec={nodeId:node,provider:'aws',region:'test',ip,port:22,username:'ubuntu',userLimit:10,capacityGb:50,mode:'fresh'};
+  await DB.prepare("INSERT INTO nodes(id,provider,region,lifecycle,user_limit,byte_limit) VALUES(?,'aws','test','enrolling',10,53687091200)").bind(node).run();
+  await DB.prepare("INSERT INTO node_bootstrap_jobs(id,node_id,ip,owner_id,mode,state,created_ms,updated_ms) VALUES(?,?,?,'123','fresh','failed',?,?)")
+    .bind(failed,node,ip,now-1000,now-500).run();
+  await DB.prepare("INSERT INTO v2_runner_jobs(id,owner_id,kind,spec_json,fingerprint,state,created_ms,expires_ms) VALUES(?,'123','v2-install',?,?,'failed',?,?)")
+    .bind(failed,JSON.stringify(spec),fp,now-1000,now+600000).run();
+  await DB.prepare("INSERT INTO v2_runner_jobs(id,owner_id,kind,spec_json,fingerprint,state,safe_code,created_ms,expires_ms) VALUES(?,'123','v2-install',?,?,'ready','DIAG_PRECHECK_OK',?,?)")
+    .bind(diag,JSON.stringify({...spec,diagnostic:true}),fp,now-100,now+600000).run();
+  await DB.prepare("INSERT INTO routes(id,node_id,transport,listen_port,state) VALUES('route-protect',?,'reality',8443,'draft')")
+    .bind(node).run();
+  const response=await enrollmentApi(new Request('https://v2/api/enrollment/clear-failed',{
+    method:'POST',headers:{'x-telegram-init-data':owner,'content-type':'application/json'},
+    body:JSON.stringify({failedInstallId:failed,diagnosticId:diag})
+  }),env,now);
+  assert.equal(response.status,409);
+  assert.equal((await response.json()).error,'NODE_RESET_UNSAFE');
+  assert.ok(await DB.prepare('SELECT id FROM nodes WHERE id=?').bind(node).first());
+  assert.ok(await DB.prepare('SELECT id FROM node_bootstrap_jobs WHERE id=?').bind(failed).first());
+  DB.close();
+});
+
+test('enrollment page does not forget selected SSH key when the install enqueue is rejected',async()=>{
+  const page=await worker.fetch(new Request('https://v2/enroll'),{},{});
+  const html=await page.text();
+  assert.match(html,/NODE_ALREADY_EXISTS:'این شناسه از نصب ناموفق قبلی/);
+  assert.match(html,/probeExpires=job.expires_ms/);
+  assert.match(html,/Date.now\(\)>=probeExpires/);
+  assert.match(html,/el\('clearFailed'\)/);
+  const failedMessage=html.indexOf('نصب آغاز نشد: ');
+  const selectedFileClear=html.indexOf("el('keyfile').value='';",html.indexOf("el('form').onsubmit"));
+  assert.ok(failedMessage>0&&selectedFileClear>0&&selectedFileClear<failedMessage);
+  const catchMessage=html.slice(failedMessage,failedMessage+240);
+  assert.doesNotMatch(catchMessage,/el\('keyfile'\).value=''/);
+});

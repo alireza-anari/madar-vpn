@@ -127,10 +127,22 @@ export async function enrollmentApi(req,env,now=Date.now(),dispatch=dispatchGith
     const job=await env.DB.prepare(
       'SELECT id,kind,state,safe_code,fingerprint,spec_json,expires_ms FROM v2_runner_jobs WHERE owner_id=? ORDER BY created_ms DESC LIMIT 1'
     ).bind(actor).first();
-    if(!job)return reply({job:null});
+    if(!job)return reply({job:null,failedInstall:null});
     const spec=JSON.parse(job.spec_json);
+    // A newer SSH probe must not hide a failed installation that still owns
+    // the node identity. Return only the safe failure metadata (never secrets).
+    const failed=await env.DB.prepare(
+      "SELECT j.id,j.fingerprint,j.safe_code,j.created_ms FROM v2_runner_jobs j "+
+      "JOIN nodes n ON n.id=json_extract(j.spec_json,'$.nodeId') "+
+      "JOIN node_bootstrap_jobs bj ON bj.id=j.id AND bj.node_id=n.id "+
+      "WHERE j.owner_id=? AND j.kind='v2-install' AND j.state='failed' "+
+      "AND n.lifecycle='enrolling' AND bj.state='failed' "+
+      "AND json_extract(j.spec_json,'$.nodeId')=? ORDER BY j.created_ms DESC LIMIT 1"
+    ).bind(actor,spec.nodeId).first();
+    const failedInstall=failed&&failed.created_ms>=now-86400000
+      ?{id:failed.id,fingerprint:failed.fingerprint,safe_code:failed.safe_code}:null;
     // Safe fields only. No SSH passwords, private keys, lease tokens or ciphertext.
-    return reply({job:{id:job.id,kind:job.kind,state:job.state,
+    return reply({failedInstall,job:{id:job.id,kind:job.kind,state:job.state,
       safe_code:job.safe_code,fingerprint:job.fingerprint,
       expires_ms:job.expires_ms,diagnostic:spec.diagnostic===true,
       spec:{nodeId:spec.nodeId,provider:spec.provider,region:spec.region,
@@ -197,7 +209,17 @@ export async function enrollmentApi(req,env,now=Date.now(),dispatch=dispatchGith
       "SELECT id FROM v2_runner_jobs WHERE owner_id=? AND state IN ('queued','leased') LIMIT 1"
     ).bind(actor).first();
     if(active)return reply({error:'JOB_ALREADY_PENDING',id:active.id},409);
-    const id=crypto.randomUUID(),diagSpec={...spec,diagnostic:true};
+    // When the owner has re-probed the same host, use the current verified
+    // username (e.g. ubuntu instead of root) for read-only diagnosis.
+    const freshProbe=await env.DB.prepare(
+      "SELECT spec_json FROM v2_runner_jobs WHERE owner_id=? AND kind='probe' "+
+      "AND state='ready' AND fingerprint=? AND expires_ms>? "+
+      "ORDER BY created_ms DESC LIMIT 1"
+    ).bind(actor,failed.fingerprint,now).first();
+    const verified=freshProbe?JSON.parse(freshProbe.spec_json):null;
+    const sameHost=verified&&verified.nodeId===spec.nodeId&&
+      verified.ip===spec.ip&&verified.port===spec.port;
+    const id=crypto.randomUUID(),diagSpec={...(sameHost?verified:spec),diagnostic:true};
     await env.DB.prepare(
       "INSERT INTO v2_runner_jobs(id,owner_id,kind,spec_json,fingerprint,encrypted_credentials,state,created_ms,expires_ms) VALUES(?,?,'v2-install',?, ?,?,'queued',?,?)"
     ).bind(id,actor,JSON.stringify(diagSpec),failed.fingerprint,JSON.stringify(b.envelope),now,now+900000).run();
@@ -208,6 +230,57 @@ export async function enrollmentApi(req,env,now=Date.now(),dispatch=dispatchGith
       return reply({error:'EXECUTOR_DISPATCH_FAILED'},503);
     }
     return reply({id});
+  }
+  if(path==='/api/enrollment/clear-failed'){
+    if(!JOB_ID.test(b.failedInstallId??'')||!JOB_ID.test(b.diagnosticId??''))
+      return reply({error:'FAILED_INSTALL_REQUIRED'},400);
+    const failed=await env.DB.prepare(
+      "SELECT j.id,j.spec_json,j.fingerprint,bj.state AS install_state,n.lifecycle "+
+      "FROM v2_runner_jobs j JOIN node_bootstrap_jobs bj ON bj.id=j.id "+
+      "JOIN nodes n ON n.id=bj.node_id "+
+      "WHERE j.id=? AND j.owner_id=? AND j.kind='v2-install' AND j.state='failed'"
+    ).bind(b.failedInstallId,actor).first();
+    if(!failed||failed.install_state!=='failed'||failed.lifecycle!=='enrolling')
+      return reply({error:'FAILED_INSTALL_REQUIRED'},409);
+    const spec=JSON.parse(failed.spec_json);
+    const diag=await env.DB.prepare(
+      "SELECT id,spec_json,fingerprint,created_ms FROM v2_runner_jobs "+
+      "WHERE id=? AND owner_id=? AND kind='v2-install' AND state='ready' "+
+      "AND safe_code='DIAG_PRECHECK_OK' AND created_ms>?"
+    ).bind(b.diagnosticId,actor,now-900000).first();
+    const diagSpec=diag?JSON.parse(diag.spec_json):null;
+    if(!diagSpec||diagSpec.diagnostic!==true||diag.fingerprint!==failed.fingerprint||
+       diagSpec.nodeId!==spec.nodeId||diagSpec.ip!==spec.ip||diagSpec.port!==spec.port)
+      return reply({error:'CLEAN_DIAG_REQUIRED'},409);
+    const pending=await env.DB.prepare(
+      "SELECT id FROM v2_runner_jobs WHERE owner_id=? AND state IN ('queued','leased') LIMIT 1"
+    ).bind(actor).first();
+    if(pending)return reply({error:'JOB_ALREADY_PENDING'},409);
+    // Never remove a node with routes, allocations or any other installer.
+    const safe=await env.DB.prepare(
+      "SELECT n.id FROM nodes n WHERE n.id=? AND n.lifecycle='enrolling' "+
+      "AND NOT EXISTS(SELECT 1 FROM routes WHERE node_id=n.id) "+
+      "AND NOT EXISTS(SELECT 1 FROM node_allocations WHERE node_id=n.id) "+
+      "AND NOT EXISTS(SELECT 1 FROM node_trial_links WHERE node_id=n.id) "+
+      "AND NOT EXISTS(SELECT 1 FROM node_trial_credentials WHERE node_id=n.id) "+
+      "AND NOT EXISTS(SELECT 1 FROM customer_trial_claims WHERE node_id=n.id) "+
+      "AND NOT EXISTS(SELECT 1 FROM node_acks WHERE node_id=n.id) "+
+      "AND NOT EXISTS(SELECT 1 FROM node_bootstrap_jobs WHERE node_id=n.id AND id<>?)"
+    ).bind(spec.nodeId,failed.id).first();
+    if(!safe)return reply({error:'NODE_RESET_UNSAFE'},409);
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM node_bootstrap_jobs WHERE id=? AND node_id=? AND owner_id=? AND state='failed'")
+        .bind(failed.id,spec.nodeId,actor),
+      env.DB.prepare(
+        "DELETE FROM nodes WHERE id=? AND lifecycle='enrolling' "+
+        "AND NOT EXISTS(SELECT 1 FROM node_bootstrap_jobs WHERE node_id=?) "+
+        "AND NOT EXISTS(SELECT 1 FROM routes WHERE node_id=?) "+
+        "AND NOT EXISTS(SELECT 1 FROM node_allocations WHERE node_id=?)"
+      ).bind(spec.nodeId,spec.nodeId,spec.nodeId,spec.nodeId),
+    ]);
+    const stillExists=await env.DB.prepare("SELECT id FROM nodes WHERE id=?")
+      .bind(spec.nodeId).first();
+    return stillExists?reply({error:'NODE_RESET_UNSAFE'},409):reply({status:'CLEARED'});
   }
   if(path==='/api/enrollment/install'){
     if(!validEnvelope(b.envelope)||b.trust!==true||!/^SHA256:[A-Za-z0-9+/]{43}$/.test(b.fingerprint??''))
