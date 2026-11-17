@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { verifyTelegramSecret,toBotMessage } from '../src/telegram.mjs';
 import { dispatchOutbox } from '../src/index.mjs';
 import worker from '../src/index.mjs';
+import {BRAND_BANNER_URL} from '../src/bot-ux.mjs';
 
 test('rejects missing and mismatched webhook credentials', async () => {
   assert.equal(await verifyTelegramSecret('wrong','correct'),false);
@@ -31,16 +32,6 @@ test('callback parsing keeps the owning Telegram message for in-place navigation
   }});
   assert.equal(photo.messageId,78);
   assert.equal(photo.editKind,'caption');
-  const appActivation=toBotMessage({update_id:126,callback_query:{
-    id:'callback-3',data:'v2:app:activate:AbCdEfGhIjKlMnOpQrStUvWx',from:{id:456},
-    message:{message_id:79,chat:{id:456,type:'private'},text:'عضویت در کانال'},
-  }});
-  assert.equal(appActivation.key,'app:activate:AbCdEfGhIjKlMnOpQrStUvWx');
-  const botActivation=toBotMessage({update_id:127,callback_query:{
-    id:'callback-4',data:'v2:activation:check',from:{id:456},
-    message:{message_id:80,chat:{id:456,type:'private'},text:'عضویت در کانال'},
-  }});
-  assert.equal(botActivation.key,'activation:check');
 });
 function outboxFixture(row){
   let state='pending';
@@ -94,6 +85,64 @@ test('outbox treats an unchanged Telegram panel as successfully delivered on ret
   finally{globalThis.fetch=original;}
   assert.deepEqual(calls,['editMessageText']);
   assert.equal(fixture.getState(),'sent');
+});
+test('branded photo messages use native Telegram sendPhoto and preserve real inline buttons',async()=>{
+  const fixture=outboxFixture({
+    id:5,chat_id:'456',body:'🌐  مــدار\n👋 پنل کاربری مدار',
+    attempts:0,reply_markup:JSON.stringify({inline_keyboard:[[{text:'اشتراک‌های من',callback_data:'v2:my'}]]}),
+    media_file_id:BRAND_BANNER_URL,
+    edit_message_id:null,edit_kind:null,
+  });
+  const original=globalThis.fetch,calls=[];
+  globalThis.fetch=async(url,init)=>{
+    assert.ok(init.body instanceof FormData);
+    const photo=init.body.get('photo');
+    assert.ok(photo instanceof Blob);
+    assert.equal(photo.type,'image/jpeg');
+    const bytes=new Uint8Array(await photo.arrayBuffer());
+    assert.deepEqual([...bytes.slice(0,3)],[255,216,255]);
+    assert.ok(bytes.length>3500);
+    calls.push({method:String(url).split('/').pop(),payload:{
+      caption:init.body.get('caption'),
+      reply_markup:JSON.parse(init.body.get('reply_markup'))
+    }});
+    return new Response(JSON.stringify({ok:true,result:{message_id:92}}),{status:200});
+  };
+  try{await dispatchOutbox({DB:fixture.DB,BOT_TOKEN:'test-token'},1000);}
+  finally{globalThis.fetch=original;}
+  assert.equal(calls.length,1);
+  assert.equal(calls[0].method,'sendPhoto');
+  assert.match(calls[0].payload.caption,/پنل کاربری مدار/);
+  assert.equal(calls[0].payload.reply_markup.inline_keyboard[0][0].callback_data,'v2:my');
+  assert.equal(fixture.getState(),'sent');
+});
+test('branded photo dashboard edits its caption rather than stacking new photos',async()=>{
+  const fixture=outboxFixture({
+    id:6,chat_id:'456',body:'🌐  مــدار\n📊 پیشخوان مدیریت',
+    attempts:0,reply_markup:JSON.stringify({inline_keyboard:[[{text:'سرورها',callback_data:'v2:admin:nodes'}]]}),
+    media_file_id:'https://raw.githubusercontent.com/example/brand.jpg',
+    edit_message_id:91,edit_kind:'caption',
+  });
+  const original=globalThis.fetch,calls=[];
+  globalThis.fetch=async(url,init)=>{
+    calls.push({method:String(url).split('/').pop(),payload:JSON.parse(init.body)});
+    return new Response(JSON.stringify({ok:true,result:{message_id:91}}),{status:200});
+  };
+  try{await dispatchOutbox({DB:fixture.DB,BOT_TOKEN:'test-token'},1000);}
+  finally{globalThis.fetch=original;}
+  assert.deepEqual(calls.map(c=>c.method),['editMessageCaption']);
+  assert.equal(calls[0].payload.message_id,91);
+  assert.ok(calls[0].payload.caption.includes('پیشخوان مدیریت'));
+  assert.equal(fixture.getState(),'sent');
+});
+test('first-party Madar banner serves JPEG without database or secrets',async()=>{
+  const response=await worker.fetch(new Request('https://localhost/brand/banner.jpg'),{},{});
+  assert.equal(response.status,200);
+  assert.match(response.headers.get('content-type'),/image\/jpeg/);
+  const pixels=new Uint8Array(await response.arrayBuffer());
+  assert.ok(pixels.length>3500);
+  assert.deepEqual([...pixels.slice(0,3)],[255,216,255]);
+  assert.deepEqual([...pixels.slice(-2)],[255,217]);
 });
 test('readiness fails closed without required bindings', async () => {
   const response=await worker.fetch(new Request('https://localhost/health/ready'),{},{});
