@@ -429,7 +429,7 @@ test('failed node cleanup refuses to delete when a route exists, even with a cle
     .bind(failed,JSON.stringify(spec),fp,now-1000,now+600000).run();
   await DB.prepare("INSERT INTO v2_runner_jobs(id,owner_id,kind,spec_json,fingerprint,state,safe_code,created_ms,expires_ms) VALUES(?,'123','v2-install',?,?,'ready','DIAG_PRECHECK_OK',?,?)")
     .bind(diag,JSON.stringify({...spec,diagnostic:true}),fp,now-100,now+600000).run();
-  await DB.prepare("INSERT INTO routes(id,node_id,transport,listen_port,state) VALUES('route-protect',?,'reality',8443,'disabled')")
+  await DB.prepare("INSERT INTO routes(id,node_id,transport,listen_port,state) VALUES('route-protect',?,'reality',8443,'draft')")
     .bind(node).run();
   const response=await enrollmentApi(new Request('https://v2/api/enrollment/clear-failed',{
     method:'POST',headers:{'x-telegram-init-data':owner,'content-type':'application/json'},
