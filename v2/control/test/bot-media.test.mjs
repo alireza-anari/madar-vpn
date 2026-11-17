@@ -12,6 +12,9 @@ function fixture(){
   for(const path of readdirSync(new URL('../migrations/',import.meta.url)).sort())
     raw.exec(readFileSync(new URL('../migrations/'+path,import.meta.url),'utf8'));
   raw.exec("INSERT INTO customers(telegram_id) VALUES('100'),('200'),('300'),('400')");
+  raw.exec("INSERT INTO telegram_bot_activations(telegram_id,channel_id,activated_ms,last_verified_ms) "+
+    "VALUES('100','-1001234567890',1,1),('200','-1001234567890',1,1),"+
+    "('300','-1001234567890',1,1),('400','-1001234567890',1,1)");
   const prepare=(sql,args=[])=>({
     bind(...params){return prepare(sql,params);},
     async first(){return raw.prepare(sql).get(...args)??null;},
