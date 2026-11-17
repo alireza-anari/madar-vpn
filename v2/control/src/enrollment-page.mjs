@@ -33,11 +33,11 @@ input[type=checkbox]{width:auto;display:inline;accent-color:#438df5}
 <button id="probe" type="button" disabled>۱ · بررسی اتصال</button>
 <fieldset id="credentials" hidden><legend>۲ · ورود امن و نصب خودکار</legend><p id="fingerprint"></p><label><input id="trust" type="checkbox">اثر انگشت را با پنل ارائه‌دهنده مطابقت دادم</label>
 <label>روش ورود<select id="method"><option value="password">رمز سرور</option><option value="key">کلید خصوصی SSH</option></select></label>
-<label>فایل کلید خصوصی<input id="keyfile" type="file"></label><label>رمز سرور یا رمز محافظ کلید<input id="password" type="password" autocomplete="off"></label><button id="install" type="submit">شروع نصب خودکار</button><button id="diagnose" type="button" hidden disabled>🔎 عیب‌یابی بدون نصب (فقط بررسی)</button><p id="diagnoseNote" hidden>فقط اطلاعات سیستم و دسترسی دانلود بررسی می‌شود؛ هیچ نصب یا حذفی انجام نمی‌شود. اطلاعات SSH فقط به‌صورت رمزگذاری‌شده ارسال می‌شوند.</p></fieldset></form><p id="status" role="status" aria-live="polite"></p>
+<label>فایل کلید خصوصی<input id="keyfile" type="file"></label><label>رمز سرور یا رمز محافظ کلید<input id="password" type="password" autocomplete="off"></label><button id="install" type="submit">شروع نصب خودکار</button><button id="diagnose" type="button" hidden disabled>🔎 عیب‌یابی بدون نصب (فقط بررسی)</button><button id="clearFailed" type="button" hidden disabled>پاک‌سازی ثبت نصب ناموفق و شروع دوباره</button><p id="diagnoseNote" hidden>فقط اطلاعات سیستم و دسترسی دانلود بررسی می‌شود؛ هیچ نصب یا حذفی انجام نمی‌شود. اطلاعات SSH فقط به‌صورت رمزگذاری‌شده ارسال می‌شوند.</p></fieldset></form><p id="status" role="status" aria-live="polite"></p>
 <script>
-const tg=window.Telegram?.WebApp;tg?.ready();const el=id=>document.getElementById(id),auth=tg?.initData||'';let publicKey,probeId,fingerprint,timer,busy=false,failedInstallId=null;
+const tg=window.Telegram?.WebApp;tg?.ready();const el=id=>document.getElementById(id),auth=tg?.initData||'';let publicKey,probeId,fingerprint,timer,busy=false,failedInstallId=null,failedNodeId=null,diagnosticId=null,probeExpires=0;
 const status=s=>el('status').textContent=s;
-const errors={PAIRING_KEY_NOT_CONFIGURED:'کلید عمومی رانر فعلی هنوز تنظیم نشده است.',RUNNER_OFFLINE:'اجراکننده مستقل V2 هنوز روی میزبان AWS متصل نشده است؛ هیچ نصبی شروع نمی‌شود.',RUNNER_NOT_CONFIGURED:'اتصال اجراکننده هنوز تنظیم نشده است.',EXECUTOR_NOT_CONFIGURED:'اجرای درخواستی هنوز به‌طور امن فعال نشده است.',EXECUTOR_DISPATCH_FAILED:'اجرای نصب در GitHub شروع نشد؛ هیچ تغییری در سرور انجام نشد.',AUTH_EXPIRED:'این صفحه را ببند و از ربات دوباره باز کن.',INVALID_TARGET:'مشخصات سرور معتبر نیست.',NODE_ALREADY_EXISTS:'این شناسه قبلاً ثبت شده است.',PROBE_REQUIRED:'بررسی اتصال را دوباره انجام بده.',JOB_ALREADY_PENDING:'یک کار در حال اجرا داری.',FAILED_INSTALL_REQUIRED:'درخواست نصب ناموفق قبلی پیدا نشد؛ صفحه را از ربات دوباره باز کن.'};
+const errors={PAIRING_KEY_NOT_CONFIGURED:'کلید عمومی رانر فعلی هنوز تنظیم نشده است.',RUNNER_OFFLINE:'اجراکننده مستقل V2 هنوز روی میزبان AWS متصل نشده است؛ هیچ نصبی شروع نمی‌شود.',RUNNER_NOT_CONFIGURED:'اتصال اجراکننده هنوز تنظیم نشده است.',EXECUTOR_NOT_CONFIGURED:'اجرای درخواستی هنوز به‌طور امن فعال نشده است.',EXECUTOR_DISPATCH_FAILED:'اجرای نصب در GitHub شروع نشد؛ هیچ تغییری در سرور انجام نشد.',AUTH_EXPIRED:'این صفحه را ببند و از ربات دوباره باز کن.',INVALID_TARGET:'مشخصات سرور معتبر نیست.',NODE_ALREADY_EXISTS:'این شناسه از نصب ناموفق قبلی در مدار ثبت شده است. پیش از تلاش مجدد، عیب‌یابی بدون نصب را اجرا کن.',PROBE_REQUIRED:'مهلت بررسی اتصال تمام شده یا اثر انگشت معتبر نیست؛ دوباره «بررسی اتصال» را بزن.',CLEAN_DIAG_REQUIRED:'ابتدا نتیجه موفق عیب‌یابی بدون نصب را دریافت کن.',NODE_RESET_UNSAFE:'پاک‌سازی خودکار امن نیست؛ این سرور داده وابسته دارد و باید بررسی شود.',JOB_ALREADY_PENDING:'یک کار در حال اجرا داری.',FAILED_INSTALL_REQUIRED:'درخواست نصب ناموفق قبلی پیدا نشد؛ صفحه را از ربات دوباره باز کن.'};
 async function api(path,data){const r=await fetch('/api/enrollment/'+path,{method:data?'POST':'GET',headers:{'content-type':'application/json','x-telegram-init-data':auth},...(data?{body:JSON.stringify(data)}:{})});const b=await r.json();if(!r.ok)throw Error(errors[b.error]||'عملیات انجام نشد؛ دوباره تلاش کن.');return b;}
 const b64=b=>btoa(String.fromCharCode(...new Uint8Array(b)));
 function restoreSpec(spec){
@@ -48,10 +48,27 @@ function restoreSpec(spec){
     if(Number.isInteger(spec[id]))el(id).value=String(spec[id]);
 }
 async function restoreJob(){
-  const {job}=await api('recent');
+  const {job,failedInstall}=await api('recent');
   if(!job)return status('آماده بررسی سرور.');
   restoreSpec(job.spec);
+  if(job.kind==='v2-install'&&job.diagnostic&&job.state==='ready'&&
+     job.safe_code==='DIAG_PRECHECK_OK'&&failedInstall?.id){
+    showDiagnoseForInstall(failedInstall.id,failedInstall.fingerprint,job.spec.nodeId);
+    diagnosticId=job.id;
+    el('diagnose').hidden=true;el('diagnoseNote').hidden=true;
+    el('clearFailed').hidden=false;el('clearFailed').disabled=false;
+    return status('عیب‌یابی موفق بود. اگر VPS همان سرور پاک و آماده است، ثبت نصب ناموفق را پاک کن و اتصال را دوباره بررسی کن.');
+  }
+  if(failedInstall?.id&&failedInstall?.fingerprint){
+    showDiagnoseForInstall(failedInstall.id,failedInstall.fingerprint,job.spec.nodeId);
+    return status('نصب قبلی این شناسه ناموفق بوده است: '+
+      (installDetails[failedInstall.safe_code]||'مرحله نصب روی VPS شکست خورده است.')+
+      ' برای جلوگیری از نصب تکراری، ابتدا «عیب‌یابی بدون نصب» را بزن.');
+  }
   if(job.kind==='probe'&&job.state==='ready'&&job.fingerprint){
+    if(job.expires_ms<=Date.now()+5000)
+      return status('مهلت اعتبار بررسی قبلی (۱۰ دقیقه) تمام شده است. دوباره «بررسی اتصال» را بزن.');
+    probeExpires=job.expires_ms;
     probeId=job.id;fingerprint=job.fingerprint;
     el('fingerprint').textContent=fingerprint;
     el('credentials').hidden=false;
@@ -59,7 +76,7 @@ async function restoreJob(){
     return status('بررسی قبلی بازیابی شد. فقط پس از تطبیق اثر انگشت، نصب را ادامه بده.');
   }
   if(job.kind==='v2-install'&&job.state==='failed'&&!job.diagnostic&&job.fingerprint){
-    showDiagnoseForInstall(job.id,job.fingerprint);
+    showDiagnoseForInstall(job.id,job.fingerprint,job.spec.nodeId);
     return status('نصب قبلی ناموفق بود: '+('خطای نامشخص در نصب')+'. برای بررسی بدون نصب دوباره اطلاعات ورود را وارد کن.');
   }
   if(job.kind==='v2-install'&&job.diagnostic&&['failed','ready'].includes(job.state))
@@ -89,8 +106,9 @@ const diagnosticDetail={
 function diagnosisMessage(code){
   return 'نتیجه عیب‌یابی بدون نصب: '+(diagnosticDetail[code]||'خطای نامشخص در عیب‌یابی رخ داد.');
 }
-function showDiagnoseForInstall(id,fp){
-  failedInstallId=id;fingerprint=fp;
+function showDiagnoseForInstall(id,fp,nodeId=el('nodeId').value.trim()){
+  failedInstallId=id;failedNodeId=nodeId;fingerprint=fp;probeId=null;probeExpires=0;
+  diagnosticId=null;el('clearFailed').hidden=true;el('clearFailed').disabled=true;
   el('fingerprint').textContent=fp;
   el('credentials').hidden=false;
   el('trust').checked=false;
@@ -121,13 +139,24 @@ async function poll(id,kind){
       busy=false;lock(false);el('probe').disabled=false;
       if(kind==='probe'){
         probeId=id;fingerprint=b.fingerprint;
-        failedInstallId=null;el('diagnose').hidden=true;
-        el('fingerprint').textContent=fingerprint;el('credentials').hidden=false;
-        el('install').disabled=false;
-        status('اتصال بررسی شد. هویت سرور را تأیید و اطلاعات ورود را وارد کن.');
+        probeExpires=Date.now()+9*60*1000;
+        if(failedInstallId&&failedNodeId===el('nodeId').value.trim()){
+          showDiagnoseForInstall(failedInstallId,fingerprint,failedNodeId);
+          status('اتصال برقرار است، اما ثبت نصب ناموفق قبلی هنوز وجود دارد. ابتدا «عیب‌یابی بدون نصب» را بزن.');
+        }else{
+          failedInstallId=null;failedNodeId=null;el('diagnose').hidden=true;
+          el('fingerprint').textContent=fingerprint;el('credentials').hidden=false;
+          el('install').disabled=false;
+          status('اتصال بررسی شد. هویت سرور را تأیید و اطلاعات ورود را وارد کن.');
+        }
       }else if(kind==='diagnose'){
-        el('credentials').hidden=true;
-        status(diagnosisMessage(b.safe_code)+' هیچ نصب یا حذفی اجرا نشد.');
+        diagnosticId=b.safe_code==='DIAG_PRECHECK_OK'?id:null;
+        el('clearFailed').hidden=!diagnosticId;
+        el('clearFailed').disabled=!diagnosticId;
+        el('diagnose').hidden=!!diagnosticId;
+        el('diagnose').disabled=false;
+        status(diagnosisMessage(b.safe_code)+
+          (diagnosticId?' در صورت اطمینان از خالی بودن VPS، ثبت ناموفق را پاک کن.':' هیچ نصب یا حذفی اجرا نشد.'));
       }else{
         el('credentials').hidden=true;
         status('نصب ثبت شد. به ربات برگرد و «صدور کانفیگ تست» را بزن. آزمون اینترنت و سهمیه هنوز جداگانه انجام می‌شود.');
@@ -138,6 +167,20 @@ async function poll(id,kind){
     timer=setTimeout(()=>poll(id,kind),3000);
   }catch(e){busy=false;status('ارتباط با سرویس برقرار نشد؛ دوباره تلاش کنید.');}
 }
+el('clearFailed').onclick=async()=>{
+  if(busy||!failedInstallId||!diagnosticId)return;
+  busy=true;el('clearFailed').disabled=true;
+  try{
+    const result=await api('clear-failed',{failedInstallId,diagnosticId});
+    if(result.status!=='CLEARED')throw Error('پاک‌سازی تأیید نشد.');
+    failedInstallId=null;failedNodeId=null;diagnosticId=null;probeId=null;probeExpires=0;fingerprint=null;
+    el('credentials').hidden=true;el('clearFailed').hidden=true;
+    el('keyfile').value='';el('password').value='';el('trust').checked=false;
+    el('probe').disabled=false;
+    status('ثبت نصب ناموفق از مدار پاک شد. دوباره «بررسی اتصال» را بزن و سپس نصب را آغاز کن.');
+  }catch(e){el('clearFailed').disabled=false;status('پاک‌سازی انجام نشد: '+e.message);}
+  finally{busy=false;}
+};
 el('diagnose').onclick=async()=>{
   if(busy||!failedInstallId||!fingerprint||!el('trust').checked){
     status('ابتدا اثر انگشت SSH قبلی را تأیید کن.');return;
@@ -151,12 +194,13 @@ el('diagnose').onclick=async()=>{
     if(credentials.method==='password'?!credentials.password:!credentials.key)
       throw Error('اطلاعات ورود را در فرم امن وارد کن.');
     const envelope=await encrypt(credentials);
-    credentials=null;el('password').value='';el('keyfile').value='';
+    credentials=null;
     const job=await api('diagnose',{failedInstallId,fingerprint,trust:true,envelope});
+    el('password').value='';el('keyfile').value='';
     status('عیب‌یابی بدون نصب شروع شد…');
     poll(job.id,'diagnose');
-  }catch(e){busy=false;el('diagnose').disabled=false;status('عیب‌یابی آغاز نشد؛ ارتباط را بررسی و دوباره تلاش کنید.');}
-  finally{credentials=null;el('password').value='';el('keyfile').value='';}
+  }catch(e){busy=false;el('diagnose').disabled=false;status('عیب‌یابی آغاز نشد: '+e.message+' فایل کلید را دوباره انتخاب نکن؛ همین‌جا می‌توانی تلاش کنی.');}
+  finally{credentials=null;}
 };
 
 el('pairRunner').onclick=async()=>{
@@ -169,8 +213,35 @@ el('pairRunner').onclick=async()=>{
   }catch(e){el('pairingStatus').textContent='اتصال امن رانر برقرار نشد؛ تنظیمات را بررسی کنید.';}
   finally{el('pairRunner').disabled=false;}
 };
-el('probe').onclick=async()=>{if(busy||!el('form').reportValidity())return;busy=true;failedInstallId=null;el('diagnose').hidden=true;el('diagnoseNote').hidden=true;el('probe').disabled=true;el('credentials').hidden=true;el('trust').checked=false;try{const b={};for(const id of ['nodeId','provider','region','ip','username'])b[id]=el(id).value.trim();for(const id of ['userLimit','capacityGb','port'])b[id]=Number(el(id).value);const job=await api('probe',b);lock(true);poll(job.id,'probe');}catch(e){busy=false;el('probe').disabled=false;status('بررسی اتصال آغاز نشد؛ اطلاعات سرور و ارتباط را بررسی کنید.');}};
-el('form').onsubmit=async e=>{e.preventDefault();if(busy||failedInstallId||!probeId||!el('trust').checked){status('ابتدا اثر انگشت سرور را تأیید کن. برای نصب قبلی ناموفق، گزینه عیب‌یابی بدون نصب را بزن.');return;}busy=true;el('install').disabled=true;let credentials;try{credentials=el('method').value==='password'?{method:'password',password:el('password').value}:{method:'key',key:await el('keyfile').files[0]?.text(),passphrase:el('password').value};if(credentials.method==='password'?!credentials.password:!credentials.key)throw Error('اطلاعات ورود را وارد کن.');const envelope=await encrypt(credentials);credentials=null;el('password').value='';el('keyfile').value='';const job=await api('install',{probeId,fingerprint,trust:true,envelope});poll(job.id,'install');}catch(e){busy=false;el('install').disabled=false;status('نصب آغاز نشد؛ ارتباط را بررسی و دوباره تلاش کنید.');}finally{credentials=null;el('password').value='';el('keyfile').value='';}};
+el('probe').onclick=async()=>{if(busy||!el('form').reportValidity())return;busy=true;if(failedNodeId!==el('nodeId').value.trim()){failedInstallId=null;failedNodeId=null;}probeId=null;probeExpires=0;el('diagnose').hidden=true;el('diagnoseNote').hidden=true;el('probe').disabled=true;el('credentials').hidden=true;el('trust').checked=false;try{const b={};for(const id of ['nodeId','provider','region','ip','username'])b[id]=el(id).value.trim();for(const id of ['userLimit','capacityGb','port'])b[id]=Number(el(id).value);const job=await api('probe',b);lock(true);poll(job.id,'probe');}catch(e){busy=false;el('probe').disabled=false;status('بررسی اتصال آغاز نشد: '+e.message);}};
+el('form').onsubmit=async e=>{
+  e.preventDefault();
+  if(busy||failedInstallId||!probeId||!el('trust').checked){
+    status('ابتدا اثر انگشت سرور را تأیید کن. برای نصب قبلی ناموفق، گزینه عیب‌یابی بدون نصب را بزن.');return;
+  }
+  if(Date.now()>=probeExpires){
+    probeId=null;el('install').disabled=true;
+    status('مهلت ۱۰ دقیقه‌ای اثر انگشت پایان یافته است. پیش از ارسال کلید، دوباره «بررسی اتصال» را بزن.');return;
+  }
+  busy=true;el('install').disabled=true;
+  let credentials;
+  try{
+    credentials=el('method').value==='password'
+      ?{method:'password',password:el('password').value}
+      :{method:'key',key:await el('keyfile').files[0]?.text(),passphrase:el('password').value};
+    if(credentials.method==='password'?!credentials.password:!credentials.key)
+      throw Error('اطلاعات ورود را وارد کن.');
+    const envelope=await encrypt(credentials);
+    credentials=null;
+    const job=await api('install',{probeId,fingerprint,trust:true,envelope});
+    // Clear the local file picker only after the API accepts the job.
+    el('password').value='';el('keyfile').value='';
+    poll(job.id,'install');
+  }catch(e){
+    busy=false;el('install').disabled=false;
+    status('نصب آغاز نشد: '+e.message+'\nفایل کلید انتخاب‌شده حفظ شده است؛ برای تلاش مجدد نیازی به انتخاب دوباره نیست.');
+  }finally{credentials=null;}
+};
 if(!auth)status('این صفحه را از دکمه افزودن سرور در ربات V2 باز کن.');
 else api('session').then(async s=>{
   publicKey=s.publicKey;el('probe').disabled=false;
