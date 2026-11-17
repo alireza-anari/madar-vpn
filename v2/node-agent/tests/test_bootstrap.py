@@ -11,6 +11,8 @@ def dns_ok(name,port,**kw):
 class BootstrapTests(unittest.TestCase):
     def test_reality_only_dry_run_does_not_change_server(self):
         plan=plan_node(node_id="test-eu01",public_ip=GOOD_IP)
+        self.assertEqual(plan_node(node_id="webdade6",public_ip=GOOD_IP)["node_id"],"webdade6")
+        self.assertEqual(plan_node(node_id="aws-eu1",public_ip=GOOD_IP)["node_id"],"aws-eu1")
         self.assertEqual(plan["protocols"],["reality"])
         self.assertEqual(plan["reality_port"],8443)
         self.assertIsNone(plan["wss_domain"])
