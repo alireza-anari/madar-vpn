@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {parseNodeAdd,parseRouteAdd,enrollNode,addRoute} from '../src/node-admin.mjs';
+import {parseNodeAdd,parseRouteAdd,enrollNode,addRoute,nodeStatusPresentation} from '../src/node-admin.mjs';
 test('node enroll input rejects shell, oversized and missing capacities',()=>{
   assert.deepEqual(parseNodeAdd('/node_add eu_01|aws|eu|20|500'),{
     id:'eu_01',provider:'aws',region:'eu',userLimit:20,byteLimit:500*1073741824
@@ -82,4 +82,19 @@ test('operator variant refuses missing parent instead of faking a ready route',a
   const result=await addRoute(db,'123','/node_route eu_01|reality|8443|irancell');
   assert.match(result.text,/اطلاعات عمومی مسیر اصلی REALITY کامل نیست/);
   assert.equal(batchCalled,false);
+});
+
+test('installed provisioning nodes are shown as ready for field testing, never as ready for sale',()=>{
+  assert.deepEqual(nodeStatusPresentation('provisioning','installed'),{
+    label:'آماده آزمون',symbol:'🧪'
+  });
+  assert.deepEqual(nodeStatusPresentation('provisioning','dispatched'),{
+    label:'در حال آماده‌سازی',symbol:'🟠'
+  });
+  assert.deepEqual(nodeStatusPresentation('ready','installed'),{
+    label:'آماده',symbol:'🟢'
+  });
+  assert.deepEqual(nodeStatusPresentation('degraded','installed'),{
+    label:'نیازمند بررسی',symbol:'🟠'
+  });
 });
