@@ -120,7 +120,7 @@ test('branded photo dashboard edits its caption rather than stacking new photos'
   const fixture=outboxFixture({
     id:6,chat_id:'456',body:'🌐  مــدار\n📊 پیشخوان مدیریت',
     attempts:0,reply_markup:JSON.stringify({inline_keyboard:[[{text:'سرورها',callback_data:'v2:admin:nodes'}]]}),
-    media_file_id:'https://raw.githubusercontent.com/example/brand.jpg',
+    media_file_id:BRAND_BANNER_URL,
     edit_message_id:91,edit_kind:'caption',
   });
   const original=globalThis.fetch,calls=[];
