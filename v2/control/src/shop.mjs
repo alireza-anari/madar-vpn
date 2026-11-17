@@ -1,8 +1,10 @@
-import {issueTrialLink,enqueueAutoNode} from './node-auto.mjs';
+import {issueTrialLink,issueCustomerTrialLink,enqueueAutoNode} from './node-auto.mjs';
 import {issueCarrierLink} from './carrier-subscription.mjs';
+import {receiveSupportPhoto,viewSupportPhoto} from './support-media.mjs';
+import {adminConfigAction} from './bot-config.mjs';
 import {adminDashboard,adminPanelAction,customerTicketAction,consumePanelInput,notifySupport,staffTicketDetails} from './bot-panels.mjs';
 import {beginNodeWizard,cancelNodeWizard,consumeNodeWizard} from './node-wizard.mjs';
-import { nodeAdminAction } from './node-admin.mjs';
+import { nodeAdminAction,nodeOverview,nodeDetails,nodeManagement,nodeFromRef } from './node-admin.mjs';
 import { handleSeller, linkSellerOnStart, grantStaffRole } from './referrals.mjs';
 /**
  * Madar V2 business UI. Every mutable action is idempotent by the Telegram
@@ -225,9 +227,7 @@ async function orderDetails(db,e,id){
     '\n📅 تاریخ ثبت: '+faDate(order.created_at)+
     '\n\nروند سفارش\n'+timeline+
     '\n\nمرحله بعد\n'+step,e.locale,[
-    [{text:'🔄 تازه‌سازی وضعیت',callback_data:'v2:orders:view:'+id}],
-    [{text:'🧾 سفارش‌های من',callback_data:'v2:orders'},
-     {text:'💬 پشتیبانی',callback_data:'v2:customer:tickets'}]
+    [{text:'🔄 تازه‌سازی وضعیت',callback_data:'v2:orders:view:'+id}]
   ]);
 }
 
@@ -238,10 +238,7 @@ async function mySubscriptions(db,e,env) {
   if (!rows.length)return response(
     panelHeading('📦','اشتراک‌های من','وضعیت و اطلاعات اتصال سرویس شما')+
     '\n\nهنوز اشتراک فعالی در مدار V2 ندارید.\nاشتراک نسخه قبلی شما مستقل و محفوظ است.',
-    e.locale,[[
-      {text:'🛍 مشاهده بسته‌ها',callback_data:'v2:plans'},
-      {text:'🧾 پیگیری سفارش',callback_data:'v2:orders'}
-    ]]);
+    e.locale,[[{text:'🛍 مشاهده بسته‌ها',callback_data:'v2:plans'}]]);
   const buttons=env.SUBSCRIPTION_LINKS_ENABLED==='true'?
     rows.filter(x=>x.state==='active').map(x=>[{
       text:'🔗 دریافت لینک اتصال · '+shortCode(x.id,8),
@@ -256,11 +253,7 @@ async function mySubscriptions(db,e,env) {
       '\n📅 پایان اعتبار: '+faDate(x.expires_at)
     )).join('\n\n──────────────\n\n')+
     '\n\n🔐 لینک اتصال خصوصی است؛ حجم دو مسیر همراه اول و ایرانسل مشترک محاسبه می‌شود.',
-    e.locale,[
-      ...buttons,
-      [{text:'🧾 سفارش‌های من',callback_data:'v2:orders'},
-       {text:'💬 پشتیبانی',callback_data:'v2:customer:tickets'}]
-    ]);
+    e.locale,buttons);
 }
 
 async function beginSupport(db,e,nowMs) {
@@ -379,22 +372,52 @@ async function adminDecision(db,e,action,id) {
     '\nهنوز هیچ کانفیگی صادر نشده است.',e.locale);
 }
 
-async function supportInbox(env,e) {
+async function supportInbox(env,e,filter='open',page=0) {
   const db=env.DB;
-  const queue=(await db.prepare(
-    "SELECT id,customer_telegram_id,subject,state FROM support_tickets " +
-    "WHERE state IN ('open','waiting') ORDER BY created_at LIMIT 8"
-  ).all()).results??[];
-  if(!queue.length)return staffResponse(
-    panelHeading('💬','صندوق پشتیبانی','مدیریت گفت‌وگوهای مشتریان')+
-    '\n\n✅ درخواست بازِ پشتیبانی در صف نیست.',e,env);
-  return staffResponse(panelHeading('💬','صندوق پشتیبانی','درخواست‌های نیازمند پاسخ')+
-    '\n\n'+queue.map((x,i)=>faNumber(i+1)+'. '+statusSymbol(x.state)+' '+faStatus(x.state)+
-      '\nکد: '+x.id+'  ·  مشتری: '+x.customer_telegram_id+
-      '\nموضوع: '+x.subject.slice(0,80)).join('\n\n──────────────\n\n'),
-    e,env,queue.map(x=>[
-      {text:'💬 مشاهده · '+shortCode(x.id,10),callback_data:'v2:ticket:view:'+x.id},
-    ]));
+  const options={
+    open:{name:'نیازمند پاسخ',where:"state='open'"},
+    waiting:{name:'منتظر مشتری',where:"state='waiting'"},
+    closed:{name:'بسته‌شده',where:"state='closed'"},
+    all:{name:'همه',where:"1=1"},
+  };
+  if(!Object.hasOwn(options,filter))filter='open';
+  page=Number.isSafeInteger(page)&&page>=0&&page<=1000?page:0;
+  const [open,waiting,closed,filtered]=await Promise.all([
+    db.prepare("SELECT COUNT(*) n FROM support_tickets WHERE state='open'").first(),
+    db.prepare("SELECT COUNT(*) n FROM support_tickets WHERE state='waiting'").first(),
+    db.prepare("SELECT COUNT(*) n FROM support_tickets WHERE state='closed'").first(),
+    db.prepare("SELECT COUNT(*) n FROM support_tickets WHERE "+options[filter].where).first(),
+  ]);
+  const total=Number(filtered?.n??0),last=Math.max(0,Math.ceil(total/6)-1);
+  page=Math.min(page,last);
+  const rows=(await db.prepare(
+    "SELECT id,customer_telegram_id,subject,state FROM support_tickets WHERE "+options[filter].where+
+    " ORDER BY created_at DESC,id DESC LIMIT 6 OFFSET ?"
+  ).bind(page*6).all()).results??[];
+  const optionsRow=[
+    {text:(filter==='open'?'✅ ':'')+'نیازمند پاسخ',callback_data:'v2:admin:tickets:open:0'},
+    {text:(filter==='waiting'?'✅ ':'')+'منتظر مشتری',callback_data:'v2:admin:tickets:waiting:0'},
+  ];
+  const optionsRow2=[
+    {text:(filter==='closed'?'✅ ':'')+'بسته‌شده',callback_data:'v2:admin:tickets:closed:0'},
+    {text:(filter==='all'?'✅ ':'')+'همه',callback_data:'v2:admin:tickets:all:0'},
+  ];
+  const pages=[];
+  if(page>0)pages.push({text:'◀️ قبلی',callback_data:'v2:admin:tickets:'+filter+':'+(page-1)});
+  if(page<last)pages.push({text:'بعدی ▶️',callback_data:'v2:admin:tickets:'+filter+':'+(page+1)});
+  const buttons=[
+    optionsRow,optionsRow2,
+    ...rows.map(row=>[{text:statusSymbol(row.state)+' '+shortCode(row.id,14)+' · '+shortCode(row.subject,22),
+      callback_data:'v2:ticket:view:'+row.id}]),
+    ...(pages.length?[pages]:[]),
+  ];
+  return staffResponse(panelHeading('💬','صندوق پشتیبانی','درخواست‌ها تفکیک‌شده و قابل پیگیری‌اند')+
+    '\n\n🔵 نیازمند پاسخ: '+faNumber(open?.n??0)+
+    '\n🟡 منتظر مشتری: '+faNumber(waiting?.n??0)+
+    '\n⚪ بسته‌شده: '+faNumber(closed?.n??0)+
+    '\n\n📂 '+options[filter].name+' · صفحه '+faNumber(page+1)+' از '+faNumber(last+1)+
+    '\n'+(rows.length?'برای مشاهده گفت‌وگو یک درخواست را انتخاب کنید.':'در این دسته درخواستی وجود ندارد.'),
+    e,env,buttons);
 }
 
 async function staffCanReply(db,e,env) {
@@ -421,7 +444,12 @@ async function staffReply(db,e,env,nowMs) {
   const session=await db.prepare(
     'SELECT ticket_id,expires_ms FROM support_staff_sessions WHERE telegram_id=?'
   ).bind(e.actorId).first();
-  if(!session||session.expires_ms<nowMs)return null;
+  if(!session)return null;
+  if(session.expires_ms<nowMs){
+    await db.prepare('DELETE FROM support_staff_sessions WHERE telegram_id=?')
+      .bind(e.actorId).run();
+    return staffResponse('⌛ زمان پاسخ‌گویی پایان یافته است؛ درخواست را دوباره باز کنید.',e,env);
+  }
   const ticket=await db.prepare(
     "SELECT id,customer_telegram_id,state FROM support_tickets WHERE id=?"
   ).bind(session.ticket_id).first();
@@ -508,9 +536,16 @@ async function personalizedHome(env,e,customerView=false) {
     ...(isAdmin&&!customerView?[[{text:'👤 مشاهده نمای مشتری',callback_data:'v2:customer:home'}]]:[]),
     ...(seller?[[{text:'🧑‍💼 ورود به پنل فروشنده',callback_data:'v2:seller:home'}]]:[]),
   ];
-  return {text:frameMessage(panelHeading('🌐','پنل کاربری مدار','مدیریت اشتراک، سفارش و پشتیبانی')+
-    '\n\n'+greeting+'\n'+state+'\n'+orderHint+'\n\n'+safety+restriction),
-    photoId:BRAND_BANNER_URL,
+  const homeLines=[
+    panelHeading('👋','پنل کاربری مدار','اشتراک و سفارش‌های شما، یکجا'),
+    '',
+    greeting,
+    state,
+    orderHint,
+    '',
+    safety+restriction
+  ];
+  return {text:frameMessage(homeLines.join('\n')),photoId:BRAND_BANNER_URL,
     replyMarkup:{inline_keyboard:[...quick,...menu.inline_keyboard]}};
 }
 
@@ -536,7 +571,7 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
       !['/start','home','support','/support','customer:tickets','/tickets','lang','/lang'].includes(key) &&
       !key.startsWith('lang:') && !key.startsWith('customer:ticket:') &&
       !key.startsWith('customer:ticket:reply:') &&
-      !(typeof e.inputText==='string' && (
+      !((typeof e.inputText==='string'||!!e.photoId) && (
         !!(await db.prepare(
           "SELECT 1 AS ok FROM customer_sessions WHERE telegram_id=? AND mode='support' AND expires_ms>?"
         ).bind(e.actorId,nowMs).first()) ||
@@ -548,7 +583,6 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
 
   if(key==='lang'||key==='/lang'||key==='lang:fa'||key==='lang:en')
     return response('🌐 زبان ربات مدار فارسی است و همه پیام‌ها به زبان فارسی نمایش داده می‌شوند.',e.locale);
-
   const botActivationReply=prompt=>({
     text:frameMessage(prompt.text),
     replyMarkup:prompt.replyMarkup,
@@ -557,9 +591,8 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
     const activation=await checkAndActivateBot(env,e.actorId,nowMs);
     if(activation.state==='activated'){
       const home=await personalizedHome(env,e);
-      const body=home.text
-        .replace(/^🌐  مــدار\n━━━━━━━━━━━━━━━━━━\n/,'')
-        .replace(/\n━━━━━━━━━━━━━━━━━━$/,'');
+      const body=home.text.startsWith('🌐  مــدار\n')
+        ?home.text.slice('🌐  مــدار\n'.length):home.text;
       return {...home,text:frameMessage(
         '✅ عضویت شما در کانال اطلاع‌رسانی تأیید شد و ربات مدار برای حساب شما فعال است. اکنون می‌توانید به اپ مدار برگردید و ورود را انجام دهید.\n\n'+body
       )};
@@ -590,7 +623,13 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
      !await isBotActivated(db,e.actorId))
     return botActivationReply(activationPrompt(env,'v2:activation:check','bot'));
 
-  if(e.photoId)return storeReceipt(db,e,env);
+  if(e.photoId){
+    const image=await receiveSupportPhoto(env,e,nowMs);
+    if(image)return image;
+    return storeReceipt(db,e,env);
+  }
+  const customerImage=key.match(/^customer:ticket:media:([0-9]{1,20})$/);
+  if(customerImage)return viewSupportPhoto(env,e,customerImage[1],true);
   const customer=await customerTicketAction(env,e,nowMs);
   if(customer)return customer;
   const adminPanel=await adminPanelAction(env,e,nowMs);
@@ -602,14 +641,18 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
       db.prepare('DELETE FROM customer_sessions WHERE telegram_id=?').bind(e.actorId),
       db.prepare('DELETE FROM admin_node_sessions WHERE telegram_id=?').bind(e.actorId),
     ]);
+    await db.prepare('DELETE FROM support_staff_sessions WHERE telegram_id=?').bind(e.actorId).run();
     return response(t('✅ عملیات لغو شد.','✅ Cancelled.',e.locale),e.locale);
   }
   if (key==='admin:node:new' || key==='admin:node:cancel') {
     if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
       return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
-    const panel=key==='admin:node:new'
-      ?await beginNodeWizard(db,e.actorId,nowMs,env)
-      :await cancelNodeWizard(db,e.actorId);
+    if(key==='admin:node:cancel'){
+      await cancelNodeWizard(db,e.actorId);
+      const overview=await nodeOverview(db);
+      return adminResponse(overview.text,e.locale,overview.replyMarkup.inline_keyboard);
+    }
+    const panel=await beginNodeWizard(db,e.actorId,nowMs,env);
     return adminResponse(panel.text,e.locale,panel.replyMarkup?.inline_keyboard??[]);
   }
   if(adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) {
@@ -626,6 +669,48 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
     if(!await grantStaffRole(db,e,role,id))
       return adminResponse('⚠️ شناسه تلگرام معتبر نیست. دستور را همراه شناسه عددی بفرستید.',e.locale);
     return adminResponse('✅ دسترسی '+faRole(role)+' برای شناسه '+id+' فعال شد.',e.locale);
+  }
+  if(key==='admin:configs'||key.startsWith('admin:configs:')){
+    if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
+      return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
+    return adminConfigAction(env,e,nowMs);
+  }
+  if(/^admin:nodes:(all|ready|setup|attention|quarantine|archive):[0-9]{1,4}$/.test(key)){
+    if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
+      return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
+    const [, ,filter,page]=key.split(':');
+    const list=await nodeOverview(db,{filter,page:Number(page)});
+    return adminResponse(list.text,e.locale,list.replyMarkup.inline_keyboard);
+  }
+  if(key.startsWith('admin:node:view:') ||
+     /^admin:node:(confirm|apply|trialref):/.test(key)){
+    if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
+      return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
+    let panel;
+    const view=key.match(/^admin:node:view:([a-f0-9]{24})$/);
+    const manage=key.match(/^admin:node:(confirm|apply):(quarantine|restore|retire):([a-f0-9]{24})$/);
+    const trial=key.match(/^admin:node:trialref:([a-f0-9]{24})$/);
+    if(view)panel=await nodeDetails(db,view[1],e.actorId);
+    else if(manage)
+      panel=await nodeManagement(db,e.actorId,manage[3],manage[2],
+        manage[1]==='apply',e.updateId);
+    else if(trial){
+      const node=await nodeFromRef(db,trial[1]);
+      const job=node?await db.prepare(
+        'SELECT state,owner_id FROM node_bootstrap_jobs WHERE node_id=?'
+      ).bind(node.id).first():null;
+      if(!node||!job||job.state!=='installed'||job.owner_id!==e.actorId||
+         ['quarantined','retired'].includes(node.lifecycle))
+        panel={text:'⛔ صدور لینک تست این سرور مجاز نیست.',replyMarkup:{inline_keyboard:[]}};
+      else {
+        const url=await issueTrialLink(env,e.actorId,node.id,nowMs);
+        panel={text:url?'🔗 لینک تست سرور '+node.id+'\n'+url+
+          '\n\nاین لینک آزمایشی است و تأیید آمادگی فروش محسوب نمی‌شود.':
+          '⏸ لینک تست آماده نیست. نصب سرور و مسیرهای اپراتورها را بررسی کنید.',
+          replyMarkup:{inline_keyboard:[]}};
+      }
+    }else panel={text:'⚠️ درخواست مدیریت سرور معتبر نیست.',replyMarkup:{inline_keyboard:[]}};
+    return adminResponse(panel.text,e.locale,panel.replyMarkup?.inline_keyboard??[]);
   }
   if(key.startsWith('admin:node:trial:')) {
     if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
@@ -653,6 +738,10 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
   if(key==='admin:plans') {
     if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
       return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
+    // A back button from the plan wizard abandons the unsaved draft.
+    if(Number.isSafeInteger(e.messageId)&&e.messageId>0)
+      await db.prepare("DELETE FROM v2_bot_input_sessions WHERE telegram_id=? AND mode='plan_draft'")
+        .bind(e.actorId).run();
     const plans=(await db.prepare(
       'SELECT id,title_fa,active,price_amount,price_currency FROM plans ORDER BY id LIMIT 12'
     ).all()).results??[];
@@ -685,9 +774,8 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
     if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
       return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
     const result=await nodeAdminAction(db,e.actorId,key==='admin:nodes'?'/nodes':key,e.inputText);
-    if(key==='admin:nodes')return adminResponse(result.text,e.locale,[
-      [{text:'➕ افزودن سرور',callback_data:'v2:admin:node:new'}],
-    ]);
+    if(key==='admin:nodes'||key==='/nodes')
+      return adminResponse(result.text,e.locale,result.replyMarkup?.inline_keyboard??[]);
     return adminResponse(result.text,e.locale);
   }
   if(key==='/plan_add') {
@@ -756,6 +844,27 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
   }
   if (key==='home') return personalizedHome(env,e);
   if (key==='customer:home') return personalizedHome(env,e,true);
+  if(key==='customer:trial'){
+    const trial=await issueCustomerTrialLink(env,e.actorId,nowMs);
+    if(trial.status==='issued')return response(
+      panelHeading('🧪','تست رایگان مدار','اعتبار لینک: یک ساعت')+
+      '\n\n✅ تست یک‌ساعته شما فعال شد.'+
+      '\nیک لینک شامل دو مسیر همراه اول و ایرانسل دریافت می‌کنید:'+
+      '\n\n'+trial.url+
+      '\n\nدر v2rayNG از بخش تنظیمات اشتراک، لینک را اضافه و به‌روزرسانی کنید.'+
+      '\n🔐 لینک خصوصی است و فقط یک بار برای این حساب صادر می‌شود.',e.locale);
+    if(trial.status==='existing')return response(
+      panelHeading('🧪','تست رایگان شما','این تست قبلاً برای حساب شما صادر شده است')+
+      '\n\nهمان لینک قبلی هنوز تا پایان مهلت یک‌ساعته معتبر است:'+
+      '\n\n'+trial.url+
+      '\n\nپس از پایان مهلت، امکان دریافت تست دوم وجود ندارد.',e.locale);
+    if(trial.status==='used')return response(
+      panelHeading('🧪','سهمیه تست استفاده شده','هر حساب تلگرام فقط یک بار مجاز به دریافت تست است.')+
+      '\n\nتست قبلی شما منقضی شده یا قبلاً استفاده شده است؛ امکان صدور تست مجدد وجود ندارد.',e.locale);
+    return response(
+      panelHeading('⏳','تست رایگان فعلاً در دسترس نیست','سرور آماده با دو مسیر تأییدشده پیدا نشد.')+
+      '\n\nسهمیه یک‌باره شما مصرف نشده است. لطفاً بعداً دوباره تلاش کنید.',e.locale);
+  }
   if (key==='plans' || key==='/plans') return listPlans(db,env,e.locale,nowMs);
   if (key==='my' || key==='/my') return mySubscriptions(db,e,env);
   if (key.startsWith('my:link:')) {
@@ -797,10 +906,19 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
     if (!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
     return adminReceipt(db,e,key.slice('admin:receipt:'.length));
   }
-  if (key==='admin:tickets') {
+  if (key==='admin:tickets'||
+      /^admin:tickets:(open|waiting|closed|all):[0-9]{1,4}$/.test(key)) {
     if (!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId) &&
       !await isStaff(db,e,'support')) return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
-    return supportInbox(env,e);
+    const match=key.match(/^admin:tickets:(open|waiting|closed|all):([0-9]{1,4})$/);
+    return supportInbox(env,e,match?.[1]??'open',match?Number(match[2]):0);
+  }
+  const staffImage=key.match(/^ticket:media:([0-9]{1,20})$/);
+  if(staffImage)return viewSupportPhoto(env,e,staffImage[1],false);
+  const staffPage=key.match(/^ticket:page:(tg-[0-9]{1,20}):([0-9]{1,4})$/);
+  if(staffPage){
+    if(!await staffCanReply(db,e,env))return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
+    return staffTicketDetails(env,e,staffPage[1],Number(staffPage[2]));
   }
   if(key.startsWith('ticket:view:')) {
     if(!await staffCanReply(db,e,env))return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
