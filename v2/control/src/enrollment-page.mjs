@@ -26,7 +26,7 @@ input[type=checkbox]{width:auto;display:inline;accent-color:#438df5}
 <button type="button" id="pairRunner">آماده‌سازی اتصال امن رانر</button><p id="pairingStatus" role="status"></p>
 </details>
 <form id="form">
-<label>شناسه سرور<input id="nodeId" value="test-aws01" required pattern="test-[A-Za-z0-9_-]{2,55}"></label>
+<label>شناسه سرور<input id="nodeId" placeholder="webdade6" required minlength="3" maxlength="64" pattern="[A-Za-z][A-Za-z0-9_-]{2,63}" title="شناسه ۳ تا ۶۴ کاراکتر؛ با حرف لاتین شروع شود و فقط شامل حروف لاتین، عدد، خط تیره و زیرخط باشد."></label><small>برای مثال: webdade6 یا aws-eu1. پیشوند test- اجباری نیست؛ نام‌های رزروشده مانند production قابل استفاده نیستند.</small>
 <label>ارائه‌دهنده<input id="provider" value="aws" required></label><label>منطقه<input id="region" value="eu-north-1" required></label>
 <label>سقف کاربر<input id="userLimit" type="number" value="20" min="1" max="100000" required></label><label>سقف حجم گیگابایت<input id="capacityGb" type="number" value="500" min="1" max="200000" required></label>
 <label>IP سرور<input id="ip" dir="ltr" required></label><label>پورت SSH<input id="port" type="number" value="22" min="1" max="65535" required></label><label>نام کاربر<input id="username" value="root" dir="ltr" required></label>
