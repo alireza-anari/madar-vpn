@@ -164,7 +164,7 @@ export function parentPage(key,isAdmin=false){
     return 'ticket:view:'+key.split(':')[2];
   if(/^customer:ticket:page:tg-[0-9]{1,20}:[0-9]{1,4}$/.test(key))
     return 'customer:ticket:'+key.split(':')[3];
-  if(/^admin:nodes:(all|ready|setup|attention|quarantine|archive):[0-9]{1,4}$/.test(key))
+  if(/^admin:nodes:(all|ready|setup|testing|attention|quarantine|archive):[0-9]{1,4}$/.test(key))
     return 'admin:nodes';
   if(/^admin:node:(confirm|apply):(quarantine|restore|retire):[a-f0-9]{24}$/.test(key))
     return 'admin:node:view:'+key.slice(-24);
