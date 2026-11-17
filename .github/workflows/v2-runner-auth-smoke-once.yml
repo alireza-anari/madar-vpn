@@ -19,6 +19,7 @@ jobs:
           BASE_URL: https://madar-v2-staging.alirezaanari117.workers.dev
           SERVICE_SECRET: ${{ secrets.MADAR_V2_RUNNER_SERVICE_SECRET }}
           PRIVATE_KEY: ${{ secrets.MADAR_V2_RUNNER_PRIVATE_KEY_PEM }}
+          PUBLIC_N: t7u_60iuXewyDUWPnzcaeaxnaaYxqDd8kD0oZrfkTmOPDE7l5uha6xnhznJ825NQWoRNXhDtRm7ifNi9VFVgvkb7Sb-WcPmYeSOFvIHFJguziaT71xylPv61lFLBy41npeck7q-uisjfJ_oWyBQcCzolG7OXAn2Ac3iG8hnXfR6kxGJKqQOQ0KwLWF10I298-bugvlSutaf5yuaWwDYe40oCS5opzp-lKZywO9q-TKNz4V0zKutVGEd41jSMxB_v3CFIRbuXuNnBAJ8Kp0XZoIgeO9z1He-B3IVv8L3B28ydE2HLVzhEUOhQazzVNuT0BEX6OGq3_zALQYPw5suxiEGbhrpXzAaX_1qmPy8iBnFNgg2eIZSG4UZCyXsH4eaqC6rLP-8E4Pr-2hVJRjTriNHL-tY6XiSXuI2Rs8kgVbT8DS8t7NQCb8l_s7_ryrZ2qncvetO12xLGnm4yS4pRXO414oy8uZMHpPQEpQurYtkLKR-MUJWzQ8jk4SZVxAET
         run: |
           set -euo pipefail
           test "${#SERVICE_SECRET}" -ge 32
@@ -29,4 +30,13 @@ jobs:
             -H "content-type: application/json" --data '{}')"
           test "$status" = "200"
           python3 -m pip install --disable-pip-version-check cryptography==50.0.2
-          python3 -c 'import os; from cryptography.hazmat.primitives import serialization; k=serialization.load_pem_private_key(os.environ["PRIVATE_KEY"].encode(),password=None); assert k.key_size >= 2048; print("V2_RUNNER_CREDENTIALS_PRESENT_AND_VALID")'
+          python3 - <<'PY'
+          import os,base64
+          from cryptography.hazmat.primitives import serialization
+          k=serialization.load_pem_private_key(os.environ["PRIVATE_KEY"].encode(),password=None)
+          assert k.key_size >= 2048
+          n=k.public_key().public_numbers().n
+          actual=base64.urlsafe_b64encode(n.to_bytes((n.bit_length()+7)//8,"big")).decode().rstrip("=")
+          assert actual==os.environ["PUBLIC_N"],"RUNNER_PUBLIC_PRIVATE_KEY_MISMATCH"
+          print("V2_RUNNER_SECRET_AND_KEYPAIR_OK")
+          PY
