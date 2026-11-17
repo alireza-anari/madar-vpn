@@ -3,7 +3,9 @@ name: Madar V2 one-time guarded staging deploy
 on:
   push:
     branches:
-      - main
+      - rewrite/madar-v2-20261110
+    paths:
+      - .github/workflows/v2-staging-one-time-deploy.yml
 
 permissions:
   contents: read
@@ -14,7 +16,6 @@ concurrency:
 
 jobs:
   deploy:
-    if: github.ref == 'refs/heads/main' && github.event.head_commit.message == 'chore: trigger isolated Madar V2 staging deployment'
     runs-on: ubuntu-latest
     environment: madar-v2-staging
     timeout-minutes: 30
@@ -54,8 +55,7 @@ jobs:
           set -euo pipefail
           payload='{"secrets":{
             "ANDROID_LOGIN_ENABLED_SECRET":{"name":"ANDROID_LOGIN_ENABLED_SECRET","type":"secret_text","text":"true"},
-            "SUBSCRIPTION_API_ENABLED_SECRET":{"name":"SUBSCRIPTION_API_ENABLED_SECRET","type":"secret_text","text":"true"},
-            "BOT_USERNAME_SECRET":{"name":"BOT_USERNAME_SECRET","type":"secret_text","text":"Madar_v2_bot"}
+            "SUBSCRIPTION_API_ENABLED_SECRET":{"name":"SUBSCRIPTION_API_ENABLED_SECRET","type":"secret_text","text":"Madar_v2_bot"}
           }}'
           curl -fsS -X PATCH \
             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
