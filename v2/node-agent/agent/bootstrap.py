@@ -22,7 +22,12 @@ from . import releases
 from .installer import MARKER_TEXT
 from .xray_config import compile_config,compile_caddy_site,encode,DOMAIN
 
-NODE_RE=re.compile(r"^test-[A-Za-z0-9_-]{2,55}$")
+NODE_RE=re.compile(r"^[A-Za-z][A-Za-z0-9_-]{2,63}$")
+RESERVED_NODE_RE=re.compile(r"^(?:prod(?:uction)?(?:[-_0-9]|$)|main(?:[-_0-9]|$)|node1$|madar-v2-node1$)",re.I)
+
+
+def allowed_staging_node_id(value):
+    return isinstance(value,str) and bool(NODE_RE.fullmatch(value)) and not RESERVED_NODE_RE.match(value)
 B64URL=re.compile(r"^[A-Za-z0-9_-]{43}$")
 SAFE_ID=re.compile(r"^[a-f0-9]{16}$")
 BASE=Path("/etc/madar-v2")
@@ -68,8 +73,8 @@ def parse_reality_keypair(output):
 def plan_node(*,node_id,public_ip,reality_port=8443,wss_domain=None,
               ws_path="/madar-ws",reality_target="www.cloudflare.com",
               dns_lookup=socket.getaddrinfo):
-    if not isinstance(node_id,str) or not NODE_RE.fullmatch(node_id):
-        raise BootstrapError("use a dedicated test-... node ID; production nodes are forbidden")
+    if not allowed_staging_node_id(node_id):
+        raise BootstrapError("invalid or reserved staging node identifier")
     try: ip=ipaddress.ip_address(public_ip)
     except ValueError as exc: raise BootstrapError("invalid public IPv4 address") from exc
     if ip.version!=4 or not ip.is_global:
@@ -314,7 +319,7 @@ def install_test_node(plan,*,downloader=None):
 
 def main(argv=None):
     p=argparse.ArgumentParser(description="Madar V2 test-only fresh-VPS bootstrap")
-    p.add_argument("--node-id",required=True,help="Must start with test-")
+    p.add_argument("--node-id",required=True,help="3-64 safe ASCII characters; reserved production names are forbidden")
     p.add_argument("--public-ip",required=True)
     p.add_argument("--reality-port",type=int,default=8443)
     p.add_argument("--reality-target",default="www.cloudflare.com")
