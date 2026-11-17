@@ -291,13 +291,13 @@ export async function nodeDetails(db,ref,actor){
   const text=panelHeading('🖥','پرونده سرور',n.id)+
     '\n\n🌍 ارائه‌دهنده: '+n.provider+
     '\n📍 منطقه: '+n.region+
-    '\n'+statusSymbol(n.lifecycle)+' وضعیت: '+faStatus(n.lifecycle)+
+    '\n'+presentation.symbol+' وضعیت: '+presentation.label+
     '\n⚙️ نصب: '+(job?faStatus(job.state):'ثبت نشده')+
     '\n👤 ظرفیت: '+formatCount(alloc.n)+' / '+formatCount(n.user_limit)+
     '\n📦 حجم تخصیص‌یافته: '+quotaLabel(alloc.bytes)+' / '+quotaLabel(n.byte_limit)+
-    '\n🔄 نسخه: '+formatCount(n.acked_revision)+' از '+formatCount(n.desired_revision)+
     '\n\n🔀 مسیرهای سرور\n'+routeText+
     (carriers?'\n\n📱 مسیرهای اپراتورها\n'+carriers:'')+
+    (waitingForFieldTest?'\n\n🧪 نصب سرور موفق بوده است. برای ادامه، لینک تست را باز کنید و اتصال هر دو اپراتور را از گوشی بررسی کنید. تا تأیید آزمون، مسیر منتشر نمی‌شود.':'')+
     '\n\n🔐 تغییر وضعیت فقط پس از تأیید انجام می‌شود؛ این بخش به VPS فرمان حذف نمی‌دهد.';
   const buttons=[
     nodeButton('🔄 تازه‌سازی همین سرور','admin:node:view:'+ref),
