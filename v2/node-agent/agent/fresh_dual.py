@@ -16,7 +16,7 @@ from .dual_reality import (
     ROOT,BIN,XUNIT,UNITS,DROP,BACKUP,
     authorize as authorize_aria, owned, call, listening, put_dropin, remove_dropin
 )
-from .bootstrap import xray_unit
+from .bootstrap import xray_unit,allowed_staging_node_id
 from .installer import require_staging_marker
 from .reconciler import ReconcileError,_atomic_file,_safe_config_root,verify_xray_binary,subprocess_runner
 from .releases import xray_binary_sha256
@@ -68,7 +68,7 @@ def enable(node,ip,*,root=ROOT,runner=subprocess_runner,probe=listening):
     if os.geteuid()!=0:raise ReconcileError("requires disposable VPS root")
     root=_safe_config_root(root)
     require_staging_marker(root)
-    if not node.startswith('test-'):raise ReconcileError("not a test node")
+    if not allowed_staging_node_id(node):raise ReconcileError("invalid or reserved staging node ID")
     metadata=json.loads(owned(root/"public-route-metadata.json",0o600))
     if metadata.get("node_id")!=node or metadata.get("public_ip")!=ip:
         raise ReconcileError("unrecognized node identity")
