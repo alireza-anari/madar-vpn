@@ -1,0 +1,31 @@
+name: Temporary V2 enrollment UI smoke check
+
+on:
+  push:
+    branches: ['rewrite/madar-v2-20261110']
+    paths: ['.github/workflows/v2-enrollment-ui-smoke-once.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify live V2 Worker and rejected unauthenticated resets
+        env:
+          BASE_URL: https://madar-v2-staging.alirezaanari117.workers.dev
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 2 "$BASE_URL/health/live" |
+            jq -e '.status=="alive" and .service=="madar-v2"'
+          page="$(curl --fail --silent --show-error --retry 2 "$BASE_URL/enroll")"
+          echo "$page" | grep -q 'پاک‌سازی ثبت نصب ناموفق و شروع دوباره'
+          echo "$page" | grep -q 'فایل کلید انتخاب‌شده حفظ شده است'
+          code="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "$BASE_URL/api/enrollment/recent")"
+          test "$code" = "401"
+          code="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            -X POST -H 'content-type: application/json' --data '{}' "$BASE_URL/api/enrollment/clear-failed")"
+          test "$code" = "401"
+          echo V2_ENROLLMENT_UI_SMOKE_OK
