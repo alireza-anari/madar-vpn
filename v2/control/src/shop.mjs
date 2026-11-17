@@ -675,7 +675,7 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
       return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
     return adminConfigAction(env,e,nowMs);
   }
-  if(/^admin:nodes:(all|ready|setup|attention|quarantine|archive):[0-9]{1,4}$/.test(key)){
+  if(/^admin:nodes:(all|ready|setup|testing|attention|quarantine|archive):[0-9]{1,4}$/.test(key)){
     if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
       return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
     const [, ,filter,page]=key.split(':');
