@@ -39,6 +39,11 @@ export function toBotMessage(update) {
     ?event.message_id:null;
   const editKind=messageId
     ?(Array.isArray(event?.photo)&&event.photo.length>0?'caption':'text'):null;
+  const brandHeader='🌐  مــدار';
+  const sourceIsBrandBanner=Array.isArray(event?.photo)&&event.photo.length>0&&
+    typeof event?.caption==='string'&&event.caption.startsWith(brandHeader+'\n')&&
+    Array.isArray(event?.caption_entities)&&event.caption_entities.some(entity=>
+      entity?.type==='bold'&&entity.offset===0&&entity.length===brandHeader.length);
   const initialPage=key==='/start'?'home':key.startsWith('/')?key.slice(1):key;
   const page=botPage(initialPage || 'unknown',locale);
   return {
@@ -55,6 +60,7 @@ export function toBotMessage(update) {
     editKind,
     sourcePhotoId:typeof event?.photo?.at(-1)?.file_id==='string'&&
       event.photo.at(-1).file_id.length<=512?event.photo.at(-1).file_id:null,
+    sourceIsBrandBanner,
     // Compatibility with early V2 preview tests, before inbox processing:
     text:page.text,
     replyMarkup:page.replyMarkup,
