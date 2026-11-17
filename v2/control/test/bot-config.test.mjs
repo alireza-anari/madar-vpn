@@ -18,6 +18,8 @@ function fixture(){
   for(const file of readdirSync(new URL('../migrations/',import.meta.url)).sort())
     raw.exec(readFileSync(new URL('../migrations/'+file,import.meta.url),'utf8'));
   raw.exec("INSERT INTO customers(telegram_id) VALUES('100'),('101'),('200')");
+  raw.exec("INSERT INTO telegram_bot_activations(telegram_id,channel_id,activated_ms,last_verified_ms) "+
+    "VALUES('100','-1001234567890',1,1),('101','-1001234567890',1,1),('200','-1001234567890',1,1)");
   const prepare=(sql,args=[])=>({
     bind(...next){return prepare(sql,next);},
     async first(){return raw.prepare(sql).get(...args)??null;},
