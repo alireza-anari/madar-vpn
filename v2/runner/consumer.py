@@ -128,7 +128,8 @@ def diagnose(transport,check):
 def validate_job(job):
     assert_public_target(job.get('targetIp',''))
     if (not re.fullmatch(r'[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}',job.get('id','')) or
-        not re.fullmatch(r'test-[A-Za-z0-9_-]{2,55}',job.get('nodeId','')) or
+        not re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]{2,63}',job.get('nodeId','')) or
+        re.match(r'^(?:prod(?:uction)?(?:[-_0-9]|$)|main(?:[-_0-9]|$)|node1$|madar-v2-node1$)',job.get('nodeId',''),re.I) or
         type(job.get('port')) is not int or not 1<=job['port']<=65535 or
         not re.fullmatch(r'[a-z_][a-z0-9_-]{0,31}',job.get('username','')) or
         job.get('kind') not in ('probe','v2-install')):

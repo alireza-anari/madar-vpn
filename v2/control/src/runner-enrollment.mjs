@@ -61,7 +61,8 @@ export async function authenticateOwner(raw,env,nowMs=Date.now()){
   }catch{return null;}
 }
 export function validateConnection(b){
-  if(!b||!/^test-[A-Za-z0-9_-]{2,55}$/.test(b.nodeId??'')||
+  if(!b||!/^[A-Za-z][A-Za-z0-9_-]{2,63}$/.test(b.nodeId??'')||
+      /^(?:prod(?:uction)?(?:[-_0-9]|$)|main(?:[-_0-9]|$)|node1$|madar-v2-node1$)/i.test(b.nodeId)||
      !/^[A-Za-z0-9_.-]{2,64}$/.test(b.provider??'')||! /^[A-Za-z0-9_-]{2,64}$/.test(b.region??'')||
      !publicV4(b.ip)||!Number.isInteger(b.port)||b.port<1||b.port>65535||
      !/^[a-z_][a-z0-9_-]{0,31}$/.test(b.username??'')||

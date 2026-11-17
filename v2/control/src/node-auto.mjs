@@ -6,7 +6,8 @@
 import {wrapClientUuid,unwrapClientUuid,tokenDigest} from './subscription.mjs';
 import {base64Feed} from './carrier-subscription.mjs';
 
-const ID=/^test-[A-Za-z0-9_-]{2,55}$/;
+// Staging only: custom display-safe IDs, with production-style reserved names blocked.
+const ID=/^(?!prod(?:uction)?(?:[-_0-9]|$))(?!main(?:[-_0-9]|$))(?!node1$)(?!madar-v2-node1$)[A-Za-z][A-Za-z0-9_-]{2,63}$/i;
 const ERROR=/^[A-Z0-9_]{3,64}$/;
 const PUB=/^[A-Za-z0-9_-]{43}$/;
 const SID=/^[a-f0-9]{2,16}$/;
