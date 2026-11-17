@@ -86,38 +86,32 @@ const customerMenu={inline_keyboard:[
     {text:'📦 اشتراک‌های من',callback_data:'v2:my'},
   ],
   [
+    {text:'🧪 دریافت تست رایگان',callback_data:'v2:customer:trial'},
+    {text:'📶 وضعیت سرویس',callback_data:'v2:status'},
+  ],
+  [
     {text:'🧾 سفارش‌های من',callback_data:'v2:orders'},
     {text:'💬 پشتیبانی',callback_data:'v2:customer:tickets'},
   ],
   [
-    {text:'📶 وضعیت سرویس',callback_data:'v2:status'},
     {text:'📘 راهنمای اتصال',callback_data:'v2:help'},
-  ],
-  [
     {text:'🔐 حریم خصوصی',callback_data:'v2:privacy'},
-    {text:'🏠 خانه',callback_data:'v2:customer:home'},
   ],
 ]};
 const managerMenu={inline_keyboard:[
   [
-    {text:'📊 پیشخوان مدیریت',callback_data:'v2:admin:home'},
     {text:'🖥 مدیریت سرورها',callback_data:'v2:admin:nodes'},
-  ],
-  [
-    {text:'➕ افزودن سرور',callback_data:'v2:admin:node:new'},
-    {text:'🧪 آزمون سرورها',callback_data:'v2:admin:node:trials'},
-  ],
-  [
     {text:'🛍 مدیریت پلن‌ها',callback_data:'v2:admin:plans'},
+  ],
+  [
     {text:'🧾 بررسی رسیدها',callback_data:'v2:admin:queue'},
-  ],
-  [
     {text:'👥 مشتریان',callback_data:'v2:admin:customers'},
-    {text:'💬 صندوق پشتیبانی',callback_data:'v2:admin:tickets'},
   ],
   [
-    {text:'🧑‍💼 کارکنان و فروشندگان',callback_data:'v2:admin:staff'},
+    {text:'💬 صندوق پشتیبانی',callback_data:'v2:admin:tickets'},
+    {text:'🔗 صدور کانفیگ',callback_data:'v2:admin:configs'},
   ],
+  [{text:'🧑‍💼 کارکنان و فروشندگان',callback_data:'v2:admin:staff'}],
 ]};
 const sellerMenuMarkup={inline_keyboard:[
   [
