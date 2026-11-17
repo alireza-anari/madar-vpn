@@ -94,6 +94,17 @@ export async function processInbox(env,nowMs=Date.now()) {
       if(event.updateId!==item.update_id) throw new Error('inbox_id_mismatch');
       const reply=(await approveAndroidLogin(env,event,nowMs))??await resolveBotAction(env,event,nowMs);
       const msg=reply??{text:frameMessage('⚠️ پاسخ مناسبی دریافت نشد. لطفاً دوباره تلاش کنید.'),replyMarkup:null};
+      // Photo captions are editable only when the photo is not a known customer
+      // support attachment or payment receipt. Attachments always get a new reply.
+      let sourceIsAttachment=false;
+      if(typeof event.sourcePhotoId==='string'&&event.sourcePhotoId.length>=5){
+        const original=await env.DB.prepare(
+          'SELECT 1 ok WHERE EXISTS(SELECT 1 FROM support_messages WHERE telegram_file_id=?) '+
+          'OR EXISTS(SELECT 1 FROM receipts WHERE telegram_file_id=?)'
+        ).bind(event.sourcePhotoId,event.sourcePhotoId).first();
+        sourceIsAttachment=!!original;
+      }
+      const canEditMessage=!sourceIsAttachment&&(!msg.photoId||msg.photoId===BRAND_BANNER_URL);
       const pageKeyboard=msg.replyMarkup?styleInlineKeyboard(contextualKeyboard(
         event.key,msg.replyMarkup,{isAdmin:adminAllowed(env.ADMIN_TELEGRAM_IDS,event.actorId)}
       )):null;
@@ -106,8 +117,10 @@ export async function processInbox(env,nowMs=Date.now()) {
       ).bind(item.update_id,event.chatId,msg.text.slice(0,3800),
         pageKeyboard?JSON.stringify(pageKeyboard):null,
         msg.photoId??null,
-        msg.photoId?null:(Number.isSafeInteger(event.messageId)?event.messageId:null),
-        msg.photoId?null:(event.editKind==='caption'?'caption':event.editKind==='text'?'text':null),
+        canEditMessage&&(!msg.photoId||event.editKind==='caption')&&
+          Number.isSafeInteger(event.messageId)?event.messageId:null,
+        canEditMessage&&(!msg.photoId||event.editKind==='caption')?
+          (event.editKind==='caption'?'caption':event.editKind==='text'?'text':null):null,
         nowMs).run();
       await env.DB.prepare(
         "UPDATE telegram_inbox SET state='done',lease_until_ms=0,event_json='{}' " +
