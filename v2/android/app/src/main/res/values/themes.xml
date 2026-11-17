@@ -2,8 +2,8 @@
 <resources>
     <style name="Theme.Madar" parent="@android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#00E5D4</item>
-        <item name="android:windowBackground">#041326</item>
+        <item name="android:colorAccent">#41EBD2</item>
+        <item name="android:windowBackground">#050C18</item>
         <item name="android:statusBarColor">#041326</item>
         <item name="android:navigationBarColor">#041326</item>
         <item name="android:windowLightStatusBar">false</item>
