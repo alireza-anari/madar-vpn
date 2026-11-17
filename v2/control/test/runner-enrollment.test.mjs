@@ -28,6 +28,12 @@ test('Mini App accepts only the signed current owner, not forged, expired or dup
 test('fresh AWS connection validation rejects shell injection and private targets',()=>{
   const good={nodeId:'test-aws01',provider:'aws',region:'eu-north-1',userLimit:20,capacityGb:500,ip:'8.8.8.8',port:22,username:'root'};
   assert.equal(validateConnection(good).mode,'fresh');
+  assert.equal(validateConnection({...good,nodeId:'webdade6'}).nodeId,'webdade6');
+  assert.equal(validateConnection({...good,nodeId:'aws-eu_1'}).nodeId,'aws-eu_1');
+  assert.equal(validateConnection({...good,nodeId:'PROD-main'}),null);
+  assert.equal(validateConnection({...good,nodeId:'bad.name'}),null);
+  assert.equal(validateConnection({...good,nodeId:'bad name'}),null);
+  assert.equal(validateConnection({...good,nodeId:'node1'}),null);
   assert.equal(validateConnection({...good,ip:'1.1.1.1'}).mode,'fresh');
   for(const diff of [{ip:'127.0.0.1'},{username:'root;id'},{port:0},{nodeId:'node1'},{provider:'x;id'},{capacityGb:0}])
     assert.equal(validateConnection({...good,...diff}),null);
