@@ -47,11 +47,14 @@ export function toBotMessage(update) {
     chatId:String(chatId),
     key,
     locale,
-    inputText:typeof update.message?.text==='string' ? update.message.text.slice(0,2000) : null,
+    inputText:typeof (update.message?.text??update.message?.caption)==='string' ?
+      (update.message.text??update.message.caption).slice(0,2000) : null,
     photoId:photoId && photoId.length>=5 && photoId.length<=512 ? photoId : null,
     callbackId:typeof update.callback_query?.id==='string' ? update.callback_query.id.slice(0,128) : null,
     messageId,
     editKind,
+    sourcePhotoId:typeof event?.photo?.at(-1)?.file_id==='string'&&
+      event.photo.at(-1).file_id.length<=512?event.photo.at(-1).file_id:null,
     // Compatibility with early V2 preview tests, before inbox processing:
     text:page.text,
     replyMarkup:page.replyMarkup,
