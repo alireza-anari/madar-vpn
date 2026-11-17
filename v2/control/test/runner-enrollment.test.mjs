@@ -383,7 +383,7 @@ test('failed install remains discoverable after new probe, cleanup requires a cl
   assert.equal(recent.failedInstall.id,id);
   assert.equal(recent.failedInstall.safe_code,'REMOTE_INSTALL_FAILED');
   assert.equal(JSON.stringify(recent).includes('encrypted_credentials'),false);
-  assert.equal((await (await api('recent',null,other)).json()).failedInstall,undefined);
+  assert.equal((await (await api('recent',null,other)).json()).failedInstall,null);
   const envelope={v:1,key:'A'.repeat(512),iv:'A'.repeat(16),data:'A'.repeat(64)};
   const start=await api('install',{probeId,trust:true,fingerprint:fp,envelope});
   assert.equal(start.status,409);
