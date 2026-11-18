@@ -1,6 +1,7 @@
 /** پنل‌های فارسی مدیریت و مشتری در ربات مدار V2. */
 import {adminMenu,frameMessage,faNumber,faStatus,faRole,statusSymbol,sectionNavigation,shortCode,panelHeading,BRAND_BANNER_URL} from './bot-ux.mjs';
 import {planWizardAction,planWizardInput} from './plan-wizard.mjs';
+import {directInput} from './admin-direct.mjs';
 
 const NAT=/^[0-9]{1,20}$/;
 const TICKET=/^tg-[0-9]{1,20}$/;
@@ -375,6 +376,7 @@ export async function consumePanelInput(env,e,nowMs=Date.now()) {
   }
   if(!idAdmin(env,e.actorId))return adminPanel('⛔ دسترسی به این بخش مجاز نیست.',[],e.locale);
   if(session.mode==='plan_draft')return planWizardInput(db,e,session,nowMs);
+  if(session.mode==='direct_config_draft')return directInput(env,e,session,nowMs);
   const match=session.mode.match(/^(grant|revoke)_(seller|support)$/);
   if(match){
     const id=raw.trim(),mode=match[1],role=match[2];
