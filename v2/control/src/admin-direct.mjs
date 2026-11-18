@@ -92,20 +92,39 @@ async function ownReadyNode(env,actor,ref,nowMs) {
   return row?n:null;
 }
 async function nodeButtons(env,actor,nowMs){
+  // A node stays field-approved after carrier acceptance; recent signed health
+  // is an independent requirement for new UUID issuance, not a new port test.
   const rows=(await env.DB.prepare(
-    "SELECT n.id,n.user_limit,n.byte_limit FROM nodes n "+
-    "JOIN node_bootstrap_jobs j ON j.node_id=n.id AND j.state='installed' "+
-    "JOIN node_health h ON h.node_id=n.id AND h.revision=n.desired_revision "+
-    "WHERE j.owner_id=? AND n.lifecycle='ready' AND "+
-    "n.desired_revision=n.acked_revision AND h.xray_healthy=1 AND "+
-    "h.stats_healthy=1 AND h.observed_ms BETWEEN ? AND ? "+
-    "AND n.user_limit>(SELECT COUNT(*) FROM node_allocations a "+
-    "WHERE a.node_id=n.id AND a.state IN ('reserved','active')) "+
-    "ORDER BY n.id LIMIT 12"
-  ).bind(actor,nowMs-600000,nowMs).all()).results??[];
-  const buttons=[];
-  for(const n of rows)buttons.push(button('🟢 '+n.id,'node:'+await nodeUiRef(n.id)));
-  return buttons;
+    "SELECT n.id,n.lifecycle,n.desired_revision,n.acked_revision,n.user_limit,"+
+    "h.revision AS health_revision,h.observed_ms,h.xray_healthy,h.stats_healthy,"+
+    "(SELECT COUNT(*) FROM node_allocations a WHERE a.node_id=n.id "+
+    "AND a.state IN ('reserved','active')) AS allocations "+
+    "FROM nodes n JOIN node_bootstrap_jobs j ON j.node_id=n.id AND j.state='installed' "+
+    "LEFT JOIN node_health h ON h.node_id=n.id "+
+    "WHERE j.owner_id=? AND n.lifecycle='ready' ORDER BY n.id LIMIT 12"
+  ).bind(actor).all()).results??[];
+  const buttons=[], blocked=[];
+  for(const n of rows){
+    if(n.desired_revision!==n.acked_revision){
+      blocked.push('🟠 '+n.id+': تأیید تنظیمات عامل قدیمی است.');continue;
+    }
+    if(n.health_revision!==n.desired_revision ||
+       n.xray_healthy!==1||n.stats_healthy!==1||
+       !Number.isFinite(n.observed_ms) ||
+       n.observed_ms<nowMs-600000||n.observed_ms>nowMs){
+      const age=Number.isFinite(n.observed_ms)?
+        Math.max(0,Math.floor((nowMs-n.observed_ms)/60000)):null;
+      blocked.push('🟠 '+n.id+': تأیید اولیه محفوظ است؛ آخرین گزارش سلامت عامل '+
+        (age===null?'ثبت نشده.':faNumber(age)+' دقیقه پیش بوده.')+
+        ' تست دوبارهٔ اپراتورها لازم نیست.');
+      continue;
+    }
+    if(n.allocations>=n.user_limit){
+      blocked.push('⏸ '+n.id+': ظرفیت تعداد کانفیگ تکمیل شده است.');continue;
+    }
+    buttons.push(button('🟢 '+n.id,'node:'+await nodeUiRef(n.id)));
+  }
+  return {buttons,blocked};
 }
 async function question(env,actor,v,nowMs,warning=''){
   const step=v.step;
@@ -117,8 +136,10 @@ async function question(env,actor,v,nowMs,warning=''){
     text='👤 نام یا برچسب مشتری را بنویس (۲ تا ۶۰ نویسه).\nمثال: علی رضایی';
   else if(step==='node'){
     text='🌐 سرور آمادهٔ موردنظر را انتخاب کن.\nسرور فقط یک بار هنگام نصب تأیید شده است.';
-    controls.push(...await nodeButtons(env,actor,nowMs));
-    if(!controls.length)text+='\n⏸ سرور آماده با سلامت تازه در دسترس نیست.';
+    const nodes=await nodeButtons(env,actor,nowMs);
+    controls.push(...nodes.buttons);
+    if(nodes.blocked.length)text+='\n\n'+nodes.blocked.join('\n');
+    if(!controls.length)text+='\n\n⏸ صدور ایمن فعلاً ممکن نیست. نیازی به تکرار تست پورت‌ها نیست؛ باید گزارش سلامت عامل بازیابی شود.';
   } else if(step==='gb'){
     text='📦 حجم اشتراک چند گیگابایت باشد؟\nاز دکمه‌ها انتخاب کن یا عدد ۱ تا ۱۰۰۰ بفرست.';
     for(const n of AMOUNTS)controls.push(button(faNumber(n)+' گیگابایت','gb:'+n));
