@@ -48,7 +48,7 @@ function fixture(){
   }};
   const env={DB,ADMIN_TELEGRAM_IDS:ADMIN,ADMIN_E2E_TEST_ENABLED:'true',
     SHOP_ENABLED:'false',PROVISIONING_ENABLED:'false',
-    SUBSCRIPTION_LINKS_ENABLED:'true',SUBSCRIPTION_API_ENABLED:'true',
+    SUBSCRIPTION_LINKS_ENABLED:'false',SUBSCRIPTION_API_ENABLED:'false',
     SUBSCRIPTION_PUBLIC_ORIGIN:'https://v2.example.test/',SUBSCRIPTION_CREDENTIAL_KEY:key,
     NODE_MASTER_KEY:master};
   return {raw,env};
@@ -142,7 +142,11 @@ test('only real signed node client ACK activates customer and exposes two-port l
   assert.match(revoked.text,/لغو آزمایش ثبت شد/);
   assert.equal(raw.prepare('SELECT state FROM subscriptions').get().state,'revoked');
   assert.equal(raw.prepare('SELECT revoked FROM subscription_tokens').get().revoked,1);
-  assert.equal((await getCarrierFeed(new Request(url),env,NOW+1000)).status,403);
+  // The store, regular subscription API and general public feed all stay off.
+  assert.equal(env.SHOP_ENABLED,'false');
+  assert.equal(env.SUBSCRIPTION_API_ENABLED,'false');
+  assert.equal(env.SUBSCRIPTION_LINKS_ENABLED,'false');
+  assert.equal((await getCarrierFeed(new Request(url),env,NOW+1000)).status,503);
   raw.close();
 });
 test('unhealthy node cannot create new test, but admin can revoke an existing E2E account',async()=>{
