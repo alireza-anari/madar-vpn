@@ -1,49 +1,81 @@
-# Madar V2 backend parity and release boundary
+# Madar V2 — dual-REALITY backend parity / release evidence
 
-This backend-only branch does NOT edit Telegram UI/UX, bot navigation, branding,
-Android UI, or V1 production resources. It reuses V1's separation of installation,
-policy acknowledgement, and customer activation.
+## Scope
+This branch changes backend, runner, node agent, D1 migrations, and automated
+tests only. **No approved Telegram bot UI/UX/menus, Android UI, or V1 source files
+are changed.** The implementation builds on the V1 seller/managed-node model,
+with REALITY TCP 443 (MCI) + 8443 (Irancell), sharing ONE customer UUID, ONE quota,
+and ONE expiration across the two ports.
 
-## Implemented control-plane sequence
+## Automated fresh-node provisioning
 
-1. Fresh V2 installer provisions trial REALITY at TCP 8443, then adds TCP 443.
-   These listeners share only the initial test UUID. Listening is not a sale.
-2. The V2 node must acknowledge its signed desired-state revision through its
-   authenticated node API. The current installer does not yet install a
-   persistent client provisioning and usage-monitoring agent.
-3. An independent field harness, using real MCI or Irancell mobile traffic,
-   can submit a short-lived HMAC-SHA256 signed JSON proof to
-   POST /api/v2/field/accept. Observations must attest authenticated proxy
-   traffic in both directions and the correct port for each operator.
-   Both fresh observations are needed before marking a node ready.
-   The secret authenticates the harness; real carrier identity must be
-   established by the harness, not guessed from the VPS public endpoint.
-4. After actual acceptance, feature-gated order reconciliation can reserve
-   an approved order transactionally: a pending subscription, encrypted UUID,
-   and one reserved node allocation. It does not activate customer access.
-5. GET /api/node/v1/clients supplies signed desired customer UUIDs to a
-   separately authenticated node. These are desired state, not installation.
-6. POST /api/node/v1/clients/ack is accepted only from a signed node; the
-   exact UUID digests, revision and dual-port health must match. Only then
-   does the Worker activate the reserved order and notify the customer.
-7. Commercial subscription feeds require matching fresh per-customer runtime
-   ACKs in addition to quota, allocation, route and entitlement checks.
-   Rotating or deleting an encrypted customer credential revokes its ACK.
+1. The existing verified V2 enrollment WebApp/Runner keeps SSH credentials
+   transient and confirms the SSH host fingerprint. It stages the pinned Xray
+   release on an isolated fresh VPS, first 8443 then also 443, preserving the
+   original test credential. Installed does not mean field-ready.
+2. With NODE_RUNTIME_AUTO_ENABLED=true **on a separately tested staging Worker**,
+   the already-authenticated runner requests a short-lived, installation-lease-
+   bound node-specific HKDF key; the Worker master key is never transported.
+   A host-key-pinned SSH package transfers that key and reviewed Python modules,
+   installs the isolated madar-v2-runtime.service and its independent quota
+   watchdog timer. This does NOT touch V1's Xray, agent, DB, UI, or services.
+3. The runtime receives signed desired-state manifests and customer policies.
+   A short-lived policy is bound to node ID, revision and HMAC. It compiles a
+   REALITY Xray config with the *same customer UUID* on 443 and 8443 and a
+   loopback-only StatsService on 127.0.0.1:10085. Xray's pinned binary validates
+   the replacement; guarded atomic apply + service restart/rollback are reused.
+4. The runtime only sends the signed per-customer /clients/ack after the
+   per-customer config has been applied and listeners and local stats API pass
+   checks. Until then a pending commercial subscription is not activated.
+5. A local SQLite ledger observes Xray's per-user counters every ~1 second,
+   retains cumulative totals across a managed process generation, and enforces
+   quota and expiry locally by removing exhausted users. A separate signed
+   usage report is sent to Worker D1 at the slower policy sync cadence (~30s).
+   D1 rejects regressed usage and clamps customer-visible used_bytes to quota.
+   The node watchdog stops the isolated Xray on an orphaned/expired signed
+   policy lease (approx 120s); it does not affect V1.
+6. Expired/exhausted subscriptions are removed from active entitlements. Their
+   node allocation is released only after the signed node confirms removal.
+7. Customer trial issuance creates a distinct UUID plus 1 GiB/one-hour quota
+   for each Telegram account; one lifetime trial per Telegram ID remains.
+   The customer subscription link is withheld until its own UUID has been
+   installed on the two listeners. The admin's original test UUID is separate.
 
-## Still missing; do NOT claim production readiness
+## Independent network acceptance remains a prerequisite
 
-- The automated persistent V2 node executor which actually installs/revokes
-  each customer's UUID on BOTH Xray listeners, verifies locally, and sends
-  the signed runtime ACK. The current V2 poller merely records desired state.
-- V1-style server-observed volume/time settlement and quota enforcement.
-  Neither the database nor a subscription link enforces physical node traffic.
-- Recovery, expiry, revocation and fail-closed policy during an outage.
-- Independent carrier field tests and live VPS reboots, with MCI and Irancell,
-  exact final SHA, quota exhaustion, and customer activation/deactivation.
+Both MCI (TCP443) and Irancell (TCP8443) must be proven through real
+**authenticated bidirectional mobile-carrier traffic** by an independent
+controlled field harness using HMAC-signed field observations. Listener checks,
+VPS-side TCP probes, unit tests, and a runner reporting installed are NOT proof
+of connectivity on a mobile network. First acceptance is stored durably.
+Subsequent node health reports can renew operational freshness *only after*
+both real independent field observations exist and the signed revision matches.
+Neither the VPS runtime nor the Worker can independently identify what SIM was
+used without the external field harness.
 
-KEEP DISABLED until these are implemented and field-verified:
-SHOP_ENABLED, SUBSCRIPTION_LINKS_ENABLED, PROVISIONING_ENABLED,
-FIELD_PROBE_ENABLED. The latter two default to disabled.
+The field observations must be made externally from real mobile networks.
+This branch does not claim such observations were performed.
 
-This is isolated V2 D1 only. Never migrate V1 production D1, reuse SSH
-secrets across versions, or edit the user-approved bot UI in this workstream.
+## Verification and release boundary
+
+- GitHub isolated control-plane and pinned-Xray disposable-host systemd tests
+  cover HMAC authorization/replay, unique user provisioning, monotonic usage,
+  quota caps, expiry, protected credentials, dual ports, and live systemd
+  installation. Check the **latest PR head** CI before promotion.
+- GitHub CI has no physical customer VPS, real carrier SIM or direct commercial
+  traffic. CI cannot establish carrier compatibility, billing accuracy during
+  crashes/restarts, or all edge cases of single-device concurrent use.
+- A production release still requires installing this exact commit on a
+  **disposable externally reachable** staging VPS, real VLESS tunnel samples
+  on both mobile operators, measuring data limits & expiry under active
+  traffic, restart/rollback, link revocation, user removal, and field evidence.
+- Restrict NODE_RUNTIME_AUTO_ENABLED, FIELD_PROBE_ENABLED,
+  PROVISIONING_ENABLED, SHOP_ENABLED, and SUBSCRIPTION_LINKS_ENABLED to
+  staging until the live acceptance matrix passes. Never turn these on in
+  production solely because GitHub CI passes.
+- Single-device concurrency enforcement is not demonstrated by the two
+  shared-quota routes; a stricter device-binding policy needs its own live
+  validation. Do not advertise it as guaranteed.
+
+The patch is **Draft / not deployed**, intentionally. It adds migrations only
+to the *separate isolated V2 D1* database. Never apply these to V1 production.
