@@ -8,6 +8,7 @@ import { getCarrierFeed } from './carrier-subscription.mjs';
 import { nodeRoute } from './node-control.mjs';
 import { fieldProbeRoute } from './field-evidence.mjs';
 import {reconcileApprovedOrders} from './provisioning.mjs';
+import {usageRoute} from './usage-telemetry.mjs';
 import { toBotMessage, verifyTelegramSecret } from './telegram.mjs';
 import { resolveBotAction,adminAllowed } from './shop.mjs';
 import {frameMessage,BRAND_BANNER_URL,styleInlineKeyboard,contextualKeyboard} from './bot-ux.mjs';
@@ -343,6 +344,10 @@ export default {
     if(path==='/api/v2/field/accept') {
       try{return await fieldProbeRoute(request,env);}
       catch{return json({error:'field_temporary_failure'},503);}
+    }
+    if(path==='/api/node/v1/usage' || path==='/api/node/v1/clients/revoked') {
+      try{return await usageRoute(request,env);}
+      catch{return json({error:'usage_temporary_failure'},503);}
     }
     if(path.startsWith('/api/node/v1/')) {
       try {return await nodeRoute(request,env);}
