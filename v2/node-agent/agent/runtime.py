@@ -16,6 +16,7 @@ import subprocess
 import tempfile
 import time
 import urllib.request
+import urllib.error
 
 from .account_policy import (
     API_PORT, LocalLedger, compile_dual_account_config, parse_stats, verify_clients
@@ -32,6 +33,33 @@ DEFAULT_ROOT=pathlib.Path('/etc/madar-v2')
 DEFAULT_STATE=pathlib.Path('/var/lib/madar-v2/runtime')
 HEARTBEAT='heartbeat.json'
 MAX_STATS=1048576
+# Only enumerated diagnostic codes are written to systemd journal.
+# Never emit raw remote response bodies, UUIDs, HMACs, paths or secrets.
+PUBLIC_RUNTIME_CODES={
+    'unrecognized Xray process generation':'XRAY_GENERATION_MISMATCH',
+    'signed policy lease expired':'POLICY_LEASE_EXPIRED',
+    'dual REALITY and stats listeners not active':'XRAY_PORTS_MISSING',
+    'Xray not active':'XRAY_STOPPED',
+    'live node health not acknowledged':'HEALTH_ACK_REJECTED',
+    'client activation not acknowledged':'CLIENT_ACK_REJECTED',
+    'revocation not acknowledged':'REVOCATION_ACK_REJECTED',
+    'usage not acknowledged':'USAGE_ACK_REJECTED',
+}
+
+def runtime_diagnostic_code(error):
+    if isinstance(error,urllib.error.HTTPError):
+        return 'HTTP_'+str(error.code) if error.code in (400,401,403,404,409,429,500,502,503,504) else 'HTTP_ERROR'
+    if isinstance(error,ReconcileError):
+        return PUBLIC_RUNTIME_CODES.get(str(error),'RECONCILE_FAILED')
+    if isinstance(error,(OSError,TimeoutError)):
+        return 'NETWORK_OR_FILESYSTEM_ERROR'
+    if isinstance(error,(ValueError,KeyError)):
+        return 'INVALID_RUNTIME_STATE'
+    return 'AGENT_ERROR'
+
+def journal_safe_error(phase,error):
+    # Stable codes let the admin diagnose service availability, without secrets.
+    print('MADAR_RUNTIME_FAULT',phase,runtime_diagnostic_code(error),flush=True)
 
 
 def read_secret_file(root):
@@ -279,7 +307,8 @@ class Runtime:
                 try:
                     self.once()
                     next_remote=now+30
-                except Exception:
+                except Exception as exc:
+                    journal_safe_error('remote',exc)
                     next_remote=now+15
                     # No renewal on a failed request. Enforce the existing
                     # signed deadline locally; the watchdog stops a dead agent.
@@ -289,7 +318,8 @@ class Runtime:
             else:
                 try:
                     self.local_tick()
-                except Exception:
+                except Exception as exc:
+                    journal_safe_error('local',exc)
                     stop_owned_xray()
             time.sleep(1)
 
