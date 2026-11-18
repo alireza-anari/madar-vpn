@@ -51,11 +51,11 @@ async function signedAck(code='accepted',digest='a'.repeat(64)){
       'x-madar-node-timestamp':String(stamp),'x-madar-node-signature':sig}
   });
 }
-async function signedHealth(){
+async function signedHealth(nowMs=NOW){
   const path='/api/node/v1/health',
     body=JSON.stringify({revision:1,ports:[443,8443],
-      xray_healthy:true,stats_healthy:true,observed_ms:NOW});
-  const stamp=Math.floor(NOW/1000),nonce=(++seq).toString(16).padStart(32,'0');
+      xray_healthy:true,stats_healthy:true,observed_ms:nowMs});
+  const stamp=Math.floor(nowMs/1000),nonce=(++seq).toString(16).padStart(32,'0');
   const sig=await signNodeRequest(await deriveNodeKey(master,ID),
     'POST',path,stamp,nonce,new TextEncoder().encode(body));
   return new Request('https://example.test'+path,{
@@ -141,5 +141,22 @@ test('manual attestations from previous config revision cannot approve a changed
   const status=await promoteAdminPair(env,ID,NOW);
   assert.equal(status.ready,false);
   assert.equal(raw.prepare("SELECT lifecycle FROM nodes").get().lifecycle,'provisioning');
+  raw.close();
+});
+
+test('after first approval both SIM checks persist, but only fresh signed health renews routes',async()=>{
+  const {raw,env}=fixture();
+  await recordAdminCarrierTest(env,ACTOR,ID,'mci',NOW);
+  await recordAdminCarrierTest(env,ACTOR,ID,'irancell',NOW);
+  assert.equal((await nodeRoute(await signedAck(),env,NOW)).status,200);
+  const later=NOW+3*86400000;
+  assert.equal(await manualPair(env.DB,ID,1,later),false);
+  assert.equal(await manualPair(env.DB,ID,1,later,true),true);
+  const health=await nodeHealthRoute(await signedHealth(later),env,later);
+  assert.equal(health.status,200);
+  assert.equal((await health.json()).carrier_proofs,'owner_manual_attestation');
+  assert.equal(raw.prepare('SELECT observed_ms FROM node_health').get().observed_ms,later);
+  raw.prepare('UPDATE nodes SET desired_revision=2,acked_revision=2').run();
+  assert.equal(await manualPair(env.DB,ID,2,later,true),false);
   raw.close();
 });
