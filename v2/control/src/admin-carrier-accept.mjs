@@ -11,11 +11,16 @@ export function manualAttestationEnabled(env) {
   return env?.ADMIN_MANUAL_FIELD_ACCEPT_ENABLED==='true';
 }
 
-export async function manualPair(db,nodeId,revision,nowMs=Date.now()){
+/** Fresh confirmation is mandatory at commissioning. Once published, the
+ * same revision's one-time accepted carrier pair persists; only signed
+ * runtime health expires and must be renewed. Never reuse after reconfiguration.
+ */
+export async function manualPair(db,nodeId,revision,nowMs=Date.now(),acceptedOnce=false){
+  const earliest=acceptedOnce?1:nowMs-TEST_TTL;
   const rows=(await db.prepare(
     "SELECT operator,port,revision,confirmed_ms FROM admin_carrier_tests "+
     "WHERE node_id=? AND revision=? AND confirmed_ms BETWEEN ? AND ?"
-  ).bind(nodeId,revision,nowMs-TEST_TTL,nowMs+30000).all()).results??[];
+  ).bind(nodeId,revision,earliest,nowMs+30000).all()).results??[];
   return rows.length===2 &&
     rows.some(x=>x.operator==='mci'&&x.port===443) &&
     rows.some(x=>x.operator==='irancell'&&x.port===8443);
