@@ -141,7 +141,8 @@ export async function e2eAction(env,actor,action,ref,nowMs=Date.now()){
       return view('⏳ UUID هنوز روی نود نصب و توسط عامل تأیید نشده است.',[
         btn('🔄 بررسی دوباره','status:'+ref)]);
     const routes=await activeRoutes(db,state.subscription_id,nowMs);
-    if(!carrierPair(routes))return view('⏳ دو مسیر تأییدشده برای این UUID هنوز آماده نیستند.',[
+    if(!carrierPair(routes.map(r=>({id:r.route_id,transport:r.transport,operator_hint:r.operator_hint,host:r.host,port:r.port}))))
+      return view('⏳ دو مسیر تأییدشده برای این UUID هنوز آماده نیستند.',[
       btn('🔄 بررسی دوباره','status:'+ref)]);
     const link=await issueCarrierLink(env,state.subscription_id,nowMs);
     return view(link?'✅ لینک خصوصی آزمایشی، فقط برای مدیر:\n'+link.url+
