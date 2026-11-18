@@ -1,15 +1,39 @@
 import json
+import io
+import urllib.error
+from contextlib import redirect_stdout
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from agent.runtime import read_marker,store_marker,watchdog,Runtime,stats_snapshot
+from agent.runtime import read_marker,store_marker,watchdog,Runtime,stats_snapshot,runtime_diagnostic_code,journal_safe_error
 from agent.runtime_install import render_runtime_units
 from agent.account_policy import LocalLedger
 
 
 class RuntimeSafetyTests(unittest.TestCase):
+    def test_runtime_error_logging_never_exposes_keys_addresses_or_uuids(self):
+        private='https://hidden.invalid/?key=secret-123 user-id'
+        self.assertEqual(runtime_diagnostic_code(
+            urllib.error.HTTPError(private,403,'private',None,None)),'HTTP_403')
+        self.assertEqual(runtime_diagnostic_code(
+            ValueError('sensitive UUID=abc123 '+private)),'INVALID_RUNTIME_STATE')
+        self.assertEqual(runtime_diagnostic_code(
+            RuntimeError('sensitive '+private)),'AGENT_ERROR')
+        from agent.reconciler import ReconcileError
+        self.assertEqual(runtime_diagnostic_code(
+            ReconcileError('unrecognized Xray process generation')),
+            'XRAY_GENERATION_MISMATCH')
+        captured=io.StringIO()
+        with redirect_stdout(captured):
+            journal_safe_error('remote',ValueError(private))
+            journal_safe_error('local',ReconcileError('unrecognized Xray process generation'))
+        output=captured.getvalue()
+        self.assertIn('MADAR_RUNTIME_FAULT remote INVALID_RUNTIME_STATE',output)
+        self.assertIn('MADAR_RUNTIME_FAULT local XRAY_GENERATION_MISMATCH',output)
+        self.assertNotIn(private,output)
+
     def test_watchdog_only_stops_owned_runtime_after_expired_commercial_heartbeat(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder)
