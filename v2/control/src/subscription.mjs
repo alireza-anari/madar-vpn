@@ -1,4 +1,5 @@
 import {findAppSession} from './android-account.mjs';
+import {nodeUiRef} from './node-admin.mjs';
 /** Revocable token-authenticated V2 subscription API, no bearer tokens in URLs.
  * Delivers structured VLESS route metadata, never server private keys.
  */
@@ -88,9 +89,50 @@ export async function activeRoutes(db,subId,nowMs) {
   return rows.filter(eligibleEndpoint);
 }
 
+/** An exceptional zero-price owner test is readable without enabling the
+ * general customer subscription API. A token cannot promote any ordinary
+ * subscription into this scope. Exact node/ref and owner binding are required.
+ */
+export async function isAdminE2eSubscription(env,subId,nowMs=Date.now()){
+  if(env.ADMIN_E2E_TEST_ENABLED!=='true'||!env.DB||
+     typeof subId!=='string'||subId.length>80)return false;
+  const row=await env.DB.prepare(
+    "SELECT o.id AS order_id,s.owner_telegram_id AS owner,a.node_id,j.owner_id "+
+    "FROM subscriptions s JOIN orders o ON o.id=s.order_id "+
+    "JOIN plans p ON p.id=o.plan_id "+
+    "JOIN customers c ON c.telegram_id=s.owner_telegram_id "+
+    "JOIN node_allocations a ON a.subscription_id=s.id AND a.state='active' "+
+    "JOIN node_bootstrap_jobs j ON j.node_id=a.node_id AND j.state='installed' "+
+    "WHERE s.id=? AND s.state='active' AND s.expires_at>? "+
+    "AND s.max_bytes=104857600 AND s.used_bytes<s.max_bytes "+
+    "AND c.state='active' AND o.customer_telegram_id=s.owner_telegram_id "+
+    "AND o.state='fulfilled' AND o.plan_id='v2-admin-e2e-100mb-1day' "+
+    "AND o.quoted_amount=0 AND o.quoted_currency='IRT' "+
+    "AND p.id=o.plan_id AND p.active=0 AND p.price_amount=0 "+
+    "AND p.duration_days=1 AND p.quota_bytes=104857600 LIMIT 1"
+  ).bind(subId,nowMs).first();
+  if(!row||row.owner!==row.owner_id ||
+     !/^[0-9]{5,20}$/.test(row.owner??'') ||
+     typeof env.ADMIN_TELEGRAM_IDS!=='string'||
+     !env.ADMIN_TELEGRAM_IDS.split(',').includes(row.owner))return false;
+  return row.order_id==='e2e-'+await nodeUiRef(row.node_id);
+}
+export async function isAdminE2eToken(env,token,nowMs=Date.now()){
+  if(env.ADMIN_E2E_TEST_ENABLED!=='true'||!env.DB)return false;
+  const hash=await tokenDigest(token);
+  if(!hash)return false;
+  const row=await env.DB.prepare(
+    "SELECT subscription_id FROM subscription_tokens "+
+    "WHERE token_hash=? AND revoked=0 AND expires_at>? LIMIT 1"
+  ).bind(hash,nowMs).first();
+  return !!row&&await isAdminE2eSubscription(env,row.subscription_id,nowMs);
+}
+
 export async function getSubscription(request,env,nowMs=Date.now()) {
   if(request.method!=='GET') return json({error:'method_not_allowed'},405);
-  if(env.SUBSCRIPTION_API_ENABLED!=='true' && env.SUBSCRIPTION_API_ENABLED_SECRET!=='true') return json({error:'service_not_ready'},503);
+  const generalApi=env.SUBSCRIPTION_API_ENABLED==='true'||env.SUBSCRIPTION_API_ENABLED_SECRET==='true';
+  if(!generalApi&&env.ADMIN_E2E_TEST_ENABLED!=='true')
+    return json({error:'service_not_ready'},503);
   if(!env.DB || !env.SUBSCRIPTION_CREDENTIAL_KEY)
     return json({error:'service_not_ready'},503);
   const header=request.headers.get('authorization')??'';
@@ -98,9 +140,11 @@ export async function getSubscription(request,env,nowMs=Date.now()) {
   const token=header.slice(7);
   const hash=await tokenDigest(token);
   if(!hash) return json({error:'unauthorized'},401);
+  if(!generalApi&&!await isAdminE2eToken(env,token,nowMs))
+    return json({error:'service_not_ready'},503);
   // App identity sessions can exist without a subscription. Subscription
   // entitlement is resolved from the verified owner, never from client input.
-  const owner=await findAppSession(env.DB,hash,nowMs);
+  const owner=generalApi?await findAppSession(env.DB,hash,nowMs):null;
   const active=owner
     ?await env.DB.prepare(
       "SELECT id,state,expires_at,max_bytes,used_bytes FROM subscriptions " +
@@ -161,9 +205,10 @@ export async function wrapClientUuid(uuid,keyText) {
  * The token is returned once and never persisted in plaintext.
  */
 export async function issueActiveToken(env,subId,nowMs=Date.now()) {
-  if(!env.DB || (env.SUBSCRIPTION_API_ENABLED!=='true' && env.SUBSCRIPTION_API_ENABLED_SECRET!=='true') ||
-     !env.SUBSCRIPTION_CREDENTIAL_KEY || typeof subId!=='string' || subId.length>80)
+  if(!env.DB || !env.SUBSCRIPTION_CREDENTIAL_KEY || typeof subId!=='string' || subId.length>80)
     return null;
+  if(env.SUBSCRIPTION_API_ENABLED!=='true' && env.SUBSCRIPTION_API_ENABLED_SECRET!=='true' &&
+     !await isAdminE2eSubscription(env,subId,nowMs))return null;
   const row=await env.DB.prepare(
     "SELECT s.id,s.expires_at FROM subscriptions s " +
     "JOIN subscription_credentials c ON c.subscription_id=s.id AND c.key_version=1 " +
