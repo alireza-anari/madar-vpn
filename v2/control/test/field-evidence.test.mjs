@@ -68,7 +68,7 @@ test('two signed field samples promote the pair exactly once; replay rejected',a
         return {meta:{changes:1}};
       },
       async all(){return {results:probes.map(({id,...p})=>p)};},
-    }};}},
+    }}};},
     async batch(rows){statements.push(...rows);return rows.map(()=>({meta:{changes:1}}));}
   };
   const env={DB:db,FIELD_PROBE_ENABLED:'true',FIELD_PROBE_SECRET:secret};
