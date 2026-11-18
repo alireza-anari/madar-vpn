@@ -34,9 +34,10 @@ export async function nodeHealthRoute(request,env,nowMs=Date.now()){
   const routeId=auth.id+'_reality';
   const fields=(await env.DB.prepare(
     "SELECT operator,port FROM field_probes WHERE node_id=? AND revision=? "+
+    "AND observed_ms BETWEEN ? AND ? "+
     "AND ((operator='mci' AND port=443) OR "+
          "(operator='irancell' AND port=8443)) GROUP BY operator,port"
-  ).bind(auth.id,doc.revision).all()).results??[];
+  ).bind(auth.id,doc.revision,nowMs-86400000,nowMs).all()).results??[];
   if(fields.length!==2||!fields.some(x=>x.operator==='mci'&&x.port===443)||
      !fields.some(x=>x.operator==='irancell'&&x.port===8443))
     return json({error:'carrier_not_accepted'},409);
