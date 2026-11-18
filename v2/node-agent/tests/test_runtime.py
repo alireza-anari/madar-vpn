@@ -15,12 +15,16 @@ class RuntimeSafetyTests(unittest.TestCase):
             stopped=[]
             self.assertFalse(watchdog(root,100000,stop=lambda:stopped.append(1)))
             self.assertEqual(stopped,[])
-            store_marker(root,{'mode':'commercial','pid':1234,'checked_ms':90000})
+            store_marker(root,{'mode':'commercial','pid':1234,'checked_ms':90000,'policy_until_ms':200000})
             self.assertTrue(watchdog(root,100000,stop=lambda:stopped.append(1)))
             self.assertEqual(stopped,[])
             self.assertFalse(watchdog(root,136000,stop=lambda:stopped.append(1)))
             self.assertEqual(stopped,[1])
             self.assertEqual(read_marker(root)['pid'],1234)
+            store_marker(root,{'mode':'commercial','pid':1234,'checked_ms':137000,'policy_until_ms':138000})
+            self.assertTrue(watchdog(root,137500,stop=lambda:stopped.append(1)))
+            self.assertFalse(watchdog(root,138000,stop=lambda:stopped.append(1)))
+            self.assertEqual(stopped,[1,1])
 
     def test_rendered_units_are_isolated_and_include_independent_watchdog(self):
         units=render_runtime_units('test-node01')
