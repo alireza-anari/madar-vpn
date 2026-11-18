@@ -65,6 +65,7 @@ class RuntimeSafetyTests(unittest.TestCase):
             runtime=Runtime.__new__(Runtime)
             runtime.state=path
             runtime.clock=lambda:1800000000
+            runtime.runner=lambda *args,**kwargs:None
             installed=[]
             def local_sample(x,_now):
                 x.observe({'sub-one':1001},1800000000000)
