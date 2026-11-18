@@ -73,15 +73,21 @@ test('signed healthy REALITY 443+8443 renews operational freshness only after ca
  assert.equal(raw.prepare("SELECT observed_ms FROM node_health").get().observed_ms,now);
  raw.close();
 });
-test('acceptance older than 24 hours cannot be extended by a healthy VPS alone',async()=>{
+test('accepted one-time field proofs remain valid after 24h if signed health is fresh',async()=>{
  const {raw,env}=fixture();
  for(const [i,operator,port] of [['old-mci','mci',443],['old-irancell','irancell',8443]]){
    raw.prepare("INSERT INTO field_probes(id,node_id,operator,port,revision,observed_ms,upload_bytes,download_bytes) "+
      "VALUES(?,?,?,?,1,?,1024,1024)").run(i,node,operator,port,now-86400001);
  }
- const stale=await nodeHealthRoute(await signed(payload()),env,now);
- assert.equal(stale.status,409);
- assert.deepEqual(await stale.json(),{error:'carrier_not_accepted'});
+ const fresh=await nodeHealthRoute(await signed(payload()),env,now);
+ assert.equal(fresh.status,200);
+ assert.equal((await fresh.json()).carrier_proofs,'initial_independent_acceptance');
+ assert.equal(raw.prepare('SELECT verified_ms FROM routes').get().verified_ms,now);
+ // A new revision without corresponding proofs must not inherit acceptance.
+ raw.prepare('UPDATE nodes SET desired_revision=2,acked_revision=2').run();
+ const oldRevision=await nodeHealthRoute(await signed({...payload(),revision:2}),env,now);
+ assert.equal(oldRevision.status,409);
+ assert.deepEqual(await oldRevision.json(),{error:'carrier_not_accepted'});
  raw.close();
 });
 test('spoofed node request and stale local measurements cannot refresh routes',async()=>{
