@@ -286,7 +286,7 @@ export async function nodeDetails(db,ref,actor,env={}){
   const currentManual=(operator)=>manualRows.some(x=>x.operator===operator &&
     x.revision===n.desired_revision && x.confirmed_ms>Date.now()-86400000);
   const canConfirm=manualAttestationEnabled(env)&&job?.state==='installed'&&
-    job.owner_id===actor&&n.lifecycle==='provisioning';
+    job.owner_id===actor&&['provisioning','ready'].includes(n.lifecycle);
   const waitingForFieldTest=n.lifecycle==='provisioning'&&job?.state==='installed';
   const routeText=routeRows.length?routeRows.map(r=>
     statusSymbol(r.state)+' '+r.transport.toUpperCase()+
@@ -308,7 +308,7 @@ export async function nodeDetails(db,ref,actor,env={}){
     (waitingForFieldTest?'\n\n🧪 نصب سرور موفق بوده است. برای ادامه، لینک تست را باز کنید و اتصال هر دو اپراتور را از گوشی بررسی کنید. تا تأیید آزمون، مسیر منتشر نمی‌شود.':'')+
     (canConfirm?'\n\n📋 تأیید دستی مدیر: همراه اول '+(currentManual('mci')?'✅':'⏳')+
       ' · ایرانسل '+(currentManual('irancell')?'✅':'⏳')+
-      '\n🔐 تأیید امضاشده عامل سرور: '+(ack?.seen?'دریافت شده':'دریافت نشده؛ وضعیت آماده مسدود است')+
+      '\n🔐 تأیید امضاشده عامل سرور: '+(Number(ack?.seen)>Date.now()-600000?'تازه و معتبر':'دریافت نشده یا منقضی؛ وضعیت آماده مسدود است')+
       '\nثبت نتیجهٔ تست به‌تنهایی جای تأیید سلامت عامل یا آزمون مستقل را نمی‌گیرد.':'')+
     '\n\n🔐 تغییر وضعیت فقط پس از تأیید انجام می‌شود؛ این بخش به VPS فرمان حذف نمی‌دهد.';
   const buttons=[
