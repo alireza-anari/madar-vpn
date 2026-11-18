@@ -26,7 +26,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-          ref: ddd9947681125d64ee60a4bac4a8bef1ebcfe718
+          ref: 53c5742f3c3600f38b970776fc8e7863d4891833
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -40,7 +40,7 @@ jobs:
           test -f v2/node-agent/agent/runtime.py
           test -f v2/node-agent/agent/account_policy.py
           test -f v2/node-agent/agent/runtime_install.py
-          test "$(git rev-parse HEAD)" = "ddd9947681125d64ee60a4bac4a8bef1ebcfe718"
+          test "$(git rev-parse HEAD)" = "53c5742f3c3600f38b970776fc8e7863d4891833"
       - name: Install fixed SSH client dependencies
         run: python3 -m pip install --disable-pip-version-check paramiko==5.0.0 cryptography==50.0.2
       - name: Verify GitHub and Cloudflare share the V2 runner service secret
