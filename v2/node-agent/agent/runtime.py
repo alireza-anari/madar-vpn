@@ -222,6 +222,11 @@ class Runtime:
         policy=verify_clients(envelope,self.key,self.node_id,now=int(self.clock()))
         self.revision=policy['revision']
         if policy['mode']!='commercial':
+            # Never continue a former commercial session after demotion.
+            old=read_marker(self.state)
+            if old and old.get('mode')=='commercial':
+                stop_owned_xray()
+                raise ReconcileError('commercial node was demoted')
             # Leave the original bootstrap UUID available for field testing.
             return {'mode':'test','connected':False}
         ledger=LocalLedger(self.state/'quota.sqlite')
@@ -278,8 +283,9 @@ class Runtime:
                     next_remote=now+15
                     # No renewal on a failed request. Enforce the existing
                     # signed deadline locally; the watchdog stops a dead agent.
-                    if not watchdog(self.state,stop=stop_owned_xray):
-                        stop_owned_xray()
+                    old=read_marker(self.state)
+                    if old and old.get('mode')=='commercial':
+                        watchdog(self.state,stop=stop_owned_xray)
             else:
                 try:
                     self.local_tick()
