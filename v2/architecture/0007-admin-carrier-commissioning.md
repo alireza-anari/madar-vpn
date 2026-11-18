@@ -11,9 +11,11 @@ Readiness requires *all* of the following:
 1. Existing installation job completed on that exact V2 node.
 2. Node desired revision equals its signed acknowledged revision.
 3. A fresh HMAC-authenticated accepted node ACK within 10 minutes, with replay protection.
-4. Both MCI and Irancell administrator confirmations in the same revision within 24h.
+4. Both MCI and Irancell administrator confirmations for the same revision, made within 24h of initial commissioning.
 5. Both expected REALITY variants (443, 8443), one matching parent route.
 6. The dedicated staging-only ADMIN_MANUAL_FIELD_ACCEPT_ENABLED flag.
+
+**Ongoing operation:** initial carrier acceptance is stored durably for that exact revision. Once a node is ready, later signed runtime health reports do not require a repeat manual SIM test every 24 hours; they still need valid signed authentication, installed dual variants and healthy loopback stats. Fresh network reachability from either operator is not independently proven by runtime health, and must be monitored separately. New configuration revision requires renewed carrier acceptance.
 
 No admin confirmation can simulate a signed node ACK or customer UUID installation.
 Successful ready status is not an independent network audit or a license to enable
