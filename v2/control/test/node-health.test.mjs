@@ -73,6 +73,17 @@ test('signed healthy REALITY 443+8443 renews operational freshness only after ca
  assert.equal(raw.prepare("SELECT observed_ms FROM node_health").get().observed_ms,now);
  raw.close();
 });
+test('acceptance older than 24 hours cannot be extended by a healthy VPS alone',async()=>{
+ const {raw,env}=fixture();
+ for(const [i,operator,port] of [['old-mci','mci',443],['old-irancell','irancell',8443]]){
+   raw.prepare("INSERT INTO field_probes(id,node_id,operator,port,revision,observed_ms,upload_bytes,download_bytes) "+
+     "VALUES(?,?,?,?,1,?,1024,1024)").run(i,node,operator,port,now-86400001);
+ }
+ const stale=await nodeHealthRoute(await signed(payload()),env,now);
+ assert.equal(stale.status,409);
+ assert.deepEqual(await stale.json(),{error:'carrier_not_accepted'});
+ raw.close();
+});
 test('spoofed node request and stale local measurements cannot refresh routes',async()=>{
  const {raw,env}=fixture();
  assert.equal((await nodeHealthRoute(new Request('https://example.test/api/node/v1/health',
