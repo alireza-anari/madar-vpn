@@ -141,7 +141,8 @@ def apply_config(root,config,*,binary,sha256,runner=subprocess_runner):
                     runner(["/usr/bin/systemctl","restart",UNIT_NAME],timeout=30)
                 raise
             return {"status":"service_configured","field_verified":False,
-                    "client_count":sum(len(x["settings"]["users"]) for x in config["inbounds"])}
+                    "client_count":sum(len(x.get("settings",{}).get("users",[]))
+                      for x in config["inbounds"] if x.get("protocol")=="vless")}
     finally:
         if staged is not None:
             staged.unlink(missing_ok=True)
