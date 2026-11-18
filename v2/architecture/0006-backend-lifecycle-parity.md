@@ -48,11 +48,14 @@ Both MCI (TCP443) and Irancell (TCP8443) must be proven through real
 controlled field harness using HMAC-signed field observations. Listener checks,
 VPS-side TCP probes, unit tests, and a runner reporting installed are NOT proof
 of connectivity on a mobile network. First acceptance is stored durably.
-Subsequent node health reports can renew operational freshness *only while*
-both independently accepted carrier observations exist **within the past 24
-hours** and the signed revision matches. After 24 hours, a fresh independent
-mobile-carrier test is required; an on-VPS health check must not indefinitely
-extend evidence of external carrier reachability.
+Subsequent signed node health reports renew *technical runtime freshness*
+only when the approved carrier evidence still matches the same configuration
+revision and both published variants remain valid. First acceptance persists;
+administrators are not required to retest SIMs for every subscription or every
+24 hours. However a fresh on-VPS health report is **not** an independent proof
+that either mobile operator is currently reachable; periodic external network
+monitoring is a separate operational release gate. Any configuration revision
+change invalidates the prior carrier approval.
 Neither the VPS runtime nor the Worker can independently identify what SIM was
 used without the external field harness.
 
