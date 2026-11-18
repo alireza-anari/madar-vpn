@@ -10,6 +10,7 @@ import { fieldProbeRoute } from './field-evidence.mjs';
 import {reconcileApprovedOrders} from './provisioning.mjs';
 import {usageRoute} from './usage-telemetry.mjs';
 import {nodeHealthRoute} from './node-health.mjs';
+import {expireEntitlements} from './subscription-lifecycle.mjs';
 import { toBotMessage, verifyTelegramSecret } from './telegram.mjs';
 import { resolveBotAction,adminAllowed } from './shop.mjs';
 import {frameMessage,BRAND_BANNER_URL,styleInlineKeyboard,contextualKeyboard} from './bot-ux.mjs';
@@ -372,6 +373,7 @@ export default {
     await reconcileApprovedOrders(env);
     if(!env.DB) return;
     const now=Date.now();
+    await expireEntitlements(env,now);
     // Minimize stored Telegram content. Orders, receipts and subscriptions
     if(env.RUNNER_ENROLLMENT_ENABLED==='true')await cleanupRunnerJobs(env.DB,now);
     await purgeAndroidLogins(env.DB,now);
