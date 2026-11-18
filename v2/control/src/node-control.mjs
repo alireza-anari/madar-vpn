@@ -168,12 +168,14 @@ async function clientManifest(env,identity,nowMs) {
       const uuid=await unwrapClientUuid(row,env.SUBSCRIPTION_CREDENTIAL_KEY);
       clients.push({subscription_id:row.id,uuid,
         expires_at:row.state==='pending'?nowMs+120000:row.expires_at,
+        quota_bytes:row.max_bytes,used_bytes:row.used_bytes,
         remaining_bytes:row.max_bytes-row.used_bytes});
     }
   }catch{return safeJson({error:'credential_unavailable'},503);}
   const issued=Math.floor(nowMs/1000);
   const payload={node_id:identity.id,revision:identity.node.desired_revision,
-    issued_at:issued,expires_at:issued+120,clients};
+    issued_at:issued,expires_at:issued+120,
+    mode:identity.node.lifecycle==='ready'?'commercial':'test',clients};
   const signature=base64Url(await hmac(identity.key,canonical(payload)));
   return safeJson({payload,signature,applied:false});
 }
