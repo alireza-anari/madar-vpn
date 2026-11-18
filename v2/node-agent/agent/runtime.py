@@ -233,6 +233,11 @@ class Runtime:
             self.apply(ledger,active)
             pid=xray_pid(self.runner)
             store_marker(self.state,{'mode':'commercial','pid':pid,'checked_ms':now_ms})
+            response=self.call('POST','/api/node/v1/health',{
+                'revision':self.revision,'observed_ms':now_ms,
+                'xray_healthy':True,'stats_healthy':True,'ports':[443,8443]})
+            if response.get('ok') is not True:
+                raise ReconcileError('live node health not acknowledged')
             self.announce_clients(active)
             self.report_usage(ledger,now_ms)
             self.revoke(ledger)
