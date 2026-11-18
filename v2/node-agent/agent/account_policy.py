@@ -185,10 +185,12 @@ class LocalLedger:
                 if old:
                     self.db.execute(
                         'UPDATE accounts SET quota=?,used=?,expires_ms=?,present=1 WHERE id=?',
-                        (quota,max(old['used'],remote_used),min(old['expires_ms'],c['expires_at']),sid))
+                        (quota,max(old['used'],remote_used),c['expires_at'],sid))
+                    self.db.execute('UPDATE accounts SET total=MAX(total,?) WHERE id=?',
+                        (remote_used,sid))
                 else:
-                    self.db.execute('INSERT INTO accounts(id,uuid,quota,used,expires_ms) VALUES(?,?,?,?,?)',
-                        (sid,c['uuid'],quota,remote_used,c['expires_at']))
+                    self.db.execute('INSERT INTO accounts(id,uuid,quota,used,expires_ms,total) VALUES(?,?,?,?,?,?)',
+                        (sid,c['uuid'],quota,remote_used,c['expires_at'],remote_used))
     def observe(self,absolute,now_ms):
         with self.db:
             for sid,value in absolute.items():
