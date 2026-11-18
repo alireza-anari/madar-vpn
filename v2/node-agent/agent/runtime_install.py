@@ -135,6 +135,14 @@ def install_node_runtime(node_id,key_source,package_source,*,root=CONFIG,
             stream.write((value+'\n').encode('ascii'))
             stream.flush();os.fsync(stream.fileno())
         created.append(KEY)
+        # systemd ReadWritePaths must exist before it starts the sandbox.
+        state_parent=pathlib.Path('/var/lib/madar-v2')
+        state_runtime=state_parent/'runtime'
+        if not state_parent.exists():
+            state_parent.mkdir(mode=0o700)
+            created.append(state_parent)
+        state_runtime.mkdir(mode=0o700,exist_ok=False)
+        created.append(state_runtime)
         for name,text in render_runtime_units(node_id).items():
             path=unit_dir/name
             with path.open('x',encoding='utf-8') as stream:
