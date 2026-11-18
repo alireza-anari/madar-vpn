@@ -160,7 +160,10 @@ test('no ready signed-health node means no direct UUID is reserved; user never r
   const {raw,env}=setup();
   raw.prepare('UPDATE node_health SET observed_ms=? WHERE node_id=?').run(NOW-900000,NODE);
   const start=await resolveBotAction(env,event(ADMIN,'admin:configs:direct:new'),NOW);
-  await resolveBotAction(env,event(ADMIN,'','مشتری تست'),NOW);
+  const stage=await resolveBotAction(env,event(ADMIN,'','مشتری تست'),NOW);
+  assert.match(stage.text,/تأیید اولیه محفوظ است/);
+  assert.match(stage.text,/تست دوبارهٔ اپراتورها لازم نیست/);
+  assert.ok(!stage.replyMarkup.inline_keyboard.flat().some(x=>x.callback_data?.includes('direct:node:')));
   const rows=await resolveBotAction(env,event(ADMIN,'admin:configs:direct:node:'+await nodeUiRef(NODE)),NOW);
   assert.match(rows.text,/سرور آماده نیست/);
   assert.equal(raw.prepare('SELECT COUNT(*) n FROM orders').get().n,0);
