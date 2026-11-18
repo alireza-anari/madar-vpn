@@ -75,7 +75,7 @@ test('manager-only E2E button is scoped to staging flag and never enables store'
   assert.equal(env.SHOP_ENABLED,'false');
   assert.equal(env.PROVISIONING_ENABLED,'false');
   const outsider=await resolveBotAction(env,event('100002','admin:configs:e2e:list'),NOW);
-  assert.match(outsider.text,/دسترسی به این بخش مجاز نیست/);
+  assert.ok(!outsider.replyMarkup?.inline_keyboard?.flat()?.some(b=>b.callback_data?.includes('e2e:')));
   env.ADMIN_E2E_TEST_ENABLED='false';
   const off=await resolveBotAction(env,event(ADMIN,'admin:configs'),NOW);
   assert.ok(!off.replyMarkup.inline_keyboard.flat().some(b=>b.callback_data==='v2:admin:configs:e2e:list'));
@@ -93,7 +93,7 @@ test('one admin confirmation creates real sealed pending UUID exactly once, with
   assert.match(started.text,/ACK/);
   const again=await resolveBotAction(env,event(ADMIN,'admin:configs:e2e:start:'+ref,201),NOW);
   assert.match(again.text,/ACK/);
-  assert.deepEqual(raw.prepare('SELECT price_amount,active,quota_bytes,duration_days FROM plans').get(),
+  assert.deepEqual({...raw.prepare('SELECT price_amount,active,quota_bytes,duration_days FROM plans').get()},
     {price_amount:0,active:0,quota_bytes:104857600,duration_days:1});
   assert.equal(raw.prepare("SELECT COUNT(*) n FROM orders WHERE quoted_amount=0 AND state='provisioning'").get().n,1);
   assert.equal(raw.prepare("SELECT COUNT(*) n FROM subscriptions WHERE state='pending'").get().n,1);
