@@ -68,6 +68,9 @@ export async function activeRoutes(db,subId,nowMs) {
     "WHERE a.subscription_id=? AND a.state='active' AND n.lifecycle='ready' " +
     "AND r.transport='reality' AND r.state='ready' AND r.verified_ms BETWEEN ? AND ? " +
     "AND rv.published=1 AND rv.verified_ms BETWEEN ? AND ? " +
+    "AND EXISTS(SELECT 1 FROM node_client_acks ac WHERE ac.node_id=n.id " +
+    "AND ac.subscription_id=a.subscription_id AND ac.revision=n.desired_revision " +
+    "AND ac.observed_ms BETWEEN ? AND ?) " +
     "UNION ALL " +
     "SELECT r.id AS route_id,r.transport,r.operator_hint,re.host,re.port,re.server_name," +
     "re.ws_path,re.reality_public_key,re.reality_short_id " +
@@ -76,9 +79,12 @@ export async function activeRoutes(db,subId,nowMs) {
     "WHERE a.subscription_id=? AND a.state='active' AND n.lifecycle='ready' " +
     "AND r.state='ready' AND r.verified_ms BETWEEN ? AND ? AND re.published=1 " +
     "AND NOT EXISTS(SELECT 1 FROM route_carrier_variants rv WHERE rv.route_id=r.id) " +
+    "AND EXISTS(SELECT 1 FROM node_client_acks ac WHERE ac.node_id=n.id " +
+    "AND ac.subscription_id=a.subscription_id AND ac.revision=n.desired_revision " +
+    "AND ac.observed_ms BETWEEN ? AND ?) " +
     "ORDER BY route_id LIMIT 8"
-  ).bind(subId,nowMs-600000,nowMs,nowMs-600000,nowMs,
-         subId,nowMs-600000,nowMs).all()).results??[];
+  ).bind(subId,nowMs-600000,nowMs,nowMs-600000,nowMs,nowMs-600000,nowMs,
+         subId,nowMs-600000,nowMs,nowMs-600000,nowMs).all()).results??[];
   return rows.filter(eligibleEndpoint);
 }
 
