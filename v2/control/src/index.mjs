@@ -6,6 +6,7 @@ import { getSubscription } from './subscription.mjs';
 import {androidLoginRoute,approveAndroidLogin,purgeAndroidLogins} from './android-login.mjs';
 import { getCarrierFeed } from './carrier-subscription.mjs';
 import { nodeRoute } from './node-control.mjs';
+import { fieldProbeRoute } from './field-evidence.mjs';
 import { toBotMessage, verifyTelegramSecret } from './telegram.mjs';
 import { resolveBotAction,adminAllowed } from './shop.mjs';
 import {frameMessage,BRAND_BANNER_URL,styleInlineKeyboard,contextualKeyboard} from './bot-ux.mjs';
@@ -337,6 +338,10 @@ export default {
       if(new URL(request.url).search) return json({error:'query_not_allowed'},400);
       try{return await getSubscription(request,env);}
       catch {return json({error:'temporary_failure'},503);}
+    }
+    if(path==='/api/v2/field/accept') {
+      try{return await fieldProbeRoute(request,env);}
+      catch{return json({error:'field_temporary_failure'},503);}
     }
     if(path.startsWith('/api/node/v1/')) {
       try {return await nodeRoute(request,env);}
