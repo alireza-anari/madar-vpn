@@ -26,7 +26,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-          ref: ${{ github.sha }}
+          ref: 84fe8b5289cde126afa0d8948e9ce1b12ceb52b5
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -37,6 +37,10 @@ jobs:
           test -n "$MADAR_V2_RUNNER_SERVICE_SECRET"
           [[ "${{ inputs.job_id }}" =~ ^[a-f0-9]{8}-([a-f0-9]{4}-){3}[a-f0-9]{12}$ ]]
           test -f v2/runner/one_shot.py
+          test -f v2/node-agent/agent/runtime.py
+          test -f v2/node-agent/agent/account_policy.py
+          test -f v2/node-agent/agent/runtime_install.py
+          test "$(git rev-parse HEAD)" = "84fe8b5289cde126afa0d8948e9ce1b12ceb52b5"
       - name: Install fixed SSH client dependencies
         run: python3 -m pip install --disable-pip-version-check paramiko==5.0.0 cryptography==50.0.2
       - name: Verify GitHub and Cloudflare share the V2 runner service secret
