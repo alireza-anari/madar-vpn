@@ -20,6 +20,10 @@ from pathlib import Path
 
 from .manifest import AgentStore, RejectedManifest, sign
 
+# workers.dev rejects Python's default urllib user agent with Cloudflare 1010.
+# This identity does not bypass authentication: signed HMAC headers remain required.
+NODE_USER_AGENT="MadarNodeAgent/2.0"
+
 
 def read_node_secret(filename):
     path=Path(filename)
@@ -73,6 +77,7 @@ def send(opener,base,node_id,key,method,path,payload=None):
     ).encode("utf-8")
     headers=signed_headers(key,node_id,method,path,body)
     headers["Accept"]="application/json"
+    headers["User-Agent"]=NODE_USER_AGENT
     if method=="POST":
         headers["Content-Type"]="application/json"
     req=urllib.request.Request(base+path,headers=headers,method=method,
