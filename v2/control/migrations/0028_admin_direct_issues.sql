@@ -11,3 +11,11 @@ CREATE TABLE IF NOT EXISTS admin_direct_issues (
   created_ms INTEGER NOT NULL CHECK(created_ms>0)
 );
 CREATE INDEX IF NOT EXISTS idx_admin_direct_issues_actor ON admin_direct_issues(actor_id,created_ms);
+
+-- Own session table: older V2 bot input sessions have a restricted mode CHECK.
+CREATE TABLE IF NOT EXISTS admin_direct_drafts (
+  telegram_id TEXT PRIMARY KEY REFERENCES customers(telegram_id),
+  context_id TEXT NOT NULL CHECK(length(context_id) BETWEEN 2 AND 1024),
+  expires_ms INTEGER NOT NULL CHECK(expires_ms>0)
+);
+CREATE INDEX IF NOT EXISTS idx_admin_direct_drafts_expiry ON admin_direct_drafts(expires_ms);
