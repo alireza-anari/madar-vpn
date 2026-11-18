@@ -108,7 +108,8 @@ def watchdog(root=DEFAULT_STATE,now_ms=None,stop=stop_owned_xray):
     if not doc or doc.get('mode')!='commercial':
         return False
     stamp=doc.get('checked_ms')
-    if type(stamp) is not int or stamp>now_ms+10000 or now_ms-stamp>45000:
+    expires=doc.get('policy_until_ms')
+    if type(stamp) is not int or type(expires) is not int or expires<=now_ms or stamp>now_ms+10000 or now_ms-stamp>45000:
         stop()
         return False
     return True
@@ -232,7 +233,8 @@ class Runtime:
             active=ledger.active(now_ms)
             self.apply(ledger,active)
             pid=xray_pid(self.runner)
-            store_marker(self.state,{'mode':'commercial','pid':pid,'checked_ms':now_ms})
+            store_marker(self.state,{'mode':'commercial','pid':pid,
+                'checked_ms':now_ms,'policy_until_ms':policy['expires_at']*1000})
             response=self.call('POST','/api/node/v1/health',{
                 'revision':self.revision,'observed_ms':now_ms,
                 'xray_healthy':True,'stats_healthy':True,'ports':[443,8443]})
@@ -244,16 +246,46 @@ class Runtime:
             return {'mode':'commercial','active':len(active)}
         finally:
             ledger.close()
+    def local_tick(self):
+        """Locally enforce byte and time limits every second, with NO Cloudflare call."""
+        old=read_marker(self.state)
+        if not old or old.get('mode')!='commercial':
+            return
+        now_ms=int(self.clock()*1000)
+        if type(old.get('policy_until_ms')) is not int or now_ms>=old['policy_until_ms']:
+            stop_owned_xray()
+            raise ReconcileError('signed policy lease expired')
+        ledger=LocalLedger(self.state/'quota.sqlite')
+        try:
+            self.sample(ledger,now_ms)
+            active=ledger.active(now_ms)
+            self.apply(ledger,[{'subscription_id':r['id'],'uuid':r['uuid']} for r in active])
+            pid=xray_pid(self.runner)
+            store_marker(self.state,{'mode':'commercial','pid':pid,
+                'checked_ms':now_ms,'policy_until_ms':old['policy_until_ms']})
+        finally:
+            ledger.close()
     def loop(self):
+        """Slow signed policy polling, fast local accounting and watchdog."""
+        next_remote=0
         while True:
-            try:
-                self.once()
-            except Exception:
-                # A transient control-plane outage gets only the already
-                # authorized short heartbeat; an invalid policy never grants
-                # more quota or time. The independent timer stops an orphan.
-                watchdog(self.state,stop=stop_owned_xray)
-            time.sleep(5)
+            now=self.clock()
+            if now>=next_remote:
+                try:
+                    self.once()
+                    next_remote=now+30
+                except Exception:
+                    next_remote=now+15
+                    # No renewal on a failed request. Enforce the existing
+                    # signed deadline locally; the watchdog stops a dead agent.
+                    if not watchdog(self.state,stop=stop_owned_xray):
+                        stop_owned_xray()
+            else:
+                try:
+                    self.local_tick()
+                except Exception:
+                    stop_owned_xray()
+            time.sleep(1)
 
 
 def main(argv=None):
