@@ -41,8 +41,11 @@ export async function nodeHealthRoute(request,env,nowMs=Date.now()){
   ).bind(auth.id,doc.revision,nowMs-86400000,nowMs).all()).results??[];
   const independent=fields.length===2&&fields.some(x=>x.operator==='mci'&&x.port===443)&&
     fields.some(x=>x.operator==='irancell'&&x.port===8443);
+  // Carrier approval was a one-time commissioning gate for this revision.
+  // Do not request a new mobile-SIM test every day. A fresh, signed Xray
+  // health report and same-revision published variants are still mandatory.
   const manual=!independent&&manualAttestationEnabled(env)&&
-    await manualPair(env.DB,auth.id,doc.revision,nowMs);
+    await manualPair(env.DB,auth.id,doc.revision,nowMs,true);
   if(!independent&&!manual)return json({error:'carrier_not_accepted'},409);
   const ready=await env.DB.prepare(
     "SELECT COUNT(*) AS n FROM route_carrier_variants v JOIN routes r ON r.id=v.route_id "+
