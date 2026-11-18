@@ -1,3 +1,4 @@
+import {deriveNodeKey} from './node-control.mjs';
 import {publicV4,reportInstall} from './node-auto.mjs';
 import {verifyTelegramSecret} from './telegram.mjs';
 
@@ -358,7 +359,8 @@ export async function runnerApi(req,env,now=Date.now()){
       nodeId:s.nodeId,targetIp:s.ip,port:s.port,username:s.username,mode:s.mode,
       diagnostic:s.diagnostic===true,
       hostFingerprint:row.fingerprint,encryptedCredentials:row.encrypted_credentials,
-      credentialsExpireAt:Math.floor(row.expires_ms/1000)};}
+      credentialsExpireAt:Math.floor(row.expires_ms/1000),
+      enableRuntime:env.NODE_RUNTIME_AUTO_ENABLED==='true'};}
     const payload=JSON.stringify(job);return reply({payload,signature:hex(await hmac(env.RUNNER_SERVICE_SECRET,payload))});
   }
   const row=await env.DB.prepare("SELECT * FROM v2_runner_jobs WHERE id=? AND lease_id=? AND state='leased' AND lease_until_ms>? AND expires_ms>?")
@@ -369,6 +371,19 @@ export async function runnerApi(req,env,now=Date.now()){
       "SELECT id FROM v2_runner_jobs WHERE id=? AND lease_id=? AND state=?"
     ).bind(b.id,b.leaseId,b.state).first():null;
     return done?reply({ok:true}):reply({error:'LEASE_EXPIRED'},409);
+  }
+  if(action==='node-key'){
+    // The caller already passed the runner bearer token and the exact live
+    // installation job lease. Never send NODE_MASTER_KEY outside the Worker.
+    if(env.NODE_RUNTIME_AUTO_ENABLED!=='true'||!env.NODE_MASTER_KEY||
+       row.kind!=='v2-install')return reply({error:'NOT_CONFIGURED'},503);
+    const spec=JSON.parse(row.spec_json);
+    if(spec.diagnostic===true||spec.mode!=='fresh'||spec.nodeId!==b.nodeId)
+      return reply({error:'INVALID_INSTALL_LEASE'},403);
+    const key=await deriveNodeKey(env.NODE_MASTER_KEY,spec.nodeId);
+    const nodeKey=btoa(String.fromCharCode(...key)).replace(/\+/g,'-')
+      .replace(/\//g,'_').replace(/=+$/,'');
+    return reply({nodeKey,origin:'https://madar-v2-staging.alirezaanari117.workers.dev'});
   }
   if(action==='renew'){
     await env.DB.prepare("UPDATE v2_runner_jobs SET lease_until_ms=? WHERE id=? AND lease_id=? AND state='leased' AND lease_until_ms>?")
