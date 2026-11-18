@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from agent.runtime import read_marker,store_marker,watchdog,Runtime,stats_snapshot
 from agent.runtime_install import render_runtime_units
+from agent.account_policy import LocalLedger
 
 
 class RuntimeSafetyTests(unittest.TestCase):
@@ -46,6 +47,49 @@ class RuntimeSafetyTests(unittest.TestCase):
         self.assertNotIn('NODE_MASTER_KEY',text)
         self.assertNotIn('0.0.0.0:10085',text)
         self.assertNotIn('nodeToken',text)
+
+
+    def test_local_tick_removes_exhausted_customer_without_worker_round_trip(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)
+            ledger=LocalLedger(path/'quota.sqlite')
+            active={'subscription_id':'sub-one',
+                'uuid':'12345678-1234-4123-8123-123456789012',
+                'expires_at':1800000060000,'quota_bytes':1000,
+                'used_bytes':0,'remaining_bytes':1000}
+            ledger.reconcile([active],1800000000000)
+            ledger.mark_installed(['sub-one'])
+            ledger.close()
+            store_marker(path,{'mode':'commercial','pid':123,
+                'checked_ms':1800000000000,'policy_until_ms':1800000120000})
+            runtime=Runtime.__new__(Runtime)
+            runtime.state=path
+            runtime.clock=lambda:1800000000
+            installed=[]
+            def local_sample(x,_now):
+                x.observe({'sub-one':1001},1800000000000)
+            runtime.sample=local_sample
+            runtime.apply=lambda _ledger,active:installed.append(active)
+            with patch('agent.runtime.xray_pid',return_value=123):
+                runtime.local_tick()
+            self.assertEqual(installed,[[]])
+            updated=LocalLedger(path/'quota.sqlite')
+            self.assertGreaterEqual(updated.get('sub-one')['used'],1000)
+            updated.close()
+            self.assertEqual(read_marker(path)['checked_ms'],1800000000000)
+
+    def test_local_tick_never_renews_an_expired_signed_policy(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)
+            store_marker(path,{'mode':'commercial','pid':123,
+                'checked_ms':1800000000000,'policy_until_ms':1800000001000})
+            runtime=Runtime.__new__(Runtime)
+            runtime.state=path
+            runtime.clock=lambda:1800000002
+            with patch('agent.runtime.stop_owned_xray') as stop:
+                with self.assertRaisesRegex(Exception,'signed policy lease expired'):
+                    runtime.local_tick()
+                stop.assert_called_once()
 
 
 if __name__=='__main__':
