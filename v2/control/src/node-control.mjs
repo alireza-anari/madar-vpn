@@ -1,3 +1,4 @@
+import {unwrapClientUuid} from './subscription.mjs';
 /** Independently authenticated V2 node desired-state protocol.
  * A node acknowledgement NEVER marks a VPN route ready.
  * NODE_MASTER_KEY is a 32-byte base64url secret stored in Worker secrets only.
@@ -143,6 +144,89 @@ async function ack(env,identity,nowMs) {
   return safeJson({ok:true,route_ready:false});
 }
 
+/** The V1-style runtime handshake: desired clients are served only to the
+ * authenticated node; the node must apply both REALITY listeners before
+ * acknowledging individual UUIDs. A manifest alone NEVER activates users. */
+async function clientManifest(env,identity,nowMs) {
+  if(!env.SUBSCRIPTION_CREDENTIAL_KEY)return safeJson({error:'not_configured'},503);
+  const rows=(await env.DB.prepare(
+    "SELECT s.id,s.expires_at,s.max_bytes,s.used_bytes,c.ciphertext_b64,c.nonce_b64,c.key_version "+
+    "FROM node_allocations a JOIN subscriptions s ON s.id=a.subscription_id "+
+    "JOIN subscription_credentials c ON c.subscription_id=s.id "+
+    "JOIN customers u ON u.telegram_id=s.owner_telegram_id "+
+    "WHERE a.node_id=? AND a.state IN ('reserved','active') "+
+    "AND s.state IN ('pending','active') AND u.state='active' "+
+    "AND s.max_bytes>s.used_bytes AND (s.state='pending' OR s.expires_at>?) "+
+    "ORDER BY s.id LIMIT 1001"
+  ).bind(identity.id,nowMs).all()).results??[];
+  if(rows.length>1000||rows.length>identity.node.user_limit)
+    return safeJson({error:'capacity_exceeded'},409);
+  const clients=[];
+  try {
+    for(const row of rows) {
+      if(row.key_version!==1)return safeJson({error:'credential_unavailable'},503);
+      const uuid=await unwrapClientUuid(row,env.SUBSCRIPTION_CREDENTIAL_KEY);
+      clients.push({subscription_id:row.id,uuid,expires_at:row.expires_at,
+        remaining_bytes:row.max_bytes-row.used_bytes});
+    }
+  }catch{return safeJson({error:'credential_unavailable'},503);}
+  const issued=Math.floor(nowMs/1000);
+  const payload={node_id:identity.id,revision:identity.node.desired_revision,
+    issued_at:issued,expires_at:issued+120,clients};
+  const signature=base64Url(await hmac(identity.key,canonical(payload)));
+  return safeJson({payload,signature,applied:false});
+}
+
+async function clientAck(env,identity,nowMs) {
+  if(!env.SUBSCRIPTION_CREDENTIAL_KEY)return safeJson({error:'not_configured'},503);
+  let b;
+  try{b=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(identity.raw));}
+  catch{return safeJson({error:'bad_request'},400);}
+  const members=b?.clients;
+  if(!Number.isSafeInteger(b?.revision)||b.revision!==identity.node.desired_revision||
+     b.revision!==identity.node.acked_revision||identity.node.lifecycle!=='ready'||
+     b.xray_healthy!==true||!Array.isArray(b.ports)||
+     b.ports.length!==2||b.ports[0]!==443||b.ports[1]!==8443||
+     !Array.isArray(members)||members.length<1||members.length>100||
+     new Set(members.map(x=>x?.subscription_id)).size!==members.length)
+    return safeJson({error:'not_ready'},409);
+  const commands=[];
+  for(const member of members) {
+    if(typeof member?.subscription_id!=='string'||member.subscription_id.length>80||
+       !HEX64.test(member?.uuid_sha256??''))
+      return safeJson({error:'bad_request'},400);
+    const row=await env.DB.prepare(
+      "SELECT c.ciphertext_b64,c.nonce_b64,c.key_version "+
+      "FROM node_allocations a JOIN subscriptions s ON s.id=a.subscription_id "+
+      "JOIN subscription_credentials c ON c.subscription_id=s.id "+
+      "JOIN customers u ON u.telegram_id=s.owner_telegram_id "+
+      "WHERE a.node_id=? AND a.subscription_id=? AND a.state IN ('reserved','active') "+
+      "AND s.state IN ('pending','active') AND u.state='active' "+
+      "AND s.max_bytes>s.used_bytes AND (s.state='pending' OR s.expires_at>?)"
+    ).bind(identity.id,member.subscription_id,nowMs).first();
+    if(!row||row.key_version!==1)return safeJson({error:'not_allocated'},409);
+    let uuid;
+    try{uuid=await unwrapClientUuid(row,env.SUBSCRIPTION_CREDENTIAL_KEY);}
+    catch{return safeJson({error:'credential_unavailable'},503);}
+    const current=toHex(await digest(encoder.encode(uuid)));
+    if(!sameMacHex(current,member.uuid_sha256))
+      return safeJson({error:'credential_mismatch'},409);
+    commands.push(env.DB.prepare(
+      "INSERT INTO node_client_acks(node_id,subscription_id,revision,credential_sha256,observed_ms) "+
+      "VALUES(?,?,?,?,?) ON CONFLICT(node_id,subscription_id) DO UPDATE SET "+
+      "revision=excluded.revision,credential_sha256=excluded.credential_sha256,"+
+      "observed_ms=excluded.observed_ms"
+    ).bind(identity.id,member.subscription_id,b.revision,current,nowMs));
+  }
+  await env.DB.batch(commands);
+  return safeJson({ok:true,applied:commands.length});
+}
+function sameMacHex(a,b) {
+  if(typeof a!=='string'||typeof b!=='string'||a.length!==b.length)return false;
+  let diff=0;for(let i=0;i<a.length;i++)diff|=a.charCodeAt(i)^b.charCodeAt(i);
+  return diff===0;
+}
+
 export async function nodeRoute(request,env,nowMs=Date.now()) {
   const path=new URL(request.url).pathname;
   if(path==='/api/node/v1/manifest' && request.method==='GET') {
@@ -152,6 +236,14 @@ export async function nodeRoute(request,env,nowMs=Date.now()) {
   if(path==='/api/node/v1/ack' && request.method==='POST') {
     const auth=await authenticatedNode(request,env,nowMs);
     return auth.error??ack(env,auth,nowMs);
+  }
+  if(path==='/api/node/v1/clients' && request.method==='GET') {
+    const auth=await authenticatedNode(request,env,nowMs);
+    return auth.error??clientManifest(env,auth,nowMs);
+  }
+  if(path==='/api/node/v1/clients/ack' && request.method==='POST') {
+    const auth=await authenticatedNode(request,env,nowMs);
+    return auth.error??clientAck(env,auth,nowMs);
   }
   return safeJson({error:'not_found'},404);
 }
