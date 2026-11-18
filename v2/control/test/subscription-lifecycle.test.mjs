@@ -25,7 +25,7 @@ test('expiry and exhausted quota invalidate links but wait for node removal ACK'
   });
   const updated=await expireEntitlements({DB:{prepare:stmt}},1000);
   assert.equal(updated.expired,2);
-  assert.deepEqual(raw.prepare('SELECT id FROM subscriptions WHERE state="active"').all()
+  assert.deepEqual(raw.prepare("SELECT id FROM subscriptions WHERE state='active'").all()
     .map(x=>x.id),['valid']);
   assert.equal(raw.prepare('SELECT COUNT(*) n FROM subscription_tokens').get().n,1);
   assert.equal(raw.prepare("SELECT COUNT(*) n FROM node_allocations WHERE state='active'").get().n,3);
