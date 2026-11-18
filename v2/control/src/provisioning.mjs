@@ -5,9 +5,11 @@
 import {wrapClientUuid} from './subscription.mjs';
 
 const validOrder=id=>typeof id==='string'&&id.length>0&&id.length<=80;
-export async function reserveApprovedOrder(env,orderId,nowMs=Date.now()) {
+export async function reserveApprovedOrder(env,orderId,nowMs=Date.now(),targetNodeId=null) {
   if(!env.DB||!env.SUBSCRIPTION_CREDENTIAL_KEY||!validOrder(orderId))
     return {status:'not_configured'};
+  if(targetNodeId!==null&&!/^[A-Za-z0-9][A-Za-z0-9_-]{1,63}$/.test(targetNodeId))
+    return {status:'bad_target_node'};
   const db=env.DB;
   const order=await db.prepare(
     "SELECT o.id,o.customer_telegram_id,p.quota_bytes,p.duration_days "+
@@ -32,9 +34,14 @@ export async function reserveApprovedOrder(env,orderId,nowMs=Date.now()) {
     "AND n.byte_limit-(SELECT COALESCE(SUM(a.quota_bytes),0) "+
       "FROM node_allocations a WHERE a.node_id=n.id "+
       "AND a.state IN ('reserved','active'))>=? "+
+    "AND EXISTS(SELECT 1 FROM node_health h WHERE h.node_id=n.id "+
+      "AND h.revision=n.desired_revision AND h.xray_healthy=1 AND h.stats_healthy=1 "+
+      "AND h.observed_ms BETWEEN ? AND ?) "+
+    (targetNodeId===null?"":"AND n.id=? ")+
     "ORDER BY n.id LIMIT 1"
   ).bind(nowMs-600000,nowMs,nowMs-600000,nowMs,
-    nowMs-600000,nowMs,order.quota_bytes).first();
+    nowMs-600000,nowMs,order.quota_bytes,nowMs-600000,nowMs,
+    ...(targetNodeId===null?[]:[targetNodeId])).first();
   if(!node)return {status:'no_verified_capacity'};
   const subId=crypto.randomUUID(),allocationId=crypto.randomUUID(),uuid=crypto.randomUUID();
   const credential=await wrapClientUuid(uuid,env.SUBSCRIPTION_CREDENTIAL_KEY);
