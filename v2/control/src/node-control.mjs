@@ -1,4 +1,5 @@
 import {unwrapClientUuid} from './subscription.mjs';
+import {promoteAdminPair} from './admin-carrier-accept.mjs';
 /** Independently authenticated V2 node desired-state protocol.
  * A node acknowledgement NEVER marks a VPN route ready.
  * NODE_MASTER_KEY is a 32-byte base64url secret stored in Worker secrets only.
@@ -135,13 +136,23 @@ async function ack(env,identity,nowMs) {
     return safeJson({error:'bad_request'},400);
   if(revision!==identity.node.desired_revision) return safeJson({error:'stale_revision'},409);
   await env.DB.batch([
-    env.DB.prepare('INSERT OR IGNORE INTO node_acks(node_id,revision,digest,status,observed_ms) VALUES(?,?,?,?,?)')
-      .bind(identity.id,revision,hash,code,nowMs),
+    env.DB.prepare(
+      'INSERT INTO node_acks(node_id,revision,digest,status,observed_ms) VALUES(?,?,?,?,?) '+
+      'ON CONFLICT(node_id,revision,digest) DO UPDATE SET status=excluded.status,'+
+      'observed_ms=excluded.observed_ms WHERE excluded.observed_ms>=node_acks.observed_ms'
+    ).bind(identity.id,revision,hash,code,nowMs),
     env.DB.prepare(
       'UPDATE nodes SET acked_revision=? WHERE id=? AND desired_revision=? AND acked_revision<? AND ?=?'
     ).bind(revision,identity.id,revision,revision,code,'accepted'),
   ]);
-  return safeJson({ok:true,route_ready:false});
+  // Admin can truthfully record successful mobile tests before the node
+  // reconnects. Only a fresh authenticated node ACK may finish commissioning.
+  let promoted={ready:false};
+  if(code==='accepted'){
+    try{promoted=await promoteAdminPair(env,identity.id,nowMs);}
+    catch{promoted={ready:false};}
+  }
+  return safeJson({ok:true,route_ready:promoted.ready});
 }
 
 /** The V1-style runtime handshake: desired clients are served only to the
