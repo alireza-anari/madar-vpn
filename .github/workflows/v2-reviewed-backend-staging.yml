@@ -1,10 +1,5 @@
 name: Madar V2 - reviewed backend-only guarded staging
 on:
-  push:
-    branches:
-      - fix/v2-backend-field-gates-20261118
-    paths:
-      - .github/workflows/v2-reviewed-backend-staging.yml
   workflow_dispatch:
     inputs:
       acknowledgement:
@@ -21,7 +16,7 @@ concurrency:
 
 jobs:
   guarded-deploy:
-    if: github.ref == 'refs/heads/fix/v2-backend-field-gates-20261118' && (github.event_name == 'push' || inputs.acknowledgement == 'V2-STAGING-ONLY')
+    if: github.ref == 'refs/heads/fix/v2-backend-field-gates-20261118' && inputs.acknowledgement == 'V2-STAGING-ONLY'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: madar-v2-staging
