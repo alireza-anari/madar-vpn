@@ -150,7 +150,7 @@ async function ack(env,identity,nowMs) {
 async function clientManifest(env,identity,nowMs) {
   if(!env.SUBSCRIPTION_CREDENTIAL_KEY)return safeJson({error:'not_configured'},503);
   const rows=(await env.DB.prepare(
-    "SELECT s.id,s.expires_at,s.max_bytes,s.used_bytes,c.ciphertext_b64,c.nonce_b64,c.key_version "+
+    "SELECT s.id,s.state,s.expires_at,s.max_bytes,s.used_bytes,c.ciphertext_b64,c.nonce_b64,c.key_version "+
     "FROM node_allocations a JOIN subscriptions s ON s.id=a.subscription_id "+
     "JOIN subscription_credentials c ON c.subscription_id=s.id "+
     "JOIN customers u ON u.telegram_id=s.owner_telegram_id "+
@@ -166,7 +166,8 @@ async function clientManifest(env,identity,nowMs) {
     for(const row of rows) {
       if(row.key_version!==1)return safeJson({error:'credential_unavailable'},503);
       const uuid=await unwrapClientUuid(row,env.SUBSCRIPTION_CREDENTIAL_KEY);
-      clients.push({subscription_id:row.id,uuid,expires_at:row.expires_at,
+      clients.push({subscription_id:row.id,uuid,
+        expires_at:row.state==='pending'?nowMs+120000:row.expires_at,
         remaining_bytes:row.max_bytes-row.used_bytes});
     }
   }catch{return safeJson({error:'credential_unavailable'},503);}
@@ -196,10 +197,13 @@ async function clientAck(env,identity,nowMs) {
        !HEX64.test(member?.uuid_sha256??''))
       return safeJson({error:'bad_request'},400);
     const row=await env.DB.prepare(
-      "SELECT c.ciphertext_b64,c.nonce_b64,c.key_version "+
+      "SELECT c.ciphertext_b64,c.nonce_b64,c.key_version,s.state,s.order_id,s.expires_at,"+
+      "o.state AS order_state,p.duration_days,s.owner_telegram_id "+
       "FROM node_allocations a JOIN subscriptions s ON s.id=a.subscription_id "+
       "JOIN subscription_credentials c ON c.subscription_id=s.id "+
       "JOIN customers u ON u.telegram_id=s.owner_telegram_id "+
+      "LEFT JOIN orders o ON o.id=s.order_id "+
+      "LEFT JOIN plans p ON p.id=o.plan_id "+
       "WHERE a.node_id=? AND a.subscription_id=? AND a.state IN ('reserved','active') "+
       "AND s.state IN ('pending','active') AND u.state='active' "+
       "AND s.max_bytes>s.used_bytes AND (s.state='pending' OR s.expires_at>?)"
@@ -211,6 +215,28 @@ async function clientAck(env,identity,nowMs) {
     const current=toHex(await digest(encoder.encode(uuid)));
     if(!sameMacHex(current,member.uuid_sha256))
       return safeJson({error:'credential_mismatch'},409);
+    if(row.state==='pending') {
+      if(row.order_state!=='provisioning'||!Number.isSafeInteger(row.duration_days)||
+         row.duration_days<1||row.duration_days>366)return safeJson({error:'order_not_ready'},409);
+      const expires=nowMs+row.duration_days*86400000;
+      commands.push(env.DB.prepare(
+        "UPDATE node_allocations SET state='active' WHERE node_id=? "+
+        "AND subscription_id=? AND state='reserved'"
+      ).bind(identity.id,member.subscription_id));
+      commands.push(env.DB.prepare(
+        "UPDATE subscriptions SET state='active',expires_at=? "+
+        "WHERE id=? AND state='pending' AND order_id=?"
+      ).bind(expires,member.subscription_id,row.order_id));
+      commands.push(env.DB.prepare(
+        "UPDATE orders SET state='fulfilled',updated_at=CURRENT_TIMESTAMP "+
+        "WHERE id=? AND state='provisioning'"
+      ).bind(row.order_id));
+      commands.push(env.DB.prepare(
+        "INSERT OR IGNORE INTO telegram_notifications(id,chat_id,body,state,due_ms) "+
+        "VALUES(?,?,?,'pending',?)"
+      ).bind('client-active:'+member.subscription_id,row.owner_telegram_id,
+        '✅ اشتراک مدار فعال شد. کانفیگ را از بخش «اشتراک‌های من» دریافت کنید.',nowMs));
+    }
     commands.push(env.DB.prepare(
       "INSERT INTO node_client_acks(node_id,subscription_id,revision,credential_sha256,observed_ms) "+
       "VALUES(?,?,?,?,?) ON CONFLICT(node_id,subscription_id) DO UPDATE SET "+
