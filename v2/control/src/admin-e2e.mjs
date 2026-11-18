@@ -25,7 +25,7 @@ const admin=(env,actor)=>typeof actor==='string'&&/^[0-9]{5,20}$/.test(actor)&&
 async function ownerNode(env,actor,ref) {
   if(!enabled(env)||!admin(env,actor)||!REF.test(ref??'')||!env.DB)return null;
   const node=await nodeFromRef(env.DB,ref);
-  if(!node||node.lifecycle!=='ready'||node.desired_revision!==node.acked_revision)return null;
+  if(!node)return null;
   const job=await env.DB.prepare(
     "SELECT state,owner_id FROM node_bootstrap_jobs WHERE node_id=?"
   ).bind(node.id).first();
@@ -66,6 +66,10 @@ export async function e2eAction(env,actor,action,ref,nowMs=Date.now()){
   if(!node)return view('⛔ سرور آماده، مالکیت مدیر یا قابلیت تست معتبر نیست.');
   const db=env.DB;
   const state=await testState(db,ref,actor);
+  if(['view','start','link'].includes(action)&&
+     (node.lifecycle!=='ready'||node.desired_revision!==node.acked_revision))
+    return view('⏸ سرور اکنون آماده نیست؛ تست جدید یا صدور لینک مجاز نیست. لغو تست قبلی همچنان ممکن است.',[
+      btn('🔄 مشاهده وضعیت','status:'+ref)]);
   if(action==='view'){
     if(state)return e2eAction(env,actor,'status',ref,nowMs);
     return view(panelHeading('🧪','تست صدور واقعی',node.id)+
