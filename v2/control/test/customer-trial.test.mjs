@@ -4,7 +4,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {readdirSync,readFileSync} from 'node:fs';
 import {resolveBotAction} from '../src/shop.mjs';
 import {botMenu} from '../src/bot-ux.mjs';
-import {wrapClientUuid,unwrapClientUuid} from '../src/subscription.mjs';
+import {wrapClientUuid,unwrapClientUuid,activeRoutes} from '../src/subscription.mjs';
 import {getTrialFeed} from '../src/node-auto.mjs';
 
 const KEY=btoa(String.fromCharCode(...new Uint8Array(32).fill(7)))
@@ -87,6 +87,8 @@ test('one Telegram account receives one one-hour link with both verified carrier
   assert.notEqual(ownUuid,UUID);
   raw.prepare("INSERT INTO node_client_acks(node_id,subscription_id,revision,credential_sha256,observed_ms) "+
     "VALUES(?,'trial-200',1,?,?)").run('test-customer-trial','a'.repeat(64),now);
+  const eligible=await activeRoutes(env.DB,'trial-200',now);
+  assert.equal(eligible.length,2,JSON.stringify(eligible));
   const feed=await getTrialFeed(new Request(url),env,now);
   assert.equal(feed.status,200);
   const lines=atob(await feed.text()).trim().split('\n');
