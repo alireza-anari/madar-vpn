@@ -342,16 +342,31 @@ export async function notifySupport(env,e,ticketId,nowMs=Date.now()) {
 export async function consumePanelInput(env,e,nowMs=Date.now()) {
   const db=env.DB;
   if((e.key??'')==='/cancel') {
-    const removed=await db.prepare('DELETE FROM v2_bot_input_sessions WHERE telegram_id=?')
-      .bind(e.actorId).run();
-    return removed.meta?.changes?panel('✅ عملیات لغو شد.',e.locale):null;
+    const [removed,direct]=await db.batch([
+      db.prepare('DELETE FROM v2_bot_input_sessions WHERE telegram_id=?').bind(e.actorId),
+      db.prepare('DELETE FROM admin_direct_drafts WHERE telegram_id=?').bind(e.actorId),
+    ]);
+    return (removed.meta?.changes||direct.meta?.changes)?
+      panel('✅ عملیات لغو شد.',e.locale):null;
   }
   const raw=e.inputText;
   if(typeof raw!=='string'||!raw.trim()||raw.startsWith('/')||raw.startsWith('v2:'))return null;
   const session=await db.prepare(
     'SELECT mode,context_id,expires_ms FROM v2_bot_input_sessions WHERE telegram_id=?'
   ).bind(e.actorId).first();
-  if(!session)return null;
+  if(!session){
+    if(!idAdmin(env,e.actorId))return null;
+    const draft=await db.prepare(
+      'SELECT context_id,expires_ms FROM admin_direct_drafts WHERE telegram_id=?'
+    ).bind(e.actorId).first();
+    if(!draft)return null;
+    if(draft.expires_ms<=nowMs){
+      await db.prepare('DELETE FROM admin_direct_drafts WHERE telegram_id=?')
+        .bind(e.actorId).run();
+      return panel('⌛ مهلت صدور کانفیگ پایان یافت؛ از ابتدا شروع کنید.',e.locale);
+    }
+    return directInput(env,e,draft,nowMs);
+  }
   if(session.expires_ms<=nowMs){
     await db.prepare('DELETE FROM v2_bot_input_sessions WHERE telegram_id=?').bind(e.actorId).run();
     return panel('⌛ مهلت عملیات پایان یافت. دوباره از منوی مربوط شروع کنید.',e.locale);
@@ -376,7 +391,6 @@ export async function consumePanelInput(env,e,nowMs=Date.now()) {
   }
   if(!idAdmin(env,e.actorId))return adminPanel('⛔ دسترسی به این بخش مجاز نیست.',[],e.locale);
   if(session.mode==='plan_draft')return planWizardInput(db,e,session,nowMs);
-  if(session.mode==='direct_config_draft')return directInput(env,e,session,nowMs);
   const match=session.mode.match(/^(grant|revoke)_(seller|support)$/);
   if(match){
     const id=raw.trim(),mode=match[1],role=match[2];
