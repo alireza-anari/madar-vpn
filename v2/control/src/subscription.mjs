@@ -65,7 +65,7 @@ export async function activeRoutes(db,subId,nowMs) {
     "rv.host,rv.port,rv.server_name,rv.ws_path,rv.reality_public_key,rv.reality_short_id " +
     "FROM node_allocations a JOIN nodes n ON n.id=a.node_id " +
     "JOIN routes r ON r.node_id=n.id JOIN route_carrier_variants rv ON rv.route_id=r.id " +
-    "WHERE a.subscription_id=? AND a.state='active' AND n.lifecycle='ready' " +
+    "WHERE a.subscription_id=? AND a.state='active' AND n.lifecycle='ready' AND n.desired_revision=n.acked_revision " +
     "AND r.transport='reality' AND r.state='ready' AND r.verified_ms BETWEEN ? AND ? " +
     "AND rv.published=1 AND rv.verified_ms BETWEEN ? AND ? " +
     "AND EXISTS(SELECT 1 FROM node_client_acks ac WHERE ac.node_id=n.id " +
@@ -76,7 +76,7 @@ export async function activeRoutes(db,subId,nowMs) {
     "re.ws_path,re.reality_public_key,re.reality_short_id " +
     "FROM node_allocations a JOIN nodes n ON n.id=a.node_id " +
     "JOIN routes r ON r.node_id=n.id JOIN route_endpoints re ON re.route_id=r.id " +
-    "WHERE a.subscription_id=? AND a.state='active' AND n.lifecycle='ready' " +
+    "WHERE a.subscription_id=? AND a.state='active' AND n.lifecycle='ready' AND n.desired_revision=n.acked_revision " +
     "AND r.state='ready' AND r.verified_ms BETWEEN ? AND ? AND re.published=1 " +
     "AND NOT EXISTS(SELECT 1 FROM route_carrier_variants rv WHERE rv.route_id=r.id) " +
     "AND EXISTS(SELECT 1 FROM node_client_acks ac WHERE ac.node_id=n.id " +
