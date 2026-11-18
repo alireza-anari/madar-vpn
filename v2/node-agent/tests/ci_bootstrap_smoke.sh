@@ -61,6 +61,16 @@ with tempfile.NamedTemporaryFile(mode='w',suffix='.json',delete=True) as tmp:
   json.dump(config,tmp);tmp.flush()
   subprocess.run(['/opt/madar-v2/bin/xray','run','-test','-config',tmp.name],
                  check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+# Most important: a REAL customer UUID on both public REALITY ports must
+# pass the pinned Xray's native validation, not only our Python unit test.
+with tempfile.NamedTemporaryFile(mode='w',suffix='.json',delete=True) as tmp:
+  enrolled=compile_dual_account_config(secrets,[{
+    'subscription_id':'sub-ci-smoke','uuid':secrets['clients'][0]}])
+  assert enrolled['inbounds'][0]['settings']['users'][0]['id']==secrets['clients'][0]
+  assert enrolled['inbounds'][1]['settings']['users'][0]['id']==secrets['clients'][0]
+  json.dump(enrolled,tmp);tmp.flush()
+  subprocess.run(['/opt/madar-v2/bin/xray','run','-test','-config',tmp.name],
+                 check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 PY
 sudo /opt/madar-v2/bin/xray run -test -config /etc/madar-v2/config.json >/dev/null 2>&1
 test "$(sudo stat -c '%a' /etc/madar-v2/local-secrets.json)" = "600"
