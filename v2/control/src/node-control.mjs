@@ -245,7 +245,7 @@ async function clientAck(env,identity,nowMs) {
     ).bind(identity.id,member.subscription_id,b.revision,current,nowMs));
   }
   await env.DB.batch(commands);
-  return safeJson({ok:true,applied:commands.length});
+  return safeJson({ok:true,applied:members.length});
 }
 function sameMacHex(a,b) {
   if(typeof a!=='string'||typeof b!=='string'||a.length!==b.length)return false;
