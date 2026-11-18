@@ -47,7 +47,7 @@ function number(input,min,max){
 const orderId=id=>'do-'+id.slice(3);
 const planId=(gb,days)=>'dp-'+gb+'-'+days;
 function decode(row){
-  if(row?.mode!==MODE||typeof row.context_id!=='string'||
+  if(typeof row?.context_id!=='string'||
      row.context_id.length>700)return null;
   try{
     const v=JSON.parse(row.context_id);
@@ -57,16 +57,16 @@ function decode(row){
 }
 async function save(db,actor,v,now){
   await db.prepare(
-    "INSERT INTO v2_bot_input_sessions(telegram_id,mode,context_id,expires_ms) "+
-    "VALUES(?,?,?,?) ON CONFLICT(telegram_id) DO UPDATE SET "+
-    "mode=excluded.mode,context_id=excluded.context_id,expires_ms=excluded.expires_ms"
-  ).bind(actor,MODE,JSON.stringify(v),now+TTL).run();
+    "INSERT INTO admin_direct_drafts(telegram_id,context_id,expires_ms) "+
+    "VALUES(?,?,?) ON CONFLICT(telegram_id) DO UPDATE SET "+
+    "context_id=excluded.context_id,expires_ms=excluded.expires_ms"
+  ).bind(actor,JSON.stringify(v),now+TTL).run();
 }
 async function load(db,actor,now){
   const row=await db.prepare(
-    "SELECT mode,context_id,expires_ms FROM v2_bot_input_sessions WHERE telegram_id=?"
+    "SELECT context_id,expires_ms FROM admin_direct_drafts WHERE telegram_id=?"
   ).bind(actor).first();
-  if(!row||row.mode!==MODE)return null;
+  if(!row)return null;
   if(row.expires_ms<=now){
     await clear(db,actor);
     return null;
@@ -75,8 +75,8 @@ async function load(db,actor,now){
 }
 async function clear(db,actor){
   await db.prepare(
-    "DELETE FROM v2_bot_input_sessions WHERE telegram_id=? AND mode=?"
-  ).bind(actor,MODE).run();
+    "DELETE FROM admin_direct_drafts WHERE telegram_id=?"
+  ).bind(actor).run();
 }
 async function ownReadyNode(env,actor,ref,nowMs) {
   if(!REF.test(ref??''))return null;
@@ -231,6 +231,10 @@ export async function directAction(env,e,nowMs=Date.now()) {
   const key=e.key??'', db=env.DB,actor=e.actorId;
   if(key==='admin:configs:direct:new'){
     const v={version:1,id:'di-'+hex(12),step:'name'};
+    // Starting a direct issue replaces only an unfinished plan draft.
+    await db.prepare(
+      "DELETE FROM v2_bot_input_sessions WHERE telegram_id=? AND mode='plan_draft'"
+    ).bind(actor).run();
     await save(db,actor,v,nowMs);
     return question(env,actor,v,nowMs);
   }
