@@ -168,6 +168,8 @@ export function parentPage(key,isAdmin=false){
     return 'admin:nodes';
   if(/^admin:node:(confirm|apply):(quarantine|restore|retire):[a-f0-9]{24}$/.test(key))
     return 'admin:node:view:'+key.slice(-24);
+  if(/^admin:node:(field|fieldapply):(mci|irancell):[a-f0-9]{24}$/.test(key))
+    return 'admin:node:view:'+key.slice(-24);
   if(/^admin:node:trialref:[a-f0-9]{24}$/.test(key))
     return 'admin:node:view:'+key.slice(-24);
   if(/^admin:node:view:[a-f0-9]{24}$/.test(key))return 'admin:nodes';
