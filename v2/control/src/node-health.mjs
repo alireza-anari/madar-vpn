@@ -3,6 +3,7 @@
  * at the same signed desired-state revision.
  */
 import {authenticatedNode} from './node-control.mjs';
+import {manualPair,manualAttestationEnabled} from './admin-carrier-accept.mjs';
 
 const json=(obj,status=200)=>new Response(JSON.stringify(obj),{
   status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store'},
@@ -38,9 +39,11 @@ export async function nodeHealthRoute(request,env,nowMs=Date.now()){
     "AND ((operator='mci' AND port=443) OR "+
          "(operator='irancell' AND port=8443)) GROUP BY operator,port"
   ).bind(auth.id,doc.revision,nowMs-86400000,nowMs).all()).results??[];
-  if(fields.length!==2||!fields.some(x=>x.operator==='mci'&&x.port===443)||
-     !fields.some(x=>x.operator==='irancell'&&x.port===8443))
-    return json({error:'carrier_not_accepted'},409);
+  const independent=fields.length===2&&fields.some(x=>x.operator==='mci'&&x.port===443)&&
+    fields.some(x=>x.operator==='irancell'&&x.port===8443);
+  const manual=!independent&&manualAttestationEnabled(env)&&
+    await manualPair(env.DB,auth.id,doc.revision,nowMs);
+  if(!independent&&!manual)return json({error:'carrier_not_accepted'},409);
   const ready=await env.DB.prepare(
     "SELECT COUNT(*) AS n FROM route_carrier_variants v JOIN routes r ON r.id=v.route_id "+
     "WHERE v.route_id=? AND r.state='ready' AND v.published=1 "+
@@ -65,5 +68,6 @@ export async function nodeHealthRoute(request,env,nowMs=Date.now()){
   ]);
   if(results[0]?.meta?.changes!==1||results[1]?.meta?.changes!==1||
      results[2]?.meta?.changes!==2)return json({error:'state_changed'},409);
-  return json({ok:true,health_fresh:true,carrier_proofs:'initial_independent_acceptance'});
+  return json({ok:true,health_fresh:true,
+    carrier_proofs:independent?'initial_independent_acceptance':'owner_manual_attestation'});
 }
