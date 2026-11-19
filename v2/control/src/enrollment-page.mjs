@@ -33,11 +33,11 @@ input[type=checkbox]{width:auto;display:inline;accent-color:#438df5}
 <button id="probe" type="button" disabled>۱ · بررسی اتصال</button>
 <fieldset id="credentials" hidden><legend>۲ · ورود امن و نصب خودکار</legend><p id="fingerprint"></p><label><input id="trust" type="checkbox">اثر انگشت را با پنل ارائه‌دهنده مطابقت دادم</label>
 <label>روش ورود<select id="method"><option value="password">رمز سرور</option><option value="key">کلید خصوصی SSH</option></select></label>
-<label>فایل کلید خصوصی<input id="keyfile" type="file"></label><label>رمز سرور یا رمز محافظ کلید<input id="password" type="password" autocomplete="off"></label><button id="install" type="submit">شروع نصب خودکار</button><button id="diagnose" type="button" hidden disabled>🔎 عیب‌یابی بدون نصب (فقط بررسی)</button><button id="clearFailed" type="button" hidden disabled>پاک‌سازی ثبت نصب ناموفق و شروع دوباره</button><p id="diagnoseNote" hidden>فقط اطلاعات سیستم و دسترسی دانلود بررسی می‌شود؛ هیچ نصب یا حذفی انجام نمی‌شود. اطلاعات SSH فقط به‌صورت رمزگذاری‌شده ارسال می‌شوند.</p></fieldset></form><p id="status" role="status" aria-live="polite"></p>
+<label>فایل کلید خصوصی<input id="keyfile" type="file"></label><label>رمز سرور یا رمز محافظ کلید<input id="password" type="password" autocomplete="off"></label><button id="install" type="submit">شروع نصب خودکار</button><button id="diagnose" type="button" hidden disabled>🔎 عیب‌یابی بدون نصب (فقط بررسی)</button><button id="clearFailed" type="button" hidden disabled>پاک‌سازی ثبت نصب ناموفق و شروع دوباره</button><button id="resetInstalled" type="button" hidden>🧹 پاک‌سازی V2 از سرور و نصب دوباره</button><p id="resetNote" hidden>فقط سرویس‌ها و فایل‌های اختصاصی V2 پاک می‌شوند. پیش از اقدام، سوابق اشتراک و میزان مصرف بررسی می‌شوند؛ برای نصب جدید شناسه تازه لازم است.</p><p id="diagnoseNote" hidden>فقط اطلاعات سیستم و دسترسی دانلود بررسی می‌شود؛ هیچ نصب یا حذفی انجام نمی‌شود. اطلاعات SSH فقط به‌صورت رمزگذاری‌شده ارسال می‌شوند.</p></fieldset></form><p id="status" role="status" aria-live="polite"></p>
 <script>
 const tg=window.Telegram?.WebApp;tg?.ready();const el=id=>document.getElementById(id),auth=tg?.initData||'';let publicKey,probeId,fingerprint,timer,busy=false,failedInstallId=null,failedNodeId=null,installedProbe=false,runtimeDownId=null,diagnosticId=null,probeExpires=0;
 const status=s=>el('status').textContent=s;
-const errors={PAIRING_KEY_NOT_CONFIGURED:'کلید عمومی رانر فعلی هنوز تنظیم نشده است.',RUNNER_OFFLINE:'اجراکننده مستقل V2 هنوز روی میزبان AWS متصل نشده است؛ هیچ نصبی شروع نمی‌شود.',RUNNER_NOT_CONFIGURED:'اتصال اجراکننده هنوز تنظیم نشده است.',EXECUTOR_NOT_CONFIGURED:'اجرای درخواستی هنوز به‌طور امن فعال نشده است.',EXECUTOR_DISPATCH_FAILED:'اجرای نصب در GitHub شروع نشد؛ هیچ تغییری در سرور انجام نشد.',AUTH_EXPIRED:'این صفحه را ببند و از ربات دوباره باز کن.',INVALID_TARGET:'مشخصات سرور معتبر نیست.',NODE_ALREADY_EXISTS:'این شناسه از نصب ناموفق قبلی در مدار ثبت شده است. پیش از تلاش مجدد، عیب‌یابی بدون نصب را اجرا کن.',PROBE_REQUIRED:'مهلت بررسی اتصال تمام شده یا اثر انگشت معتبر نیست؛ دوباره «بررسی اتصال» را بزن.',CLEAN_DIAG_REQUIRED:'ابتدا نتیجه موفق عیب‌یابی بدون نصب را دریافت کن.',NODE_RESET_UNSAFE:'پاک‌سازی خودکار امن نیست؛ این سرور داده وابسته دارد و باید بررسی شود.',JOB_ALREADY_PENDING:'یک کار در حال اجرا داری.',FAILED_INSTALL_REQUIRED:'درخواست نصب ناموفق قبلی پیدا نشد؛ صفحه را از ربات دوباره باز کن.'};
+const errors={PAIRING_KEY_NOT_CONFIGURED:'کلید عمومی رانر فعلی هنوز تنظیم نشده است.',RUNNER_OFFLINE:'اجراکننده مستقل V2 هنوز روی میزبان AWS متصل نشده است؛ هیچ نصبی شروع نمی‌شود.',RUNNER_NOT_CONFIGURED:'اتصال اجراکننده هنوز تنظیم نشده است.',EXECUTOR_NOT_CONFIGURED:'اجرای درخواستی هنوز به‌طور امن فعال نشده است.',EXECUTOR_DISPATCH_FAILED:'اجرای نصب در GitHub شروع نشد؛ هیچ تغییری در سرور انجام نشد.',AUTH_EXPIRED:'این صفحه را ببند و از ربات دوباره باز کن.',INVALID_TARGET:'مشخصات سرور معتبر نیست.',NODE_ALREADY_EXISTS:'این شناسه از نصب ناموفق قبلی در مدار ثبت شده است. پیش از تلاش مجدد، عیب‌یابی بدون نصب را اجرا کن.',PROBE_REQUIRED:'مهلت بررسی اتصال تمام شده یا اثر انگشت معتبر نیست؛ دوباره «بررسی اتصال» را بزن.',CLEAN_DIAG_REQUIRED:'ابتدا نتیجه موفق عیب‌یابی بدون نصب را دریافت کن.',NODE_RESET_UNSAFE:'پاک‌سازی خودکار امن نیست؛ این سرور داده وابسته دارد و باید بررسی شود.',JOB_ALREADY_PENDING:'یک کار در حال اجرا داری.',FAILED_INSTALL_REQUIRED:'درخواست نصب ناموفق قبلی پیدا نشد؛ صفحه را از ربات دوباره باز کن.',NODE_NOT_INSTALLED:'فقط سرور نصب‌شده متعلق به این مدیر قابل پاک‌سازی است.',NODE_HAS_ACTIVE_OR_USED_ACCOUNTS:'سرور دارای اشتراک فعال یا مصرف‌شده است. پاک‌سازی بدون تعیین تکلیف مشتریان مجاز نیست.',NODE_HAS_LIVE_TRIAL:'لینک آزمایشی هنوز معتبر است؛ پس از پایان اعتبار اقدام کن.',NODE_HAS_PAID_ORDERS:'سفارش پرداخت‌شده یا رسید تأییدشده به این سرور وابسته است.',RESET_HOST_MISMATCH:'IP ثبت‌شده برای این سرور با سرور متصل‌شده مطابقت ندارد.',RESET_EXPLICIT_CONSENT_REQUIRED:'تأیید صریح نام سرور و تطبیق اثر انگشت لازم است.',RESET_QUARANTINE_FAILED:'امکان جداسازی ایمن سرور از صدور کانفیگ وجود ندارد.',RESET_BLOCKED:'پاک‌سازی روی VPS به‌دلیل وجود داده مصرف یا فایل‌های ناشناس متوقف شد.',RESET_CLEANUP_FAILED:'پاک‌سازی روی سرور کامل نشد؛ وضعیت را قبل از تلاش مجدد بررسی کن.',RESET_DB_FINALIZATION_FAILED:'پاک‌سازی سمت سرور گزارش شد ولی بستن عملیات در دیتابیس کامل نشد؛ دوباره نصب نکن.'};
 async function api(path,data){const r=await fetch('/api/enrollment/'+path,{method:data?'POST':'GET',headers:{'content-type':'application/json','x-telegram-init-data':auth},...(data?{body:JSON.stringify(data)}:{})});const b=await r.json();if(!r.ok)throw Error(errors[b.error]||'عملیات انجام نشد؛ دوباره تلاش کن.');return b;}
 const b64=b=>btoa(String.fromCharCode(...new Uint8Array(b)));
 function restoreSpec(spec){
@@ -51,6 +51,13 @@ async function restoreJob(){
   const {job,failedInstall}=await api('recent');
   if(!job)return status('آماده بررسی سرور.');
   restoreSpec(job.spec);
+  if(job.cleanup&&job.state==='ready'&&job.safe_code==='RESET_COMPLETED'){
+    installedProbe=false;
+    el('credentials').hidden=true;
+    const oldId=job.spec.nodeId;
+    el('nodeId').value=oldId.slice(0,55)+'-new1';
+    return status('پاک‌سازی اختصاصی V2 در VPS تأیید شد و سرور قبلی بازنشسته شد. اکنون شناسه جدید را بررسی کن و نصب را از ابتدا انجام بده.');
+  }
   if(job.kind==='v2-install'&&job.diagnostic&&job.state==='ready'&&
      job.safe_code==='DIAG_PRECHECK_OK'&&failedInstall?.id){
     showDiagnoseForInstall(failedInstall.id,failedInstall.fingerprint,job.spec.nodeId);
@@ -85,7 +92,7 @@ async function restoreJob(){
   if(job.state==='queued'||job.state==='leased'){
     busy=true;el('probe').disabled=true;lock(true);
     status('درخواست قبلی بازیابی شد؛ در حال بررسی نتیجه…');
-    return poll(job.id,job.kind==='probe'?'probe':job.diagnostic?'diagnose':'install');
+    return poll(job.id,job.kind==='probe'?'probe':job.cleanup?'cleanup':job.diagnostic?'diagnose':'install');
   }
   if(job.state==='failed')
     return status('بررسی قبلی ناموفق بود: '+'خطای نامشخص در بررسی'+'. می‌توانی دوباره بررسی کنی.');
@@ -134,6 +141,8 @@ Object.assign(installDetails,{
 });
 function showInstalledProbe(){
   installedProbe=true;
+  el('resetInstalled').hidden=false;el('resetInstalled').disabled=false;
+  el('resetNote').hidden=false;
   el('fingerprint').textContent=fingerprint;
   el('credentials').hidden=false;
   el('install').disabled=true;
@@ -148,7 +157,7 @@ async function poll(id,kind){
     if(b.state==='failed'){
       busy=false;lock(false);el('probe').disabled=false;
       if(kind==='install'&&b.fingerprint)showDiagnoseForInstall(id,b.fingerprint);
-      status(kind==='diagnose'?diagnosisMessage(b.safe_code):
+      status(kind==='cleanup'?'پاک‌سازی کامل نشد: '+(errors[b.safe_code]||'وضعیت سرور نیازمند بررسی است. از تکرار خودکار حذف خودداری کن.'):kind==='diagnose'?diagnosisMessage(b.safe_code):
         'عملیات ناموفق بود: '+(installDetails[b.safe_code]||'خطای نامشخص هنگام نصب رخ داد.'));
       return;
     }
@@ -168,6 +177,13 @@ async function poll(id,kind){
           el('install').disabled=false;
           status('اتصال بررسی شد. هویت سرور را تأیید و اطلاعات ورود را وارد کن.');
         }
+      }else if(kind==='cleanup'){
+        el('resetInstalled').disabled=false;
+        el('resetInstalled').hidden=true;el('resetNote').hidden=true;
+        el('credentials').hidden=true;
+        installedProbe=false;runtimeDownId=null;probeId=null;probeExpires=0;
+        el('nodeId').value=el('nodeId').value.slice(0,55)+'-new1';
+        status('✅ پاک‌سازی اختصاصی V2 روی VPS تأیید شد. سابقه سرور قدیمی حفظ و دسترسی آن بازنشسته شد. شناسه جدید آماده است؛ دکمه «بررسی اتصال» را بزن و نصب جدید را انجام بده.');
       }else if(kind==='diagnose'){
         if(installedProbe){
           runtimeDownId=b.safe_code==='DIAG_RUNTIME_DOWN'?id:null;
@@ -189,10 +205,39 @@ async function poll(id,kind){
       }
       return;
     }
-    status(kind==='probe'?'در حال بررسی اتصال…':kind==='diagnose'?'در حال عیب‌یابی فقط‌خواندنی سرور…':'نصب در حال اجراست…');
+    status(kind==='probe'?'در حال بررسی اتصال…':kind==='cleanup'?'در حال پاک‌سازی امن V2 روی VPS…':kind==='diagnose'?'در حال عیب‌یابی فقط‌خواندنی سرور…':'نصب در حال اجراست…');
     timer=setTimeout(()=>poll(id,kind),3000);
   }catch(e){busy=false;status('ارتباط با سرویس برقرار نشد؛ دوباره تلاش کنید.');}
 }
+el('resetInstalled').onclick=async()=>{
+  if(busy||!installedProbe||!probeId||!fingerprint||!el('trust').checked||Date.now()>=probeExpires){
+    status('برای پاک‌سازی، ابتدا بررسی اتصال و تطبیق اثر انگشت SSH را انجام بده.');return;
+  }
+  const nodeId=el('nodeId').value.trim();
+  busy=true;el('resetInstalled').disabled=true;
+  let credentials=null;
+  try{
+    const gate=await api('reset-check?nodeId='+encodeURIComponent(nodeId));
+    if(!gate.ok)throw Error(errors[gate.code]||'به علت اطلاعات وابسته روی سرور، پاک‌سازی مجاز نیست.');
+    const count=gate.willCancelPending||0;
+    const consent=prompt('پاک‌سازی V2 روی سرور '+nodeId+' غیرقابل بازگشت است. '+
+      (count?'تعداد '+count+' سفارش آزمایشیِ نصب‌نشده لغو می‌شود. ':'')+
+      'فقط فایل‌ها و سرویس‌های اختصاصی مدار حذف می‌شوند. برای تأیید، نام سرور را دقیق وارد کن:');
+    if(consent!==nodeId){status('پاک‌سازی لغو شد؛ هیچ فرمانی اجرا نشد.');return;}
+    credentials=el('method').value==='password'
+      ?{method:'password',password:el('password').value}
+      :{method:'key',key:await el('keyfile').files[0]?.text(),passphrase:el('password').value};
+    if(credentials.method==='password'?!credentials.password:!credentials.key)
+      throw Error('رمز یا کلید SSH را در فرم امن وارد کن.');
+    const envelope=await encrypt(credentials);credentials=null;
+    const job=await api('reset',{nodeId,confirmNodeId:nodeId,confirm:'RESET_V2_ONLY',
+      probeId,fingerprint,trust:true,envelope});
+    el('password').value='';el('keyfile').value='';
+    status('درخواست پاک‌سازی امن ثبت شد؛ در حال تأیید عملیات از سرور…');
+    poll(job.id,'cleanup');
+  }catch(e){busy=false;el('resetInstalled').disabled=false;status('پاک‌سازی آغاز نشد: '+e.message);}
+  finally{credentials=null;}
+};
 el('clearFailed').onclick=async()=>{
   if(busy||!failedInstallId||!diagnosticId)return;
   busy=true;el('clearFailed').disabled=true;
@@ -240,7 +285,7 @@ el('pairRunner').onclick=async()=>{
   }catch(e){el('pairingStatus').textContent='اتصال امن رانر برقرار نشد؛ تنظیمات را بررسی کنید.';}
   finally{el('pairRunner').disabled=false;}
 };
-el('probe').onclick=async()=>{if(busy||!el('form').reportValidity())return;busy=true;if(failedNodeId!==el('nodeId').value.trim()){failedInstallId=null;failedNodeId=null;}probeId=null;probeExpires=0;installedProbe=false;runtimeDownId=null;el('diagnose').textContent='عیب‌یابی بدون نصب (فقط بررسی)';el('diagnose').hidden=true;el('diagnoseNote').hidden=true;el('probe').disabled=true;el('credentials').hidden=true;el('trust').checked=false;try{const b={};for(const id of ['nodeId','provider','region','ip','username'])b[id]=el(id).value.trim();for(const id of ['userLimit','capacityGb','port'])b[id]=Number(el(id).value);const job=await api('probe',b);lock(true);poll(job.id,'probe');}catch(e){busy=false;el('probe').disabled=false;status('بررسی اتصال آغاز نشد: '+e.message);}};
+el('probe').onclick=async()=>{if(busy||!el('form').reportValidity())return;busy=true;if(failedNodeId!==el('nodeId').value.trim()){failedInstallId=null;failedNodeId=null;}probeId=null;probeExpires=0;installedProbe=false;runtimeDownId=null;el('resetInstalled').hidden=true;el('resetNote').hidden=true;el('diagnose').textContent='عیب‌یابی بدون نصب (فقط بررسی)';el('diagnose').hidden=true;el('diagnoseNote').hidden=true;el('probe').disabled=true;el('credentials').hidden=true;el('trust').checked=false;try{const b={};for(const id of ['nodeId','provider','region','ip','username'])b[id]=el(id).value.trim();for(const id of ['userLimit','capacityGb','port'])b[id]=Number(el(id).value);const job=await api('probe',b);lock(true);poll(job.id,'probe');}catch(e){busy=false;el('probe').disabled=false;status('بررسی اتصال آغاز نشد: '+e.message);}};
 el('form').onsubmit=async e=>{
   e.preventDefault();
   if(busy||failedInstallId||installedProbe||!probeId||!el('trust').checked){
