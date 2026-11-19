@@ -82,10 +82,10 @@ test('owner resets a prior V2 install only via signed host-key re-probe and remo
   assert.deepEqual(await check.json(),{ok:true,code:'RESET_ALLOWED',willCancelPending:1});
   const payload={nodeId:NODE,confirmNodeId:NODE,confirm:'RESET_V2_ONLY',probeId:PROBE,
     fingerprint:FP,trust:true,envelope:ENV};
-  assert.equal((await enrollmentApi(controlRequest('reset',{...payload,
-    confirmNodeId:'another-node'},auth),env,NOW)).status,400);
-  assert.equal((await enrollmentApi(controlRequest('reset',{...payload,
-    fingerprint:'SHA256:'+'b'.repeat(43)},auth),env,NOW)).status,409);
+  assert.equal((await enrollmentApi(controlRequest('reset',auth,{...payload,
+    confirmNodeId:'another-node'}),env,NOW)).status,400);
+  assert.equal((await enrollmentApi(controlRequest('reset',auth,{...payload,
+    fingerprint:'SHA256:'+'b'.repeat(43)}),env,NOW)).status,409);
   const dispatched=[];
   const requested=await enrollmentApi(controlRequest('reset',auth,payload),env,NOW,
     async(_,id)=>{dispatched.push(id);return true});
