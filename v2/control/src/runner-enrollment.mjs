@@ -317,7 +317,7 @@ export async function enrollmentApi(req,env,now=Date.now(),dispatch=dispatchGith
       "SELECT id FROM v2_runner_jobs WHERE owner_id=? AND state IN ('queued','leased') LIMIT 1"
     ).bind(actor).first();
     if(pending)return reply({error:'JOB_ALREADY_PENDING'},409);
-    const id=crypto.randomUUID(),cleanupSpec={...spec,cleanup:true};
+    const id=crypto.randomUUID(),cleanupSpec={...spec,cleanup:true,cleanupPreviousLifecycle:eligible.node.lifecycle};
     try{
       const result=await env.DB.batch([
         env.DB.prepare("UPDATE nodes SET lifecycle='quarantined' WHERE id=? "+
@@ -500,7 +500,7 @@ export async function runnerApi(req,env,now=Date.now()){
   const fingerprint=b.details?.fingerprint;
   if(b.state==='ready'&&row.kind==='probe'&&!/^SHA256:[A-Za-z0-9+/]{43}$/.test(fingerprint??''))return reply({error:'BAD_FINGERPRINT'},400);
   const safeProbeCodes=new Set(['SSH_TIMEOUT','SSH_REFUSED','SSH_UNREACHABLE','SSH_HANDSHAKE_FAILED','PROBE_EXPIRED','SSH_PROBE_FAILED']);
-  const safeInstallCodes=new Set(['RESET_BLOCKED','RESET_REMOTE_FAILED','RESET_CLEANUP_FAILED','SSH_TIMEOUT','SSH_REFUSED','SSH_UNREACHABLE','SSH_AUTH_FAILED','HOST_KEY_CHANGED','INVALID_SSH_KEY','CREDENTIALS_EXPIRED','CREDENTIAL_DECRYPT_FAILED','SSH_LOGIN_FAILED','REMOTE_INSTALL_FAILED','INSTALL_REPORT_FAILED']);
+  const safeInstallCodes=new Set(['RESET_PREFLIGHT_BLOCKED','RESET_BLOCKED','RESET_REMOTE_FAILED','RESET_CLEANUP_FAILED','SSH_TIMEOUT','SSH_REFUSED','SSH_UNREACHABLE','SSH_AUTH_FAILED','HOST_KEY_CHANGED','INVALID_SSH_KEY','CREDENTIALS_EXPIRED','CREDENTIAL_DECRYPT_FAILED','SSH_LOGIN_FAILED','REMOTE_INSTALL_FAILED','INSTALL_REPORT_FAILED']);
   const safeDiagnosticCodes=new Set(['DIAG_EXISTING_VPN','DIAG_PORT_443_BUSY','DIAG_PORT_8443_BUSY','DIAG_UNSUPPORTED_OS','DIAG_NO_ROOT','DIAG_SYSTEMD_MISSING','DIAG_GITHUB_UNREACHABLE','DIAG_PRECHECK_OK','DIAG_REMOTE_FAILED','DIAG_RUNTIME_ACTIVE','DIAG_RUNTIME_DOWN','DIAG_XRAY_DOWN','DIAG_RUNTIME_GENERATION','DIAG_RUNTIME_ERROR','DIAG_RUNTIME_STARTED','DIAG_RUNTIME_START_FAILED']);
   for(const code of ['REMOTE_PACKAGE_FAILED','REMOTE_BOOTSTRAP_FAILED','REMOTE_DUAL_FAILED','REMOTE_METADATA_FAILED'])safeInstallCodes.add(code);
   const specs=row.kind==='v2-install'?JSON.parse(row.spec_json):null;
@@ -524,6 +524,24 @@ export async function runnerApi(req,env,now=Date.now()){
     if(b.state==='ready'){
       const result=await retireCleanedNode(env.DB,row.owner_id,specs.nodeId,row.id,now,completion);
       if(!result)return reply({error:'RESET_DB_FINALIZATION_FAILED'},409);
+    }else if(code==='RESET_PREFLIGHT_BLOCKED'){
+      // The *trusted* SSH runner independently proved the read-only preflight
+      // rejected the reset BEFORE any service/file mutation. Only that code
+      // permits releasing quarantine; every uncertain failure stays blocked.
+      // Proven untouched VPS: restore exactly the captured pre-reset state,
+      // not an arbitrary new state which would demote a commercial runtime.
+      // Existing node health expiry still gates any new paid issuance.
+      const previous=specs.cleanupPreviousLifecycle;
+      if(!['ready','provisioning','degraded'].includes(previous))
+        return reply({error:'RESET_PREFLIGHT_RESTORE_FAILED'},409);
+      const results=await env.DB.batch([
+        completion,
+        env.DB.prepare("UPDATE nodes SET lifecycle=? WHERE id=? "+
+          "AND lifecycle='quarantined'").bind(previous,specs.nodeId),
+      ]);
+      if(Number(results[0]?.meta?.changes)!==1||
+         Number(results[1]?.meta?.changes)!==1)
+        return reply({error:'RESET_PREFLIGHT_RESTORE_FAILED'},409);
     }else await completion.run();
   }else if(row.kind==='v2-install'&&!diag){
     const spec=JSON.parse(row.spec_json);

@@ -128,3 +128,53 @@ test('owner resets a prior V2 install only via signed host-key re-probe and remo
   }),env,NOW+3000)).status,200);
   raw.close();
 });
+
+
+test('a read-only VPS reset preflight refusal safely releases quarantine without authorizing sales',async()=>{
+  const {raw,DB}=database();
+  const env={DB,BOT_TOKEN:'bot-token',ADMIN_TELEGRAM_IDS:OWNER,
+    RUNNER_ENROLLMENT_ENABLED:'true',V2_EXECUTOR_BACKEND:'github-actions',
+    GITHUB_ACTIONS_DISPATCH_TOKEN:'g'.repeat(48),RUNNER_SERVICE_SECRET:'s'.repeat(48),
+    RUNNER_PUBLIC_KEY:JSON.stringify({kid:'madar-v2-github-actions',kty:'RSA',
+      alg:'RSA-OAEP-256',e:'AQAB',n:'A'.repeat(342)})};
+  const auth=await signedInit(env.BOT_TOKEN,OWNER,NOW);
+  const payload={nodeId:NODE,confirmNodeId:NODE,confirm:'RESET_V2_ONLY',
+    probeId:PROBE,fingerprint:FP,trust:true,envelope:ENV};
+  const created=await enrollmentApi(controlRequest('reset',auth,payload),env,NOW,
+    async()=>true);
+  assert.equal(created.status,200);
+  const {id}=await created.json();
+  const leased=await runnerApi(runnerRequest('lease',env.RUNNER_SERVICE_SECRET,{
+    runnerId:'v2-github-actions',jobId:id}),env,NOW+1000);
+  const job=JSON.parse((await leased.json()).payload);
+  const completed=await runnerApi(runnerRequest('report',env.RUNNER_SERVICE_SECRET,{
+    id,leaseId:job.leaseId,state:'failed',safeCode:'RESET_PREFLIGHT_BLOCKED'
+  }),env,NOW+2000);
+  assert.equal(completed.status,200);
+  assert.equal(raw.prepare("SELECT lifecycle FROM nodes WHERE id=?").get(NODE).lifecycle,'ready');
+  assert.equal(raw.prepare("SELECT state FROM subscriptions WHERE id='sub-pending'").get().state,'pending');
+  assert.equal(raw.prepare("SELECT state FROM node_allocations WHERE id='alloc-pending'").get().state,'reserved');
+  assert.equal(raw.prepare("SELECT safe_code FROM v2_runner_jobs WHERE id=?").get(id).safe_code,'RESET_PREFLIGHT_BLOCKED');
+  raw.close();
+});
+test('uncertain remote cleanup failure never releases quarantine',async()=>{
+  const {raw,DB}=database();
+  const env={DB,BOT_TOKEN:'bot-token',ADMIN_TELEGRAM_IDS:OWNER,
+    RUNNER_ENROLLMENT_ENABLED:'true',V2_EXECUTOR_BACKEND:'github-actions',
+    GITHUB_ACTIONS_DISPATCH_TOKEN:'g'.repeat(48),RUNNER_SERVICE_SECRET:'s'.repeat(48),
+    RUNNER_PUBLIC_KEY:JSON.stringify({kid:'madar-v2-github-actions',kty:'RSA',
+      alg:'RSA-OAEP-256',e:'AQAB',n:'A'.repeat(342)})};
+  const auth=await signedInit(env.BOT_TOKEN,OWNER,NOW);
+  const payload={nodeId:NODE,confirmNodeId:NODE,confirm:'RESET_V2_ONLY',
+    probeId:PROBE,fingerprint:FP,trust:true,envelope:ENV};
+  const {id}=await (await enrollmentApi(controlRequest('reset',auth,payload),env,NOW,
+    async()=>true)).json();
+  const leased=await runnerApi(runnerRequest('lease',env.RUNNER_SERVICE_SECRET,{
+    runnerId:'v2-github-actions',jobId:id}),env,NOW+1000);
+  const job=JSON.parse((await leased.json()).payload);
+  const failed=await runnerApi(runnerRequest('report',env.RUNNER_SERVICE_SECRET,{
+    id,leaseId:job.leaseId,state:'failed',safeCode:'RESET_BLOCKED'}),env,NOW+2000);
+  assert.equal(failed.status,200);
+  assert.equal(raw.prepare("SELECT lifecycle FROM nodes WHERE id=?").get(NODE).lifecycle,'quarantined');
+  raw.close();
+});
