@@ -20,8 +20,11 @@ test('sales require explicit opt-in and valid payment instructions',()=>{
 test('route availability never guesses capacity from missing evidence', async()=>{
   const db={prepare(sql) {
     assert.match(sql,/verified_ms BETWEEN/);
+    assert.match(sql,/node_health/);
+    assert.match(sql,/node_acks/);
+    assert.match(sql,/route_carrier_variants/);
     return {bind(...args) {
-      assert.equal(args.length,3);
+      assert.equal(args.length,11);
       return {first:async()=>null};
     }};
   }};
