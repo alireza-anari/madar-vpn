@@ -1,0 +1,70 @@
+name: Stage guarded Madar carrier-trial Worker version (no traffic)
+on:
+  push:
+    branches: ['rewrite/madar-v2-20261110']
+    paths: ['.github/workflows/v1-carrier-version-upload.yml']
+permissions:
+  contents: read
+concurrency:
+  group: madar-operator-trial-candidate
+  cancel-in-progress: false
+jobs:
+  stage-version:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 22
+    env:
+      CLOUDFLARE_ACCOUNT_ID: "2e4e0d025c81b9134fd2d19f17535e30"
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Enforce one-time candidate commit and production invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "ce48dc763266910ca40ee5b551e915d6b930b146"
+          test "$(git diff --name-only HEAD^ HEAD)" = ".github/workflows/v1-carrier-version-upload.yml"
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test "$(grep -c '"keep_vars": true' apps/sales-bot/wrangler.jsonc)" = 1
+          grep -Fq 'f59e160f-89ab-4a90-a4dc-f257883d5a61' apps/sales-bot/wrangler.jsonc
+          api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/madar-sales-bot"
+          curl --fail-with-body --silent --show-error -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "$api/deployments" |
+            jq -e '.success and .result.deployments[0].versions[0].version_id=="7f08360e-9b15-4915-99b9-bdf25d8c28fe"' >/dev/null
+          curl --fail-with-body --silent --show-error -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "$api/settings" |
+            jq -e '.success and
+              ([.result.bindings[]|select(.name=="SALES_DB" and .id=="f59e160f-89ab-4a90-a4dc-f257883d5a61")]|length)==1 and
+              ([.result.bindings[].name] |
+                index("BOT_TOKEN") != null and
+                index("RUNNER_SERVICE_SECRET") != null and
+                index("POLICY_SIGNING_SECRET") != null and
+                index("TELEGRAM_WEBHOOK_SECRET") != null and
+                index("USAGE_LINK_SECRET") != null)' >/dev/null
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.9.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Re-run full sales-bot guards
+        run: |
+          pnpm --filter @madar/sales-bot types
+          pnpm --filter @madar/sales-bot typecheck
+          pnpm --filter @madar/sales-bot test
+          pnpm --filter @madar/sales-bot build
+      - name: Upload version without deploying any production traffic
+        working-directory: apps/sales-bot
+        run: pnpm exec wrangler versions upload --message "Madar admin-only carrier trial preview; no production rollout"
+      - name: Assert production active version unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/madar-sales-bot/deployments" |
+            jq -e '.success and .result.deployments[0].versions[0].version_id=="7f08360e-9b15-4915-99b9-bdf25d8c28fe"' >/dev/null

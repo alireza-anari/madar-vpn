@@ -1,0 +1,279 @@
+import {findAppSession} from './android-account.mjs';
+import {nodeUiRef} from './node-admin.mjs';
+import {enabled as featureEnabled} from './feature-flags.mjs';
+/** Revocable token-authenticated V2 subscription API, no bearer tokens in URLs.
+ * Delivers structured VLESS route metadata, never server private keys.
+ */
+const ascii=new TextEncoder();
+const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const TOKEN=/^[A-Za-z0-9_-]{43}$/;
+const SAFE_HOST=/^[a-zA-Z0-9][a-zA-Z0-9.:-]{1,252}$/;
+
+const hex=bytes=>Array.from(bytes).map(b=>b.toString(16).padStart(2,'0')).join('');
+const base64Decode=value=>{
+  if(typeof value!=='string'|| !/^[a-zA-Z0-9_-]+$/.test(value))
+    throw new TypeError('invalid_b64url');
+  const clean=value.replace(/-/g,'+').replace(/_/g,'/');
+  return Uint8Array.from(atob(clean+'='.repeat((4-clean.length%4)%4)),x=>x.charCodeAt(0));
+};
+const json=(obj,status=200)=>new Response(JSON.stringify(obj),{
+  status,headers:{
+    'content-type':'application/json; charset=utf-8',
+    'cache-control':'no-store, private','pragma':'no-cache',
+    'x-content-type-options':'nosniff','referrer-policy':'no-referrer',
+  },
+});
+
+export async function tokenDigest(token) {
+  if(!TOKEN.test(token??'')) return null;
+  return hex(new Uint8Array(await crypto.subtle.digest('SHA-256',ascii.encode(token))));
+}
+
+export async function unwrapClientUuid(credential,keyText) {
+  const raw=base64Decode(keyText);
+  if(raw.length!==32) throw new TypeError('credential_key_length');
+  const nonce=base64Decode(credential?.nonce_b64);
+  const ciphertext=base64Decode(credential?.ciphertext_b64);
+  if(nonce.length!==12 || ciphertext.length<16) throw new TypeError('bad_ciphertext');
+  const key=await crypto.subtle.importKey('raw',raw,{name:'AES-GCM'},false,['decrypt']);
+  const uuid=new TextDecoder('utf-8',{fatal:true}).decode(
+    await crypto.subtle.decrypt({name:'AES-GCM',iv:nonce},key,ciphertext)
+  );
+  if(!UUID.test(uuid)) throw new TypeError('bad_client_uuid');
+  return uuid;
+}
+
+export function eligibleEndpoint(row) {
+  if(!row || !SAFE_HOST.test(row.host??'') || !Number.isInteger(row.port) ||
+     row.port<1||row.port>65535) return false;
+  if(row.transport==='reality')
+    return typeof row.server_name==='string' && SAFE_HOST.test(row.server_name) &&
+      /^[A-Za-z0-9_-]{43}$/.test(row.reality_public_key??'') &&
+      /^[a-fA-F0-9]{0,16}$/.test(row.reality_short_id??'');
+  if(row.transport==='wss')
+    return typeof row.server_name==='string' && SAFE_HOST.test(row.server_name) &&
+      typeof row.ws_path==='string' && row.ws_path.startsWith('/') &&
+      row.ws_path.length<=256 && !/[\r\n]/.test(row.ws_path);
+  return false; // UDP outbounds require a separately audited client adapter
+}
+
+/** Two independently verified port variants share the same parent node allocation.
+ * Historical single-endpoint routes remain supported until variants are staged.
+ * A partially published carrier group never leaks its untested legacy endpoint.
+ */
+export async function activeRoutes(db,subId,nowMs) {
+  const rows=(await db.prepare(
+    "SELECT r.id || ':' || rv.operator AS route_id,r.transport,rv.operator AS operator_hint," +
+    "rv.host,rv.port,rv.server_name,rv.ws_path,rv.reality_public_key,rv.reality_short_id " +
+    "FROM node_allocations a JOIN nodes n ON n.id=a.node_id " +
+    "JOIN routes r ON r.node_id=n.id JOIN route_carrier_variants rv ON rv.route_id=r.id " +
+    "WHERE a.subscription_id=? AND a.state='active' AND n.lifecycle='ready' AND n.desired_revision=n.acked_revision " +
+    "AND r.transport='reality' AND r.state='ready' AND r.verified_ms BETWEEN ? AND ? " +
+    "AND rv.published=1 AND rv.verified_ms BETWEEN ? AND ? " +
+    "AND EXISTS(SELECT 1 FROM node_client_acks ac WHERE ac.node_id=n.id " +
+    "AND ac.subscription_id=a.subscription_id AND ac.revision=n.desired_revision " +
+    "AND ac.observed_ms BETWEEN ? AND ?) " +
+    "UNION ALL " +
+    "SELECT r.id AS route_id,r.transport,r.operator_hint,re.host,re.port,re.server_name," +
+    "re.ws_path,re.reality_public_key,re.reality_short_id " +
+    "FROM node_allocations a JOIN nodes n ON n.id=a.node_id " +
+    "JOIN routes r ON r.node_id=n.id JOIN route_endpoints re ON re.route_id=r.id " +
+    "WHERE a.subscription_id=? AND a.state='active' AND n.lifecycle='ready' AND n.desired_revision=n.acked_revision " +
+    "AND r.state='ready' AND r.verified_ms BETWEEN ? AND ? AND re.published=1 " +
+    "AND NOT EXISTS(SELECT 1 FROM route_carrier_variants rv WHERE rv.route_id=r.id) " +
+    "AND EXISTS(SELECT 1 FROM node_client_acks ac WHERE ac.node_id=n.id " +
+    "AND ac.subscription_id=a.subscription_id AND ac.revision=n.desired_revision " +
+    "AND ac.observed_ms BETWEEN ? AND ?) " +
+    "ORDER BY route_id LIMIT 8"
+  ).bind(subId,nowMs-600000,nowMs,nowMs-600000,nowMs,nowMs-600000,nowMs,
+         subId,nowMs-600000,nowMs,nowMs-600000,nowMs).all()).results??[];
+  return rows.filter(eligibleEndpoint);
+}
+
+/** An exceptional zero-price owner test is readable without enabling the
+ * general customer subscription API. A token cannot promote any ordinary
+ * subscription into this scope. Exact node/ref and owner binding are required.
+ */
+export async function isAdminE2eSubscription(env,subId,nowMs=Date.now()){
+  if(env.ADMIN_E2E_TEST_ENABLED!=='true'||!env.DB||
+     typeof subId!=='string'||subId.length>80)return false;
+  const row=await env.DB.prepare(
+    "SELECT o.id AS order_id,s.owner_telegram_id AS owner,a.node_id,j.owner_id "+
+    "FROM subscriptions s JOIN orders o ON o.id=s.order_id "+
+    "JOIN plans p ON p.id=o.plan_id "+
+    "JOIN customers c ON c.telegram_id=s.owner_telegram_id "+
+    "JOIN node_allocations a ON a.subscription_id=s.id AND a.state='active' "+
+    "JOIN node_bootstrap_jobs j ON j.node_id=a.node_id AND j.state='installed' "+
+    "WHERE s.id=? AND s.state='active' AND s.expires_at>? "+
+    "AND s.max_bytes=104857600 AND s.used_bytes<s.max_bytes "+
+    "AND c.state='active' AND o.customer_telegram_id=s.owner_telegram_id "+
+    "AND o.state='fulfilled' AND o.plan_id='v2-admin-e2e-100mb-1day' "+
+    "AND o.quoted_amount=0 AND o.quoted_currency='IRT' "+
+    "AND p.id=o.plan_id AND p.active=0 AND p.price_amount=0 "+
+    "AND p.duration_days=1 AND p.quota_bytes=104857600 LIMIT 1"
+  ).bind(subId,nowMs).first();
+  if(!row||row.owner!==row.owner_id ||
+     !/^[0-9]{5,20}$/.test(row.owner??'') ||
+     typeof env.ADMIN_TELEGRAM_IDS!=='string'||
+     !env.ADMIN_TELEGRAM_IDS.split(',').includes(row.owner))return false;
+  return row.order_id==='e2e-'+await nodeUiRef(row.node_id);
+}
+export async function isAdminE2eToken(env,token,nowMs=Date.now()){
+  if(env.ADMIN_E2E_TEST_ENABLED!=='true'||!env.DB)return false;
+  const hash=await tokenDigest(token);
+  if(!hash)return false;
+  const row=await env.DB.prepare(
+    "SELECT subscription_id FROM subscription_tokens "+
+    "WHERE token_hash=? AND revoked=0 AND expires_at>? LIMIT 1"
+  ).bind(hash,nowMs).first();
+  return !!row&&await isAdminE2eSubscription(env,row.subscription_id,nowMs);
+}
+
+/** Private, zero-price manager-issued configs, never public storefront access. */
+export async function isAdminDirectSubscription(env,subId,nowMs=Date.now()){
+  if(env.ADMIN_DIRECT_ISSUE_ENABLED!=='true'||!env.DB||
+     typeof subId!=='string'||subId.length>80)return false;
+  const row=await env.DB.prepare(
+    "SELECT i.id,i.actor_id,i.node_id,i.quota_bytes,i.duration_days,"+
+    "o.id order_id,o.customer_telegram_id,j.owner_id,"+
+    "p.id plan_id,p.quota_bytes plan_quota,p.duration_days plan_days "+
+    "FROM subscriptions s JOIN orders o ON o.id=s.order_id "+
+    "JOIN admin_direct_issues i ON i.order_id=o.id "+
+    "JOIN plans p ON p.id=o.plan_id "+
+    "JOIN customers c ON c.telegram_id=s.owner_telegram_id "+
+    "JOIN node_allocations a ON a.subscription_id=s.id AND a.node_id=i.node_id "+
+    "AND a.state='active' "+
+    "JOIN node_bootstrap_jobs j ON j.node_id=i.node_id AND j.state='installed' "+
+    "WHERE s.id=? AND s.state='active' AND s.expires_at>? "+
+    "AND s.max_bytes=i.quota_bytes AND s.used_bytes<s.max_bytes "+
+    "AND c.state='active' AND o.state='fulfilled' "+
+    "AND o.quoted_amount=0 AND o.quoted_currency='IRT' AND o.seller_telegram_id IS NULL "+
+    "AND o.customer_telegram_id=s.owner_telegram_id "+
+    "AND p.price_amount=0 AND p.active=0 AND p.price_currency='IRT' LIMIT 1"
+  ).bind(subId,nowMs).first();
+  if(!row||row.actor_id!==row.owner_id||
+     row.actor_id!==row.customer_telegram_id||
+     row.plan_quota!==row.quota_bytes||row.plan_days!==row.duration_days||
+     row.plan_id!=='dp-'+(row.quota_bytes/1073741824)+'-'+row.duration_days||
+     row.order_id!=='do-'+row.id.slice(3)||
+     !/^di-[a-f0-9]{24}$/.test(row.id)||
+     !/^[0-9]{5,20}$/.test(row.actor_id??'')||
+     typeof env.ADMIN_TELEGRAM_IDS!=='string'||
+     !env.ADMIN_TELEGRAM_IDS.split(',').map(x=>x.trim()).includes(row.actor_id))
+    return false;
+  return true;
+}
+export async function isAdminDirectToken(env,token,nowMs=Date.now()){
+  if(env.ADMIN_DIRECT_ISSUE_ENABLED!=='true'||!env.DB)return false;
+  const hash=await tokenDigest(token);
+  if(!hash)return false;
+  const row=await env.DB.prepare(
+    "SELECT subscription_id FROM subscription_tokens "+
+    "WHERE token_hash=? AND revoked=0 AND expires_at>? LIMIT 1"
+  ).bind(hash,nowMs).first();
+  return !!row&&await isAdminDirectSubscription(env,row.subscription_id,nowMs);
+}
+
+export async function getSubscription(request,env,nowMs=Date.now()) {
+  if(request.method!=='GET') return json({error:'method_not_allowed'},405);
+  const generalApi=featureEnabled(env,'SUBSCRIPTION_API_ENABLED');
+  if(!generalApi&&env.ADMIN_E2E_TEST_ENABLED!=='true'&&env.ADMIN_DIRECT_ISSUE_ENABLED!=='true')
+    return json({error:'service_not_ready'},503);
+  if(!env.DB || !env.SUBSCRIPTION_CREDENTIAL_KEY)
+    return json({error:'service_not_ready'},503);
+  const header=request.headers.get('authorization')??'';
+  if(!header.startsWith('Bearer ')) return json({error:'unauthorized'},401);
+  const token=header.slice(7);
+  const hash=await tokenDigest(token);
+  if(!hash) return json({error:'unauthorized'},401);
+  if(!generalApi&&!(await isAdminE2eToken(env,token,nowMs)||await isAdminDirectToken(env,token,nowMs)))
+    return json({error:'service_not_ready'},503);
+  // App identity sessions can exist without a subscription. Subscription
+  // entitlement is resolved from the verified owner, never from client input.
+  const owner=generalApi?await findAppSession(env.DB,hash,nowMs):null;
+  const active=owner
+    ?await env.DB.prepare(
+      "SELECT id,state,expires_at,max_bytes,used_bytes FROM subscriptions " +
+      "WHERE owner_telegram_id=? AND state='active' AND expires_at>? " +
+      "ORDER BY expires_at DESC LIMIT 1"
+    ).bind(owner,nowMs).first()
+    :await env.DB.prepare(
+      "SELECT s.id,s.state,s.expires_at,s.max_bytes,s.used_bytes " +
+      "FROM subscription_tokens t JOIN subscriptions s ON s.id=t.subscription_id " +
+      "JOIN customers c ON c.telegram_id=s.owner_telegram_id " +
+      "WHERE t.token_hash=? AND t.revoked=0 AND t.expires_at>? " +
+      "AND s.state='active' AND c.state='active' AND s.expires_at>? LIMIT 1"
+    ).bind(hash,nowMs,nowMs).first();
+  if(!active) return json({error:'subscription_inactive'},403);
+  if(active.max_bytes<=0 || active.used_bytes>=active.max_bytes)
+    return json({error:'quota_exhausted'},403);
+  const routes=await activeRoutes(env.DB,active.id,nowMs);
+  if(!routes.length) return json({error:'no_verified_routes'},503);
+  const secrets=await env.DB.prepare(
+    'SELECT ciphertext_b64,nonce_b64,key_version FROM subscription_credentials WHERE subscription_id=?'
+  ).bind(active.id).first();
+  if(!secrets || secrets.key_version!==1) return json({error:'credential_unavailable'},503);
+  let id;
+  try{id=await unwrapClientUuid(secrets,env.SUBSCRIPTION_CREDENTIAL_KEY);}
+  catch{return json({error:'credential_unavailable'},503);}
+  const named=env.ADMIN_DIRECT_ISSUE_ENABLED==='true'?await env.DB.prepare(
+    'SELECT i.label FROM admin_direct_issues i JOIN subscriptions s ON s.order_id=i.order_id WHERE s.id=?'
+  ).bind(active.id).first():null;
+  return json({
+    version:1,subscription_id:active.id,expires_at:active.expires_at,
+    ...(named?.label?{customer_label:named.label}:{}),
+    quota_bytes:active.max_bytes,used_bytes:active.used_bytes,
+    client:{protocol:'vless',uuid:id},
+    routes:routes.map(x=>({
+      id:x.route_id,protocol:'vless',transport:x.transport,operator_hint:x.operator_hint??null,
+      endpoint:{host:x.host,port:x.port},
+      tls:{server_name:x.server_name,
+        ...(x.transport==='reality'?{reality_public_key:x.reality_public_key,
+          short_id:x.reality_short_id}: {})},
+      ...(x.transport==='wss'?{websocket:{path:x.ws_path}}:{}),
+    })),
+  });
+}
+
+
+export async function wrapClientUuid(uuid,keyText) {
+  if(!UUID.test(uuid??'')) throw new TypeError('invalid_client_uuid');
+  const raw=base64Decode(keyText);
+  if(raw.length!==32) throw new TypeError('credential_key_length');
+  const key=await crypto.subtle.importKey('raw',raw,{name:'AES-GCM'},false,['encrypt']);
+  const nonce=crypto.getRandomValues(new Uint8Array(12));
+  const encrypted=new Uint8Array(await crypto.subtle.encrypt({
+    name:'AES-GCM',iv:nonce,
+  },key,ascii.encode(uuid)));
+  const encode=data=>btoa(String.fromCharCode(...data)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  return {nonce_b64:encode(nonce),ciphertext_b64:encode(encrypted),key_version:1};
+}
+
+/** Issue a sign-in token only for an active subscription with a supported encrypted
+ * credential and active allocation. Route freshness is enforced by getSubscription,
+ * so a temporary route outage does not prevent the customer opening the app.
+ * The token is returned once and never persisted in plaintext.
+ */
+export async function issueActiveToken(env,subId,nowMs=Date.now()) {
+  if(!env.DB || !env.SUBSCRIPTION_CREDENTIAL_KEY || typeof subId!=='string' || subId.length>80)
+    return null;
+  if(!featureEnabled(env,'SUBSCRIPTION_API_ENABLED') &&
+     !await isAdminE2eSubscription(env,subId,nowMs)&&
+     !await isAdminDirectSubscription(env,subId,nowMs))return null;
+  const row=await env.DB.prepare(
+    "SELECT s.id,s.expires_at FROM subscriptions s " +
+    "JOIN subscription_credentials c ON c.subscription_id=s.id AND c.key_version=1 " +
+    "JOIN customers owner ON owner.telegram_id=s.owner_telegram_id " +
+    "WHERE s.id=? AND s.state='active' AND owner.state='active' AND s.expires_at>? " +
+    "AND s.max_bytes>0 AND s.used_bytes<s.max_bytes " +
+    "AND EXISTS(SELECT 1 FROM node_allocations a WHERE a.subscription_id=s.id AND a.state='active')"
+  ).bind(subId,nowMs).first();
+  if(!row) return null;
+  const entropy=crypto.getRandomValues(new Uint8Array(32));
+  const token=btoa(String.fromCharCode(...entropy)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  const hash=await tokenDigest(token);
+  await env.DB.prepare(
+    'INSERT INTO subscription_tokens(token_hash,subscription_id,expires_at) VALUES(?,?,?)'
+  ).bind(hash,subId,row.expires_at).run();
+  return {token,expires_at:row.expires_at};
+}

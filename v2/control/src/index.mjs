@@ -1,0 +1,406 @@
+import {getTrialFeed,reportInstall,retryPending} from './node-auto.mjs';
+import {enrollmentApi,runnerApi,cleanupRunnerJobs} from './runner-enrollment.mjs';
+import {enrollmentPage} from './enrollment-page.mjs';
+import {activateIsolatedBotWebhook} from './telegram-activation.mjs';
+import { getSubscription } from './subscription.mjs';
+import {androidLoginRoute,approveAndroidLogin,purgeAndroidLogins} from './android-login.mjs';
+import { getCarrierFeed } from './carrier-subscription.mjs';
+import { nodeRoute } from './node-control.mjs';
+import { fieldProbeRoute } from './field-evidence.mjs';
+import {reconcileApprovedOrders} from './provisioning.mjs';
+import {usageRoute} from './usage-telemetry.mjs';
+import {nodeHealthRoute} from './node-health.mjs';
+import {expireEntitlements} from './subscription-lifecycle.mjs';
+import { toBotMessage, verifyTelegramSecret } from './telegram.mjs';
+import { resolveBotAction,adminAllowed } from './shop.mjs';
+import {frameMessage,BRAND_BANNER_URL,styleInlineKeyboard,contextualKeyboard} from './bot-ux.mjs';
+import {bannerImageResponse,brandBannerBytes} from './brand-banner.mjs';
+import {channelActivationConfigured} from './bot-activation.mjs';
+
+const json=(value,status=200)=>new Response(JSON.stringify(value),{
+  status,headers:{
+    'content-type':'application/json; charset=utf-8','cache-control':'no-store',
+    'x-content-type-options':'nosniff','referrer-policy':'no-referrer',
+  },
+});
+const MAX_WEBHOOK_BYTES=32768;
+const delay=(n)=>Math.min(3600000,5000*2**Math.min(n,9));
+
+async function readJson(request) {
+  if (!/^application\/json(?:\s*;|\s*$)/i.test(request.headers.get('content-type')??'')) return {status:415};
+  const declared=Number(request.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared>MAX_WEBHOOK_BYTES) return {status:413};
+  const reader=request.body?.getReader();
+  if (!reader) return {status:400};
+  const chunks=[]; let length=0;
+  try {
+    for (;;) {
+      const {done,value}=await reader.read();
+      if (done) break;
+      length+=value.byteLength;
+      if(length>MAX_WEBHOOK_BYTES) {await reader.cancel();return {status:413};}
+      chunks.push(value);
+    }
+    const bytes=new Uint8Array(length);let off=0;
+    for(const chunk of chunks) {bytes.set(chunk,off);off+=chunk.byteLength;}
+    const value=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));
+    if(!value || typeof value!=='object' || Array.isArray(value)) return {status:400};
+    return {value};
+  } catch {return {status:400};}
+  finally {reader.releaseLock();}
+}
+
+async function telegramCall(env,method,payload) {
+  try {
+    // Upload the bundled Madar artwork directly; Telegram never needs to fetch a URL.
+    const brandedPhoto=method==='sendPhoto'&&payload.photo===BRAND_BANNER_URL;
+    let form=null;
+    if(brandedPhoto){
+      form=new FormData();
+      form.append('chat_id',String(payload.chat_id));
+      form.append('photo',new Blob([brandBannerBytes()],{type:'image/jpeg'}),'madar-banner.jpg');
+      form.append('caption',String(payload.caption??''));
+      if(payload.caption_entities)form.append('caption_entities',JSON.stringify(payload.caption_entities));
+      if(payload.reply_markup)form.append('reply_markup',JSON.stringify(payload.reply_markup));
+    }
+    const response=await fetch('https://api.telegram.org/bot'+env.BOT_TOKEN+'/'+method,{
+      method:'POST',...(form?{}:{headers:{'content-type':'application/json'}}),
+      body:form??JSON.stringify(payload),signal:AbortSignal.timeout(12000),
+    });
+    const data=await response.json().catch(()=>null);
+    return {ok:response.ok&&data?.ok===true,description:String(data?.description??'')};
+  } catch {
+    return {ok:false,description:''};
+  }
+}
+async function telegram(env,method,payload) {
+  return (await telegramCall(env,method,payload)).ok;
+}
+
+/** A per-chat ordered durable inbox. A failed update is retried without
+ * requiring Telegram to resend it; business writes must remain idempotent. */
+export async function processInbox(env,nowMs=Date.now()) {
+  if(!env.DB || !env.BOT_TOKEN) return;
+  const rows=(await env.DB.prepare(
+    "SELECT i.update_id,i.event_json,i.attempts FROM telegram_inbox i WHERE " +
+    "((i.state='pending' AND i.due_ms<=?) OR (i.state='leased' AND i.lease_until_ms<=?)) " +
+    "AND NOT EXISTS (SELECT 1 FROM telegram_inbox prev WHERE prev.chat_id=i.chat_id " +
+    "AND prev.update_id<i.update_id AND prev.state IN ('pending','leased')) " +
+    "ORDER BY i.update_id LIMIT 20"
+  ).bind(nowMs,nowMs).all()).results??[];
+  for(const item of rows) {
+    const claim=await env.DB.prepare(
+      "UPDATE telegram_inbox SET state='leased',lease_until_ms=?,attempts=attempts+1 WHERE update_id=? " +
+      "AND ((state='pending' AND due_ms<=?) OR (state='leased' AND lease_until_ms<=?))"
+    ).bind(nowMs+30000,item.update_id,nowMs,nowMs).run();
+    if(claim.meta?.changes!==1) continue;
+    try {
+      const event=JSON.parse(item.event_json);
+      if(event.updateId!==item.update_id) throw new Error('inbox_id_mismatch');
+      const reply=(await approveAndroidLogin(env,event,nowMs))??await resolveBotAction(env,event,nowMs);
+      const msg=reply??{text:frameMessage('⚠️ پاسخ مناسبی دریافت نشد. لطفاً دوباره تلاش کنید.'),replyMarkup:null};
+      // Photo captions are editable only when the photo is not a known customer
+      // support attachment or payment receipt. Attachments always get a new reply.
+      let sourceIsAttachment=false;
+      if(typeof event.sourcePhotoId==='string'&&event.sourcePhotoId.length>=5){
+        const original=await env.DB.prepare(
+          'SELECT 1 ok WHERE EXISTS(SELECT 1 FROM support_messages WHERE telegram_file_id=?) '+
+          'OR EXISTS(SELECT 1 FROM receipts WHERE telegram_file_id=?)'
+        ).bind(event.sourcePhotoId,event.sourcePhotoId).first();
+        sourceIsAttachment=!!original;
+      }
+      const canEditMessage=!sourceIsAttachment&&(!msg.photoId||msg.photoId===BRAND_BANNER_URL);
+      const pageKeyboard=msg.replyMarkup?styleInlineKeyboard(contextualKeyboard(
+        event.key,msg.replyMarkup,{isAdmin:adminAllowed(env.ADMIN_TELEGRAM_IDS,event.actorId)}
+      )):null;
+      // This insert precedes marking inbox done. A crash will re-run the
+      // idempotent action but cannot add a second outgoing reply.
+      await env.DB.prepare(
+        "INSERT OR IGNORE INTO telegram_outbox " +
+        "(update_id,chat_id,body,reply_markup,media_file_id,edit_message_id,edit_kind,state,due_ms) "+
+        "VALUES (?,?,?,?,?,?,?,'pending',?)"
+      ).bind(item.update_id,event.chatId,msg.text.slice(0,3800),
+        pageKeyboard?JSON.stringify(pageKeyboard):null,
+        msg.photoId??null,
+        canEditMessage&&(!msg.photoId||event.editKind==='caption')&&
+          Number.isSafeInteger(event.messageId)?event.messageId:null,
+        canEditMessage&&(!msg.photoId||event.editKind==='caption')?
+          (event.editKind==='caption'?'caption':event.editKind==='text'?'text':null):null,
+        nowMs).run();
+      await env.DB.prepare(
+        "UPDATE telegram_inbox SET state='done',lease_until_ms=0,event_json='{}' " +
+        "WHERE update_id=? AND state='leased'"
+      ).bind(item.update_id).run();
+    } catch {
+      const attempt=item.attempts+1;
+      await env.DB.prepare(
+        "UPDATE telegram_inbox SET state=?,lease_until_ms=0,due_ms=? WHERE update_id=? AND state='leased'"
+      ).bind(attempt>=8?'dead':'pending',nowMs+delay(attempt),item.update_id).run();
+    }
+  }
+}
+
+/** UTF-16 offsets used by Telegram for brand and screen headings. */
+export function brandedEntities(body){
+  if(typeof body!=='string'||!body.startsWith('🌐  مــدار\n'))return [];
+  const header='🌐  مــدار';
+  const out=[{type:'bold',offset:0,length:header.length}];
+  const first=body.indexOf('\n');
+  if(first<0)return out;
+  const start=first+1,end=body.indexOf('\n',start);
+  const title=body.slice(start,end<0?body.length:end);
+  if(title.length>0&&title.length<=85)out.push({type:'bold',offset:start,length:title.length});
+  return out;
+}
+
+/** Every table is a compile-time constant; never interpolate user data as SQL. */
+async function deliverTable(env,name,nowMs,withPhoto) {
+  const rows=(await env.DB.prepare(
+    'SELECT id,chat_id,body,attempts'+(withPhoto?',reply_markup,media_file_id,edit_message_id,edit_kind':'')+
+    ' FROM '+name+" WHERE (state='pending' AND due_ms<=?) OR "+
+    "(state='leased' AND lease_until_ms<=?) ORDER BY id LIMIT 20"
+  ).bind(nowMs,nowMs).all()).results??[];
+  for(const item of rows) {
+    const claimed=await env.DB.prepare(
+      'UPDATE '+name+" SET state='leased',lease_until_ms=?,attempts=attempts+1 WHERE id=? " +
+      "AND ((state='pending' AND due_ms<=?) OR (state='leased' AND lease_until_ms<=?))"
+    ).bind(nowMs+30000,item.id,nowMs,nowMs).run();
+    if(claimed.meta?.changes!==1) continue;
+    let sent=false;
+    try {
+      const markup=withPhoto && item.reply_markup?JSON.parse(item.reply_markup):null;
+      const media=withPhoto && typeof item.media_file_id==='string' && item.media_file_id.length>0;
+      const displayBody=media?item.body.slice(0,1024):item.body;
+      const entities=brandedEntities(displayBody);
+      const sendPayload={
+        chat_id:item.chat_id,
+        ...(media?{photo:item.media_file_id,caption:displayBody}:{text:displayBody}),
+        ...(entities.length?{[media?'caption_entities':'entities']:entities}:{}),
+        ...(markup?{reply_markup:markup}:{}),
+      };
+      let editAttempted=false;
+      if(withPhoto&&item.edit_message_id&&(!media||(item.media_file_id===BRAND_BANNER_URL&&item.edit_kind==='caption'))) {
+        const caption=item.edit_kind==='caption';
+        if(!caption||displayBody.length<=1024) {
+          editAttempted=true;
+          const method=caption?'editMessageCaption':'editMessageText';
+          const field=caption?'caption':'text';
+          const editPayload={
+            chat_id:item.chat_id,message_id:item.edit_message_id,[field]:displayBody,
+            ...(entities.length?{[caption?'caption_entities':'entities']:entities}:{}),
+            reply_markup:markup??{inline_keyboard:[]},
+          };
+          const edited=await telegramCall(env,method,editPayload);
+          sent=edited.ok||/message is not modified/i.test(edited.description);
+          if(!sent&&/message to edit not found|message can't be edited|there is no text in the message to edit|message_id_invalid|message caption is too long|message is too long/i.test(edited.description))
+            sent=await telegram(env,'sendMessage',{chat_id:item.chat_id,text:displayBody,
+              ...(entities.length?{entities}:{}),...(markup?{reply_markup:markup}:{})});
+        }
+      }
+      if(!editAttempted)sent=await telegram(env,media?'sendPhoto':'sendMessage',sendPayload);
+    } catch { /* retry; no credentials, content or chat IDs in logs */ }
+    if(sent) {
+      await env.DB.prepare('UPDATE '+name+" SET state='sent',lease_until_ms=0 "+
+        "WHERE id=? AND state='leased'").bind(item.id).run();
+    } else {
+      const attempt=item.attempts+1;
+      await env.DB.prepare('UPDATE '+name+" SET state=?,lease_until_ms=0,due_ms=? " +
+        "WHERE id=? AND state='leased'").bind(attempt>=8?'dead':'pending',nowMs+delay(attempt),item.id).run();
+    }
+  }
+}
+
+export async function dispatchOutbox(env,nowMs=Date.now()) {
+  if(!env.DB || !env.BOT_TOKEN) return;
+  await deliverTable(env,'telegram_outbox',nowMs,true);
+  await deliverTable(env,'telegram_notifications',nowMs,false);
+}
+
+async function poll(env) {
+  await processInbox(env);
+  await dispatchOutbox(env);
+}
+
+async function receive(request,env,ctx) {
+  if(!(await verifyTelegramSecret(request.headers.get('x-telegram-bot-api-secret-token'),
+    env.TELEGRAM_WEBHOOK_SECRET))) return json({error:'unauthorized'},401);
+  if(!env.DB || !env.BOT_TOKEN) return json({error:'not_ready'},503);
+  const parsed=await readJson(request);
+  if(parsed.status) return json({error:parsed.status===413?'too_large':'bad_request'},parsed.status);
+  const event=toBotMessage(parsed.value);
+  if(!event) return json({ok:true,ignored:true});
+  const minimal={
+    updateId:event.updateId,chatId:event.chatId,actorId:event.actorId,
+    locale:event.locale,key:event.key,inputText:event.inputText,photoId:event.photoId,
+    messageId:event.messageId,editKind:event.editKind,
+  };
+  const payload=JSON.stringify(minimal);
+  if(payload.length>8192) return json({error:'too_large'},413);
+  // Acknowledgement is sent only after the event has been persisted.
+  await env.DB.prepare(
+    "INSERT OR IGNORE INTO telegram_inbox(update_id,chat_id,event_json,state,due_ms) "+
+    "VALUES(?,?,?,'pending',?)"
+  ).bind(event.updateId,event.chatId,payload,Date.now()).run();
+  ctx?.waitUntil?.(poll(env).catch(()=>{}));
+  if(event.callbackId) ctx?.waitUntil?.(
+    telegram(env,'answerCallbackQuery',{callback_query_id:event.callbackId,cache_time:0}).catch(()=>false)
+  );
+  return json({ok:true});
+}
+
+
+/** Public-safe diagnostic: never returns webhook URL or bot bearer token.
+ * Inspect a pre-existing bot binding before attempting setWebhook, so a
+ * shared V1 token cannot be redirected to a V2 endpoint accidentally.
+ */
+export async function telegramBindingStatus(env,transport=fetch) {
+  if(!env.BOT_TOKEN)return json({status:'unconfigured',bot:'missing',webhook:'unknown'},503);
+  try {
+    const base='https://api.telegram.org/bot'+env.BOT_TOKEN+'/';
+    const [me,hook]=await Promise.all(['getMe','getWebhookInfo'].map(async method=>{
+      const r=await transport(base+method,{signal:AbortSignal.timeout(7000)});
+      if(!r.ok)throw Error('telegram_api_error');
+      const data=await r.json();
+      if(data?.ok!==true)throw Error('telegram_api_error');
+      return data.result;
+    }));
+    const url=typeof hook?.url==='string'?hook.url:'';
+    let webhook='unknown';
+    if(url==='')webhook='unset';
+    else {
+      try {
+        const parsed=new URL(url);
+        if(parsed.protocol==='https:') {
+          if(parsed.hostname==='madar-v2-staging.alirezaanari117.workers.dev' &&
+             parsed.pathname==='/telegram/webhook')
+            webhook='v2';
+          else if(parsed.hostname==='madar-sales-bot.alirezaanari117.workers.dev')
+            webhook='legacy_v1';
+          else webhook='another_bot_or_app';
+        } else webhook='another_bot_or_app';
+      }catch{webhook='another_bot_or_app';}
+    }
+    return json({status:'ok',bot_id:me?.id,bot_username:me?.username,
+      webhook,webhook_pending:Math.min(100000,Math.max(0,hook?.pending_update_count??0)),
+      is_dedicated_v2:webhook==='v2'});
+  }catch{return json({status:'telegram_check_unavailable'},503);}
+}
+
+export default {
+  async fetch(request,env,ctx) {
+    const path=new URL(request.url).pathname;
+    if(request.method==='GET'&&path==='/enroll')return new Response(enrollmentPage,{headers:{
+      'content-type':'text/html; charset=utf-8','cache-control':'no-store','referrer-policy':'no-referrer',
+      'x-content-type-options':'nosniff','permissions-policy':'camera=(), microphone=(), geolocation=()',
+      'content-security-policy':"default-src 'none'; script-src 'unsafe-inline' https://telegram.org; style-src 'unsafe-inline'; connect-src 'self'; frame-src https://oauth.telegram.org; base-uri 'none'; form-action 'self'"
+    }});
+    if(path.startsWith('/api/enrollment/')){
+      try{return await enrollmentApi(request,env);}catch{return json({error:'TEMPORARY_FAILURE'},503);}
+    }
+    if(path.startsWith('/api/runner/')){
+      try{return await runnerApi(request,env);}catch{return json({error:'TEMPORARY_FAILURE'},503);}
+    }
+    if(request.method==='GET' && path==='/brand/banner.jpg')return bannerImageResponse();
+    if(request.method==='GET' && path==='/health/bot')return telegramBindingStatus(env);
+    if(request.method==='GET' && path==='/health/live')
+      return json({status:'alive',service:'madar-v2'});
+    if(request.method==='GET' && path==='/health/ready') {
+      if(!env.DB || !env.BOT_TOKEN || !env.TELEGRAM_WEBHOOK_SECRET ||
+         !/^\d{5,20}(?:,\d{5,20})*$/.test(env.ADMIN_TELEGRAM_IDS??''))
+        return json({status:'not_ready'},503);
+      if(!channelActivationConfigured(env))
+        return json({status:'not_ready',reason:'channel_activation_not_configured'},503);
+      try {
+        await env.DB.prepare('SELECT media_file_id FROM telegram_outbox LIMIT 1').first();
+        await env.DB.prepare('SELECT event_json FROM telegram_inbox LIMIT 1').first();
+        const bot=await telegramBindingStatus(env);
+        if(bot.status!==200 || (await bot.json()).is_dedicated_v2!==true)
+          return json({status:'not_ready',reason:'independent_telegram_bot_required'},503);
+        return json({status:'ready'});
+      } catch {return json({status:'not_ready'},503);}
+    }
+    if(path.startsWith('/t/')) {
+      try{return await getTrialFeed(request,env);}
+      catch{return json({error:'not_ready'},503);}
+    }
+    if(path==='/api/v2/node-bootstrap/report') {
+      try{return await reportInstall(request,env);}
+      catch{return json({error:'not_ready'},503);}
+    }
+    if(path.startsWith('/s/')) {
+      try{return await getCarrierFeed(request,env);}
+      catch{return new Response('Not ready',{status:503,headers:{
+        'content-type':'text/plain; charset=utf-8','cache-control':'private, no-store',
+        'referrer-policy':'no-referrer','x-content-type-options':'nosniff',
+      }});}
+    }
+    if(path==='/api/v2/android/login/start' || path==='/api/v2/android/login/verify' || path==='/api/v2/android/login/complete' || path==='/api/v2/android/logout') {
+      try{return await androidLoginRoute(request,env);}
+      catch{return json({error:'temporary_failure'},503);}
+    }
+    if(path==='/api/v2/subscription') {
+      if(new URL(request.url).search) return json({error:'query_not_allowed'},400);
+      try{return await getSubscription(request,env);}
+      catch {return json({error:'temporary_failure'},503);}
+    }
+    if(path==='/api/v2/field/accept') {
+      try{return await fieldProbeRoute(request,env);}
+      catch{return json({error:'field_temporary_failure'},503);}
+    }
+    if(path==='/api/node/v1/health') {
+      try{return await nodeHealthRoute(request,env);}
+      catch{return json({error:'node_health_failure'},503);}
+    }
+    if(path==='/api/node/v1/usage' || path==='/api/node/v1/clients/revoked') {
+      try{return await usageRoute(request,env);}
+      catch{return json({error:'usage_temporary_failure'},503);}
+    }
+    if(path.startsWith('/api/node/v1/')) {
+      try {return await nodeRoute(request,env);}
+      catch {return json({error:'node_temporary_failure'},503);}
+    }
+    if(request.method==='POST' && path==='/telegram/webhook') {
+      try{return await receive(request,env,ctx);}
+      catch{return json({error:'temporary_failure'},503);}
+    }
+    return json({error:'not_found'},404);
+  },
+  async scheduled(_event,env) {
+    await activateIsolatedBotWebhook(env);
+    await poll(env);
+    await retryPending(env);
+    // Feature-gated durable provisioning; never issue a config before node client ACK.
+    await reconcileApprovedOrders(env);
+    if(!env.DB) return;
+    const now=Date.now();
+    await expireEntitlements(env,now);
+    // Minimize stored Telegram content. Orders, receipts and subscriptions
+    if(env.RUNNER_ENROLLMENT_ENABLED==='true')await cleanupRunnerJobs(env.DB,now);
+    await purgeAndroidLogins(env.DB,now);
+    // are deliberately excluded: they require a separate accounting policy.
+    const oldDays=(n)=>Math.floor((now-n*86400000)/1000);
+    await env.DB.prepare('DELETE FROM node_nonces WHERE created_ms<?')
+      .bind(now-10*60*1000).run();
+    // Expire private conversation input state independently of Telegram inbox
+    // retention. Never retain an abandoned admin/customer wizard indefinitely.
+    await env.DB.prepare('DELETE FROM v2_bot_input_sessions WHERE expires_ms<?')
+      .bind(now).run();
+    await env.DB.prepare(
+      "DELETE FROM telegram_inbox WHERE state IN ('done','dead') " +
+      "AND created_at<datetime(?,'unixepoch')"
+    ).bind(oldDays(14)).run();
+    await env.DB.prepare(
+      "DELETE FROM telegram_outbox WHERE state IN ('sent','dead') " +
+      "AND created_at<datetime(?,'unixepoch')"
+    ).bind(oldDays(30)).run();
+    await env.DB.prepare(
+      "DELETE FROM telegram_notifications WHERE state IN ('sent','dead') " +
+      "AND created_at<datetime(?,'unixepoch')"
+    ).bind(oldDays(30)).run();
+    await env.DB.prepare(
+      "DELETE FROM support_messages WHERE ticket_id IN " +
+      "(SELECT id FROM support_tickets WHERE state='closed' " +
+      "AND closed_at<datetime(?,'unixepoch'))"
+    ).bind(oldDays(90)).run();
+  }
+};
