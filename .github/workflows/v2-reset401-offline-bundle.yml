@@ -4,7 +4,7 @@ on:
     branches:
       - release/v2-reset401-worker-build-20261119
     paths:
-      - .github/workflows/v2-offline-bundle.yml
+      - .github/workflows/v2-reset401-offline-bundle.yml
 permissions:
   contents: write
 jobs:
