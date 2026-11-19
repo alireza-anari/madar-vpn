@@ -3,6 +3,7 @@
  * the exact UUID installed in Xray. Never uses V1 D1 or modifies Telegram UI.
  */
 import {wrapClientUuid} from './subscription.mjs';
+import {enabled as featureEnabled} from './feature-flags.mjs';
 
 const validOrder=id=>typeof id==='string'&&id.length>0&&id.length<=80;
 export async function reserveApprovedOrder(env,orderId,nowMs=Date.now(),targetNodeId=null) {
@@ -71,7 +72,7 @@ export async function reserveApprovedOrder(env,orderId,nowMs=Date.now(),targetNo
 }
 
 export async function reconcileApprovedOrders(env,nowMs=Date.now(),limit=3) {
-  if(env.PROVISIONING_ENABLED!=='true'||!env.DB||!env.SUBSCRIPTION_CREDENTIAL_KEY)
+  if(!featureEnabled(env,'PROVISIONING_ENABLED')||!env.DB||!env.SUBSCRIPTION_CREDENTIAL_KEY)
     return [];
   const pending=(await env.DB.prepare(
     "SELECT id FROM orders WHERE state='approved' ORDER BY updated_at,id LIMIT ?"
