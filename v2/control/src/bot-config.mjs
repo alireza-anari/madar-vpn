@@ -6,6 +6,7 @@ import {issueCarrierLink} from './carrier-subscription.mjs';
 import {enabled as adminE2eEnabled,listE2e,e2eAction} from './admin-e2e.mjs';
 import {directAction} from './admin-direct.mjs';
 import {frameMessage,faNumber,faStatus,shortCode,panelHeading} from './bot-ux.mjs';
+import {enabled as featureEnabled} from './feature-flags.mjs';
 
 const HEX=/^[a-f0-9]{24}$/;
 const PAGE=6;
@@ -49,7 +50,7 @@ async function configHome(env,nowMs){
       "WHERE s.state='active' AND c.state='active' AND s.expires_at>? AND s.max_bytes>s.used_bytes")
       .bind(nowMs).first()
   ]);
-  const real=env.SUBSCRIPTION_API_ENABLED==='true'&&env.SUBSCRIPTION_LINKS_ENABLED==='true';
+  const real=featureEnabled(env,'SUBSCRIPTION_API_ENABLED')&&featureEnabled(env,'SUBSCRIPTION_LINKS_ENABLED');
   return view(panelHeading('🔗','صدور کانفیگ مدار','یک لینک اشتراک با دو مسیر اپراتور')+
     '\n\n🧪 سرور نصب‌شده برای بررسی: '+faNumber(installed?.n??0)+
     '\n👤 اشتراک دارای اعتبار: '+faNumber(sub?.n??0)+

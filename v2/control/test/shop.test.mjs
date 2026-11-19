@@ -132,3 +132,28 @@ test('private Telegram user cannot mint another user subscription link',async()=
   assert.match(response.text,/اشتراک فعال شما پیدا نشد/);
   assert.doesNotMatch(response.text,/https:\/\/.*\/s\//);
 });
+
+test('production secret overrides can enable sales only with payment instructions',()=>{
+  assert.equal(salesConfigured({
+    SHOP_ENABLED:'false',SHOP_ENABLED_SECRET:'true',
+    PROVISIONING_ENABLED:'false',PROVISIONING_ENABLED_SECRET:'true',
+    PAYMENT_INSTRUCTIONS:'Verified payment details provided by the merchant',
+  }),true);
+  assert.equal(salesConfigured({
+    SHOP_ENABLED:'false',SHOP_ENABLED_SECRET:'true',
+    PROVISIONING_ENABLED:'false',PROVISIONING_ENABLED_SECRET:'true',
+  }),false);
+});
+
+test('an explicit secret false cannot be bypassed by public sales variables',()=>{
+  assert.equal(salesConfigured({
+    SHOP_ENABLED:'true',SHOP_ENABLED_SECRET:'false',
+    PROVISIONING_ENABLED:'true',
+    PAYMENT_INSTRUCTIONS:'Valid independently verified payment instructions',
+  }),false);
+  assert.equal(salesConfigured({
+    SHOP_ENABLED:'true',
+    PROVISIONING_ENABLED:'true',PROVISIONING_ENABLED_SECRET:'false',
+    PAYMENT_INSTRUCTIONS:'Valid independently verified payment instructions',
+  }),false);
+});

@@ -90,7 +90,8 @@ test('a single issued link is hash-stored, authorized and returns only two profi
     },
   };
   const env={
-    DB:db,SUBSCRIPTION_API_ENABLED:'true',SUBSCRIPTION_LINKS_ENABLED:'true',
+    DB:db,SUBSCRIPTION_API_ENABLED:'false',SUBSCRIPTION_LINKS_ENABLED:'false',
+    SUBSCRIPTION_API_ENABLED_SECRET:'true',SUBSCRIPTION_LINKS_ENABLED_SECRET:'true',
     SUBSCRIPTION_PUBLIC_ORIGIN:'https://sub.madar.test',
     SUBSCRIPTION_CREDENTIAL_KEY:key,
   };
@@ -108,4 +109,16 @@ test('a single issued link is hash-stored, authorized and returns only two profi
   assert.equal(decoded.length,2);
   assert.match(decoded[0],/443/);
   assert.match(decoded[1],/8443/);
+});
+
+test('an explicit disabled secret prevents ordinary subscription links',async()=>{
+  const env={
+    DB:{},SUBSCRIPTION_API_ENABLED:'true',SUBSCRIPTION_LINKS_ENABLED:'true',
+    SUBSCRIPTION_LINKS_ENABLED_SECRET:'false',
+    SUBSCRIPTION_PUBLIC_ORIGIN:'https://sub.madar.test',
+  };
+  assert.equal(await issueCarrierLink(env,'sub-1',now),null);
+  assert.equal((await getCarrierFeed(
+    new Request('https://sub.madar.test/s/'+'Q'.repeat(43)),env,now
+  )).status,503);
 });

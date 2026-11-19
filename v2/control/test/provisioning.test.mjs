@@ -50,3 +50,22 @@ test('the cron enroller is disabled by default, even with approved orders',async
     SUBSCRIPTION_CREDENTIAL_KEY:credentialKey}),[]);
   assert.equal(seen.length,0);
 });
+
+test('secret opt-in enables the cron enroller without exposing public sale',async()=>{
+  const {db,seen}=fakeDB(true);
+  const rows=await reconcileApprovedOrders({DB:db,
+    SHOP_ENABLED:'false',
+    PROVISIONING_ENABLED:'false',PROVISIONING_ENABLED_SECRET:'true',
+    SUBSCRIPTION_CREDENTIAL_KEY:credentialKey},1800000000000);
+  assert.equal(rows.length,1);
+  assert.equal(rows[0].status,'reserved');
+  assert.equal(seen.length,4);
+});
+
+test('a secret off overrides an accidentally enabled provisioning variable',async()=>{
+  const {db,seen}=fakeDB(true);
+  assert.deepEqual(await reconcileApprovedOrders({DB:db,
+    PROVISIONING_ENABLED:'true',PROVISIONING_ENABLED_SECRET:'false',
+    SUBSCRIPTION_CREDENTIAL_KEY:credentialKey},1800000000000),[]);
+  assert.equal(seen.length,0);
+});
