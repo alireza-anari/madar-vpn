@@ -120,12 +120,32 @@ except Exception:
  code='DIAG_REMOTE_FAILED'
 print(json.dumps({'code':code},separators=(',',':')))
 '''
+REMOTE_RUNTIME_DIAG=r'''
+import json,subprocess
+def active(unit):
+ return subprocess.run(['/usr/bin/systemctl','is-active','--quiet',unit],timeout=5).returncode==0
+runtime='madar-v2-runtime.service'
+code='DIAG_RUNTIME_ACTIVE'
+try:
+ if not active(runtime):code='DIAG_RUNTIME_DOWN'
+ else:
+  log=subprocess.run(['/usr/bin/journalctl','-u',runtime,'--since','5 minutes ago','-n','100','--no-pager','-o','cat'],capture_output=True,text=True,timeout=8,check=True).stdout
+  faults=[line for line in log.splitlines() if line.startswith(('MADAR_RUNTIME_FAULT','MADAR_REMOTE_ERROR'))]
+  if faults:
+   last=faults[-1]
+   code='DIAG_RUNTIME_GENERATION' if ('XRAY_GENERATION_MISMATCH' in last or 'unrecognized Xray process generation' in last) else 'DIAG_RUNTIME_ERROR'
+  elif not active('madar-v2-xray.service'):code='DIAG_XRAY_DOWN'
+except (OSError,subprocess.SubprocessError):
+ code='DIAG_REMOTE_FAILED'
+print(json.dumps({'code':code},separators=(',',':')))
+'''
 DIAG_CODES=frozenset({'DIAG_EXISTING_VPN','DIAG_PORT_443_BUSY','DIAG_PORT_8443_BUSY',
     'DIAG_UNSUPPORTED_OS','DIAG_NO_ROOT','DIAG_SYSTEMD_MISSING','DIAG_GITHUB_UNREACHABLE',
-    'DIAG_PRECHECK_OK','DIAG_REMOTE_FAILED'})
-def diagnose(transport,check):
+    'DIAG_PRECHECK_OK','DIAG_REMOTE_FAILED','DIAG_RUNTIME_ACTIVE','DIAG_RUNTIME_DOWN',
+    'DIAG_XRAY_DOWN','DIAG_RUNTIME_GENERATION','DIAG_RUNTIME_ERROR'})
+def diagnose(transport,check,runtime=False):
     # SSH command only runs a fixed Python snippet; no user-provided shell text.
-    code=base64.b64encode(REMOTE_DIAG.encode()).decode()
+    code=base64.b64encode((REMOTE_RUNTIME_DIAG if runtime else REMOTE_DIAG).encode()).decode()
     cmd='sudo -n python3 -c '+shlex.quote('import base64;exec(base64.b64decode('+repr(code)+'))')
     check()
     out=transport.run(cmd,timeout=35)
@@ -227,7 +247,7 @@ def run_job(job,api,private_key,clock=time.time,network_mode='aws'):
         with SshTransport(job['targetIp'],job['port'],job['username'],job['hostFingerprint'],credentials) as transport:
             if job.get('diagnostic') is True:
                 stage='diagnostic'
-                result_code=diagnose(transport,check)
+                result_code=diagnose(transport,check,runtime=job.get('runtimeDiagnostic') is True)
                 stage='report'
                 post('report',state='ready',safeCode=result_code)
                 return 'ready'
