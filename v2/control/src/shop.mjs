@@ -59,15 +59,32 @@ async function upsertCustomer(db, e) {
 }
 
 async function healthyNodeAvailable(db, quota, nowMs) {
+  // The storefront must never ask a customer to pay unless the same
+  // fresh dual-REALITY capacity evidence used by the provisioner exists.
+  // A previously published route alone does NOT prove live node health.
+  const from=nowMs-600000;
   const r = await db.prepare(
-    "SELECT n.id FROM nodes n WHERE n.lifecycle='ready' " +
+    "SELECT n.id FROM nodes n " +
+    "JOIN routes r ON r.node_id=n.id AND r.id=n.id||'_reality' " +
+    "JOIN route_carrier_variants m ON m.route_id=r.id AND m.operator='mci' " +
+      "AND m.port=443 AND m.published=1 AND m.verified_ms BETWEEN ? AND ? " +
+    "JOIN route_carrier_variants i ON i.route_id=r.id AND i.operator='irancell' " +
+      "AND i.port=8443 AND i.published=1 AND i.verified_ms BETWEEN ? AND ? " +
+    "WHERE n.lifecycle='ready' AND n.desired_revision=n.acked_revision " +
+    "AND r.transport='reality' AND r.state='ready' AND r.verified_ms BETWEEN ? AND ? " +
     "AND n.user_limit > (SELECT COUNT(*) FROM node_allocations a " +
-    "WHERE a.node_id=n.id AND a.state IN ('reserved','active')) " +
+      "WHERE a.node_id=n.id AND a.state IN ('reserved','active')) " +
     "AND n.byte_limit - (SELECT COALESCE(SUM(a.quota_bytes),0) " +
-    "FROM node_allocations a WHERE a.node_id=n.id AND a.state IN ('reserved','active')) >= ? " +
-    "AND EXISTS(SELECT 1 FROM routes r WHERE r.node_id=n.id AND r.state='ready' " +
-    "AND r.verified_ms BETWEEN ? AND ?) ORDER BY n.id LIMIT 1"
-  ).bind(quota, nowMs - 600000, nowMs).first();
+      "FROM node_allocations a WHERE a.node_id=n.id " +
+      "AND a.state IN ('reserved','active')) >= ? " +
+    "AND EXISTS(SELECT 1 FROM node_health h WHERE h.node_id=n.id " +
+      "AND h.revision=n.desired_revision AND h.xray_healthy=1 AND h.stats_healthy=1 " +
+      "AND h.observed_ms BETWEEN ? AND ?) " +
+    "AND EXISTS(SELECT 1 FROM node_acks a WHERE a.node_id=n.id " +
+      "AND a.revision=n.desired_revision AND a.status='accepted' " +
+      "AND a.observed_ms BETWEEN ? AND ?) ORDER BY n.id LIMIT 1"
+  ).bind(from,nowMs,from,nowMs,from,nowMs,quota,
+    from,nowMs,from,nowMs).first();
   return r?.id ?? null;
 }
 
