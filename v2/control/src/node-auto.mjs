@@ -3,7 +3,7 @@
  * Never receive root passwords, SSH private keys or shell code in Telegram.
  * Installation does not imply mobile carrier acceptance or enable sales.
  */
-import {wrapClientUuid,unwrapClientUuid,tokenDigest} from './subscription.mjs';
+import {wrapClientUuid,unwrapClientUuid,tokenDigest,activeRoutes} from './subscription.mjs';
 import {base64Feed} from './carrier-subscription.mjs';
 
 // Staging only: custom display-safe IDs, with production-style reserved names blocked.
@@ -266,6 +266,8 @@ export async function issueCustomerTrialLink(env,telegramId,nowMs=Date.now()){
   const token=await customerTrialToken(telegramId,nowMs,env.SUBSCRIPTION_CREDENTIAL_KEY);
   if(!token)return {status:'unavailable'};
   const digest=await tokenDigest(token),expiresMs=nowMs+3600000;
+  const subId='trial-'+telegramId,trialQuota=1073741824;
+  const cred=await wrapClientUuid(crypto.randomUUID(),env.SUBSCRIPTION_CREDENTIAL_KEY);
   try{
     await env.DB.batch([
       env.DB.prepare(
@@ -282,7 +284,7 @@ export async function issueCustomerTrialLink(env,telegramId,nowMs=Date.now()){
         "AND (SELECT COUNT(*) FROM route_carrier_variants v WHERE v.route_id=r.id)=2 "+
         "AND EXISTS(SELECT 1 FROM customers c WHERE c.telegram_id=? AND c.state='active') "+
         "AND n.user_limit>(SELECT COUNT(*) FROM node_allocations a WHERE a.node_id=n.id AND a.state IN ('reserved','active')) "+
-        "AND n.byte_limit>(SELECT COALESCE(SUM(a.quota_bytes),0) FROM node_allocations a WHERE a.node_id=n.id AND a.state IN ('reserved','active')) "+
+        "AND n.byte_limit-(SELECT COALESCE(SUM(a.quota_bytes),0) FROM node_allocations a WHERE a.node_id=n.id AND a.state IN ('reserved','active'))>=1073741824 "+
         "ORDER BY (SELECT COUNT(*) FROM node_trial_links l WHERE l.node_id=n.id AND l.expires_ms>?) ASC,n.id LIMIT 1"
       ).bind(telegramId,digest,nowMs,expiresMs,
         nowMs-600000,nowMs,nowMs-600000,nowMs,nowMs-600000,nowMs,
@@ -292,6 +294,23 @@ export async function issueCustomerTrialLink(env,telegramId,nowMs=Date.now()){
         "SELECT token_hash,node_id,telegram_id,expires_ms FROM customer_trial_claims "+
         "WHERE telegram_id=? AND token_hash=?"
       ).bind(telegramId,digest),
+      // A customer test gets its OWN UUID, server quota, and expiry. The
+      // bootstrap admin test UUID is never issued to a public customer.
+      env.DB.prepare(
+        "INSERT OR IGNORE INTO subscriptions(id,owner_telegram_id,state,expires_at,max_bytes,used_bytes) "+
+        "SELECT ?,?,'active',?,?,0 FROM customer_trial_claims "+
+        "WHERE telegram_id=? AND token_hash=?"
+      ).bind(subId,telegramId,expiresMs,trialQuota,telegramId,digest),
+      env.DB.prepare(
+        "INSERT OR IGNORE INTO subscription_credentials(subscription_id,ciphertext_b64,nonce_b64,key_version) "+
+        "SELECT ?,?,?,1 WHERE EXISTS(SELECT 1 FROM customer_trial_claims "+
+        "WHERE telegram_id=? AND token_hash=?)"
+      ).bind(subId,cred.ciphertext_b64,cred.nonce_b64,telegramId,digest),
+      env.DB.prepare(
+        "INSERT OR IGNORE INTO node_allocations(id,node_id,subscription_id,quota_bytes,state) "+
+        "SELECT ?,c.node_id,?,?, 'active' FROM customer_trial_claims c "+
+        "WHERE c.telegram_id=? AND c.token_hash=?"
+      ).bind('trial-alloc-'+telegramId,subId,trialQuota,telegramId,digest),
     ]);
   }catch{return {status:'unavailable'};}
   const claim=await env.DB.prepare(
@@ -335,6 +354,38 @@ export async function getTrialFeed(req,env,nowMs=Date.now()){
     ).bind(trial.node_id,nowMs-600000,nowMs,nowMs-600000,nowMs,
       nowMs-600000,nowMs).first();
     if(!ready)return response('Not ready',503,'text/plain; charset=utf-8');
+  }
+  if(customerClaim){
+    const subId='trial-'+customerClaim.telegram_id;
+    const account=await env.DB.prepare(
+      "SELECT s.id,s.state,s.max_bytes,s.used_bytes,s.expires_at "+
+      "FROM subscriptions s JOIN node_allocations a ON a.subscription_id=s.id "+
+      "WHERE s.id=? AND a.node_id=? AND a.state='active'"
+    ).bind(subId,trial.node_id).first();
+    if(!account||account.state!=='active'||account.expires_at<=nowMs||
+       account.max_bytes<=account.used_bytes)
+      return response('Expired',403,'text/plain; charset=utf-8');
+    const secure=await env.DB.prepare(
+      "SELECT ciphertext_b64,nonce_b64,key_version FROM subscription_credentials WHERE subscription_id=?"
+    ).bind(subId).first();
+    if(!secure||secure.key_version!==1)
+      return response('Not ready',503,'text/plain; charset=utf-8');
+    const routes=await activeRoutes(env.DB,subId,nowMs);
+    if(routes.length!==2||
+       !routes.some(x=>x.operator_hint==='mci'&&x.port===443)||
+       !routes.some(x=>x.operator_hint==='irancell'&&x.port===8443))
+      return response('Not ready',503,'text/plain; charset=utf-8');
+    let uuid;
+    try{uuid=await unwrapClientUuid(secure,env.SUBSCRIPTION_CREDENTIAL_KEY);}
+    catch{return response('Not ready',503,'text/plain; charset=utf-8');}
+    const snapshot={client:{uuid},routes:routes.map(x=>({
+      id:trial.node_id+':'+x.operator_hint,transport:'reality',operator_hint:x.operator_hint,
+      endpoint:{host:x.host,port:x.port},
+      tls:{server_name:x.server_name,reality_public_key:x.reality_public_key,short_id:x.reality_short_id},
+    }))};
+    const feed=base64Feed(snapshot);
+    return feed===null?response('Not ready',503,'text/plain; charset=utf-8')
+      :response(feed,200,'text/plain; charset=utf-8');
   }
   const c=await env.DB.prepare(
     "SELECT ciphertext_b64,nonce_b64,key_version FROM node_trial_credentials WHERE node_id=?"

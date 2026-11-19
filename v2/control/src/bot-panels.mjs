@@ -1,6 +1,7 @@
 /** پنل‌های فارسی مدیریت و مشتری در ربات مدار V2. */
 import {adminMenu,frameMessage,faNumber,faStatus,faRole,statusSymbol,sectionNavigation,shortCode,panelHeading,BRAND_BANNER_URL} from './bot-ux.mjs';
 import {planWizardAction,planWizardInput} from './plan-wizard.mjs';
+import {directInput} from './admin-direct.mjs';
 
 const NAT=/^[0-9]{1,20}$/;
 const TICKET=/^tg-[0-9]{1,20}$/;
@@ -20,10 +21,10 @@ async function count(db,sql,...args) {
   return Number(x?.n??0);
 }
 
-export async function adminDashboard(env,e) {
+export async function adminDashboard(env,e,nowMs=Date.now()) {
   if(!idAdmin(env,e.actorId))return adminPanel('⛔ دسترسی به این بخش مجاز نیست.',[],e.locale);
   const db=env.DB;
-  const [customers,orders,receipts,tickets,nodes,installed,ready,subs]=await Promise.all([
+  const [customers,orders,receipts,tickets,nodes,installed,fieldAccepted,ready,subs]=await Promise.all([
     count(db,'SELECT COUNT(*) AS n FROM customers'),
     count(db,"SELECT COUNT(*) AS n FROM orders WHERE state IN ('pending','receipt_submitted','approved','provisioning')"),
     count(db,"SELECT COUNT(*) AS n FROM orders WHERE state='receipt_submitted'"),
@@ -31,6 +32,16 @@ export async function adminDashboard(env,e) {
     count(db,'SELECT COUNT(*) AS n FROM nodes'),
     count(db,"SELECT COUNT(*) AS n FROM node_bootstrap_jobs WHERE state='installed'"),
     count(db,"SELECT COUNT(*) AS n FROM nodes WHERE lifecycle='ready'"),
+    // Field acceptance and current runtime health are different gates.
+    count(db,"SELECT COUNT(*) AS n FROM nodes n WHERE n.lifecycle='ready' "+
+      "AND n.desired_revision=n.acked_revision "+
+      "AND EXISTS (SELECT 1 FROM node_bootstrap_jobs j "+
+      "WHERE j.node_id=n.id AND j.state='installed') "+
+      "AND EXISTS (SELECT 1 FROM node_health h WHERE h.node_id=n.id "+
+      "AND h.revision=n.desired_revision AND h.xray_healthy=1 AND h.stats_healthy=1 "+
+      "AND h.observed_ms BETWEEN ? AND ?) "+
+      "AND (SELECT COUNT(*) FROM node_allocations a WHERE a.node_id=n.id "+
+      "AND a.state IN ('reserved','active'))<n.user_limit",nowMs-600000,nowMs),
     count(db,"SELECT COUNT(*) AS n FROM subscriptions WHERE state='active'")
   ]);
   const salesReady=env.SHOP_ENABLED==='true'&&env.PROVISIONING_ENABLED==='true'&&
@@ -43,7 +54,7 @@ export async function adminDashboard(env,e) {
     :tickets>0
       ?'💬 '+faNumber(tickets)+' درخواست پشتیبانی باز'
       :ready===0
-        ?'⚠️ سرور آماده وجود ندارد'
+        ?fieldAccepted>0?'⚠️ سرور تأییدشده، گزارش سلامت تازه یا ظرفیت صدور ندارد':'⚠️ سرور آماده وجود ندارد'
         :'✅ مورد فوری در صف نیست';
   const body=[
     panelHeading('📊','پیشخوان مدیریت','خلاصه وضعیت مدار'),
@@ -56,7 +67,8 @@ export async function adminDashboard(env,e) {
     '',
     '🖥 کل سرورها: '+faNumber(nodes),
     '🛠 نصب‌شده: '+faNumber(installed),
-    '✅ وضعیت آماده: '+faNumber(ready),
+    '✅ آماده برای صدور: '+faNumber(ready),
+    '🧪 تأیید اولیه: '+faNumber(fieldAccepted),
     '',
     '🛒 فروش عمومی: '+(salesReady?'در حال پیکربندی':'غیرفعال'),
     actionNeeded
@@ -341,16 +353,31 @@ export async function notifySupport(env,e,ticketId,nowMs=Date.now()) {
 export async function consumePanelInput(env,e,nowMs=Date.now()) {
   const db=env.DB;
   if((e.key??'')==='/cancel') {
-    const removed=await db.prepare('DELETE FROM v2_bot_input_sessions WHERE telegram_id=?')
-      .bind(e.actorId).run();
-    return removed.meta?.changes?panel('✅ عملیات لغو شد.',e.locale):null;
+    const [removed,direct]=await db.batch([
+      db.prepare('DELETE FROM v2_bot_input_sessions WHERE telegram_id=?').bind(e.actorId),
+      db.prepare('DELETE FROM admin_direct_drafts WHERE telegram_id=?').bind(e.actorId),
+    ]);
+    return (removed.meta?.changes||direct.meta?.changes)?
+      panel('✅ عملیات لغو شد.',e.locale):null;
   }
   const raw=e.inputText;
   if(typeof raw!=='string'||!raw.trim()||raw.startsWith('/')||raw.startsWith('v2:'))return null;
   const session=await db.prepare(
     'SELECT mode,context_id,expires_ms FROM v2_bot_input_sessions WHERE telegram_id=?'
   ).bind(e.actorId).first();
-  if(!session)return null;
+  if(!session){
+    if(!idAdmin(env,e.actorId))return null;
+    const draft=await db.prepare(
+      'SELECT context_id,expires_ms FROM admin_direct_drafts WHERE telegram_id=?'
+    ).bind(e.actorId).first();
+    if(!draft)return null;
+    if(draft.expires_ms<=nowMs){
+      await db.prepare('DELETE FROM admin_direct_drafts WHERE telegram_id=?')
+        .bind(e.actorId).run();
+      return panel('⌛ مهلت صدور کانفیگ پایان یافت؛ از ابتدا شروع کنید.',e.locale);
+    }
+    return directInput(env,e,draft,nowMs);
+  }
   if(session.expires_ms<=nowMs){
     await db.prepare('DELETE FROM v2_bot_input_sessions WHERE telegram_id=?').bind(e.actorId).run();
     return panel('⌛ مهلت عملیات پایان یافت. دوباره از منوی مربوط شروع کنید.',e.locale);
