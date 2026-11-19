@@ -1,0 +1,35 @@
+name: Madar V2 retail capacity live smoke (no secrets)
+on:
+  push:
+    branches:
+      - release/v2-retail-capacity-20261119
+    paths:
+      - .github/workflows/v2-retail-capacity-live.yml
+permissions:
+  contents: read
+jobs:
+  public-api-smoke:
+    if: contains(github.event.head_commit.message, 'CHECK-V2-RETAIL-LIVE-ONCE')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    env:
+      BASE: https://madar-v2-staging.alirezaanari117.workers.dev
+    steps:
+      - name: Verify deployed Worker without keys or customer data
+        run: |
+          set -euo pipefail
+          live="$(curl -fsS --retry 3 --retry-delay 2 --connect-timeout 5 --max-time 20 "$BASE/health/live")"
+          echo "$live" | jq -e '.status=="alive" and .service=="madar-v2"' >/dev/null
+          ready="$(curl -fsS --retry 3 --retry-delay 2 --connect-timeout 5 --max-time 20 "$BASE/health/ready")"
+          echo "$ready" | jq -e '.status=="ready"' >/dev/null
+          bot="$(curl -fsS --retry 3 --retry-delay 2 --connect-timeout 5 --max-time 20 "$BASE/health/bot")"
+          echo "$bot" | jq -e '.status=="ok" and .is_dedicated_v2==true and .webhook=="v2" and .bot_id==9023463795' >/dev/null
+          enroll="$(curl -sS --retry 3 --retry-delay 2 --connect-timeout 5 --max-time 20 -o /dev/null -w '%{http_code}' "$BASE/enroll")"
+          test "$enroll" = 200
+          webhook="$(curl -sS --retry 3 --retry-delay 2 --connect-timeout 5 --max-time 20 -X POST -o /dev/null -w '%{http_code}' "$BASE/telegram/webhook")"
+          test "$webhook" = 401
+          client="$(curl -sS --retry 3 --retry-delay 2 --connect-timeout 5 --max-time 20 -o /dev/null -w '%{http_code}' "$BASE/api/node/v1/clients")"
+          test "$client" = 401
+          bad_token="$(curl -sS --retry 3 --retry-delay 2 --connect-timeout 5 --max-time 20 -o /dev/null -w '%{http_code}' "$BASE/s/invalid-token")"
+          test "$bad_token" = 404
+          echo "PASS: LIVE_WORKER_V2 BOT_WEBHOOK NODE_AUTH PRIVATE_LINK_INPUT"
