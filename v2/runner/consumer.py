@@ -247,6 +247,13 @@ for member in archive.getmembers():
  target.write_bytes(archive.extractfile(member).read())
 sys.path.insert(0,str(dest))
 from agent.owned_reset import reset
+# An outright read-only rejection MUST NOT quarantine a working node.
+# Distinguish it from any exception after destructive work has started.
+try:
+ reset(job['nodeId'],job['targetIp'],apply=False)
+except Exception:
+ print(json.dumps({'status':'RESET_PREFLIGHT_BLOCKED'}))
+ sys.exit(0)
 status=reset(job['nodeId'],job['targetIp'],apply=True)
 print(json.dumps({'status':status}))
 '''
@@ -272,6 +279,8 @@ def cleanup_node(transport,job,check):
     check();out=transport.run(command,buffer.getvalue(),timeout=180);check()
     try:result=json.loads(out)
     except (TypeError,ValueError):raise RemoteCleanupError('RESET_BLOCKED') from None
+    if result=={'status':'RESET_PREFLIGHT_BLOCKED'}:
+        raise RemoteCleanupError('RESET_PREFLIGHT_BLOCKED')
     if result!={'status':'RESET_COMPLETED'}:
         raise RemoteCleanupError('RESET_BLOCKED')
     return {'status':'RESET_COMPLETED'}
@@ -289,7 +298,8 @@ def safe_failure_code(exc,kind,stage='unknown'):
         if isinstance(exc,ValueError) and str(exc)=='EXPIRED':return 'PROBE_EXPIRED'
         return 'SSH_PROBE_FAILED'
     if kind=='v2-install':
-        if isinstance(exc,RemoteCleanupError):return 'RESET_BLOCKED'
+        if isinstance(exc,RemoteCleanupError):
+            return 'RESET_PREFLIGHT_BLOCKED' if str(exc)=='RESET_PREFLIGHT_BLOCKED' else 'RESET_BLOCKED'
         if stage=='cleanup':return 'RESET_CLEANUP_FAILED'
         if isinstance(exc,RemoteInstallError) and str(exc) in REMOTE_FAILURE_CODES:
             return str(exc)
