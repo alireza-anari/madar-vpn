@@ -72,7 +72,8 @@ class ReadinessRaceTests(unittest.TestCase):
             runtime=Runtime.__new__(Runtime)
             runtime.root=pathlib.Path(tmp)
             runtime.runner=Mock()
-            runtime.runner.return_value.returncode=0
+            # Force the service-inactive path so startup invalidates the old PID.
+            runtime.runner.return_value.returncode=1
             ledger=Mock()
             active=[{'subscription_id':'sub-one','uuid':'unused'}]
             with patch('agent.runtime.compile_dual_account_config',
