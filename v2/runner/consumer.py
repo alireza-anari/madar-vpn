@@ -41,11 +41,17 @@ dest=pathlib.Path('/var/lib/madar-v2-jobs')/job['id']
 dest.mkdir(parents=True,mode=0o700,exist_ok=False)
 archive=tarfile.open(fileobj=io.BytesIO(sys.stdin.buffer.read(1048576)),mode='r:')
 for member in archive.getmembers():
-    if not member.isfile() or not member.name.startswith('agent/') or len(pathlib.PurePosixPath(member.name).parts)!=2 or not member.name.endswith('.py') or member.size>65536:
+    trusted_code=(member.name.startswith('agent/') and
+        len(pathlib.PurePosixPath(member.name).parts)==2 and
+        member.name.endswith('.py') and member.size<=65536)
+    trusted_key=(member.name=='secrets/node.key' and member.size<=96)
+    if not member.isfile() or not (trusted_code or trusted_key):
         raise ValueError('INVALID_PACKAGE')
     target=dest/member.name
     target.parent.mkdir(mode=0o700,exist_ok=True)
-    target.write_bytes(archive.extractfile(member).read())
+    with target.open('xb') as file:
+        os.fchmod(file.fileno(),0o600)
+        file.write(archive.extractfile(member).read())
 sys.path.insert(0,str(dest))
 from agent.bootstrap import plan_node,install_test_node
 from agent.fresh_dual import enable
@@ -56,6 +62,10 @@ stage='REMOTE_DUAL_FAILED'
 enable(job['nodeId'],job['targetIp'])
 from agent.dual_reality import listening
 if not (listening(443) and listening(8443)):raise ValueError('LISTENERS_FAILED')
+if (dest/'secrets/node.key').exists():
+    stage='REMOTE_AGENT_FAILED'
+    from agent.runtime_install import install_node_runtime
+    install_node_runtime(job['nodeId'],dest/'secrets/node.key',dest/'agent')
 stage='REMOTE_METADATA_FAILED'
 root=pathlib.Path('/etc/madar-v2')
 m=json.loads((root/'public-route-metadata.json').read_text())
@@ -66,7 +76,7 @@ print(json.dumps(dict(public_key=m['reality_public_key'],short_id=m['short_id'],
 # Return only a fixed stage code; raw errors may contain configuration secrets.
 REMOTE="import json\nstage='REMOTE_PACKAGE_FAILED'\ntry:\n"+textwrap.indent(REMOTE,'    ')+"\nexcept Exception:\n    print(json.dumps({'error':stage}))\n"
 REMOTE_FAILURE_CODES=frozenset({'REMOTE_PACKAGE_FAILED','REMOTE_BOOTSTRAP_FAILED',
-    'REMOTE_DUAL_FAILED','REMOTE_METADATA_FAILED'})
+    'REMOTE_DUAL_FAILED','REMOTE_METADATA_FAILED','REMOTE_AGENT_FAILED'})
 
 
 class RemoteInstallError(ValueError):
@@ -136,12 +146,19 @@ def validate_job(job):
         raise ValueError('INVALID_V2_JOB')
     if job.get('mode')!='fresh':raise ValueError('INVALID_V2_JOB')
 
-def install(transport,job,check):
+def install(transport,job,check,node_key=None):
     validate_job(job)
     buffer=io.BytesIO()
     with tarfile.open(fileobj=buffer,mode='w:') as archive:
         for path in sorted((REPO/'v2/node-agent/agent').glob('*.py')):
             data=path.read_bytes();info=tarfile.TarInfo('agent/'+path.name);info.size=len(data);info.mode=0o600
+            archive.addfile(info,io.BytesIO(data))
+        if node_key is not None:
+            if not isinstance(node_key,str) or not re.fullmatch(r'[A-Za-z0-9_-]{43}',node_key):
+                raise ValueError('INVALID_NODE_KEY')
+            data=(node_key+'\n').encode('ascii')
+            info=tarfile.TarInfo('secrets/node.key')
+            info.size=len(data);info.mode=0o600
             archive.addfile(info,io.BytesIO(data))
     # The remote command never contains credentials, only fixed source and validated metadata.
     fields={k:job[k] for k in ('id','nodeId','targetIp','mode')}
@@ -215,7 +232,19 @@ def run_job(job,api,private_key,clock=time.time,network_mode='aws'):
                 post('report',state='ready',safeCode=result_code)
                 return 'ready'
             stage='remote'
-            details=install(transport,job,check);check()
+            node_key=None
+            if job.get('enableRuntime') is True:
+                # The runner already has the short-lived lease; never fetch
+                # the master key or place the node secret in CLI arguments.
+                reply=post('node-key',nodeId=job['nodeId'])
+                if not isinstance(reply,dict) or not re.fullmatch(
+                    r'[A-Za-z0-9_-]{43}',reply.get('nodeKey','')):
+                    raise ValueError('NODE_PAIRING_FAILED')
+                if reply.get('origin')!=ORIGIN:
+                    raise ValueError('NODE_PAIRING_FAILED')
+                node_key=reply['nodeKey']
+            details=install(transport,job,check,node_key=node_key);check()
+            node_key=None
         # Additional VPN exposure is allowed only after fresh-host preflight and installation.
         if job['mode']=='fresh' and network_mode=='aws':ensure_network(job['targetIp'],job['port'],extra_tcp_ports=(8443,))
         check()

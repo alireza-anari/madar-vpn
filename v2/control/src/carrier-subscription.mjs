@@ -7,7 +7,7 @@
  * subscription URL, so this intentionally differs from the bearer-only JSON
  * API. Keep URL private, do not put it in a query string, HTML or referrer.
  */
-import {activeRoutes,getSubscription,issueActiveToken} from './subscription.mjs';
+import {activeRoutes,getSubscription,issueActiveToken,isAdminE2eToken,isAdminE2eSubscription,isAdminDirectToken,isAdminDirectSubscription} from './subscription.mjs';
 
 const TOKEN=/^[A-Za-z0-9_-]{43}$/;
 const PAIR=['mci','irancell'];
@@ -45,7 +45,7 @@ export function carrierPair(routes) {
   return selected;
 }
 
-export function vlessLink(route,uuid) {
+export function vlessLink(route,uuid,customerLabel=null) {
   const opts=new URLSearchParams({
     encryption:'none',
     security:'reality',
@@ -58,7 +58,9 @@ export function vlessLink(route,uuid) {
   });
   const hostname=route.endpoint.host;
   const address=hostname.includes(':')&&!hostname.startsWith('[')?'['+hostname+']':hostname;
-  const label=PROFILE[route.operator_hint];
+  const baseLabel=PROFILE[route.operator_hint];
+  const label=typeof customerLabel==='string'&&customerLabel.length<=60&&
+    !/[\r\n<>]/.test(customerLabel)?baseLabel+' · '+customerLabel:baseLabel;
   if(!label)throw new TypeError('unknown_carrier');
   return 'vless://'+uuid+'@'+address+':'+route.endpoint.port+'?'+
     opts.toString()+'#'+encodeURIComponent(label);
@@ -67,7 +69,7 @@ export function vlessLink(route,uuid) {
 export function base64Feed(snapshot) {
   const routes=carrierPair(snapshot.routes);
   if(!routes)return null;
-  const source=routes.map(r=>vlessLink(r,snapshot.client.uuid)).join('\n')+'\n';
+  const source=routes.map(r=>vlessLink(r,snapshot.client.uuid,snapshot.customer_label)).join('\n')+'\n';
   const bytes=new TextEncoder().encode(source);
   return btoa(String.fromCharCode(...bytes));
 }
@@ -78,7 +80,8 @@ export async function getCarrierFeed(request,env,nowMs=Date.now()) {
   const url=new URL(request.url);
   const token=url.pathname.startsWith('/s/')?url.pathname.slice(3):'';
   if(url.search || url.hash || !TOKEN.test(token))return noStore('Not found',404);
-  if(env.SUBSCRIPTION_LINKS_ENABLED!=='true'||env.SUBSCRIPTION_API_ENABLED!=='true')
+  if((env.SUBSCRIPTION_LINKS_ENABLED!=='true'||env.SUBSCRIPTION_API_ENABLED!=='true')&&
+     !(await isAdminE2eToken(env,token,nowMs)||await isAdminDirectToken(env,token,nowMs)))
     return noStore('Not ready',503);
   const internal=new Request(url.origin+'/api/v2/subscription',{
     headers:{authorization:'Bearer '+token},
@@ -115,8 +118,10 @@ function trustedOrigin(value) {
  * fully active quota-bearing subscription. Never issues placeholder links.
  */
 export async function issueCarrierLink(env,subscriptionId,nowMs=Date.now()) {
-  if(env.SUBSCRIPTION_LINKS_ENABLED!=='true' ||
-     env.SUBSCRIPTION_API_ENABLED!=='true' || !env.DB)return null;
+  if(!env.DB)return null;
+  if((env.SUBSCRIPTION_LINKS_ENABLED!=='true'||env.SUBSCRIPTION_API_ENABLED!=='true')&&
+     !await isAdminE2eSubscription(env,subscriptionId,nowMs)&&
+     !await isAdminDirectSubscription(env,subscriptionId,nowMs))return null;
   const origin=trustedOrigin(env.SUBSCRIPTION_PUBLIC_ORIGIN);
   if(!origin)return null;
   const routes=await activeRoutes(env.DB,subscriptionId,nowMs);

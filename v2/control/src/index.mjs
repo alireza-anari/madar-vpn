@@ -6,6 +6,11 @@ import { getSubscription } from './subscription.mjs';
 import {androidLoginRoute,approveAndroidLogin,purgeAndroidLogins} from './android-login.mjs';
 import { getCarrierFeed } from './carrier-subscription.mjs';
 import { nodeRoute } from './node-control.mjs';
+import { fieldProbeRoute } from './field-evidence.mjs';
+import {reconcileApprovedOrders} from './provisioning.mjs';
+import {usageRoute} from './usage-telemetry.mjs';
+import {nodeHealthRoute} from './node-health.mjs';
+import {expireEntitlements} from './subscription-lifecycle.mjs';
 import { toBotMessage, verifyTelegramSecret } from './telegram.mjs';
 import { resolveBotAction,adminAllowed } from './shop.mjs';
 import {frameMessage,BRAND_BANNER_URL,styleInlineKeyboard,contextualKeyboard} from './bot-ux.mjs';
@@ -338,6 +343,18 @@ export default {
       try{return await getSubscription(request,env);}
       catch {return json({error:'temporary_failure'},503);}
     }
+    if(path==='/api/v2/field/accept') {
+      try{return await fieldProbeRoute(request,env);}
+      catch{return json({error:'field_temporary_failure'},503);}
+    }
+    if(path==='/api/node/v1/health') {
+      try{return await nodeHealthRoute(request,env);}
+      catch{return json({error:'node_health_failure'},503);}
+    }
+    if(path==='/api/node/v1/usage' || path==='/api/node/v1/clients/revoked') {
+      try{return await usageRoute(request,env);}
+      catch{return json({error:'usage_temporary_failure'},503);}
+    }
     if(path.startsWith('/api/node/v1/')) {
       try {return await nodeRoute(request,env);}
       catch {return json({error:'node_temporary_failure'},503);}
@@ -352,8 +369,11 @@ export default {
     await activateIsolatedBotWebhook(env);
     await poll(env);
     await retryPending(env);
+    // Feature-gated durable provisioning; never issue a config before node client ACK.
+    await reconcileApprovedOrders(env);
     if(!env.DB) return;
     const now=Date.now();
+    await expireEntitlements(env,now);
     // Minimize stored Telegram content. Orders, receipts and subscriptions
     if(env.RUNNER_ENROLLMENT_ENABLED==='true')await cleanupRunnerJobs(env.DB,now);
     await purgeAndroidLogins(env.DB,now);

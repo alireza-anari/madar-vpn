@@ -1,4 +1,5 @@
 import {findAppSession} from './android-account.mjs';
+import {nodeUiRef} from './node-admin.mjs';
 /** Revocable token-authenticated V2 subscription API, no bearer tokens in URLs.
  * Delivers structured VLESS route metadata, never server private keys.
  */
@@ -65,26 +66,118 @@ export async function activeRoutes(db,subId,nowMs) {
     "rv.host,rv.port,rv.server_name,rv.ws_path,rv.reality_public_key,rv.reality_short_id " +
     "FROM node_allocations a JOIN nodes n ON n.id=a.node_id " +
     "JOIN routes r ON r.node_id=n.id JOIN route_carrier_variants rv ON rv.route_id=r.id " +
-    "WHERE a.subscription_id=? AND a.state='active' AND n.lifecycle='ready' " +
+    "WHERE a.subscription_id=? AND a.state='active' AND n.lifecycle='ready' AND n.desired_revision=n.acked_revision " +
     "AND r.transport='reality' AND r.state='ready' AND r.verified_ms BETWEEN ? AND ? " +
     "AND rv.published=1 AND rv.verified_ms BETWEEN ? AND ? " +
+    "AND EXISTS(SELECT 1 FROM node_client_acks ac WHERE ac.node_id=n.id " +
+    "AND ac.subscription_id=a.subscription_id AND ac.revision=n.desired_revision " +
+    "AND ac.observed_ms BETWEEN ? AND ?) " +
     "UNION ALL " +
     "SELECT r.id AS route_id,r.transport,r.operator_hint,re.host,re.port,re.server_name," +
     "re.ws_path,re.reality_public_key,re.reality_short_id " +
     "FROM node_allocations a JOIN nodes n ON n.id=a.node_id " +
     "JOIN routes r ON r.node_id=n.id JOIN route_endpoints re ON re.route_id=r.id " +
-    "WHERE a.subscription_id=? AND a.state='active' AND n.lifecycle='ready' " +
+    "WHERE a.subscription_id=? AND a.state='active' AND n.lifecycle='ready' AND n.desired_revision=n.acked_revision " +
     "AND r.state='ready' AND r.verified_ms BETWEEN ? AND ? AND re.published=1 " +
     "AND NOT EXISTS(SELECT 1 FROM route_carrier_variants rv WHERE rv.route_id=r.id) " +
+    "AND EXISTS(SELECT 1 FROM node_client_acks ac WHERE ac.node_id=n.id " +
+    "AND ac.subscription_id=a.subscription_id AND ac.revision=n.desired_revision " +
+    "AND ac.observed_ms BETWEEN ? AND ?) " +
     "ORDER BY route_id LIMIT 8"
-  ).bind(subId,nowMs-600000,nowMs,nowMs-600000,nowMs,
-         subId,nowMs-600000,nowMs).all()).results??[];
+  ).bind(subId,nowMs-600000,nowMs,nowMs-600000,nowMs,nowMs-600000,nowMs,
+         subId,nowMs-600000,nowMs,nowMs-600000,nowMs).all()).results??[];
   return rows.filter(eligibleEndpoint);
+}
+
+/** An exceptional zero-price owner test is readable without enabling the
+ * general customer subscription API. A token cannot promote any ordinary
+ * subscription into this scope. Exact node/ref and owner binding are required.
+ */
+export async function isAdminE2eSubscription(env,subId,nowMs=Date.now()){
+  if(env.ADMIN_E2E_TEST_ENABLED!=='true'||!env.DB||
+     typeof subId!=='string'||subId.length>80)return false;
+  const row=await env.DB.prepare(
+    "SELECT o.id AS order_id,s.owner_telegram_id AS owner,a.node_id,j.owner_id "+
+    "FROM subscriptions s JOIN orders o ON o.id=s.order_id "+
+    "JOIN plans p ON p.id=o.plan_id "+
+    "JOIN customers c ON c.telegram_id=s.owner_telegram_id "+
+    "JOIN node_allocations a ON a.subscription_id=s.id AND a.state='active' "+
+    "JOIN node_bootstrap_jobs j ON j.node_id=a.node_id AND j.state='installed' "+
+    "WHERE s.id=? AND s.state='active' AND s.expires_at>? "+
+    "AND s.max_bytes=104857600 AND s.used_bytes<s.max_bytes "+
+    "AND c.state='active' AND o.customer_telegram_id=s.owner_telegram_id "+
+    "AND o.state='fulfilled' AND o.plan_id='v2-admin-e2e-100mb-1day' "+
+    "AND o.quoted_amount=0 AND o.quoted_currency='IRT' "+
+    "AND p.id=o.plan_id AND p.active=0 AND p.price_amount=0 "+
+    "AND p.duration_days=1 AND p.quota_bytes=104857600 LIMIT 1"
+  ).bind(subId,nowMs).first();
+  if(!row||row.owner!==row.owner_id ||
+     !/^[0-9]{5,20}$/.test(row.owner??'') ||
+     typeof env.ADMIN_TELEGRAM_IDS!=='string'||
+     !env.ADMIN_TELEGRAM_IDS.split(',').includes(row.owner))return false;
+  return row.order_id==='e2e-'+await nodeUiRef(row.node_id);
+}
+export async function isAdminE2eToken(env,token,nowMs=Date.now()){
+  if(env.ADMIN_E2E_TEST_ENABLED!=='true'||!env.DB)return false;
+  const hash=await tokenDigest(token);
+  if(!hash)return false;
+  const row=await env.DB.prepare(
+    "SELECT subscription_id FROM subscription_tokens "+
+    "WHERE token_hash=? AND revoked=0 AND expires_at>? LIMIT 1"
+  ).bind(hash,nowMs).first();
+  return !!row&&await isAdminE2eSubscription(env,row.subscription_id,nowMs);
+}
+
+/** Private, zero-price manager-issued configs, never public storefront access. */
+export async function isAdminDirectSubscription(env,subId,nowMs=Date.now()){
+  if(env.ADMIN_DIRECT_ISSUE_ENABLED!=='true'||!env.DB||
+     typeof subId!=='string'||subId.length>80)return false;
+  const row=await env.DB.prepare(
+    "SELECT i.id,i.actor_id,i.node_id,i.quota_bytes,i.duration_days,"+
+    "o.id order_id,o.customer_telegram_id,j.owner_id,"+
+    "p.id plan_id,p.quota_bytes plan_quota,p.duration_days plan_days "+
+    "FROM subscriptions s JOIN orders o ON o.id=s.order_id "+
+    "JOIN admin_direct_issues i ON i.order_id=o.id "+
+    "JOIN plans p ON p.id=o.plan_id "+
+    "JOIN customers c ON c.telegram_id=s.owner_telegram_id "+
+    "JOIN node_allocations a ON a.subscription_id=s.id AND a.node_id=i.node_id "+
+    "AND a.state='active' "+
+    "JOIN node_bootstrap_jobs j ON j.node_id=i.node_id AND j.state='installed' "+
+    "WHERE s.id=? AND s.state='active' AND s.expires_at>? "+
+    "AND s.max_bytes=i.quota_bytes AND s.used_bytes<s.max_bytes "+
+    "AND c.state='active' AND o.state='fulfilled' "+
+    "AND o.quoted_amount=0 AND o.quoted_currency='IRT' AND o.seller_telegram_id IS NULL "+
+    "AND o.customer_telegram_id=s.owner_telegram_id "+
+    "AND p.price_amount=0 AND p.active=0 AND p.price_currency='IRT' LIMIT 1"
+  ).bind(subId,nowMs).first();
+  if(!row||row.actor_id!==row.owner_id||
+     row.actor_id!==row.customer_telegram_id||
+     row.plan_quota!==row.quota_bytes||row.plan_days!==row.duration_days||
+     row.plan_id!=='dp-'+(row.quota_bytes/1073741824)+'-'+row.duration_days||
+     row.order_id!=='do-'+row.id.slice(3)||
+     !/^di-[a-f0-9]{24}$/.test(row.id)||
+     !/^[0-9]{5,20}$/.test(row.actor_id??'')||
+     typeof env.ADMIN_TELEGRAM_IDS!=='string'||
+     !env.ADMIN_TELEGRAM_IDS.split(',').map(x=>x.trim()).includes(row.actor_id))
+    return false;
+  return true;
+}
+export async function isAdminDirectToken(env,token,nowMs=Date.now()){
+  if(env.ADMIN_DIRECT_ISSUE_ENABLED!=='true'||!env.DB)return false;
+  const hash=await tokenDigest(token);
+  if(!hash)return false;
+  const row=await env.DB.prepare(
+    "SELECT subscription_id FROM subscription_tokens "+
+    "WHERE token_hash=? AND revoked=0 AND expires_at>? LIMIT 1"
+  ).bind(hash,nowMs).first();
+  return !!row&&await isAdminDirectSubscription(env,row.subscription_id,nowMs);
 }
 
 export async function getSubscription(request,env,nowMs=Date.now()) {
   if(request.method!=='GET') return json({error:'method_not_allowed'},405);
-  if(env.SUBSCRIPTION_API_ENABLED!=='true' && env.SUBSCRIPTION_API_ENABLED_SECRET!=='true') return json({error:'service_not_ready'},503);
+  const generalApi=env.SUBSCRIPTION_API_ENABLED==='true'||env.SUBSCRIPTION_API_ENABLED_SECRET==='true';
+  if(!generalApi&&env.ADMIN_E2E_TEST_ENABLED!=='true'&&env.ADMIN_DIRECT_ISSUE_ENABLED!=='true')
+    return json({error:'service_not_ready'},503);
   if(!env.DB || !env.SUBSCRIPTION_CREDENTIAL_KEY)
     return json({error:'service_not_ready'},503);
   const header=request.headers.get('authorization')??'';
@@ -92,9 +185,11 @@ export async function getSubscription(request,env,nowMs=Date.now()) {
   const token=header.slice(7);
   const hash=await tokenDigest(token);
   if(!hash) return json({error:'unauthorized'},401);
+  if(!generalApi&&!(await isAdminE2eToken(env,token,nowMs)||await isAdminDirectToken(env,token,nowMs)))
+    return json({error:'service_not_ready'},503);
   // App identity sessions can exist without a subscription. Subscription
   // entitlement is resolved from the verified owner, never from client input.
-  const owner=await findAppSession(env.DB,hash,nowMs);
+  const owner=generalApi?await findAppSession(env.DB,hash,nowMs):null;
   const active=owner
     ?await env.DB.prepare(
       "SELECT id,state,expires_at,max_bytes,used_bytes FROM subscriptions " +
@@ -120,8 +215,12 @@ export async function getSubscription(request,env,nowMs=Date.now()) {
   let id;
   try{id=await unwrapClientUuid(secrets,env.SUBSCRIPTION_CREDENTIAL_KEY);}
   catch{return json({error:'credential_unavailable'},503);}
+  const named=env.ADMIN_DIRECT_ISSUE_ENABLED==='true'?await env.DB.prepare(
+    'SELECT i.label FROM admin_direct_issues i JOIN subscriptions s ON s.order_id=i.order_id WHERE s.id=?'
+  ).bind(active.id).first():null;
   return json({
     version:1,subscription_id:active.id,expires_at:active.expires_at,
+    ...(named?.label?{customer_label:named.label}:{}),
     quota_bytes:active.max_bytes,used_bytes:active.used_bytes,
     client:{protocol:'vless',uuid:id},
     routes:routes.map(x=>({
@@ -155,9 +254,11 @@ export async function wrapClientUuid(uuid,keyText) {
  * The token is returned once and never persisted in plaintext.
  */
 export async function issueActiveToken(env,subId,nowMs=Date.now()) {
-  if(!env.DB || (env.SUBSCRIPTION_API_ENABLED!=='true' && env.SUBSCRIPTION_API_ENABLED_SECRET!=='true') ||
-     !env.SUBSCRIPTION_CREDENTIAL_KEY || typeof subId!=='string' || subId.length>80)
+  if(!env.DB || !env.SUBSCRIPTION_CREDENTIAL_KEY || typeof subId!=='string' || subId.length>80)
     return null;
+  if(env.SUBSCRIPTION_API_ENABLED!=='true' && env.SUBSCRIPTION_API_ENABLED_SECRET!=='true' &&
+     !await isAdminE2eSubscription(env,subId,nowMs)&&
+     !await isAdminDirectSubscription(env,subId,nowMs))return null;
   const row=await env.DB.prepare(
     "SELECT s.id,s.expires_at FROM subscriptions s " +
     "JOIN subscription_credentials c ON c.subscription_id=s.id AND c.key_version=1 " +

@@ -98,3 +98,25 @@ test('installed provisioning nodes are shown as ready for field testing, never a
     label:'نیازمند بررسی',symbol:'🟠'
   });
 });
+
+test('field-ready node with stale signed runtime health must not appear connected',()=>{
+  const now=1800000000000;
+  const base={desired_revision:1,revision:1,xray_healthy:1,stats_healthy:1};
+  assert.deepEqual(nodeStatusPresentation('ready','installed',
+    {...base,observed_ms:now-58*60*1000},now),{
+      label:'آماده؛ گزارش عامل قدیمی',symbol:'🟠'
+  });
+  assert.deepEqual(nodeStatusPresentation('ready','installed',
+    {...base,observed_ms:now-1000},now),{
+      label:'آماده',symbol:'🟢'
+  });
+  assert.deepEqual(nodeStatusPresentation('ready','installed',
+    {...base,observed_ms:now-1000,stats_healthy:0},now),{
+      label:'آماده؛ گزارش عامل قدیمی',symbol:'🟠'
+  });
+  // Stale health never undoes the carrier field acceptance in the database.
+  assert.deepEqual(nodeStatusPresentation('provisioning','installed',
+    {...base,observed_ms:now-999999},now),{
+      label:'آماده آزمون',symbol:'🧪'
+  });
+});

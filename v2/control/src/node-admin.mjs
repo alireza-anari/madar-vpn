@@ -1,5 +1,6 @@
 /** مدیریت فارسی سرورها و مسیرهای پیش‌نویس در محیط V2. */
 import {sectionNavigation,frameMessage,faStatus,faNumber,statusSymbol,panelHeading} from './bot-ux.mjs';
+import {manualAttestationEnabled,recordAdminCarrierTest} from './admin-carrier-accept.mjs';
 
 const NODE_ID=/^[A-Za-z0-9][A-Za-z0-9_-]{1,63}$/;
 const PROVIDER=/^[A-Za-z0-9][A-Za-z0-9_.-]{1,63}$/;
@@ -181,9 +182,18 @@ function filterMenu(filter){
   ];
 }
 /** A completed installer is not a ready route: it is waiting for field tests. */
-export function nodeStatusPresentation(lifecycle,installState){
+export function nodeStatusPresentation(lifecycle,installState,health=null,nowMs=Date.now()){
   if(lifecycle==='provisioning'&&installState==='installed')
     return {label:'آماده آزمون',symbol:'🧪'};
+  // Manual carrier acceptance persists, but new clients require fresh signed
+  // runtime health. Do not silently present a stale node as available for issue.
+  if(lifecycle==='ready'&&health){
+    const recent=health.revision===health.desired_revision&&
+      health.xray_healthy===1&&health.stats_healthy===1&&
+      Number.isFinite(health.observed_ms)&&
+      health.observed_ms>=nowMs-600000&&health.observed_ms<=nowMs;
+    if(!recent)return {label:'آماده؛ گزارش عامل قدیمی',symbol:'🟠'};
+  }
   return {label:faStatus(lifecycle),symbol:statusSymbol(lifecycle)};
 }
 
@@ -205,8 +215,10 @@ export async function nodeOverview(db,{filter='all',page=0}={}){
   const maxPage=Math.max(0,Math.ceil(filtered/PAGE_SIZE)-1);
   page=Math.min(page,maxPage);
   const list=(await db.prepare(
-    'SELECT n.id,n.provider,n.region,n.lifecycle,j.state AS install_state FROM nodes n '+
-    'LEFT JOIN node_bootstrap_jobs j ON j.node_id=n.id WHERE '+sql+
+    'SELECT n.id,n.provider,n.region,n.lifecycle,n.desired_revision,'+
+    'j.state AS install_state,h.revision,h.observed_ms,h.xray_healthy,h.stats_healthy '+
+    'FROM nodes n LEFT JOIN node_bootstrap_jobs j ON j.node_id=n.id '+
+    'LEFT JOIN node_health h ON h.node_id=n.id WHERE '+sql+
     ' ORDER BY '+statusOrder+',n.created_at DESC,n.id LIMIT ? OFFSET ?'
   ).bind(PAGE_SIZE,page*PAGE_SIZE).all()).results??[];
   const text=panelHeading('🖥','مدیریت سرورها','هر سرور یک صفحه اختصاصی دارد')+
@@ -220,7 +232,7 @@ export async function nodeOverview(db,{filter='all',page=0}={}){
   const items=[];
   for(const n of list){
     const ref=await nodeUiRef(n.id);
-    const status=nodeStatusPresentation(n.lifecycle,n.install_state);
+    const status=nodeStatusPresentation(n.lifecycle,n.install_state,n,Date.now());
     items.push(nodeButton(status.symbol+' '+short(n.id,33)+' · '+status.label,
       'admin:node:view:'+ref));
   }
@@ -267,18 +279,30 @@ function managementButtons(node,ref,active,jobState){
       [nodeButton('🗄 بایگانی سرور','admin:node:confirm:retire:'+ref)]:[]),
   ];
 }
-export async function nodeDetails(db,ref,actor){
+export async function nodeDetails(db,ref,actor,env={}){
   const n=await nodeRecord(db,ref);
   if(!n)return panel('⚠️ سرور یافت نشد یا لینک انتخاب منقضی شده است.');
-  const [alloc,job,routes,variants]=await Promise.all([
+  const [alloc,job,routes,variants,manual,ack,health]=await Promise.all([
     activeAllocations(db,n.id),
     db.prepare('SELECT state,owner_id FROM node_bootstrap_jobs WHERE node_id=?').bind(n.id).first(),
     db.prepare("SELECT id,transport,state,listen_port,operator_hint FROM routes WHERE node_id=? ORDER BY id LIMIT 16").bind(n.id).all(),
     db.prepare("SELECT cv.operator,cv.port,cv.published,cv.verified_ms FROM route_carrier_variants cv "+
       "JOIN routes r ON r.id=cv.route_id WHERE r.node_id=? ORDER BY cv.operator LIMIT 10").bind(n.id).all(),
+    db.prepare("SELECT operator,port,revision,confirmed_ms FROM admin_carrier_tests WHERE node_id=?").bind(n.id).all(),
+    db.prepare("SELECT MAX(observed_ms) AS seen FROM node_acks WHERE node_id=? AND revision=? AND status='accepted'").bind(n.id,n.desired_revision).first(),
+    db.prepare("SELECT revision,observed_ms,xray_healthy,stats_healthy FROM node_health WHERE node_id=?").bind(n.id).first(),
   ]);
   const routeRows=routes.results??[],variantRows=variants.results??[];
-  const presentation=nodeStatusPresentation(n.lifecycle,job?.state);
+  const presentation=nodeStatusPresentation(n.lifecycle,job?.state,
+    {...health,desired_revision:n.desired_revision},Date.now());
+  const healthAge=Number.isFinite(health?.observed_ms)?
+    Math.max(0,Math.floor((Date.now()-health.observed_ms)/60000)):null;
+  const healthFresh=n.lifecycle==='ready'&&presentation.symbol==='🟢';
+  const manualRows=manual.results??[];
+  const currentManual=(operator)=>manualRows.some(x=>x.operator===operator &&
+    x.revision===n.desired_revision && x.confirmed_ms>Date.now()-86400000);
+  const canConfirm=manualAttestationEnabled(env)&&job?.state==='installed'&&
+    job.owner_id===actor&&['provisioning','ready'].includes(n.lifecycle);
   const waitingForFieldTest=n.lifecycle==='provisioning'&&job?.state==='installed';
   const routeText=routeRows.length?routeRows.map(r=>
     statusSymbol(r.state)+' '+r.transport.toUpperCase()+
@@ -293,16 +317,27 @@ export async function nodeDetails(db,ref,actor){
     '\n📍 منطقه: '+n.region+
     '\n'+presentation.symbol+' وضعیت: '+presentation.label+
     '\n⚙️ نصب: '+(job?faStatus(job.state):'ثبت نشده')+
+    (n.lifecycle==='ready'?'\n📡 سلامت لحظه‌ای عامل: '+(healthFresh?'✅ تازه و معتبر':
+      '🟠 آخرین گزارش '+(healthAge===null?'ثبت نشده':formatCount(healthAge)+' دقیقه پیش')+
+      '؛ صدور جدید تا بازیابی ارتباط متوقف است. تأیید دو اپراتور محفوظ است.'):'')+
     '\n👤 ظرفیت: '+formatCount(alloc.n)+' / '+formatCount(n.user_limit)+
     '\n📦 حجم تخصیص‌یافته: '+quotaLabel(alloc.bytes)+' / '+quotaLabel(n.byte_limit)+
     '\n\n🔀 مسیرهای سرور\n'+routeText+
     (carriers?'\n\n📱 مسیرهای اپراتورها\n'+carriers:'')+
     (waitingForFieldTest?'\n\n🧪 نصب سرور موفق بوده است. برای ادامه، لینک تست را باز کنید و اتصال هر دو اپراتور را از گوشی بررسی کنید. تا تأیید آزمون، مسیر منتشر نمی‌شود.':'')+
+    (canConfirm?'\n\n📋 تأیید دستی مدیر: همراه اول '+(currentManual('mci')?'✅':'⏳')+
+      ' · ایرانسل '+(currentManual('irancell')?'✅':'⏳')+
+      '\n🔐 تأیید امضاشده عامل سرور: '+(Number(ack?.seen)>Date.now()-600000?'تازه و معتبر':'دریافت نشده یا منقضی؛ وضعیت آماده مسدود است')+
+      '\nثبت نتیجهٔ تست به‌تنهایی جای تأیید سلامت عامل یا آزمون مستقل را نمی‌گیرد.':'')+
     '\n\n🔐 تغییر وضعیت فقط پس از تأیید انجام می‌شود؛ این بخش به VPS فرمان حذف نمی‌دهد.';
   const buttons=[
     nodeButton('🔄 تازه‌سازی همین سرور','admin:node:view:'+ref),
     ...(job?.state==='installed'&&job.owner_id===actor&&n.lifecycle!=='retired'&&n.lifecycle!=='quarantined'?
       [nodeButton('🧪 لینک تست این سرور','admin:node:trialref:'+ref)]:[]),
+    ...(canConfirm?[
+      nodeButton((currentManual('mci')?'✅':'📱')+' ثبت تست همراه اول · ۴۴۳','admin:node:field:mci:'+ref),
+      nodeButton((currentManual('irancell')?'✅':'📱')+' ثبت تست ایرانسل · ۸۴۴۳','admin:node:field:irancell:'+ref),
+    ]:[]),
     ...managementButtons(n,ref,alloc.n,job?.state),
     nodeButton('↩️ فهرست سرورها','admin:nodes'),
   ];
@@ -363,6 +398,44 @@ export async function nodeManagement(db,actor,ref,operation,apply=false,updateId
     '\n\nاین تغییر به معنای تأیید اتصال یا حذف VPS نیست.'),
     replyMarkup:{inline_keyboard:[nodeButton('🖥 مشاهده سرور','admin:node:view:'+ref)]}};
 }
+/** Explicit second tap: record user's first-hand network test, never fabricate probes. */
+export async function nodeFieldAction(env,actor,ref,operator,apply=false,nowMs=Date.now()) {
+  const n=await nodeRecord(env.DB,ref);
+  if(!n)return panel('⛔ سرور پیدا نشد.');
+  if(!['mci','irancell'].includes(operator)||!manualAttestationEnabled(env))
+    return panel('⛔ ثبت آزمون دستی در این محیط فعال نیست.');
+  const job=await env.DB.prepare(
+    'SELECT state,owner_id FROM node_bootstrap_jobs WHERE node_id=?'
+  ).bind(n.id).first();
+  if(!job||job.state!=='installed'||job.owner_id!==actor||
+    !['provisioning','ready'].includes(n.lifecycle))
+    return panel('⛔ فقط مدیر ثبت‌کننده و پس از نصب موفق می‌تواند نتیجه آزمون را تأیید کند.');
+  const carrier=operator==='mci'?'همراه اول':'ایرانسل';
+  const port=operator==='mci'?'۴۴۳':'۸۴۴۳';
+  if(!apply) return {text:frameMessage(panelHeading('🧪','تأیید آزمون دستی',n.id)+
+    '\n\nآیا خودت با اینترنت سیم‌کارت '+carrier+'، اتصال واقعی VPN روی پورت '+port+
+    ' را بررسی کرده‌ای و ارسال و دریافت داده موفق بوده است؟'+
+    '\n\nاین فقط گزارش دستی مدیر است؛ تأیید مستقل یا سلامت نود را جعل نمی‌کند.'),replyMarkup:{
+    inline_keyboard:[
+      nodeButton('✅ بله؛ اتصال واقعی را تست کردم',
+        'admin:node:fieldapply:'+operator+':'+ref),
+      nodeButton('↩️ بازگشت بدون ثبت','admin:node:view:'+ref),
+    ],
+  }};
+  const result=await recordAdminCarrierTest(env,actor,n.id,operator,nowMs);
+  let message;
+  if(!result.ok)message='⛔ تأیید ثبت نشد. '+result.reason;
+  else if(result.ready)message='✅ تست‌های دستی و تأیید امضاشدهٔ عامل دریافت شد؛ سرور آماده شد.';
+  else if(!result.paired)message='✅ تست '+carrier+' ثبت شد. لطفاً اپراتور دیگر را نیز تأیید کن.';
+  else message='✅ هر دو تست دستی ثبت شده‌اند، ولی سرور هنوز آماده نیست.\n'+
+    'علت: '+(result.reason==='node_ack_pending'?'عامل نود هنوز ACK امضاشده نفرستاده است.':result.reason)+
+    '\nنصب عامل و سرویس madar-v2-runtime باید بررسی شود.';
+  return {text:frameMessage(message),replyMarkup:{inline_keyboard:[
+    nodeButton('🔄 وضعیت همین سرور','admin:node:view:'+ref),
+    nodeButton('↩️ مدیریت سرورها','admin:nodes')
+  ]}};
+}
+
 export async function nodeFromRef(db,ref){
   return nodeRecord(db,ref);
 }

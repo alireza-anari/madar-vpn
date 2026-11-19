@@ -1,0 +1,128 @@
+name: Madar V2 - reviewed backend-only guarded staging
+on:
+  workflow_dispatch:
+    inputs:
+      acknowledgement:
+        description: Type V2-STAGING-ONLY
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: madar-v2-reviewed-staging-deployment
+  cancel-in-progress: false
+
+jobs:
+  guarded-deploy:
+    if: github.ref == 'refs/heads/fix/v2-backend-field-gates-20261118' && inputs.acknowledgement == 'V2-STAGING-ONLY'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: madar-v2-staging
+    env:
+      CLOUDFLARE_ACCOUNT_ID: 2e4e0d025c81b9134fd2d19f17535e30
+      CLOUDFLARE_API_TOKEN: ${{ secrets.MADAR_V2_STAGING_CF_TOKEN }}
+      WORKER_NAME: madar-v2-staging
+      V2_DB: 81e78af9-9740-45da-9e80-9b2d498f4f54
+      BASE_URL: https://madar-v2-staging.alirezaanari117.workers.dev
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify staging credentials and pinned target
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test "$(jq -r '.name' v2/control/wrangler.jsonc)" = "$WORKER_NAME"
+          test "$(jq -r '.d1_databases[0].database_id' v2/control/wrangler.jsonc)" = "$V2_DB"
+          test "$(jq -r '.keep_vars' v2/control/wrangler.jsonc)" = true
+          current="$(curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"             "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$WORKER_NAME/settings")"
+          echo "$current" | jq -e --arg db "$V2_DB" '
+            .success == true and
+            any(.result.bindings[]; .type=="d1" and .name=="DB" and .id==$db) and
+            any(.result.bindings[]; .name=="NODE_MASTER_KEY" and .type=="secret_text") and
+            any(.result.bindings[]; .name=="ADMIN_TELEGRAM_IDS" and .type=="plain_text" and (.text|length)>0) and
+            any(.result.bindings[]; .name=="PROVISIONING_ENABLED" and .text=="false") and
+            any(.result.bindings[]; .name=="SHOP_ENABLED" and .text=="false") and
+            any(.result.bindings[]; .name=="SUBSCRIPTION_LINKS_ENABLED" and .text=="false")
+          ' >/dev/null
+      - name: Re-run complete reviewed V2 control and runner tests
+        run: |
+          set -euo pipefail
+          (cd v2/control && npm run check && npm test)
+          python3 v2/control/test/schema.test.py
+          (cd v2/node-agent && python3 -m unittest discover -s tests)
+          python3 -m pip install --quiet paramiko==5.0.0 cryptography==50.0.2
+          python3 -m unittest discover -s v2/runner
+      - name: Preserve approved dashboard settings and hard-disable commercial delivery
+        run: |
+          python3 - <<'PY'
+          import json,pathlib
+          p=pathlib.Path("v2/control/wrangler.jsonc")
+          c=json.loads(p.read_text())
+          assert c["name"]=="madar-v2-staging"
+          assert c["d1_databases"][0]["database_id"]=="81e78af9-9740-45da-9e80-9b2d498f4f54"
+          c["keep_vars"]=True
+          c["vars"]={
+            "NODE_AUTO_ENABLED":"false",
+            "NODE_RUNTIME_AUTO_ENABLED":"true",
+            "FIELD_PROBE_ENABLED":"false",
+            "PROVISIONING_ENABLED":"false",
+            "SHOP_ENABLED":"false",
+            "SUBSCRIPTION_LINKS_ENABLED":"false",
+            "SUBSCRIPTION_API_ENABLED":"false"
+          }
+          p.write_text(json.dumps(c,indent=2)+"\n")
+          PY
+      - name: Back up exact active Worker version for emergency rollback
+        run: |
+          set -euo pipefail
+          old="$(curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"             "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$WORKER_NAME/deployments" |
+            jq -er '.result.deployments[0].versions[] | select(.percentage==100) | .version_id')"
+          test -n "$old"
+          echo "PREVIOUS_VERSION_ID=$old" >> "$GITHUB_ENV"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.9.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+      - name: Install repository locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Apply migrations to the isolated V2 D1 only
+        run: pnpm --filter @madar/sales-bot exec wrangler d1 migrations apply madar-v2-staging-db --remote --config ../../v2/control/wrangler.jsonc
+      - name: Deploy V2 backend-only review to V2 staging
+        id: deploy
+        run: pnpm --filter @madar/sales-bot exec wrangler deploy --config ../../v2/control/wrangler.jsonc
+      - name: Verify live staging and security gates after deploy
+        run: |
+          set -euo pipefail
+          curl -fsS --retry 3 "$BASE_URL/health/live" |
+            jq -e '.status=="alive" and .service=="madar-v2"' >/dev/null
+          test "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/telegram/webhook")" = 401
+          test "$(curl -sS -o /dev/null -w '%{http_code}' "$BASE_URL/api/node/v1/clients")" = 401
+          test "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/api/v2/field/accept")" = 503
+          current="$(curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"             "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$WORKER_NAME/settings")"
+          echo "$current" | jq -e '
+            .success == true and
+            any(.result.bindings[]; .name=="ADMIN_TELEGRAM_IDS" and .text=="479321174") and
+            any(.result.bindings[]; .name=="NODE_RUNTIME_AUTO_ENABLED" and .text=="true") and
+            any(.result.bindings[]; .name=="SHOP_ENABLED" and .text=="false") and
+            any(.result.bindings[]; .name=="PROVISIONING_ENABLED" and .text=="false") and
+            any(.result.bindings[]; .name=="SUBSCRIPTION_LINKS_ENABLED" and .text=="false")
+          ' >/dev/null
+          echo "V2_STAGING_GUARDED_DEPLOY_PASS"
+      - name: Restore original version if post-deploy verification fails
+        if: failure() && steps.deploy.outcome == 'success'
+        run: |
+          set -euo pipefail
+          test -n "${PREVIOUS_VERSION_ID:-}"
+          curl -fsS -X POST             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"             -H "Content-Type: application/json"             "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$WORKER_NAME/deployments"             --data "$(jq -nc --arg version "$PREVIOUS_VERSION_ID" '{strategy:"percentage",versions:[{version_id:$version,percentage:100}]}')" |
+            jq -e '.success == true' >/dev/null
+          echo "ROLLED_BACK_TO_PREVIOUS_WORKER_VERSION"
