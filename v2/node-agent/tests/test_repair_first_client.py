@@ -4,7 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from agent.account_policy import LocalLedger
 from agent.runtime_install import render_runtime_units
@@ -40,6 +40,16 @@ def fixture(root):
 
 
 class BoundedRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        # GitHub-hosted CI is non-root. Keep the real root/ownership checks in
+        # production; simulate only those two preconditions for temp fixtures.
+        root=patch('repair_first_client.os.geteuid',return_value=0)
+        ownership=patch('repair_first_client.safe_regular',
+                        side_effect=lambda path,**kwargs: Path(path))
+        root.start();ownership.start()
+        self.addCleanup(ownership.stop)
+        self.addCleanup(root.stop)
+
     def test_dry_run_and_repair_do_not_rewrite_usage_ledger(self):
         with tempfile.TemporaryDirectory() as path:
             files=fixture(path)
