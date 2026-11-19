@@ -22,8 +22,8 @@ jobs:
             sleep 2
           done
           page="$(curl -fsS --max-time 15 "$BASE/enroll")"
-          printf '%s' "$page" | grep -Fq 'id="resetInstalled"'
-          printf '%s' "$page" | grep -Fq 'پاک‌سازی V2 از سرور و نصب دوباره'
+          grep -Fq 'id="resetInstalled"' <<< "$page"
+          grep -Fq 'پاک‌سازی V2 از سرور و نصب دوباره' <<< "$page"
           test "$(curl -sS --max-time 15 -o /dev/null -w '%{http_code}' "$BASE/api/enrollment/reset-check?nodeId=Amazon-hanie")" = 401
           test "$(curl -sS --max-time 15 -o /dev/null -w '%{http_code}' "$BASE/api/node/v1/clients")" = 401
           test "$(curl -sS --max-time 15 -o /dev/null -w '%{http_code}' -X POST "$BASE/telegram/webhook")" = 401
