@@ -86,7 +86,7 @@ jobs:
       - name: Verify migration isolates owner-only tests from retail checkout
         run: |
           set -euo pipefail
-          payload='{"sql":"SELECT sql FROM sqlite_master WHERE type=\"index\" AND name=\"idx_v2_one_retail_checkout_per_customer\""}'
+          payload="$(jq -nc --arg sql "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_v2_one_retail_checkout_per_customer'" '{sql:$sql}')"
           curl --fail-with-body -fsS --retry 2 -X POST \
             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
             -H 'Content-Type: application/json' \
