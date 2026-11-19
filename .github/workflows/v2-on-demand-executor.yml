@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   execute:
-    if: github.ref == 'refs/heads/rewrite/madar-v2-20261110'
+    if: github.ref == 'refs/heads/release/madar-v2-single-20261119'
     runs-on: ubuntu-24.04
     environment: madar-v2-staging
     timeout-minutes: 19
