@@ -69,7 +69,7 @@ def preflight(node_id,ip,run=subprocess.run):
     if os.geteuid()!=0: raise RecoveryBlocked('ROOT_REQUIRED')
     if not re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]{2,63}',node_id):
         raise RecoveryBlocked('INVALID_NODE')
-    if not re.fullmatch(r'[0-9]{1,3}(?:\\.[0-9]{1,3}){3}',ip):
+    if not re.fullmatch(r'[0-9]{1,3}(?:\.[0-9]{1,3}){3}',ip):
         raise RecoveryBlocked('INVALID_IP')
     metadata=json.loads(require_regular(ROOT/'public-route-metadata.json',8192).read_text())
     if metadata.get('node_id')!=node_id or metadata.get('public_ip')!=ip:
