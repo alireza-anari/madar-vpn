@@ -228,6 +228,54 @@ def install(transport,job,check,node_key=None):
     if set(result)!={'public_key','short_id','server_name','uuid'}:raise ValueError('INVALID_METADATA')
     return result
 
+# Staging-only scoped cleanup. The remote helper independently checks the
+# V2 owner identity and refuses any installed Xray commercial UUID/usage.
+REMOTE_RESET=r'''
+import fcntl,io,json,os,pathlib,sys,tarfile
+job=json.loads(sys.argv[1])
+os.umask(0o077)
+lock=open('/run/lock/madar-v2-provision.lock','a')
+fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+dest=pathlib.Path('/var/lib/madar-v2-jobs')/job['id']
+dest.mkdir(parents=True,mode=0o700,exist_ok=False)
+archive=tarfile.open(fileobj=io.BytesIO(sys.stdin.buffer.read(1048576)),mode='r:')
+for member in archive.getmembers():
+ if not member.isfile() or not member.name.startswith('agent/') or len(pathlib.PurePosixPath(member.name).parts)!=2 or not member.name.endswith('.py') or member.size>65536:
+  raise ValueError('INVALID_PACKAGE')
+ target=dest/member.name
+ target.parent.mkdir(mode=0o700,exist_ok=True)
+ target.write_bytes(archive.extractfile(member).read())
+sys.path.insert(0,str(dest))
+from agent.owned_reset import reset
+status=reset(job['nodeId'],job['targetIp'],apply=True)
+print(json.dumps({'status':status}))
+'''
+REMOTE_RESET="import json\nstage='RESET_REMOTE_FAILED'\ntry:\n"+textwrap.indent(REMOTE_RESET,'    ')+"\nexcept Exception:\n    print(json.dumps({'error':'RESET_BLOCKED'}))\n"
+
+class RemoteCleanupError(ValueError):
+    pass
+
+def cleanup_node(transport,job,check):
+    validate_job(job)
+    if job.get('cleanup') is not True or job.get('diagnostic') is True:
+        raise RemoteCleanupError('RESET_BLOCKED')
+    buffer=io.BytesIO()
+    with tarfile.open(fileobj=buffer,mode='w:') as archive:
+        for path in sorted((REPO/'v2/node-agent/agent').glob('*.py')):
+            data=path.read_bytes()
+            info=tarfile.TarInfo('agent/'+path.name)
+            info.size=len(data);info.mode=0o600
+            archive.addfile(info,io.BytesIO(data))
+    fields={k:job[k] for k in ('id','nodeId','targetIp')}
+    code=base64.b64encode(REMOTE_RESET.encode()).decode()
+    command='sudo -n python3 -c '+shlex.quote('import base64;exec(base64.b64decode('+repr(code)+'))')+' '+shlex.quote(json.dumps(fields))
+    check();out=transport.run(command,buffer.getvalue(),timeout=180);check()
+    try:result=json.loads(out)
+    except (TypeError,ValueError):raise RemoteCleanupError('RESET_BLOCKED') from None
+    if result!={'status':'RESET_COMPLETED'}:
+        raise RemoteCleanupError('RESET_BLOCKED')
+    return {'status':'RESET_COMPLETED'}
+
 def safe_failure_code(exc,kind,stage='unknown'):
     """Only bounded, non-sensitive error codes leave the GitHub executor."""
     if isinstance(exc,(TimeoutError,socket.timeout)) or (isinstance(exc,OSError) and exc.errno==errno.ETIMEDOUT):
@@ -241,6 +289,8 @@ def safe_failure_code(exc,kind,stage='unknown'):
         if isinstance(exc,ValueError) and str(exc)=='EXPIRED':return 'PROBE_EXPIRED'
         return 'SSH_PROBE_FAILED'
     if kind=='v2-install':
+        if isinstance(exc,RemoteCleanupError):return 'RESET_BLOCKED'
+        if stage=='cleanup':return 'RESET_CLEANUP_FAILED'
         if isinstance(exc,RemoteInstallError) and str(exc) in REMOTE_FAILURE_CODES:
             return str(exc)
         if isinstance(exc,paramiko.AuthenticationException) or (
@@ -282,6 +332,12 @@ def run_job(job,api,private_key,clock=time.time,network_mode='aws'):
         job['encryptedCredentials']=None
         stage='ssh'
         with SshTransport(job['targetIp'],job['port'],job['username'],job['hostFingerprint'],credentials) as transport:
+            if job.get('cleanup') is True:
+                stage='cleanup'
+                cleanup_node(transport,job,check);check()
+                stage='report'
+                post('report',state='ready',safeCode='RESET_COMPLETED')
+                return 'ready'
             if job.get('diagnostic') is True:
                 stage='diagnostic'
                 result_code=diagnose(transport,check,runtime=job.get('runtimeDiagnostic') is True,
