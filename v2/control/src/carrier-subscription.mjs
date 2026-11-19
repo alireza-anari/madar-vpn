@@ -8,6 +8,7 @@
  * API. Keep URL private, do not put it in a query string, HTML or referrer.
  */
 import {activeRoutes,getSubscription,issueActiveToken,isAdminE2eToken,isAdminE2eSubscription,isAdminDirectToken,isAdminDirectSubscription} from './subscription.mjs';
+import {enabled as featureEnabled} from './feature-flags.mjs';
 
 const TOKEN=/^[A-Za-z0-9_-]{43}$/;
 const PAIR=['mci','irancell'];
@@ -80,7 +81,7 @@ export async function getCarrierFeed(request,env,nowMs=Date.now()) {
   const url=new URL(request.url);
   const token=url.pathname.startsWith('/s/')?url.pathname.slice(3):'';
   if(url.search || url.hash || !TOKEN.test(token))return noStore('Not found',404);
-  if((env.SUBSCRIPTION_LINKS_ENABLED!=='true'||env.SUBSCRIPTION_API_ENABLED!=='true')&&
+  if((!featureEnabled(env,'SUBSCRIPTION_LINKS_ENABLED')||!featureEnabled(env,'SUBSCRIPTION_API_ENABLED'))&&
      !(await isAdminE2eToken(env,token,nowMs)||await isAdminDirectToken(env,token,nowMs)))
     return noStore('Not ready',503);
   const internal=new Request(url.origin+'/api/v2/subscription',{
@@ -119,7 +120,7 @@ function trustedOrigin(value) {
  */
 export async function issueCarrierLink(env,subscriptionId,nowMs=Date.now()) {
   if(!env.DB)return null;
-  if((env.SUBSCRIPTION_LINKS_ENABLED!=='true'||env.SUBSCRIPTION_API_ENABLED!=='true')&&
+  if((!featureEnabled(env,'SUBSCRIPTION_LINKS_ENABLED')||!featureEnabled(env,'SUBSCRIPTION_API_ENABLED'))&&
      !await isAdminE2eSubscription(env,subscriptionId,nowMs)&&
      !await isAdminDirectSubscription(env,subscriptionId,nowMs))return null;
   const origin=trustedOrigin(env.SUBSCRIPTION_PUBLIC_ORIGIN);
