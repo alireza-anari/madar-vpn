@@ -13,6 +13,7 @@ import { handleSeller, linkSellerOnStart, grantStaffRole } from './referrals.mjs
  */
 import { botMenu,botPage,adminMenu,sellerMenu,supportMenu,frameMessage,faNumber,faMoney,faGB,faDate,faStatus,faRole,sectionNavigation,usageMeter,statusSymbol,shortCode,panelHeading,BRAND_BANNER_URL } from './bot-ux.mjs';
 import {isBotActivated,checkAndActivateBot,activationPrompt,activationUnavailableReply} from './bot-activation.mjs';
+import {enabled as featureEnabled} from './feature-flags.mjs';
 
 const ORDER_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{1,48}$/;
 const PLAN_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{1,30}$/;
@@ -39,7 +40,7 @@ export function adminAllowed(ids, userId) {
 }
 
 export function salesConfigured(env) {
-  return env.SHOP_ENABLED === 'true' && env.PROVISIONING_ENABLED === 'true' &&
+  return featureEnabled(env,'SHOP_ENABLED') && featureEnabled(env,'PROVISIONING_ENABLED') &&
     typeof env.PAYMENT_INSTRUCTIONS === 'string' &&
     env.PAYMENT_INSTRUCTIONS.trim().length >= 12 &&
     env.PAYMENT_INSTRUCTIONS.length <= 700;
@@ -104,7 +105,7 @@ async function pendingOrder(db,id) {
   return db.prepare(
     "SELECT id,state,quoted_amount,quoted_currency FROM orders " +
     "WHERE customer_telegram_id=? AND state IN ('pending','receipt_submitted','approved','provisioning') " +
-    "AND substr(idempotency_key,1,7) <> 'direct:' ORDER BY created_at DESC LIMIT 1"
+    "AND substr(idempotency_key,1,7) <> 'direct:' AND substr(idempotency_key,1,10) <> 'admin-e2e:' ORDER BY created_at DESC LIMIT 1"
   ).bind(id).first();
 }
 
@@ -239,7 +240,7 @@ async function mySubscriptions(db,e,env) {
     panelHeading('📦','اشتراک‌های من','وضعیت و اطلاعات اتصال سرویس شما')+
     '\n\nهنوز اشتراک فعالی در مدار V2 ندارید.\nاشتراک نسخه قبلی شما مستقل و محفوظ است.',
     e.locale,[[{text:'🛍 مشاهده بسته‌ها',callback_data:'v2:plans'}]]);
-  const buttons=env.SUBSCRIPTION_LINKS_ENABLED==='true'?
+  const buttons=featureEnabled(env,'SUBSCRIPTION_LINKS_ENABLED')?
     rows.filter(x=>x.state==='active').map(x=>[{
       text:'🔗 دریافت لینک اتصال · '+shortCode(x.id,8),
       callback_data:'v2:my:link:'+x.id,
