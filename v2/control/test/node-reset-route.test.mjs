@@ -169,8 +169,9 @@ test('uncertain remote cleanup failure never releases quarantine',async()=>{
     probeId:PROBE,fingerprint:FP,trust:true,envelope:ENV};
   const {id}=await (await enrollmentApi(controlRequest('reset',auth,payload),env,NOW,
     async()=>true)).json();
-  const job=JSON.parse((await runnerApi(runnerRequest('lease',env.RUNNER_SERVICE_SECRET,{
-    runnerId:'v2-github-actions',jobId:id}),env,NOW+1000)).json()).payload);
+  const leased=await runnerApi(runnerRequest('lease',env.RUNNER_SERVICE_SECRET,{
+    runnerId:'v2-github-actions',jobId:id}),env,NOW+1000);
+  const job=JSON.parse((await leased.json()).payload);
   const failed=await runnerApi(runnerRequest('report',env.RUNNER_SERVICE_SECRET,{
     id,leaseId:job.leaseId,state:'failed',safeCode:'RESET_BLOCKED'}),env,NOW+2000);
   assert.equal(failed.status,200);
