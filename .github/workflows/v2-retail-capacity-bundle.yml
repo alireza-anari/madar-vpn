@@ -4,7 +4,7 @@ on:
     branches:
       - release/v2-retail-capacity-20261119
     paths:
-      - .github/workflows/v2-pr70-offline-bundle.yml
+      - .github/workflows/v2-retail-capacity-bundle.yml
 
 permissions:
   contents: write
