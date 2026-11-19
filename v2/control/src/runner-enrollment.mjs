@@ -317,7 +317,7 @@ export async function enrollmentApi(req,env,now=Date.now(),dispatch=dispatchGith
       "SELECT id FROM v2_runner_jobs WHERE owner_id=? AND state IN ('queued','leased') LIMIT 1"
     ).bind(actor).first();
     if(pending)return reply({error:'JOB_ALREADY_PENDING'},409);
-    const id=crypto.randomUUID(),cleanupSpec={...spec,cleanup:true};
+    const id=crypto.randomUUID(),cleanupSpec={...spec,cleanup:true,cleanupPreviousLifecycle:eligible.node.lifecycle};
     try{
       const result=await env.DB.batch([
         env.DB.prepare("UPDATE nodes SET lifecycle='quarantined' WHERE id=? "+
@@ -528,16 +528,16 @@ export async function runnerApi(req,env,now=Date.now()){
       // The *trusted* SSH runner independently proved the read-only preflight
       // rejected the reset BEFORE any service/file mutation. Only that code
       // permits releasing quarantine; every uncertain failure stays blocked.
-      // Resume at provisioning (never ready), unpublish routes and require fresh
-      // authenticated runtime and carrier acceptance before new sales.
+      // Proven untouched VPS: restore exactly the captured pre-reset state,
+      // not an arbitrary new state which would demote a commercial runtime.
+      // Existing node health expiry still gates any new paid issuance.
+      const previous=specs.cleanupPreviousLifecycle;
+      if(!['ready','provisioning','degraded'].includes(previous))
+        return reply({error:'RESET_PREFLIGHT_RESTORE_FAILED'},409);
       const results=await env.DB.batch([
         completion,
-        env.DB.prepare("UPDATE nodes SET lifecycle='provisioning' WHERE id=? "+
-          "AND lifecycle='quarantined'").bind(specs.nodeId),
-        env.DB.prepare("UPDATE routes SET state='checking',verified_ms=NULL "+
-          "WHERE node_id=? AND state='ready'").bind(specs.nodeId),
-        env.DB.prepare("UPDATE route_carrier_variants SET published=0,verified_ms=NULL "+
-          "WHERE route_id IN (SELECT id FROM routes WHERE node_id=?)").bind(specs.nodeId),
+        env.DB.prepare("UPDATE nodes SET lifecycle=? WHERE id=? "+
+          "AND lifecycle='quarantined'").bind(previous,specs.nodeId),
       ]);
       if(Number(results[0]?.meta?.changes)!==1||
          Number(results[1]?.meta?.changes)!==1)
