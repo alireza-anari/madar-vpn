@@ -183,3 +183,16 @@ test('an existing checkout cannot block admin direct issuance or permit a second
   assert.equal(raw.prepare("SELECT state FROM orders WHERE id='old-test'").get().state,'provisioning');
   raw.close();
 });
+
+test('refresh shows a new check time without changing a pending order',async()=>{
+  const {raw,env}=setup();
+  await wizard(env);
+  const id=raw.prepare('SELECT id FROM admin_direct_issues').get().id;
+  const action='admin:configs:direct:status:'+id;
+  const first=await resolveBotAction(env,event(ADMIN,action),NOW);
+  const next=await resolveBotAction(env,event(ADMIN,action),NOW+1000);
+  assert.match(next.text,/آخرین بررسی: .* به وقت تهران/);
+  assert.notEqual(first.text,next.text);
+  assert.equal(raw.prepare('SELECT state FROM subscriptions').get().state,'pending');
+  raw.close();
+});

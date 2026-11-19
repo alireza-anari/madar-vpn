@@ -209,7 +209,7 @@ async function ensureReservation(env,actor,v,nowMs){
   }catch{return {status:'create_rejected'};}
   return reserveApprovedOrder(env,order,nowMs,n.id);
 }
-export async function directStatus(env,actor,id,nowMs=Date.now()){
+export async function directStatus(env,actor,id,nowMs=Date.now(),refreshed=false){
   if(!validAdmin(env,actor))return panel('⛔ دسترسی به صدور مستقیم مجاز نیست.');
   const row=await issueRow(env.DB,actor,id);
   if(!row)return panel('⚠️ این کانفیگ در حساب مدیر وجود ندارد.',[
@@ -226,7 +226,10 @@ export async function directStatus(env,actor,id,nowMs=Date.now()){
     '\n\n'+(ready?'✅ کانفیگ نصب شده و برای دریافت آماده است.':
       row.subscription_state==='revoked'?'⛔ اشتراک لغو شده است.':
       '⏳ مدار در حال نصب خودکار UUID جدید است. نیازی به تست مجدد سرور نیست.');
-  return panel(text,[
+  const checkedAt=refreshed?new Intl.DateTimeFormat('fa-IR',{
+    timeZone:'Asia/Tehran',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23',
+  }).format(nowMs):null;
+  return panel(text+(checkedAt?'\n\n🕒 آخرین بررسی: '+checkedAt+' به وقت تهران':''),[
     ...(ready?[button('🔗 دریافت لینک دو اپراتور','link:'+id)]:[]),
     ...(row.subscription_state!=='revoked'&&row.order_state!=='cancelled'?
       [button('🛑 لغو این کانفیگ','end:'+id)]:[]),
@@ -269,7 +272,7 @@ export async function directAction(env,e,nowMs=Date.now()) {
   if(operation){
     const [,action,id]=operation, row=await issueRow(db,actor,id);
     if(!row)return panel('⛔ این کانفیگ متعلق به مدیر نیست.');
-    if(action==='status')return directStatus(env,actor,id,nowMs);
+    if(action==='status')return directStatus(env,actor,id,nowMs,true);
     if(action==='end')return panel('آیا کانفیگ '+row.label+' لغو شود؟ لینک آن بی‌اعتبار می‌شود و عامل سرور حذف UUID را انجام می‌دهد.',[
       button('✅ تأیید لغو','revoke:'+id),
       button('↩️ انصراف','status:'+id)]);
