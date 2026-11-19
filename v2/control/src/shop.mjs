@@ -4,7 +4,7 @@ import {receiveSupportPhoto,viewSupportPhoto} from './support-media.mjs';
 import {adminConfigAction} from './bot-config.mjs';
 import {adminDashboard,adminPanelAction,customerTicketAction,consumePanelInput,notifySupport,staffTicketDetails} from './bot-panels.mjs';
 import {beginNodeWizard,cancelNodeWizard,consumeNodeWizard} from './node-wizard.mjs';
-import { nodeAdminAction,nodeOverview,nodeDetails,nodeManagement,nodeFromRef } from './node-admin.mjs';
+import { nodeAdminAction,nodeOverview,nodeDetails,nodeManagement,nodeFromRef,nodeFieldAction } from './node-admin.mjs';
 import { handleSeller, linkSellerOnStart, grantStaffRole } from './referrals.mjs';
 /**
  * Madar V2 business UI. Every mutable action is idempotent by the Telegram
@@ -104,7 +104,7 @@ async function pendingOrder(db,id) {
   return db.prepare(
     "SELECT id,state,quoted_amount,quoted_currency FROM orders " +
     "WHERE customer_telegram_id=? AND state IN ('pending','receipt_submitted','approved','provisioning') " +
-    "ORDER BY created_at DESC LIMIT 1"
+    "AND substr(idempotency_key,1,7) <> 'direct:' ORDER BY created_at DESC LIMIT 1"
   ).bind(id).first();
 }
 
@@ -683,17 +683,21 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
     return adminResponse(list.text,e.locale,list.replyMarkup.inline_keyboard);
   }
   if(key.startsWith('admin:node:view:') ||
-     /^admin:node:(confirm|apply|trialref):/.test(key)){
+     /^admin:node:(confirm|apply|trialref|field|fieldapply):/.test(key)){
     if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
       return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
     let panel;
     const view=key.match(/^admin:node:view:([a-f0-9]{24})$/);
     const manage=key.match(/^admin:node:(confirm|apply):(quarantine|restore|retire):([a-f0-9]{24})$/);
     const trial=key.match(/^admin:node:trialref:([a-f0-9]{24})$/);
-    if(view)panel=await nodeDetails(db,view[1],e.actorId);
+    const field=key.match(/^admin:node:(field|fieldapply):(mci|irancell):([a-f0-9]{24})$/);
+    if(view)panel=await nodeDetails(db,view[1],e.actorId,env);
     else if(manage)
       panel=await nodeManagement(db,e.actorId,manage[3],manage[2],
         manage[1]==='apply',e.updateId);
+    else if(field)
+      panel=await nodeFieldAction(env,e.actorId,field[3],field[2],
+        field[1]==='fieldapply',nowMs);
     else if(trial){
       const node=await nodeFromRef(db,trial[1]);
       const job=node?await db.prepare(

@@ -213,9 +213,22 @@ def _probe_ports(plan):
 
 
 def _make_user(name):
-    command(["/usr/sbin/useradd","--system","--user-group",
-             "--no-create-home","--home-dir","/var/empty",
-             "--shell","/usr/sbin/nologin",name])
+    # A scoped reinstall intentionally preserves the old system account.
+    # Reuse it ONLY when it is exactly the dedicated non-login V2 identity.
+    import pwd,grp
+    try:
+        existing=pwd.getpwnam(name)
+    except KeyError:
+        command(["/usr/sbin/useradd","--system","--user-group",
+                 "--no-create-home","--home-dir","/var/empty",
+                 "--shell","/usr/sbin/nologin",name])
+        return
+    if (name not in ('madar-v2-xray','madar-v2-caddy') or
+        existing.pw_dir!='/var/empty' or
+        existing.pw_shell!='/usr/sbin/nologin' or
+        existing.pw_uid<100 or existing.pw_uid>=1000 or
+        grp.getgrgid(existing.pw_gid).gr_name!=name):
+        raise BootstrapError("existing V2 service account does not match the approved isolated identity")
 
 
 def _is_active(unit):

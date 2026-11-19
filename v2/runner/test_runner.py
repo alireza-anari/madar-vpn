@@ -182,3 +182,79 @@ class ReadOnlyDiagnosisTests(unittest.TestCase):
         for raw in [b'{"code":"arbitrary error"}',b'{"code":"DIAG_PRECHECK_OK","secret":"x"}',b'not-json']:
             with self.assertRaises((ValueError,TypeError)):
                 consumer.diagnose(Transport(raw),lambda:None)
+
+
+class NodeRuntimeAttachmentTests(unittest.TestCase):
+    def test_node_key_is_only_inside_pinned_ssh_tar_not_command_or_metadata(self):
+        import io,tarfile
+        job=RunnerTests().job()
+        key='Z'*43
+        class Transport:
+            def run(self,cmd,data,timeout):
+                self.cmd=cmd;self.data=data
+                return json.dumps(dict(public_key='a'*43,short_id='aabb',
+                    server_name='www.cloudflare.com',
+                    uuid='12345678-1234-4123-8123-123456789012')).encode()
+        ssh=Transport()
+        result=consumer.install(ssh,job,lambda:None,node_key=key)
+        self.assertIn('public_key',result)
+        self.assertNotIn(key,ssh.cmd)
+        with tarfile.open(fileobj=io.BytesIO(ssh.data)) as tar:
+            self.assertEqual(tar.extractfile('secrets/node.key').read(),(key+'\n').encode())
+            self.assertTrue(any(i.name=='agent/runtime.py' for i in tar.getmembers()))
+        self.assertNotIn(key,str(result))
+
+    def test_install_requires_signed_node_key_when_runtime_requested(self):
+        job=RunnerTests().job()
+        job['enableRuntime']=True
+        class API(Api):
+            def post(self,path,payload):
+                super().post(path,payload)
+                if path=='node-key':
+                    return {'nodeKey':'Y'*43,'origin':consumer.ORIGIN}
+                return {'ok':True}
+        api=API()
+        with patch.object(consumer,'decrypt_credentials',return_value={'method':'password','password':'secret'}),\
+            patch.object(consumer,'SshTransport') as ssh,\
+            patch.object(consumer,'install',return_value={'public_key':'a','short_id':'b'}) as install:
+            self.assertEqual(consumer.run_job(job,api,None,clock=lambda:100,network_mode='none'),'ready')
+            self.assertTrue(any(x[0]=='node-key' for x in api.reports))
+            self.assertEqual(install.call_args.kwargs['node_key'],'Y'*43)
+        self.assertNotIn('Y'*43,str(api.reports[-1]))
+
+
+
+class ScopedResetRunnerTests(unittest.TestCase):
+    def test_authenticated_cleanup_uses_only_owned_v2_reset_and_not_reinstall(self):
+        job=RunnerTests().job()
+        job['cleanup']=True
+        api=Api()
+        client={'method':'password','password':'canary'}
+        with patch.object(consumer,'ensure_network',return_value=False), \
+             patch.object(consumer,'decrypt_credentials',return_value=client), \
+             patch.object(consumer,'SshTransport'), \
+             patch.object(consumer,'cleanup_node',return_value={'status':'RESET_COMPLETED'}) as cleanup, \
+             patch.object(consumer,'install',side_effect=AssertionError('normal installer forbidden')) as install:
+            self.assertEqual(consumer.run_job(job,api,None,clock=lambda:100),'ready')
+            cleanup.assert_called_once()
+            install.assert_not_called()
+        self.assertIsNone(job['encryptedCredentials'])
+        self.assertEqual(client,{})
+        self.assertEqual(api.reports[-1][1]['safeCode'],'RESET_COMPLETED')
+        self.assertEqual(api.reports[-1][1]['state'],'ready')
+
+    def test_remote_cleanup_refuses_unrecognized_reply_and_invalid_stage(self):
+        job=RunnerTests().job()
+        job['cleanup']=True
+        class Transport:
+            def __init__(self,response):self.response=response
+            def run(self,*args,**kwargs):return self.response
+        self.assertEqual(
+            consumer.cleanup_node(Transport(b'{"status":"RESET_COMPLETED"}'),job,lambda:None),
+            {'status':'RESET_COMPLETED'})
+        for response in (b'{"status":"WRONG"}',b'{}',b'not json'):
+            with self.assertRaises(consumer.RemoteCleanupError):
+                consumer.cleanup_node(Transport(response),job,lambda:None)
+        self.assertEqual(
+            consumer.safe_failure_code(consumer.RemoteCleanupError('SECRET'),'v2-install','cleanup'),
+            'RESET_BLOCKED')

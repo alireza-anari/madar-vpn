@@ -150,6 +150,9 @@ export function parentPage(key,isAdmin=false){
   if(key==='admin:node:cancel')return 'admin:home'; // Cancellation lands on server overview.
   if(key==='admin:node:trials')return 'admin:nodes';
   if(key==='admin:configs'||key==='admin:configs:home')return 'admin:home';
+  if(key==='admin:configs:e2e:list')return 'admin:configs';
+  if(/^admin:configs:e2e:(view|start|status|link|end|revoke):[a-f0-9]{24}$/.test(key))
+    return 'admin:configs:e2e:list';
   if(/^admin:configs:(trials|subscriptions):[0-9]{1,4}$/.test(key))
     return 'admin:configs';
   if(/^admin:configs:trial:[a-f0-9]{24}$/.test(key))
@@ -167,6 +170,8 @@ export function parentPage(key,isAdmin=false){
   if(/^admin:nodes:(all|ready|setup|testing|attention|quarantine|archive):[0-9]{1,4}$/.test(key))
     return 'admin:nodes';
   if(/^admin:node:(confirm|apply):(quarantine|restore|retire):[a-f0-9]{24}$/.test(key))
+    return 'admin:node:view:'+key.slice(-24);
+  if(/^admin:node:(field|fieldapply):(mci|irancell):[a-f0-9]{24}$/.test(key))
     return 'admin:node:view:'+key.slice(-24);
   if(/^admin:node:trialref:[a-f0-9]{24}$/.test(key))
     return 'admin:node:view:'+key.slice(-24);

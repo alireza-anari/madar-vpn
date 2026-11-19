@@ -5,6 +5,8 @@ if [[ "$GITHUB_ACTIONS" != "true" || "$RUNNER_ENVIRONMENT" != "github-hosted" ]]
  exit 1
 fi
 cleanup() {
+ sudo systemctl disable --now madar-v2-runtime.service madar-v2-runtime-watchdog.timer >/dev/null 2>&1 || true
+ sudo rm -f /etc/systemd/system/madar-v2-runtime.service /etc/systemd/system/madar-v2-runtime-watchdog.service /etc/systemd/system/madar-v2-runtime-watchdog.timer
  sudo systemctl disable --now madar-v2-xray.service >/dev/null 2>&1 || true
  sudo systemctl disable --now madar-v2-caddy.service >/dev/null 2>&1 || true
  sudo rm -f /etc/systemd/system/madar-v2-xray.service /etc/systemd/system/madar-v2-caddy.service
@@ -28,7 +30,10 @@ class LocalTransport:
 job=dict(id=str(uuid.uuid4()),nodeId='test-ci-native',targetIp='8.8.4.4',
          mode='fresh',port=22,username='root',kind='v2-install')
 try:
-    result=install(LocalTransport(),job,lambda:None)
+    import base64
+    # Disposable, non-production HKDF-shaped node key. The Worker is not used.
+    test_key=base64.urlsafe_b64encode(bytes([73])*32).rstrip(b'=').decode()
+    result=install(LocalTransport(),job,lambda:None,node_key=test_key)
 except Exception:
     # CI has no server/user credentials. Surface the fixed ReconcileError
     # chain on the disposable host, never enable this on a user VPS.
@@ -38,6 +43,35 @@ assert set(result)=={'public_key','short_id','server_name','uuid'}
 print('Verified exact remote package/bootstrap/dual/metadata flow; no client credentials logged')
 PY
 sudo systemctl is-active --quiet madar-v2-xray.service
+sudo systemctl is-active --quiet madar-v2-runtime.service
+sudo systemctl is-enabled --quiet madar-v2-runtime-watchdog.timer
+test "$(sudo stat -c '%a' /etc/madar-v2/node.key)" = "600"
+sudo test -f /opt/madar-v2/runtime/agent/runtime.py
+sudo python3 - <<'PY'
+import json,pathlib,subprocess,sys,tempfile
+sys.path.insert(0,'/opt/madar-v2/runtime')
+from agent.account_policy import compile_dual_account_config
+root=pathlib.Path('/etc/madar-v2')
+secrets=json.loads((root/'local-secrets.json').read_text())
+config=compile_dual_account_config(secrets,[])
+ports=[r['port'] for r in config['inbounds']]
+assert ports==[8443,443,10085],ports
+assert config['inbounds'][2]['listen']=='127.0.0.1'
+with tempfile.NamedTemporaryFile(mode='w',suffix='.json',delete=True) as tmp:
+  json.dump(config,tmp);tmp.flush()
+  subprocess.run(['/opt/madar-v2/bin/xray','run','-test','-config',tmp.name],
+                 check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+# Most important: a REAL customer UUID on both public REALITY ports must
+# pass the pinned Xray's native validation, not only our Python unit test.
+with tempfile.NamedTemporaryFile(mode='w',suffix='.json',delete=True) as tmp:
+  enrolled=compile_dual_account_config(secrets,[{
+    'subscription_id':'sub-ci-smoke','uuid':secrets['clients'][0]}])
+  assert enrolled['inbounds'][0]['settings']['users'][0]['id']==secrets['clients'][0]
+  assert enrolled['inbounds'][1]['settings']['users'][0]['id']==secrets['clients'][0]
+  json.dump(enrolled,tmp);tmp.flush()
+  subprocess.run(['/opt/madar-v2/bin/xray','run','-test','-config',tmp.name],
+                 check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+PY
 sudo /opt/madar-v2/bin/xray run -test -config /etc/madar-v2/config.json >/dev/null 2>&1
 test "$(sudo stat -c '%a' /etc/madar-v2/local-secrets.json)" = "600"
 test "$(sudo stat -c '%a' /opt/madar-v2)" = "755"

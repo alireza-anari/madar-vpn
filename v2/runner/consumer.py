@@ -41,11 +41,17 @@ dest=pathlib.Path('/var/lib/madar-v2-jobs')/job['id']
 dest.mkdir(parents=True,mode=0o700,exist_ok=False)
 archive=tarfile.open(fileobj=io.BytesIO(sys.stdin.buffer.read(1048576)),mode='r:')
 for member in archive.getmembers():
-    if not member.isfile() or not member.name.startswith('agent/') or len(pathlib.PurePosixPath(member.name).parts)!=2 or not member.name.endswith('.py') or member.size>65536:
+    trusted_code=(member.name.startswith('agent/') and
+        len(pathlib.PurePosixPath(member.name).parts)==2 and
+        member.name.endswith('.py') and member.size<=65536)
+    trusted_key=(member.name=='secrets/node.key' and member.size<=96)
+    if not member.isfile() or not (trusted_code or trusted_key):
         raise ValueError('INVALID_PACKAGE')
     target=dest/member.name
     target.parent.mkdir(mode=0o700,exist_ok=True)
-    target.write_bytes(archive.extractfile(member).read())
+    with target.open('xb') as file:
+        os.fchmod(file.fileno(),0o600)
+        file.write(archive.extractfile(member).read())
 sys.path.insert(0,str(dest))
 from agent.bootstrap import plan_node,install_test_node
 from agent.fresh_dual import enable
@@ -56,6 +62,10 @@ stage='REMOTE_DUAL_FAILED'
 enable(job['nodeId'],job['targetIp'])
 from agent.dual_reality import listening
 if not (listening(443) and listening(8443)):raise ValueError('LISTENERS_FAILED')
+if (dest/'secrets/node.key').exists():
+    stage='REMOTE_AGENT_FAILED'
+    from agent.runtime_install import install_node_runtime
+    install_node_runtime(job['nodeId'],dest/'secrets/node.key',dest/'agent')
 stage='REMOTE_METADATA_FAILED'
 root=pathlib.Path('/etc/madar-v2')
 m=json.loads((root/'public-route-metadata.json').read_text())
@@ -66,7 +76,7 @@ print(json.dumps(dict(public_key=m['reality_public_key'],short_id=m['short_id'],
 # Return only a fixed stage code; raw errors may contain configuration secrets.
 REMOTE="import json\nstage='REMOTE_PACKAGE_FAILED'\ntry:\n"+textwrap.indent(REMOTE,'    ')+"\nexcept Exception:\n    print(json.dumps({'error':stage}))\n"
 REMOTE_FAILURE_CODES=frozenset({'REMOTE_PACKAGE_FAILED','REMOTE_BOOTSTRAP_FAILED',
-    'REMOTE_DUAL_FAILED','REMOTE_METADATA_FAILED'})
+    'REMOTE_DUAL_FAILED','REMOTE_METADATA_FAILED','REMOTE_AGENT_FAILED'})
 
 
 class RemoteInstallError(ValueError):
@@ -110,15 +120,72 @@ except Exception:
  code='DIAG_REMOTE_FAILED'
 print(json.dumps({'code':code},separators=(',',':')))
 '''
+REMOTE_RUNTIME_DIAG=r'''
+import json,os,pathlib,stat,subprocess,tempfile
+def write_unit(path,text,mode):
+ fd,name=tempfile.mkstemp(prefix='.madar-runtime-',dir=path.parent)
+ try:
+  with os.fdopen(fd,'w',encoding='utf-8') as out:
+   os.fchmod(out.fileno(),mode)
+   out.write(text)
+   out.flush()
+   os.fsync(out.fileno())
+  os.replace(name,path)
+ finally:
+  pathlib.Path(name).unlink(missing_ok=True)
+def remove_legacy_dependency(unit):
+ path=pathlib.Path('/etc/systemd/system')/unit
+ info=path.lstat()
+ if not stat.S_ISREG(info.st_mode) or info.st_uid!=0 or info.st_mode&0o022 or info.st_size>8192:
+  raise OSError('Unexpected Madar unit file')
+ text=path.read_text(encoding='utf-8')
+ legacy='After=network-online.target madar-v2-xray.service\nRequires=madar-v2-xray.service\n'
+ if legacy not in text:return
+ if ('Description=Madar V2 isolated node quota and client reconciler\n' not in text or
+     'ExecStart=/usr/bin/python3 -m agent.runtime ' not in text or text.count(legacy)!=1):
+  raise OSError('Unexpected Madar unit content')
+ mode=stat.S_IMODE(info.st_mode)
+ write_unit(path,text.replace(legacy,'After=network-online.target\n'),mode)
+ try:
+  subprocess.run(['/usr/bin/systemctl','daemon-reload'],timeout=8,check=True)
+ except (OSError,subprocess.SubprocessError):
+  write_unit(path,text,mode)
+  subprocess.run(['/usr/bin/systemctl','daemon-reload'],timeout=8,check=True)
+  raise
+def active(unit):
+ return subprocess.run(['/usr/bin/systemctl','is-active','--quiet',unit],timeout=5).returncode==0
+runtime='madar-v2-runtime.service'
+code='DIAG_RUNTIME_ACTIVE'
+try:
+ if not active(runtime):
+  code='DIAG_RUNTIME_DOWN'
+  if START_RUNTIME:
+   remove_legacy_dependency(runtime)
+   result=subprocess.run(['/usr/bin/systemctl','start',runtime],timeout=18)
+   code='DIAG_RUNTIME_STARTED' if result.returncode==0 and active(runtime) else 'DIAG_RUNTIME_START_FAILED'
+ else:
+  log=subprocess.run(['/usr/bin/journalctl','-u',runtime,'--since','5 minutes ago','-n','100','--no-pager','-o','cat'],capture_output=True,text=True,timeout=8,check=True).stdout
+  faults=[line for line in log.splitlines() if line.startswith(('MADAR_RUNTIME_FAULT','MADAR_REMOTE_ERROR'))]
+  if faults:
+   last=faults[-1]
+   code='DIAG_RUNTIME_GENERATION' if ('XRAY_GENERATION_MISMATCH' in last or 'unrecognized Xray process generation' in last) else 'DIAG_RUNTIME_ERROR'
+  elif not active('madar-v2-xray.service'):code='DIAG_XRAY_DOWN'
+except (OSError,subprocess.SubprocessError):
+ code='DIAG_REMOTE_FAILED'
+print(json.dumps({'code':code},separators=(',',':')))
+'''
 DIAG_CODES=frozenset({'DIAG_EXISTING_VPN','DIAG_PORT_443_BUSY','DIAG_PORT_8443_BUSY',
     'DIAG_UNSUPPORTED_OS','DIAG_NO_ROOT','DIAG_SYSTEMD_MISSING','DIAG_GITHUB_UNREACHABLE',
-    'DIAG_PRECHECK_OK','DIAG_REMOTE_FAILED'})
-def diagnose(transport,check):
+    'DIAG_PRECHECK_OK','DIAG_REMOTE_FAILED','DIAG_RUNTIME_ACTIVE','DIAG_RUNTIME_DOWN',
+    'DIAG_XRAY_DOWN','DIAG_RUNTIME_GENERATION','DIAG_RUNTIME_ERROR',
+    'DIAG_RUNTIME_STARTED','DIAG_RUNTIME_START_FAILED'})
+def diagnose(transport,check,runtime=False,start=False):
     # SSH command only runs a fixed Python snippet; no user-provided shell text.
-    code=base64.b64encode(REMOTE_DIAG.encode()).decode()
+    script=('START_RUNTIME = '+repr(start)+'\n'+REMOTE_RUNTIME_DIAG) if runtime else REMOTE_DIAG
+    code=base64.b64encode(script.encode()).decode()
     cmd='sudo -n python3 -c '+shlex.quote('import base64;exec(base64.b64decode('+repr(code)+'))')
     check()
-    out=transport.run(cmd,timeout=35)
+    out=transport.run(cmd,timeout=50 if runtime and start else 35)
     check()
     result=json.loads(out)
     if not isinstance(result,dict) or set(result)!={'code'} or result['code'] not in DIAG_CODES:
@@ -136,12 +203,19 @@ def validate_job(job):
         raise ValueError('INVALID_V2_JOB')
     if job.get('mode')!='fresh':raise ValueError('INVALID_V2_JOB')
 
-def install(transport,job,check):
+def install(transport,job,check,node_key=None):
     validate_job(job)
     buffer=io.BytesIO()
     with tarfile.open(fileobj=buffer,mode='w:') as archive:
         for path in sorted((REPO/'v2/node-agent/agent').glob('*.py')):
             data=path.read_bytes();info=tarfile.TarInfo('agent/'+path.name);info.size=len(data);info.mode=0o600
+            archive.addfile(info,io.BytesIO(data))
+        if node_key is not None:
+            if not isinstance(node_key,str) or not re.fullmatch(r'[A-Za-z0-9_-]{43}',node_key):
+                raise ValueError('INVALID_NODE_KEY')
+            data=(node_key+'\n').encode('ascii')
+            info=tarfile.TarInfo('secrets/node.key')
+            info.size=len(data);info.mode=0o600
             archive.addfile(info,io.BytesIO(data))
     # The remote command never contains credentials, only fixed source and validated metadata.
     fields={k:job[k] for k in ('id','nodeId','targetIp','mode')}
@@ -153,6 +227,54 @@ def install(transport,job,check):
         raise RemoteInstallError(result['error'])
     if set(result)!={'public_key','short_id','server_name','uuid'}:raise ValueError('INVALID_METADATA')
     return result
+
+# Staging-only scoped cleanup. The remote helper independently checks the
+# V2 owner identity and refuses any installed Xray commercial UUID/usage.
+REMOTE_RESET=r'''
+import fcntl,io,json,os,pathlib,sys,tarfile
+job=json.loads(sys.argv[1])
+os.umask(0o077)
+lock=open('/run/lock/madar-v2-provision.lock','a')
+fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+dest=pathlib.Path('/var/lib/madar-v2-jobs')/job['id']
+dest.mkdir(parents=True,mode=0o700,exist_ok=False)
+archive=tarfile.open(fileobj=io.BytesIO(sys.stdin.buffer.read(1048576)),mode='r:')
+for member in archive.getmembers():
+ if not member.isfile() or not member.name.startswith('agent/') or len(pathlib.PurePosixPath(member.name).parts)!=2 or not member.name.endswith('.py') or member.size>65536:
+  raise ValueError('INVALID_PACKAGE')
+ target=dest/member.name
+ target.parent.mkdir(mode=0o700,exist_ok=True)
+ target.write_bytes(archive.extractfile(member).read())
+sys.path.insert(0,str(dest))
+from agent.owned_reset import reset
+status=reset(job['nodeId'],job['targetIp'],apply=True)
+print(json.dumps({'status':status}))
+'''
+REMOTE_RESET="import json\nstage='RESET_REMOTE_FAILED'\ntry:\n"+textwrap.indent(REMOTE_RESET,'    ')+"\nexcept Exception:\n    print(json.dumps({'error':'RESET_BLOCKED'}))\n"
+
+class RemoteCleanupError(ValueError):
+    pass
+
+def cleanup_node(transport,job,check):
+    validate_job(job)
+    if job.get('cleanup') is not True or job.get('diagnostic') is True:
+        raise RemoteCleanupError('RESET_BLOCKED')
+    buffer=io.BytesIO()
+    with tarfile.open(fileobj=buffer,mode='w:') as archive:
+        for path in sorted((REPO/'v2/node-agent/agent').glob('*.py')):
+            data=path.read_bytes()
+            info=tarfile.TarInfo('agent/'+path.name)
+            info.size=len(data);info.mode=0o600
+            archive.addfile(info,io.BytesIO(data))
+    fields={k:job[k] for k in ('id','nodeId','targetIp')}
+    code=base64.b64encode(REMOTE_RESET.encode()).decode()
+    command='sudo -n python3 -c '+shlex.quote('import base64;exec(base64.b64decode('+repr(code)+'))')+' '+shlex.quote(json.dumps(fields))
+    check();out=transport.run(command,buffer.getvalue(),timeout=180);check()
+    try:result=json.loads(out)
+    except (TypeError,ValueError):raise RemoteCleanupError('RESET_BLOCKED') from None
+    if result!={'status':'RESET_COMPLETED'}:
+        raise RemoteCleanupError('RESET_BLOCKED')
+    return {'status':'RESET_COMPLETED'}
 
 def safe_failure_code(exc,kind,stage='unknown'):
     """Only bounded, non-sensitive error codes leave the GitHub executor."""
@@ -167,6 +289,8 @@ def safe_failure_code(exc,kind,stage='unknown'):
         if isinstance(exc,ValueError) and str(exc)=='EXPIRED':return 'PROBE_EXPIRED'
         return 'SSH_PROBE_FAILED'
     if kind=='v2-install':
+        if isinstance(exc,RemoteCleanupError):return 'RESET_BLOCKED'
+        if stage=='cleanup':return 'RESET_CLEANUP_FAILED'
         if isinstance(exc,RemoteInstallError) and str(exc) in REMOTE_FAILURE_CODES:
             return str(exc)
         if isinstance(exc,paramiko.AuthenticationException) or (
@@ -208,14 +332,33 @@ def run_job(job,api,private_key,clock=time.time,network_mode='aws'):
         job['encryptedCredentials']=None
         stage='ssh'
         with SshTransport(job['targetIp'],job['port'],job['username'],job['hostFingerprint'],credentials) as transport:
+            if job.get('cleanup') is True:
+                stage='cleanup'
+                cleanup_node(transport,job,check);check()
+                stage='report'
+                post('report',state='ready',safeCode='RESET_COMPLETED')
+                return 'ready'
             if job.get('diagnostic') is True:
                 stage='diagnostic'
-                result_code=diagnose(transport,check)
+                result_code=diagnose(transport,check,runtime=job.get('runtimeDiagnostic') is True,
+                    start=job.get('startRuntime') is True)
                 stage='report'
                 post('report',state='ready',safeCode=result_code)
                 return 'ready'
             stage='remote'
-            details=install(transport,job,check);check()
+            node_key=None
+            if job.get('enableRuntime') is True:
+                # The runner already has the short-lived lease; never fetch
+                # the master key or place the node secret in CLI arguments.
+                reply=post('node-key',nodeId=job['nodeId'])
+                if not isinstance(reply,dict) or not re.fullmatch(
+                    r'[A-Za-z0-9_-]{43}',reply.get('nodeKey','')):
+                    raise ValueError('NODE_PAIRING_FAILED')
+                if reply.get('origin')!=ORIGIN:
+                    raise ValueError('NODE_PAIRING_FAILED')
+                node_key=reply['nodeKey']
+            details=install(transport,job,check,node_key=node_key);check()
+            node_key=None
         # Additional VPN exposure is allowed only after fresh-host preflight and installation.
         if job['mode']=='fresh' and network_mode=='aws':ensure_network(job['targetIp'],job['port'],extra_tcp_ports=(8443,))
         check()

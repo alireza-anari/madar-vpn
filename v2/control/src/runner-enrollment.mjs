@@ -1,5 +1,7 @@
+import {deriveNodeKey} from './node-control.mjs';
 import {publicV4,reportInstall} from './node-auto.mjs';
 import {verifyTelegramSecret} from './telegram.mjs';
+import {resetEligibility,retireCleanedNode} from './node-reset.mjs';
 
 // Optional short-lived GitHub-hosted executor. No GitHub token is exposed to Telegram.
 const GITHUB_RUNNER_ID='v2-github-actions';
@@ -112,6 +114,18 @@ export async function cleanupRunnerJobs(db,now){
   // Leased expired jobs are terminal, never retried while an old installer may still run.
   await db.prepare("UPDATE v2_runner_jobs SET state='failed',safe_code='EXPIRED',encrypted_credentials=NULL WHERE state IN ('queued','leased') AND (expires_ms<=? OR (state='leased' AND lease_until_ms<=?))").bind(now,now).run();
 }
+async function installedProbe(db,actor,probe){
+  if(!probe?.fingerprint)return false;
+  const spec=JSON.parse(probe.spec_json);
+  const match=await db.prepare(
+    "SELECT 1 AS matched FROM node_bootstrap_jobs b JOIN v2_runner_jobs j ON j.id=b.id "+
+    "WHERE b.node_id=? AND b.ip=? AND b.owner_id=? AND b.state='installed' "+
+    "AND j.owner_id=? AND j.kind='v2-install' AND j.state='ready' AND j.fingerprint=? "+
+    "AND json_extract(j.spec_json,'$.port')=? LIMIT 1"
+  ).bind(spec.nodeId,spec.ip,actor,actor,probe.fingerprint,spec.port).first();
+  return !!match;
+}
+
 export async function enrollmentApi(req,env,now=Date.now(),dispatch=dispatchGithubJob){
   if(!env.DB||env.RUNNER_ENROLLMENT_ENABLED!=='true')return reply({error:'RUNNER_NOT_CONFIGURED'},503);
   const actor=await authenticateOwner(req.headers.get('x-telegram-init-data'),env,now);
@@ -123,6 +137,12 @@ export async function enrollmentApi(req,env,now=Date.now(),dispatch=dispatchGith
     if(!publicKey||!env.RUNNER_SERVICE_SECRET||!(await executorReady(env,now)))
       return reply({error:env.V2_EXECUTOR_BACKEND==='github-actions'?'EXECUTOR_NOT_CONFIGURED':'RUNNER_OFFLINE'},503);
     return reply({publicKey});
+  }
+  if(path==='/api/enrollment/reset-check'&&req.method==='GET'){
+    const requested=new URL(req.url).searchParams.get('nodeId');
+    const eligible=await resetEligibility(env.DB,actor,requested,now);
+    return reply({ok:eligible.ok,code:eligible.code,
+      willCancelPending:eligible.ok?eligible.willCancelPending:0});
   }
   if(path==='/api/enrollment/recent'&&req.method==='GET'){
     const job=await env.DB.prepare(
@@ -146,14 +166,19 @@ export async function enrollmentApi(req,env,now=Date.now(),dispatch=dispatchGith
     return reply({failedInstall,job:{id:job.id,kind:job.kind,state:job.state,
       safe_code:job.safe_code,fingerprint:job.fingerprint,
       expires_ms:job.expires_ms,diagnostic:spec.diagnostic===true,
+       cleanup:spec.cleanup===true,
       spec:{nodeId:spec.nodeId,provider:spec.provider,region:spec.region,
         ip:spec.ip,port:spec.port,username:spec.username,
         userLimit:spec.userLimit,capacityGb:spec.capacityGb}}});
   }
   if(path.startsWith('/api/enrollment/jobs/')&&req.method==='GET'){
     const id=path.slice('/api/enrollment/jobs/'.length);
-    const job=await env.DB.prepare('SELECT id,kind,state,safe_code,fingerprint FROM v2_runner_jobs WHERE id=? AND owner_id=?')
-      .bind(id,actor).first();return job?reply(job):reply({error:'NOT_FOUND'},404);
+    const job=await env.DB.prepare('SELECT id,kind,state,safe_code,fingerprint,spec_json FROM v2_runner_jobs WHERE id=? AND owner_id=?')
+      .bind(id,actor).first();
+    if(!job)return reply({error:'NOT_FOUND'},404);
+    const installed=job.kind==='probe'&&job.state==='ready'&&await installedProbe(env.DB,actor,job);
+    const {spec_json,...safeJob}=job;
+    return reply({...safeJob,installed});
   }
   if(req.method!=='POST')return reply({error:'NOT_FOUND'},404);
   let b;try{b=await body(req);}catch{return reply({error:'BAD_BODY'},400);}
@@ -185,6 +210,43 @@ export async function enrollmentApi(req,env,now=Date.now(),dispatch=dispatchGith
       .bind(id,actor,JSON.stringify(spec),now,now+600000).run();
     if(env.V2_EXECUTOR_BACKEND==='github-actions'&&!(await dispatch(env,id))){
       await env.DB.prepare("UPDATE v2_runner_jobs SET state='failed',safe_code='EXECUTOR_DISPATCH_FAILED' WHERE id=? AND state='queued'").bind(id).run();
+      return reply({error:'EXECUTOR_DISPATCH_FAILED'},503);
+    }
+    return reply({id});
+  }
+  if(path==='/api/enrollment/diagnose-installed'){
+    if(!JOB_ID.test(b.probeId??'')||!validEnvelope(b.envelope)||b.trust!==true)
+      return reply({error:'ENCRYPTED_CREDENTIALS_REQUIRED'},400);
+    const probe=await env.DB.prepare(
+      "SELECT spec_json,fingerprint FROM v2_runner_jobs "+
+      "WHERE id=? AND owner_id=? AND kind='probe' AND state='ready' AND expires_ms>?"
+    ).bind(b.probeId,actor,now).first();
+    if(!probe||probe.fingerprint!==b.fingerprint||!await installedProbe(env.DB,actor,probe))
+      return reply({error:'INSTALLED_PROBE_REQUIRED'},409);
+    if(!(await executorReady(env,now)))return reply({error:'EXECUTOR_NOT_CONFIGURED'},503);
+    const spec={...JSON.parse(probe.spec_json),diagnostic:true,runtimeDiagnostic:true};
+    if(b.startRuntime===true){
+      const prior=await env.DB.prepare(
+        "SELECT spec_json,fingerprint FROM v2_runner_jobs WHERE id=? AND owner_id=? "+
+        "AND kind='v2-install' AND state='ready' AND safe_code='DIAG_RUNTIME_DOWN' AND created_ms>?"
+      ).bind(b.diagnosticId??'',actor,now-900000).first();
+      const target=prior?JSON.parse(prior.spec_json):null;
+      if(!target?.runtimeDiagnostic||prior.fingerprint!==probe.fingerprint||
+         target.nodeId!==spec.nodeId||target.ip!==spec.ip||target.port!==spec.port)
+        return reply({error:'RUNTIME_DOWN_DIAGNOSIS_REQUIRED'},409);
+      spec.startRuntime=true;
+    }
+    const id=crypto.randomUUID();
+    const queued=await env.DB.prepare(
+      "INSERT INTO v2_runner_jobs(id,owner_id,kind,spec_json,fingerprint,encrypted_credentials,state,created_ms,expires_ms) "+
+      "SELECT ?,?,'v2-install',?,?,?,'queued',?,? WHERE NOT EXISTS "+
+      "(SELECT 1 FROM v2_runner_jobs WHERE owner_id=? AND state IN ('queued','leased') AND expires_ms>?)"
+    ).bind(id,actor,JSON.stringify(spec),probe.fingerprint,JSON.stringify(b.envelope),now,now+900000,actor,now).run();
+    if(queued.meta?.changes!==1)return reply({error:'JOB_ALREADY_PENDING'},409);
+    if(env.V2_EXECUTOR_BACKEND==='github-actions'&&!(await dispatch(env,id))){
+      await env.DB.prepare(
+        "UPDATE v2_runner_jobs SET state='failed',safe_code='EXECUTOR_DISPATCH_FAILED',encrypted_credentials=NULL WHERE id=? AND state='queued'"
+      ).bind(id).run();
       return reply({error:'EXECUTOR_DISPATCH_FAILED'},503);
     }
     return reply({id});
@@ -231,6 +293,52 @@ export async function enrollmentApi(req,env,now=Date.now(),dispatch=dispatchGith
       return reply({error:'EXECUTOR_DISPATCH_FAILED'},503);
     }
     return reply({id});
+  }
+  if(path==='/api/enrollment/reset'){
+    // This action is deliberately separate from clear-failed (database-only).
+    // It requires a NEW pinned SSH host-key probe and explicit typed consent.
+    if(!validEnvelope(b.envelope)||b.trust!==true||
+       b.confirm!=='RESET_V2_ONLY'||b.confirmNodeId!==b.nodeId||
+       !/^SHA256:[A-Za-z0-9+/]{43}$/.test(b.fingerprint??'')||
+       !JOB_ID.test(b.probeId??''))
+      return reply({error:'RESET_EXPLICIT_CONSENT_REQUIRED'},400);
+    const prior=await env.DB.prepare(
+      "SELECT spec_json,fingerprint FROM v2_runner_jobs WHERE id=? "+
+      "AND owner_id=? AND kind='probe' AND state='ready' AND expires_ms>?"
+    ).bind(b.probeId,actor,now).first();
+    if(!prior||prior.fingerprint!==b.fingerprint)return reply({error:'PROBE_REQUIRED'},409);
+    const spec=JSON.parse(prior.spec_json);
+    if(spec.nodeId!==b.nodeId||!validateConnection(spec))return reply({error:'INVALID_TARGET'},400);
+    const eligible=await resetEligibility(env.DB,actor,spec.nodeId,now);
+    if(!eligible.ok)return reply({error:eligible.code},409);
+    if(eligible.node.ip!==spec.ip)return reply({error:'RESET_HOST_MISMATCH'},409);
+    if(!(await executorReady(env,now)))return reply({error:'EXECUTOR_NOT_CONFIGURED'},503);
+    const pending=await env.DB.prepare(
+      "SELECT id FROM v2_runner_jobs WHERE owner_id=? AND state IN ('queued','leased') LIMIT 1"
+    ).bind(actor).first();
+    if(pending)return reply({error:'JOB_ALREADY_PENDING'},409);
+    const id=crypto.randomUUID(),cleanupSpec={...spec,cleanup:true};
+    try{
+      const result=await env.DB.batch([
+        env.DB.prepare("UPDATE nodes SET lifecycle='quarantined' WHERE id=? "+
+          "AND lifecycle IN ('ready','provisioning','degraded')").bind(spec.nodeId),
+        env.DB.prepare("INSERT INTO v2_runner_jobs(id,owner_id,kind,spec_json,probe_id,"+
+          "fingerprint,encrypted_credentials,state,created_ms,expires_ms) "+
+          "VALUES(?,?,'v2-install',?,?,? ,?,'queued',?,?)")
+          .bind(id,actor,JSON.stringify(cleanupSpec),prior.probe_id??null,
+            b.fingerprint,JSON.stringify(b.envelope),now,now+900000),
+      ]);
+      if(Number(result[0]?.meta?.changes)!==1||Number(result[1]?.meta?.changes)!==1)
+        return reply({error:'RESET_QUARANTINE_FAILED'},409);
+    }catch{return reply({error:'RESET_QUARANTINE_FAILED'},409);}
+    if(env.V2_EXECUTOR_BACKEND==='github-actions'&&!(await dispatch(env,id))){
+      await env.DB.prepare("UPDATE v2_runner_jobs SET state='failed',"+
+        "safe_code='EXECUTOR_DISPATCH_FAILED',encrypted_credentials=NULL "+
+        "WHERE id=? AND state='queued'").bind(id).run();
+      // Keep quarantined: a dispatch timeout can still mean SSH cleanup started.
+      return reply({error:'EXECUTOR_DISPATCH_FAILED'},503);
+    }
+    return reply({id,willCancelPending:eligible.willCancelPending});
   }
   if(path==='/api/enrollment/clear-failed'){
     if(!JOB_ID.test(b.failedInstallId??'')||!JOB_ID.test(b.diagnosticId??''))
@@ -356,9 +464,10 @@ export async function runnerApi(req,env,now=Date.now()){
     let job=null;
     if(row){const s=JSON.parse(row.spec_json);job={id:row.id,leaseId:lease,kind:row.kind,
       nodeId:s.nodeId,targetIp:s.ip,port:s.port,username:s.username,mode:s.mode,
-      diagnostic:s.diagnostic===true,
+      diagnostic:s.diagnostic===true,cleanup:s.cleanup===true,runtimeDiagnostic:s.runtimeDiagnostic===true,startRuntime:s.startRuntime===true,
       hostFingerprint:row.fingerprint,encryptedCredentials:row.encrypted_credentials,
-      credentialsExpireAt:Math.floor(row.expires_ms/1000)};}
+      credentialsExpireAt:Math.floor(row.expires_ms/1000),
+      enableRuntime:env.NODE_RUNTIME_AUTO_ENABLED==='true'};}
     const payload=JSON.stringify(job);return reply({payload,signature:hex(await hmac(env.RUNNER_SERVICE_SECRET,payload))});
   }
   const row=await env.DB.prepare("SELECT * FROM v2_runner_jobs WHERE id=? AND lease_id=? AND state='leased' AND lease_until_ms>? AND expires_ms>?")
@@ -370,6 +479,19 @@ export async function runnerApi(req,env,now=Date.now()){
     ).bind(b.id,b.leaseId,b.state).first():null;
     return done?reply({ok:true}):reply({error:'LEASE_EXPIRED'},409);
   }
+  if(action==='node-key'){
+    // The caller already passed the runner bearer token and the exact live
+    // installation job lease. Never send NODE_MASTER_KEY outside the Worker.
+    if(env.NODE_RUNTIME_AUTO_ENABLED!=='true'||!env.NODE_MASTER_KEY||
+       row.kind!=='v2-install')return reply({error:'NOT_CONFIGURED'},503);
+    const spec=JSON.parse(row.spec_json);
+    if(spec.diagnostic===true||spec.mode!=='fresh'||spec.nodeId!==b.nodeId)
+      return reply({error:'INVALID_INSTALL_LEASE'},403);
+    const key=await deriveNodeKey(env.NODE_MASTER_KEY,spec.nodeId);
+    const nodeKey=btoa(String.fromCharCode(...key)).replace(/\+/g,'-')
+      .replace(/\//g,'_').replace(/=+$/,'');
+    return reply({nodeKey,origin:'https://madar-v2-staging.alirezaanari117.workers.dev'});
+  }
   if(action==='renew'){
     await env.DB.prepare("UPDATE v2_runner_jobs SET lease_until_ms=? WHERE id=? AND lease_id=? AND state='leased' AND lease_until_ms>?")
       .bind(now+90000,row.id,b.leaseId,now).run();return reply({ok:true});
@@ -378,13 +500,18 @@ export async function runnerApi(req,env,now=Date.now()){
   const fingerprint=b.details?.fingerprint;
   if(b.state==='ready'&&row.kind==='probe'&&!/^SHA256:[A-Za-z0-9+/]{43}$/.test(fingerprint??''))return reply({error:'BAD_FINGERPRINT'},400);
   const safeProbeCodes=new Set(['SSH_TIMEOUT','SSH_REFUSED','SSH_UNREACHABLE','SSH_HANDSHAKE_FAILED','PROBE_EXPIRED','SSH_PROBE_FAILED']);
-  const safeInstallCodes=new Set(['SSH_TIMEOUT','SSH_REFUSED','SSH_UNREACHABLE','SSH_AUTH_FAILED','HOST_KEY_CHANGED','INVALID_SSH_KEY','CREDENTIALS_EXPIRED','CREDENTIAL_DECRYPT_FAILED','SSH_LOGIN_FAILED','REMOTE_INSTALL_FAILED','INSTALL_REPORT_FAILED']);
-  const safeDiagnosticCodes=new Set(['DIAG_EXISTING_VPN','DIAG_PORT_443_BUSY','DIAG_PORT_8443_BUSY','DIAG_UNSUPPORTED_OS','DIAG_NO_ROOT','DIAG_SYSTEMD_MISSING','DIAG_GITHUB_UNREACHABLE','DIAG_PRECHECK_OK','DIAG_REMOTE_FAILED']);
+  const safeInstallCodes=new Set(['RESET_BLOCKED','RESET_REMOTE_FAILED','RESET_CLEANUP_FAILED','SSH_TIMEOUT','SSH_REFUSED','SSH_UNREACHABLE','SSH_AUTH_FAILED','HOST_KEY_CHANGED','INVALID_SSH_KEY','CREDENTIALS_EXPIRED','CREDENTIAL_DECRYPT_FAILED','SSH_LOGIN_FAILED','REMOTE_INSTALL_FAILED','INSTALL_REPORT_FAILED']);
+  const safeDiagnosticCodes=new Set(['DIAG_EXISTING_VPN','DIAG_PORT_443_BUSY','DIAG_PORT_8443_BUSY','DIAG_UNSUPPORTED_OS','DIAG_NO_ROOT','DIAG_SYSTEMD_MISSING','DIAG_GITHUB_UNREACHABLE','DIAG_PRECHECK_OK','DIAG_REMOTE_FAILED','DIAG_RUNTIME_ACTIVE','DIAG_RUNTIME_DOWN','DIAG_XRAY_DOWN','DIAG_RUNTIME_GENERATION','DIAG_RUNTIME_ERROR','DIAG_RUNTIME_STARTED','DIAG_RUNTIME_START_FAILED']);
   for(const code of ['REMOTE_PACKAGE_FAILED','REMOTE_BOOTSTRAP_FAILED','REMOTE_DUAL_FAILED','REMOTE_METADATA_FAILED'])safeInstallCodes.add(code);
-  const diag=row.kind==='v2-install'&&JSON.parse(row.spec_json).diagnostic===true;
+  const specs=row.kind==='v2-install'?JSON.parse(row.spec_json):null;
+  const diag=!!specs?.diagnostic,cleanup=!!specs?.cleanup;
+  if(cleanup&&diag)return reply({error:'INVALID_RESET_JOB'},409);
+  if(cleanup&&b.state==='ready'&&b.safeCode!=='RESET_COMPLETED')
+    return reply({error:'RESET_REMOTE_PROOF_MISSING'},409);
   if(diag&&b.state==='ready'&&!safeDiagnosticCodes.has(b.safeCode))
     return reply({error:'BAD_DIAG_REPORT'},400);
-  const code=diag?(
+  const code=cleanup?(b.state==='ready'?'RESET_COMPLETED':
+    safeInstallCodes.has(b.safeCode)?b.safeCode:'RESET_CLEANUP_FAILED'):diag?(
       safeDiagnosticCodes.has(b.safeCode)?b.safeCode:
       safeInstallCodes.has(b.safeCode)?b.safeCode:'DIAG_REMOTE_FAILED'
     ):(b.state==='ready'?'OK':(
@@ -393,7 +520,12 @@ export async function runnerApi(req,env,now=Date.now()){
       ?b.safeCode:'INSTALLATION_FAILED'));
   const completion=env.DB.prepare("UPDATE v2_runner_jobs SET state=?,safe_code=?,fingerprint=COALESCE(?,fingerprint),encrypted_credentials=NULL,lease_until_ms=0 WHERE id=? AND lease_id=? AND state='leased'")
     .bind(b.state,code,row.kind==='probe'?fingerprint??null:null,row.id,b.leaseId);
-  if(row.kind==='v2-install'&&!diag){
+  if(cleanup){
+    if(b.state==='ready'){
+      const result=await retireCleanedNode(env.DB,row.owner_id,specs.nodeId,row.id,now,completion);
+      if(!result)return reply({error:'RESET_DB_FINALIZATION_FAILED'},409);
+    }else await completion.run();
+  }else if(row.kind==='v2-install'&&!diag){
     const spec=JSON.parse(row.spec_json);
     const result=await reportInstall(new Request('https://internal/report',{method:'POST',headers:{'x-madar-deploy-auth':env.RUNNER_SERVICE_SECRET},body:JSON.stringify({
       ...b.details,job_id:row.id,node_id:spec.nodeId,ip:spec.ip,status:b.state==='ready'?'installed':'failed',error_code:'INSTALLATION_FAILED'
