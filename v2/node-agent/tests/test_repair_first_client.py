@@ -21,7 +21,7 @@ def fixture(root):
     pkg.mkdir(parents=True)
     src=pkg/'runtime.py'
     text=("def run(ledger,policy,now_ms):\n"+OLD+"\n" +
-          "    return None\n")
+          "            return None\n")
     src.write_text(text)
     src.chmod(0o600)
     metadata=root/'public-route-metadata.json'
