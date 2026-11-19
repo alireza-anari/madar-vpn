@@ -1,0 +1,30 @@
+name: Madar V2 live smoke after isolated Cloudflare upload
+on:
+  push:
+    branches:
+      - release/madar-v2-single-20261119
+    paths:
+      - .github/workflows/v2-live-smoke-once.yml
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check live V2 identity and non-destructive Mini App UI
+        env:
+          BASE: https://madar-v2-staging.alirezaanari117.workers.dev
+        run: |
+          set -euo pipefail
+          for i in 1 2 3 4 5; do
+            if curl -fsS --max-time 10 "$BASE/health/live" | jq -e '.status=="alive" and .service=="madar-v2"' >/dev/null; then break; fi
+            sleep 2
+          done
+          page="$(curl -fsS --max-time 15 "$BASE/enroll")"
+          printf '%s' "$page" | grep -Fq 'id="resetInstalled"'
+          printf '%s' "$page" | grep -Fq 'پاک‌سازی V2 از سرور و نصب دوباره'
+          test "$(curl -sS --max-time 15 -o /dev/null -w '%{http_code}' "$BASE/api/enrollment/reset-check?nodeId=Amazon-hanie")" = 401
+          test "$(curl -sS --max-time 15 -o /dev/null -w '%{http_code}' "$BASE/api/node/v1/clients")" = 401
+          test "$(curl -sS --max-time 15 -o /dev/null -w '%{http_code}' -X POST "$BASE/telegram/webhook")" = 401
+          echo 'V2_LIVE_HEALTH_UI_AUTH_PASS'
