@@ -221,3 +221,40 @@ class NodeRuntimeAttachmentTests(unittest.TestCase):
             self.assertTrue(any(x[0]=='node-key' for x in api.reports))
             self.assertEqual(install.call_args.kwargs['node_key'],'Y'*43)
         self.assertNotIn('Y'*43,str(api.reports[-1]))
+
+
+
+class ScopedResetRunnerTests(unittest.TestCase):
+    def test_authenticated_cleanup_uses_only_owned_v2_reset_and_not_reinstall(self):
+        job=RunnerTests().job()
+        job['cleanup']=True
+        api=Api()
+        client={'method':'password','password':'canary'}
+        with patch.object(consumer,'ensure_network',return_value=False), \
+             patch.object(consumer,'decrypt_credentials',return_value=client), \
+             patch.object(consumer,'SshTransport'), \
+             patch.object(consumer,'cleanup_node',return_value={'status':'RESET_COMPLETED'}) as cleanup, \
+             patch.object(consumer,'install',side_effect=AssertionError('normal installer forbidden')) as install:
+            self.assertEqual(consumer.run_job(job,api,None,clock=lambda:100),'ready')
+            cleanup.assert_called_once()
+            install.assert_not_called()
+        self.assertIsNone(job['encryptedCredentials'])
+        self.assertEqual(client,{})
+        self.assertEqual(api.reports[-1][1]['safeCode'],'RESET_COMPLETED')
+        self.assertEqual(api.reports[-1][1]['state'],'ready')
+
+    def test_remote_cleanup_refuses_unrecognized_reply_and_invalid_stage(self):
+        job=RunnerTests().job()
+        job['cleanup']=True
+        class Transport:
+            def __init__(self,response):self.response=response
+            def run(self,*args,**kwargs):return self.response
+        self.assertEqual(
+            consumer.cleanup_node(Transport(b'{"status":"RESET_COMPLETED"}'),job,lambda:None),
+            {'status':'RESET_COMPLETED'})
+        for response in (b'{"status":"WRONG"}',b'{}',b'not json'):
+            with self.assertRaises(consumer.RemoteCleanupError):
+                consumer.cleanup_node(Transport(response),job,lambda:None)
+        self.assertEqual(
+            consumer.safe_failure_code(consumer.RemoteCleanupError('SECRET'),'v2-install','cleanup'),
+            'RESET_BLOCKED')
