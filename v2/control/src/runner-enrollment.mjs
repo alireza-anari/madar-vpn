@@ -217,6 +217,17 @@ export async function enrollmentApi(req,env,now=Date.now(),dispatch=dispatchGith
       return reply({error:'INSTALLED_PROBE_REQUIRED'},409);
     if(!(await executorReady(env,now)))return reply({error:'EXECUTOR_NOT_CONFIGURED'},503);
     const spec={...JSON.parse(probe.spec_json),diagnostic:true,runtimeDiagnostic:true};
+    if(b.startRuntime===true){
+      const prior=await env.DB.prepare(
+        "SELECT spec_json,fingerprint FROM v2_runner_jobs WHERE id=? AND owner_id=? "+
+        "AND kind='v2-install' AND state='ready' AND safe_code='DIAG_RUNTIME_DOWN' AND created_ms>?"
+      ).bind(b.diagnosticId??'',actor,now-900000).first();
+      const target=prior?JSON.parse(prior.spec_json):null;
+      if(!target?.runtimeDiagnostic||prior.fingerprint!==probe.fingerprint||
+         target.nodeId!==spec.nodeId||target.ip!==spec.ip||target.port!==spec.port)
+        return reply({error:'RUNTIME_DOWN_DIAGNOSIS_REQUIRED'},409);
+      spec.startRuntime=true;
+    }
     const id=crypto.randomUUID();
     const queued=await env.DB.prepare(
       "INSERT INTO v2_runner_jobs(id,owner_id,kind,spec_json,fingerprint,encrypted_credentials,state,created_ms,expires_ms) "+
@@ -399,7 +410,7 @@ export async function runnerApi(req,env,now=Date.now()){
     let job=null;
     if(row){const s=JSON.parse(row.spec_json);job={id:row.id,leaseId:lease,kind:row.kind,
       nodeId:s.nodeId,targetIp:s.ip,port:s.port,username:s.username,mode:s.mode,
-      diagnostic:s.diagnostic===true,runtimeDiagnostic:s.runtimeDiagnostic===true,
+      diagnostic:s.diagnostic===true,runtimeDiagnostic:s.runtimeDiagnostic===true,startRuntime:s.startRuntime===true,
       hostFingerprint:row.fingerprint,encryptedCredentials:row.encrypted_credentials,
       credentialsExpireAt:Math.floor(row.expires_ms/1000),
       enableRuntime:env.NODE_RUNTIME_AUTO_ENABLED==='true'};}
@@ -436,7 +447,7 @@ export async function runnerApi(req,env,now=Date.now()){
   if(b.state==='ready'&&row.kind==='probe'&&!/^SHA256:[A-Za-z0-9+/]{43}$/.test(fingerprint??''))return reply({error:'BAD_FINGERPRINT'},400);
   const safeProbeCodes=new Set(['SSH_TIMEOUT','SSH_REFUSED','SSH_UNREACHABLE','SSH_HANDSHAKE_FAILED','PROBE_EXPIRED','SSH_PROBE_FAILED']);
   const safeInstallCodes=new Set(['SSH_TIMEOUT','SSH_REFUSED','SSH_UNREACHABLE','SSH_AUTH_FAILED','HOST_KEY_CHANGED','INVALID_SSH_KEY','CREDENTIALS_EXPIRED','CREDENTIAL_DECRYPT_FAILED','SSH_LOGIN_FAILED','REMOTE_INSTALL_FAILED','INSTALL_REPORT_FAILED']);
-  const safeDiagnosticCodes=new Set(['DIAG_EXISTING_VPN','DIAG_PORT_443_BUSY','DIAG_PORT_8443_BUSY','DIAG_UNSUPPORTED_OS','DIAG_NO_ROOT','DIAG_SYSTEMD_MISSING','DIAG_GITHUB_UNREACHABLE','DIAG_PRECHECK_OK','DIAG_REMOTE_FAILED','DIAG_RUNTIME_ACTIVE','DIAG_RUNTIME_DOWN','DIAG_XRAY_DOWN','DIAG_RUNTIME_GENERATION','DIAG_RUNTIME_ERROR']);
+  const safeDiagnosticCodes=new Set(['DIAG_EXISTING_VPN','DIAG_PORT_443_BUSY','DIAG_PORT_8443_BUSY','DIAG_UNSUPPORTED_OS','DIAG_NO_ROOT','DIAG_SYSTEMD_MISSING','DIAG_GITHUB_UNREACHABLE','DIAG_PRECHECK_OK','DIAG_REMOTE_FAILED','DIAG_RUNTIME_ACTIVE','DIAG_RUNTIME_DOWN','DIAG_XRAY_DOWN','DIAG_RUNTIME_GENERATION','DIAG_RUNTIME_ERROR','DIAG_RUNTIME_STARTED','DIAG_RUNTIME_START_FAILED']);
   for(const code of ['REMOTE_PACKAGE_FAILED','REMOTE_BOOTSTRAP_FAILED','REMOTE_DUAL_FAILED','REMOTE_METADATA_FAILED'])safeInstallCodes.add(code);
   const diag=row.kind==='v2-install'&&JSON.parse(row.spec_json).diagnostic===true;
   if(diag&&b.state==='ready'&&!safeDiagnosticCodes.has(b.safeCode))
