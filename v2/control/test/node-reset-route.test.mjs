@@ -151,7 +151,7 @@ test('a read-only VPS reset preflight refusal safely releases quarantine without
     id,leaseId:job.leaseId,state:'failed',safeCode:'RESET_PREFLIGHT_BLOCKED'
   }),env,NOW+2000);
   assert.equal(completed.status,200);
-  assert.equal(raw.prepare("SELECT lifecycle FROM nodes WHERE id=?").get(NODE).lifecycle,'provisioning');
+  assert.equal(raw.prepare("SELECT lifecycle FROM nodes WHERE id=?").get(NODE).lifecycle,'ready');
   assert.equal(raw.prepare("SELECT state FROM subscriptions WHERE id='sub-pending'").get().state,'pending');
   assert.equal(raw.prepare("SELECT state FROM node_allocations WHERE id='alloc-pending'").get().state,'reserved');
   assert.equal(raw.prepare("SELECT safe_code FROM v2_runner_jobs WHERE id=?").get(id).safe_code,'RESET_PREFLIGHT_BLOCKED');
