@@ -1,0 +1,107 @@
+name: Madar V2 single guarded staging release
+on:
+  push:
+    branches:
+      - release/madar-v2-single-20261119
+    paths:
+      - .github/workflows/v2-single-guarded-staging.yml
+permissions:
+  contents: read
+concurrency:
+  group: madar-v2-only-staging-pilot
+  cancel-in-progress: false
+jobs:
+  deploy-v2-only:
+    if: contains(github.event.head_commit.message, 'RUN-ISOLATED-V2-STAGING-ONCE')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: madar-v2-staging
+    env:
+      CLOUDFLARE_ACCOUNT_ID: 2e4e0d025c81b9134fd2d19f17535e30
+      CLOUDFLARE_API_TOKEN: ${{ secrets.MADAR_V2_STAGING_CF_TOKEN }}
+      BASE_URL: https://madar-v2-staging.alirezaanari117.workers.dev
+      V2_DB: 81e78af9-9740-45da-9e80-9b2d498f4f54
+      WORKER_NAME: madar-v2-staging
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Guard V2-only target and configured secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test "$(jq -r '.name' v2/control/wrangler.jsonc)" = "$WORKER_NAME"
+          test "$(jq -r '.d1_databases[0].database_id' v2/control/wrangler.jsonc)" = "$V2_DB"
+          test "$(jq -r '.keep_vars' v2/control/wrangler.jsonc)" = true
+          test "$(jq -r '.vars.SHOP_ENABLED' v2/control/wrangler.jsonc)" = false
+          test "$(jq -r '.vars.PROVISIONING_ENABLED' v2/control/wrangler.jsonc)" = false
+          test "$(jq -r '.vars.SUBSCRIPTION_LINKS_ENABLED' v2/control/wrangler.jsonc)" = false
+          current="$(curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$WORKER_NAME/settings")"
+          echo "$current" | jq -e --arg db "$V2_DB" '
+            .success == true and
+            any(.result.bindings[]; .type=="d1" and .name=="DB" and .id==$db) and
+            any(.result.bindings[]; .name=="NODE_MASTER_KEY" and .type=="secret_text") and
+            any(.result.bindings[]; .name=="RUNNER_ENROLLMENT_ENABLED" and .text=="true") and
+            any(.result.bindings[]; .name=="PROVISIONING_ENABLED" and .text=="false") and
+            any(.result.bindings[]; .name=="SHOP_ENABLED" and .text=="false") and
+            any(.result.bindings[]; .name=="SUBSCRIPTION_LINKS_ENABLED" and .text=="false")
+          ' >/dev/null
+      - name: Install pinned test and deploy dependencies
+        run: |
+          python3 -m pip install --disable-pip-version-check paramiko==5.0.0 cryptography==50.0.2
+      - name: Reverify V2 source and isolated reset behavior
+        run: |
+          set -euo pipefail
+          (cd v2/control && npm run check && npm test)
+          python3 v2/control/test/schema.test.py
+          (cd v2/node-agent && python3 -m unittest discover -s tests -p 'test_*.py')
+          python3 -m unittest discover -s v2/runner
+          test -f v2/node-agent/agent/owned_reset.py
+          test -f v2/control/src/node-reset.mjs
+      - name: Snapshot current V2 Worker version for rollback
+        run: |
+          set -euo pipefail
+          old="$(curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$WORKER_NAME/deployments" | jq -er '.result.deployments[0].versions[] | select(.percentage==100) | .version_id')"
+          test -n "$old"
+          echo "PREVIOUS_VERSION_ID=$old" >> "$GITHUB_ENV"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.9.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+      - name: Install repository locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Apply V2-only additive migrations
+        run: pnpm --filter @madar/sales-bot exec wrangler d1 migrations apply madar-v2-staging-db --remote --config ../../v2/control/wrangler.jsonc
+      - name: Deploy V2 staging (never V1)
+        id: deploy
+        run: pnpm --filter @madar/sales-bot exec wrangler deploy --config ../../v2/control/wrangler.jsonc
+      - name: Verify live V2 and reset button without triggering cleanup
+        run: |
+          set -euo pipefail
+          curl -fsS --retry 3 "$BASE_URL/health/live" | jq -e '.status=="alive" and .service=="madar-v2"' >/dev/null
+          curl -fsS --retry 3 "$BASE_URL/enroll" | grep -q 'id="resetInstalled"'
+          test "$(curl -sS -o /dev/null -w '%{http_code}' "$BASE_URL/api/enrollment/reset-check?nodeId=test-noop01")" = 401
+          test "$(curl -sS -o /dev/null -w '%{http_code}' "$BASE_URL/api/node/v1/clients")" = 401
+          test "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/telegram/webhook")" = 401
+          current="$(curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$WORKER_NAME/settings")"
+          echo "$current" | jq -e '
+            .success == true and
+            any(.result.bindings[]; .name=="SHOP_ENABLED" and .text=="false") and
+            any(.result.bindings[]; .name=="PROVISIONING_ENABLED" and .text=="false") and
+            any(.result.bindings[]; .name=="SUBSCRIPTION_LINKS_ENABLED" and .text=="false")
+          ' >/dev/null
+          echo V2_STAGING_RESET_UI_DEPLOYED
+      - name: Roll back V2 Worker code after post-deploy failure
+        if: failure() && steps.deploy.outcome == 'success'
+        run: |
+          set -euo pipefail
+          test -n "$PREVIOUS_VERSION_ID"
+          curl -fsS -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$WORKER_NAME/deployments" --data "$(jq -nc --arg version "$PREVIOUS_VERSION_ID" '{strategy:"percentage",versions:[{version_id:$version,percentage:100}]}')" | jq -e '.success==true' >/dev/null
+          echo V2_STAGING_ROLLED_BACK
