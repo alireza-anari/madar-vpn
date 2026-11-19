@@ -211,5 +211,34 @@ class SchemaTests(unittest.TestCase):
             self.db.execute("UPDATE android_login_challenges SET state='unknown' WHERE id='"+
                             'A'*24+"'")
 
+    def test_field_evidence_rejects_mislabelled_operator_ports(self):
+        self.db.execute("""INSERT INTO field_probes
+          (id,node_id,operator,port,revision,observed_ms,upload_bytes,download_bytes)
+          VALUES(?,?,?,?,?,?,?,?)""",
+          ('field-one','node-1','mci',443,1,1000,1024,1024))
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute("""INSERT INTO field_probes
+              (id,node_id,operator,port,revision,observed_ms,upload_bytes,download_bytes)
+              VALUES(?,?,?,?,?,?,?,?)""",
+              ('field-two','node-1','irancell',443,1,1000,1024,1024))
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute("""INSERT INTO field_probes
+              (id,node_id,operator,port,revision,observed_ms,upload_bytes,download_bytes)
+              VALUES(?,?,?,?,?,?,?,?)""",
+              ('field-three','node-1','irancell',8443,1,1000,0,1024))
+
+    def test_rotating_customer_uuid_revokes_old_node_ack(self):
+        self.db.execute("""INSERT INTO subscription_credentials
+            (subscription_id,ciphertext_b64,nonce_b64,key_version)
+            VALUES('sub-1',?,?,1)""",('A'*40,'B'*16))
+        self.db.execute("""INSERT INTO node_client_acks
+            (node_id,subscription_id,revision,credential_sha256,observed_ms)
+            VALUES('node-1','sub-1',1,?,1000)""",('c'*64,))
+        self.db.execute("""UPDATE subscription_credentials
+            SET ciphertext_b64=? WHERE subscription_id='sub-1'""",('D'*40,))
+        count=self.db.execute("""SELECT count(*) FROM node_client_acks
+            WHERE subscription_id='sub-1'""").fetchone()[0]
+        self.assertEqual(count,0)
+
 if __name__=='__main__':
     unittest.main()

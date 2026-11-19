@@ -42,6 +42,26 @@ class ReconcilerTests(unittest.TestCase):
         self.assertEqual(calls[0][1:4],["run","-test","-config"])
         self.assertEqual(calls[1],["/usr/bin/systemctl","restart","madar-v2-xray.service"])
 
+    def test_stats_api_inbound_without_users_does_not_fake_client_count(self):
+        # Commercial config has two VLESS listeners and a loopback stats API.
+        # The latter has settings.address, not settings.users.
+        from agent.account_policy import compile_dual_account_config
+        config=compile_dual_account_config({
+            'clients':[UUID],
+            'reality':{
+                'port':8443,'target':'www.example.com','server_name':'www.example.com',
+                'private_key':'A'*43,'short_ids':['abcdef0123456789']
+            },
+            'websocket':None
+        },[{'subscription_id':'sub-one','uuid':UUID}])
+        self.assertEqual(config['inbounds'][2]['protocol'],'dokodemo-door')
+        self.assertNotIn('users',config['inbounds'][2]['settings'])
+        result=apply_config(self.path,config,binary=self.binary,sha256=self.sha,
+                            runner=lambda *_args,**_kw:True)
+        self.assertEqual(result['status'],'service_configured')
+        # Two ports share a single customer UUID. Count installed VLESS entries.
+        self.assertEqual(result['client_count'],2)
+
     def test_config_validation_failure_does_not_touch_existing(self):
         current=self.path/"config.json"
         current.write_text("PREVIOUS")

@@ -461,3 +461,37 @@ test('enrollment page does not forget selected SSH key when the install enqueue 
   const catchMessage=html.slice(failedMessage,failedMessage+240);
   assert.doesNotMatch(catchMessage,/el\('keyfile'\).value=''/);
 });
+
+test('installed-node diagnosis needs a matching owned probe and leaves the node installed',async()=>{
+  const DB=database(),now=1000000;
+  const env={DB,BOT_TOKEN:'test-token',ADMIN_TELEGRAM_IDS:'123,456',
+    RUNNER_ENROLLMENT_ENABLED:'true',V2_EXECUTOR_BACKEND:'github-actions',
+    RUNNER_SERVICE_SECRET:'s'.repeat(48),GITHUB_ACTIONS_DISPATCH_TOKEN:'g'.repeat(48),
+    RUNNER_PUBLIC_KEY:JSON.stringify({kid:'madar-v2-github-actions',kty:'RSA',alg:'RSA-OAEP-256',e:'AQAB',n:'A'.repeat(512)})};
+  const owner=await initData(env.BOT_TOKEN,123,1000),other=await initData(env.BOT_TOKEN,456,1000);
+  const id=crypto.randomUUID(),probeId=crypto.randomUUID(),fp='SHA256:'+'a'.repeat(43);
+  const spec={nodeId:'Amazon-hanie',ip:'8.8.8.8',port:22,username:'ubuntu',mode:'fresh'};
+  await DB.prepare("INSERT INTO nodes(id,provider,region,lifecycle,user_limit,byte_limit) VALUES('Amazon-hanie','aws','eu','ready',20,500)").run();
+  await DB.prepare("INSERT INTO node_bootstrap_jobs(id,node_id,ip,owner_id,mode,state,created_ms,updated_ms) VALUES(?,'Amazon-hanie','8.8.8.8','123','fresh','installed',?,?)").bind(id,now,now).run();
+  for(const [jobId,kind] of [[id,'v2-install'],[probeId,'probe']])
+    await DB.prepare("INSERT INTO v2_runner_jobs(id,owner_id,kind,spec_json,fingerprint,state,created_ms,expires_ms) VALUES(?,'123',?,?,?,'ready',?,?)")
+      .bind(jobId,kind,JSON.stringify(spec),fp,now,now+600000).run();
+  const body={probeId,trust:true,fingerprint:fp,envelope:{v:1,key:'A'.repeat(512),iv:'A'.repeat(16),data:'A'.repeat(64)}};
+  const start=(auth,data)=>enrollmentApi(new Request('https://v2/api/enrollment/diagnose-installed',{
+    method:'POST',headers:{'x-telegram-init-data':auth,'content-type':'application/json'},body:JSON.stringify(data),
+  }),env,now,async()=>true);
+  assert.equal((await start(other,body)).status,409);
+  assert.equal((await start(owner,{...body,fingerprint:'SHA256:'+'b'.repeat(43)})).status,409);
+  const response=await start(owner,body);
+  assert.equal(response.status,200);
+  const jobId=(await response.json()).id;
+  const run=(action,data)=>runnerApi(new Request('https://v2/api/runner/'+action,{
+    method:'POST',headers:{authorization:'Bearer '+env.RUNNER_SERVICE_SECRET,'content-type':'application/json'},body:JSON.stringify(data),
+  }),env,now);
+  const leased=JSON.parse((await (await run('lease',{runnerId:'v2-github-actions',jobId})).json()).payload);
+  assert.equal(leased.runtimeDiagnostic,true);
+  assert.equal((await run('report',{id:jobId,leaseId:leased.leaseId,state:'ready',safeCode:'DIAG_RUNTIME_GENERATION'})).status,200);
+  assert.equal((await DB.prepare('SELECT encrypted_credentials FROM v2_runner_jobs WHERE id=?').bind(jobId).first()).encrypted_credentials,null);
+  assert.equal((await DB.prepare('SELECT state FROM node_bootstrap_jobs WHERE id=?').bind(id).first()).state,'installed');
+  DB.close();
+});

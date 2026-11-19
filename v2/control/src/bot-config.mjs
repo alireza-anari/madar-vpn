@@ -3,6 +3,8 @@
 import {nodeUiRef,nodeFromRef} from './node-admin.mjs';
 import {issueTrialLink} from './node-auto.mjs';
 import {issueCarrierLink} from './carrier-subscription.mjs';
+import {enabled as adminE2eEnabled,listE2e,e2eAction} from './admin-e2e.mjs';
+import {directAction} from './admin-direct.mjs';
 import {frameMessage,faNumber,faStatus,shortCode,panelHeading} from './bot-ux.mjs';
 
 const HEX=/^[a-f0-9]{24}$/;
@@ -53,7 +55,9 @@ async function configHome(env,nowMs){
     '\n👤 اشتراک دارای اعتبار: '+faNumber(sub?.n??0)+
     '\n🔒 صدور کانفیگ واقعی: '+(real?'در صورت تأیید مسیرها':'غیرفعال تا تأیید سرویس')+
     '\n\nبرای کانفیگ آزمایشی سرور، مسیر اول را انتخاب کنید. لینک مشتری فقط برای اشتراک فعال با مسیرهای مستقل تأییدشده صادر می‌شود.',[
+    ...(env.ADMIN_DIRECT_ISSUE_ENABLED==='true'?[btn('➕ صدور کانفیگ جدید','direct:new'),btn('📋 کانفیگ‌های صادرشده','direct:list')]:[]),
     btn('🧪 صدور لینک تست سرور','trials:0'),
+    ...(adminE2eEnabled(env)?[btn('🔬 تست صدور واقعی UUID · ویژه مدیر','e2e:list')]:[]),
     btn('🔗 صدور لینک اشتراک فعال','subscriptions:0'),
   ]);
 }
@@ -160,6 +164,10 @@ async function subscriptionAction(env,ref,nowMs,issue){
 export async function adminConfigAction(env,e,nowMs=Date.now()){
   const key=e.key??'';
   if(key==='admin:configs'||key==='admin:configs:home')return configHome(env,nowMs);
+  if(key.startsWith('admin:configs:direct:'))return directAction(env,e,nowMs);
+  if(key==='admin:configs:e2e:list')return listE2e(env,e.actorId,nowMs);
+  const e2e=key.match(/^admin:configs:e2e:(view|start|status|link|end|revoke):([a-f0-9]{24})$/);
+  if(e2e)return e2eAction(env,e.actorId,e2e[1],e2e[2],nowMs);
   const list=key.match(/^admin:configs:(trials|subscriptions):([0-9]{1,4})$/);
   if(list)return list[1]==='trials'?trialList(env,e,Number(list[2])):
     subscriptionList(env,nowMs,Number(list[2]));

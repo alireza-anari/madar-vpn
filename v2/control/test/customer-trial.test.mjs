@@ -4,7 +4,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {readdirSync,readFileSync} from 'node:fs';
 import {resolveBotAction} from '../src/shop.mjs';
 import {botMenu} from '../src/bot-ux.mjs';
-import {wrapClientUuid} from '../src/subscription.mjs';
+import {wrapClientUuid,unwrapClientUuid,activeRoutes} from '../src/subscription.mjs';
 import {getTrialFeed} from '../src/node-auto.mjs';
 
 const KEY=btoa(String.fromCharCode(...new Uint8Array(32).fill(7)))
@@ -41,6 +41,7 @@ function fixture(){
 async function readyNode(raw,id,nowMs,{verified=true,lifecycle='ready'}={}){
   raw.prepare("INSERT INTO nodes(id,provider,region,lifecycle,user_limit,byte_limit) "+
     "VALUES(?,'Webdade','test',?,20,10737418240)").run(id,lifecycle);
+  raw.prepare("UPDATE nodes SET acked_revision=desired_revision WHERE id=?").run(id);
   raw.prepare(
     "INSERT INTO node_bootstrap_jobs(id,node_id,ip,owner_id,mode,state,created_ms,updated_ms) "+
     "VALUES(?,?,'198.51.100.2','100','fresh','installed',1,1)"
@@ -74,13 +75,27 @@ test('one Telegram account receives one one-hour link with both verified carrier
   assert.match(first.text,/تست یک‌ساعته شما فعال شد/);
   assert.equal(raw.prepare('SELECT COUNT(*) n FROM customer_trial_claims WHERE telegram_id=?').get('200').n,1);
   assert.equal(raw.prepare('SELECT COUNT(*) n FROM node_trial_links WHERE owner_id=?').get('200').n,1);
+  // A link alone is not a working config: server must first install this
+  // customer's own UUID on both REALITY listeners.
+  assert.equal((await getTrialFeed(new Request(url),env,now)).status,503);
+  const sub=raw.prepare("SELECT s.max_bytes,s.expires_at,c.ciphertext_b64,c.nonce_b64,c.key_version "+
+    "FROM subscriptions s JOIN subscription_credentials c ON c.subscription_id=s.id "+
+    "WHERE s.id='trial-200'").get();
+  assert.equal(sub.max_bytes,1073741824);
+  assert.equal(sub.expires_at,now+3600000);
+  const ownUuid=await unwrapClientUuid(sub,KEY);
+  assert.notEqual(ownUuid,UUID);
+  raw.prepare("INSERT INTO node_client_acks(node_id,subscription_id,revision,credential_sha256,observed_ms) "+
+    "VALUES(?,'trial-200',1,?,?)").run('test-customer-trial','a'.repeat(64),now);
+  const eligible=await activeRoutes(env.DB,'trial-200',now);
+  assert.equal(eligible.length,2,JSON.stringify(eligible));
   const feed=await getTrialFeed(new Request(url),env,now);
   assert.equal(feed.status,200);
   const lines=atob(await feed.text()).trim().split('\n');
   assert.equal(lines.length,2);
   assert.ok(lines.some(x=>x.includes(':443?')&&decodeURIComponent(x).includes('همراه اول')));
   assert.ok(lines.some(x=>x.includes(':8443?')&&decodeURIComponent(x).includes('ایرانسل')));
-  assert.ok(lines.every(x=>x.startsWith('vless://'+UUID+'@')));
+  assert.ok(lines.every(x=>x.startsWith('vless://'+ownUuid+'@')));
 
   const repeat=await resolveBotAction(env,event(200,'customer:trial',502),now+1000);
   assert.match(repeat.text,/قبلاً برای حساب شما صادر شده است/);

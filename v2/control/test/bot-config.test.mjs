@@ -123,6 +123,13 @@ test('one real carrier subscription link is issued only for active quota and two
   assert.equal(raw.prepare('SELECT COUNT(*) n FROM subscription_tokens').get().n,0);
   env.SUBSCRIPTION_API_ENABLED='true';
   env.SUBSCRIPTION_LINKS_ENABLED='true';
+  // Field-ready listeners with only the installer trial UUID MUST NOT
+  // generate a paid customer configuration.
+  const uninstalled=await resolveBotAction(env,event(100,'admin:configs:issue:'+token,3015),now);
+  assert.match(uninstalled.text,/کانفیگ صادر نشد/);
+  raw.prepare("UPDATE nodes SET acked_revision=desired_revision WHERE id=?").run(id);
+  raw.prepare("INSERT INTO node_client_acks(node_id,subscription_id,revision,credential_sha256,observed_ms) "+
+    "VALUES(?,'active-sub',1,?,?)").run(id,'a'.repeat(64),now);
   const issued=await resolveBotAction(env,event(100,'admin:configs:issue:'+token,302),now);
   const url=issued.text.match(/https:\/\/v2\.example\.test\/s\/[a-zA-Z0-9_-]{43}/)?.[0];
   assert.ok(url);
