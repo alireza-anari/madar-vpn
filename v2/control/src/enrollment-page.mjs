@@ -83,7 +83,11 @@ async function restoreJob(){
     el('install').disabled=false;
     return status('بررسی قبلی بازیابی شد. فقط پس از تطبیق اثر انگشت، نصب را ادامه بده.');
   }
-  if(job.kind==='v2-install'&&job.state==='failed'&&!job.diagnostic&&job.fingerprint){
+  if(job.cleanup&&job.state==='failed'){
+    installedProbe=false;
+    return status('پاک‌سازی سرور کامل نشده است. سرویس ممکن است نیمه‌پاک شده باشد؛ بدون بررسی وضعیت VPS، نصب مجدد را آغاز نکن.');
+  }
+  if(job.kind==='v2-install'&&job.state==='failed'&&!job.diagnostic&&!job.cleanup&&job.fingerprint){
     showDiagnoseForInstall(job.id,job.fingerprint,job.spec.nodeId);
     return status('نصب قبلی ناموفق بود: '+('خطای نامشخص در نصب')+'. برای بررسی بدون نصب دوباره اطلاعات ورود را وارد کن.');
   }
@@ -223,7 +227,7 @@ el('resetInstalled').onclick=async()=>{
     const consent=prompt('پاک‌سازی V2 روی سرور '+nodeId+' غیرقابل بازگشت است. '+
       (count?'تعداد '+count+' سفارش آزمایشیِ نصب‌نشده لغو می‌شود. ':'')+
       'فقط فایل‌ها و سرویس‌های اختصاصی مدار حذف می‌شوند. برای تأیید، نام سرور را دقیق وارد کن:');
-    if(consent!==nodeId){status('پاک‌سازی لغو شد؛ هیچ فرمانی اجرا نشد.');return;}
+    if(consent!==nodeId){busy=false;el('resetInstalled').disabled=false;status('پاک‌سازی لغو شد؛ هیچ فرمانی اجرا نشد.');return;}
     credentials=el('method').value==='password'
       ?{method:'password',password:el('password').value}
       :{method:'key',key:await el('keyfile').files[0]?.text(),passphrase:el('password').value};
