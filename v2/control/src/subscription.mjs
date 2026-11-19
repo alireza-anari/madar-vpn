@@ -257,7 +257,7 @@ export async function wrapClientUuid(uuid,keyText) {
 export async function issueActiveToken(env,subId,nowMs=Date.now()) {
   if(!env.DB || !env.SUBSCRIPTION_CREDENTIAL_KEY || typeof subId!=='string' || subId.length>80)
     return null;
-  if(env.SUBSCRIPTION_API_ENABLED!=='true' && env.SUBSCRIPTION_API_ENABLED_SECRET!=='true' &&
+  if(!featureEnabled(env,'SUBSCRIPTION_API_ENABLED') &&
      !await isAdminE2eSubscription(env,subId,nowMs)&&
      !await isAdminDirectSubscription(env,subId,nowMs))return null;
   const row=await env.DB.prepare(
