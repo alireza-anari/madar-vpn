@@ -53,7 +53,7 @@ test('positive client installation ACK or still-active trial blocks VPS removal'
     "VALUES(?,?,?,?)").run('a'.repeat(64),NODE,OWNER,NOW+60000);
   assert.equal((await resetEligibility(db,OWNER,NODE,NOW)).code,'NODE_HAS_LIVE_TRIAL');
   raw.exec("DELETE FROM node_trial_links");
-  raw.prepare("INSERT INTO node_client_acks(node_id,subscription_id,revision,uuid_sha256,observed_ms) "+
+  raw.prepare("INSERT INTO node_client_acks(node_id,subscription_id,revision,credential_sha256,observed_ms) "+
     "VALUES(?, 'sub-pending',1,?,?)").run(NODE,'b'.repeat(64),NOW);
   assert.equal((await resetEligibility(db,OWNER,NODE,NOW)).code,'NODE_HAS_ACTIVE_OR_USED_ACCOUNTS');
   raw.close();
