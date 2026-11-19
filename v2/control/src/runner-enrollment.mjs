@@ -27,7 +27,7 @@ export async function dispatchGithubJob(env,jobId,send=fetch) {
       headers:{'authorization':'Bearer '+env.GITHUB_ACTIONS_DISPATCH_TOKEN,
         'accept':'application/vnd.github+json','content-type':'application/json',
         'x-github-api-version':'2022-11-28','user-agent':'madar-v2-staging'},
-      body:JSON.stringify({ref:'rewrite/madar-v2-20261110',inputs:{job_id:jobId}}),
+      body:JSON.stringify({ref:'release/madar-v2-single-20261119',inputs:{job_id:jobId}}),
       signal:AbortSignal.timeout(10000),
     });
     return r.status===204;
