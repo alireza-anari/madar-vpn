@@ -1,5 +1,6 @@
 import {findAppSession} from './android-account.mjs';
 import {nodeUiRef} from './node-admin.mjs';
+import {enabled as featureEnabled} from './feature-flags.mjs';
 /** Revocable token-authenticated V2 subscription API, no bearer tokens in URLs.
  * Delivers structured VLESS route metadata, never server private keys.
  */
@@ -175,7 +176,7 @@ export async function isAdminDirectToken(env,token,nowMs=Date.now()){
 
 export async function getSubscription(request,env,nowMs=Date.now()) {
   if(request.method!=='GET') return json({error:'method_not_allowed'},405);
-  const generalApi=env.SUBSCRIPTION_API_ENABLED==='true'||env.SUBSCRIPTION_API_ENABLED_SECRET==='true';
+  const generalApi=featureEnabled(env,'SUBSCRIPTION_API_ENABLED');
   if(!generalApi&&env.ADMIN_E2E_TEST_ENABLED!=='true'&&env.ADMIN_DIRECT_ISSUE_ENABLED!=='true')
     return json({error:'service_not_ready'},503);
   if(!env.DB || !env.SUBSCRIPTION_CREDENTIAL_KEY)
