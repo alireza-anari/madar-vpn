@@ -263,7 +263,12 @@ class Runtime:
         try:
             self.sample(ledger,now_ms)
             ledger.reconcile(policy['clients'],now_ms)
-            active=ledger.active(now_ms)
+            # LocalLedger rows use "id", while the signed client policy and
+            # Xray/ACK compiler require "subscription_id". The first new
+            # commercial account must be normalized BEFORE apply/ACK; otherwise
+            # a KeyError strands the order in provisioning forever.
+            active=[{'subscription_id':row['id'],'uuid':row['uuid']}
+                    for row in ledger.active(now_ms)]
             self.apply(ledger,active)
             pid=xray_pid(self.runner)
             store_marker(self.state,{'mode':'commercial','pid':pid,
