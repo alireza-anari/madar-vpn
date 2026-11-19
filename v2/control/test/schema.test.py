@@ -240,5 +240,25 @@ class SchemaTests(unittest.TestCase):
             WHERE subscription_id='sub-1'""").fetchone()[0]
         self.assertEqual(count,0)
 
+    def test_privileged_admin_e2e_order_does_not_block_retail_checkout(self):
+        self.db.execute("INSERT INTO customers(telegram_id) VALUES ('101')")
+        self.db.execute("""INSERT INTO plans(id,title_fa,title_en,price_amount,
+            price_currency,quota_bytes,duration_days) VALUES
+            ('test','تست','Test',0,'IRT',100,1),
+            ('retail','ماهانه','Monthly',1000,'IRT',200,30)""")
+        self.db.execute("""INSERT INTO orders(id,customer_telegram_id,plan_id,
+            idempotency_key,quoted_amount,quoted_currency,state)
+            VALUES ('e2e-old','101','test','admin-e2e:old',0,'IRT','provisioning')""")
+        self.db.execute("""INSERT INTO orders(id,customer_telegram_id,plan_id,
+            idempotency_key,quoted_amount,quoted_currency,state)
+            VALUES ('retail-one','101','retail','telegram-update:123',1000,'IRT','pending')""")
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute("""INSERT INTO orders(id,customer_telegram_id,plan_id,
+                idempotency_key,quoted_amount,quoted_currency,state)
+                VALUES ('retail-two','101','retail','telegram-update:124',1000,'IRT','pending')""")
+        self.assertEqual(self.db.execute(
+            "SELECT COUNT(*) FROM orders WHERE customer_telegram_id='101'").fetchone()[0],2)
+
+
 if __name__=='__main__':
     unittest.main()
