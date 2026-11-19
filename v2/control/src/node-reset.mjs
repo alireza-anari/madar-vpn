@@ -41,7 +41,7 @@ export async function resetEligibility(db,owner,nodeId,nowMs){
   return {ok:true,node,willCancelPending:pending,code:'RESET_ALLOWED'};
 }
 
-export async function retireCleanedNode(db,owner,nodeId,jobId,nowMs){
+export async function retireCleanedNode(db,owner,nodeId,jobId,nowMs,completion){
   const gate=await resetEligibility(db,owner,nodeId,nowMs);
   if(!gate.ok||gate.node.lifecycle!=='quarantined')
     return false;
@@ -71,8 +71,11 @@ export async function retireCleanedNode(db,owner,nodeId,jobId,nowMs){
       "VALUES(?,?, 'node',?,'v2-owner-remote-reset-complete')")
       .bind('v2reset:'+jobId,owner,nodeId),
   ];
+  // Mark the SSH job completed in the SAME transaction as node retirement.
+  if(!completion)return false;
+  rows.push(completion);
   try{
-    await db.batch(rows);
-    return true;
+    const result=await db.batch(rows);
+    return Number(result.at(-1)?.meta?.changes)===1;
   }catch{return false;}
 }
