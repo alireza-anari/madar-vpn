@@ -258,3 +258,8 @@ class ScopedResetRunnerTests(unittest.TestCase):
         self.assertEqual(
             consumer.safe_failure_code(consumer.RemoteCleanupError('SECRET'),'v2-install','cleanup'),
             'RESET_BLOCKED')
+        self.assertEqual(consumer.safe_failure_code(
+            consumer.RemoteCleanupError('RESET_PREFLIGHT_BLOCKED'),'v2-install','cleanup'),
+            'RESET_PREFLIGHT_BLOCKED')
+        with self.assertRaisesRegex(consumer.RemoteCleanupError,'RESET_PREFLIGHT_BLOCKED'):
+            consumer.cleanup_node(Transport(b'{"status":"RESET_PREFLIGHT_BLOCKED"}'),job,lambda:None)
