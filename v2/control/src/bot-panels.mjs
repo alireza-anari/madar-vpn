@@ -21,10 +21,10 @@ async function count(db,sql,...args) {
   return Number(x?.n??0);
 }
 
-export async function adminDashboard(env,e) {
+export async function adminDashboard(env,e,nowMs=Date.now()) {
   if(!idAdmin(env,e.actorId))return adminPanel('⛔ دسترسی به این بخش مجاز نیست.',[],e.locale);
   const db=env.DB;
-  const [customers,orders,receipts,tickets,nodes,installed,ready,subs]=await Promise.all([
+  const [customers,orders,receipts,tickets,nodes,installed,fieldAccepted,ready,subs]=await Promise.all([
     count(db,'SELECT COUNT(*) AS n FROM customers'),
     count(db,"SELECT COUNT(*) AS n FROM orders WHERE state IN ('pending','receipt_submitted','approved','provisioning')"),
     count(db,"SELECT COUNT(*) AS n FROM orders WHERE state='receipt_submitted'"),
@@ -32,6 +32,16 @@ export async function adminDashboard(env,e) {
     count(db,'SELECT COUNT(*) AS n FROM nodes'),
     count(db,"SELECT COUNT(*) AS n FROM node_bootstrap_jobs WHERE state='installed'"),
     count(db,"SELECT COUNT(*) AS n FROM nodes WHERE lifecycle='ready'"),
+    // Field acceptance and current runtime health are different gates.
+    count(db,"SELECT COUNT(*) AS n FROM nodes n WHERE n.lifecycle='ready' "+
+      "AND n.desired_revision=n.acked_revision "+
+      "AND EXISTS (SELECT 1 FROM node_bootstrap_jobs j "+
+      "WHERE j.node_id=n.id AND j.state='installed') "+
+      "AND EXISTS (SELECT 1 FROM node_health h WHERE h.node_id=n.id "+
+      "AND h.revision=n.desired_revision AND h.xray_healthy=1 AND h.stats_healthy=1 "+
+      "AND h.observed_ms BETWEEN ? AND ?) "+
+      "AND (SELECT COUNT(*) FROM node_allocations a WHERE a.node_id=n.id "+
+      "AND a.state IN ('reserved','active'))<n.user_limit",nowMs-600000,nowMs),
     count(db,"SELECT COUNT(*) AS n FROM subscriptions WHERE state='active'")
   ]);
   const salesReady=env.SHOP_ENABLED==='true'&&env.PROVISIONING_ENABLED==='true'&&
@@ -44,7 +54,7 @@ export async function adminDashboard(env,e) {
     :tickets>0
       ?'💬 '+faNumber(tickets)+' درخواست پشتیبانی باز'
       :ready===0
-        ?'⚠️ سرور آماده وجود ندارد'
+        ?fieldAccepted>0?'⚠️ سرور تأییدشده، گزارش سلامت تازه یا ظرفیت صدور ندارد':'⚠️ سرور آماده وجود ندارد'
         :'✅ مورد فوری در صف نیست';
   const body=[
     panelHeading('📊','پیشخوان مدیریت','خلاصه وضعیت مدار'),
@@ -57,7 +67,8 @@ export async function adminDashboard(env,e) {
     '',
     '🖥 کل سرورها: '+faNumber(nodes),
     '🛠 نصب‌شده: '+faNumber(installed),
-    '✅ وضعیت آماده: '+faNumber(ready),
+    '✅ آماده برای صدور: '+faNumber(ready),
+    '🧪 تأیید اولیه: '+faNumber(fieldAccepted),
     '',
     '🛒 فروش عمومی: '+(salesReady?'در حال پیکربندی':'غیرفعال'),
     actionNeeded
