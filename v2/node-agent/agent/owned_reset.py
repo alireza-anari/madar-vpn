@@ -209,16 +209,25 @@ def reset(node_id,public_ip,*,apply=False,etc=ETC,app=APP,data=DATA,
         return 'RESET_PREFLIGHT_OK'
     for service in STOP_SEQUENCE:
         if units/service in paths:
-            completed=runner(['/usr/bin/systemctl','disable','--now',service],
+            # The watchdog oneshot is static (no [Install] section): attempting
+            # to "disable" it can fail even on an otherwise healthy system.
+            # Stop first, then disable only the enabled units/timer.
+            stopped=runner(['/usr/bin/systemctl','stop',service],
                 check=False,timeout=25,stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-            if completed.returncode!=0:
+            if stopped.returncode!=0:
                 raise ResetBlocked('V2_SYSTEMD_STOP_FAILED')
             active=runner(['/usr/bin/systemctl','is-active','--quiet',service],
                 check=False,timeout=5,stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
             if active.returncode==0:
                 raise ResetBlocked('V2_SYSTEMD_STILL_ACTIVE')
+            if service!='madar-v2-runtime-watchdog.service':
+                disabled=runner(['/usr/bin/systemctl','disable',service],
+                    check=False,timeout=20,stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+                if disabled.returncode!=0:
+                    raise ResetBlocked('V2_SYSTEMD_DISABLE_FAILED')
     # Preflight ensured every path belongs to the disposable V2 test node.
     for item in paths:
         item.unlink()
