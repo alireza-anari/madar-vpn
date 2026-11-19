@@ -105,6 +105,42 @@ def ports_listening():
     return True
 
 
+def wait_for_xray_readiness(runner=subprocess.run,*,timeout=6.0,interval=0.25,
+                            monotonic=time.monotonic,sleep=time.sleep):
+    """Bounded readiness gate for systemd Type=simple Xray startup.
+
+    A successful systemctl start is NOT proof that TCP listeners and the
+    StatsService are ready. Never acknowledge a customer before all three
+    listener ports, the stats API, and a single stable live PID pass.
+    External watchdog and quota enforcement remain enabled.
+    """
+    if not (0 < timeout <= 10 and 0 < interval <= 1):
+        raise ValueError('INVALID_XRAY_READINESS_WINDOW')
+    deadline=monotonic()+timeout
+    first_pid=None
+    while True:
+        pid=xray_pid(runner)
+        if first_pid is None:
+            first_pid=pid
+        if pid!=first_pid:
+            raise ReconcileError('unrecognized Xray process generation')
+        if ports_listening():
+            try:
+                parse_stats(stats_snapshot(XRAY,runner),[])
+            except (OSError,subprocess.CalledProcessError,subprocess.TimeoutExpired):
+                # The loopback stats API can briefly lag the TCP listeners.
+                # A malformed or inconsistent response is NOT retryable.
+                pass
+            else:
+                if xray_pid(runner)!=first_pid:
+                    raise ReconcileError('unrecognized Xray process generation')
+                return first_pid
+        remaining=deadline-monotonic()
+        if remaining<=0:
+            raise ReconcileError('dual REALITY and stats listeners not active')
+        sleep(min(interval,remaining))
+
+
 def store_marker(root,document):
     path=pathlib.Path(root)/HEARTBEAT
     data=json.dumps(document,separators=(',',':'),sort_keys=True)
@@ -193,10 +229,10 @@ class Runtime:
                     check=True,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,timeout=20)
                 ledger.epoch_reset()
-        if not ports_listening():
-            raise ReconcileError('dual REALITY and stats listeners not active')
-        # Verify the API endpoint itself BEFORE acknowledging any clients.
-        parse_stats(stats_snapshot(XRAY,self.runner),[])
+        # Type=simple returns before sockets and StatsService are necessarily
+        # ready. Do not race immediate readiness against the Xray startup.
+        # The signed policy lease and the independent watchdog are unchanged.
+        wait_for_xray_readiness(self.runner)
         ledger.mark_installed([x['subscription_id'] for x in active])
         return changed
     def _simple_runner(self,args,timeout=20):
