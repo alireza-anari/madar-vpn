@@ -228,7 +228,10 @@ def reset(node_id,public_ip,*,apply=False,etc=ETC,app=APP,data=DATA,
                     stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
                 if disabled.returncode!=0:
                     raise ResetBlocked('V2_SYSTEMD_DISABLE_FAILED')
-    # Preflight ensured every path belongs to the disposable V2 test node.
+    # The agent could have been reconciling a customer at the first check.
+    # Re-read Xray users and the durable ledger AFTER all V2 services stop.
+    # A newly installed UUID or incremented counter now refuses deletion.
+    preflight(node_id,public_ip,etc=etc,app=app,data=data,units=units)
     for item in paths:
         item.unlink()
     if drop:
