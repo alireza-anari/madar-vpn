@@ -104,7 +104,7 @@ async function pendingOrder(db,id) {
   return db.prepare(
     "SELECT id,state,quoted_amount,quoted_currency FROM orders " +
     "WHERE customer_telegram_id=? AND state IN ('pending','receipt_submitted','approved','provisioning') " +
-    "ORDER BY created_at DESC LIMIT 1"
+    "AND substr(idempotency_key,1,7) <> 'direct:' ORDER BY created_at DESC LIMIT 1"
   ).bind(id).first();
 }
 

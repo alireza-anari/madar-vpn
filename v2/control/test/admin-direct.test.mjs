@@ -65,7 +65,7 @@ async function signed(method,path,data=null){
     ...(method==='POST'?{body}:{})
   });
 }
-async function wizard(env){
+async function wizard(env,gb=10,days=30){
   const start=await resolveBotAction(env,event(ADMIN,'admin:configs:direct:new'),NOW);
   assert.match(start.text,/نام یا برچسب مشتری/);
   const name=await resolveBotAction(env,event(ADMIN,'','علی رضایی'),NOW);
@@ -73,9 +73,9 @@ async function wizard(env){
   const ref=await nodeUiRef(NODE);
   const server=await resolveBotAction(env,event(ADMIN,'admin:configs:direct:node:'+ref),NOW);
   assert.match(server.text,/حجم اشتراک/);
-  const volume=await resolveBotAction(env,event(ADMIN,'admin:configs:direct:gb:10'),NOW);
+  const volume=await resolveBotAction(env,event(ADMIN,'admin:configs:direct:gb:'+gb),NOW);
   assert.match(volume.text,/مدت اعتبار/);
-  const duration=await resolveBotAction(env,event(ADMIN,'admin:configs:direct:days:30'),NOW);
+  const duration=await resolveBotAction(env,event(ADMIN,'admin:configs:direct:days:'+days),NOW);
   assert.match(duration.text,/بررسی نهایی/);
   assert.match(duration.text,/علی رضایی/);
   assert.match(duration.text,/Amazon-118|direct-node-01/);
@@ -167,5 +167,19 @@ test('no ready signed-health node means no direct UUID is reserved; user never r
   const rows=await resolveBotAction(env,event(ADMIN,'admin:configs:direct:node:'+await nodeUiRef(NODE)),NOW);
   assert.match(rows.text,/سرور آماده نیست/);
   assert.equal(raw.prepare('SELECT COUNT(*) n FROM orders').get().n,0);
+  raw.close();
+});
+
+test('an existing checkout cannot block admin direct issuance or permit a second checkout',async()=>{
+  const {raw,env}=setup();
+  raw.prepare("INSERT INTO plans(id,title_fa,title_en,price_amount,price_currency,quota_bytes,duration_days) "+
+    "VALUES('existing','آزمون','Test',0,'IRT',1073741824,1)").run();
+  const order=raw.prepare("INSERT INTO orders(id,customer_telegram_id,plan_id,idempotency_key,quoted_amount,quoted_currency,state) "+
+    "VALUES(?,?,'existing',?,0,'IRT','provisioning')");
+  order.run('old-test',ADMIN,'old-test');
+  assert.match((await wizard(env,200,90)).text,/در انتظار تأیید عامل/);
+  assert.equal(raw.prepare('SELECT quota_bytes FROM admin_direct_issues').get().quota_bytes,200*1073741824);
+  assert.throws(()=>order.run('second-checkout',ADMIN,'checkout'));
+  assert.equal(raw.prepare("SELECT state FROM orders WHERE id='old-test'").get().state,'provisioning');
   raw.close();
 });
