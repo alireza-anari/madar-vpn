@@ -121,7 +121,37 @@ except Exception:
 print(json.dumps({'code':code},separators=(',',':')))
 '''
 REMOTE_RUNTIME_DIAG=r'''
-import json,subprocess
+import json,os,pathlib,stat,subprocess,tempfile
+def write_unit(path,text,mode):
+ fd,name=tempfile.mkstemp(prefix='.madar-runtime-',dir=path.parent)
+ try:
+  with os.fdopen(fd,'w',encoding='utf-8') as out:
+   os.fchmod(out.fileno(),mode)
+   out.write(text)
+   out.flush()
+   os.fsync(out.fileno())
+  os.replace(name,path)
+ finally:
+  pathlib.Path(name).unlink(missing_ok=True)
+def remove_legacy_dependency(unit):
+ path=pathlib.Path('/etc/systemd/system')/unit
+ info=path.lstat()
+ if not stat.S_ISREG(info.st_mode) or info.st_uid!=0 or info.st_mode&0o022 or info.st_size>8192:
+  raise OSError('Unexpected Madar unit file')
+ text=path.read_text(encoding='utf-8')
+ legacy='After=network-online.target madar-v2-xray.service\nRequires=madar-v2-xray.service\n'
+ if legacy not in text:return
+ if ('Description=Madar V2 isolated node quota and client reconciler\n' not in text or
+     'ExecStart=/usr/bin/python3 -m agent.runtime ' not in text or text.count(legacy)!=1):
+  raise OSError('Unexpected Madar unit content')
+ mode=stat.S_IMODE(info.st_mode)
+ write_unit(path,text.replace(legacy,'After=network-online.target\n'),mode)
+ try:
+  subprocess.run(['/usr/bin/systemctl','daemon-reload'],timeout=8,check=True)
+ except (OSError,subprocess.SubprocessError):
+  write_unit(path,text,mode)
+  subprocess.run(['/usr/bin/systemctl','daemon-reload'],timeout=8,check=True)
+  raise
 def active(unit):
  return subprocess.run(['/usr/bin/systemctl','is-active','--quiet',unit],timeout=5).returncode==0
 runtime='madar-v2-runtime.service'
@@ -130,6 +160,7 @@ try:
  if not active(runtime):
   code='DIAG_RUNTIME_DOWN'
   if START_RUNTIME:
+   remove_legacy_dependency(runtime)
    result=subprocess.run(['/usr/bin/systemctl','start',runtime],timeout=18)
    code='DIAG_RUNTIME_STARTED' if result.returncode==0 and active(runtime) else 'DIAG_RUNTIME_START_FAILED'
  else:
@@ -154,7 +185,7 @@ def diagnose(transport,check,runtime=False,start=False):
     code=base64.b64encode(script.encode()).decode()
     cmd='sudo -n python3 -c '+shlex.quote('import base64;exec(base64.b64decode('+repr(code)+'))')
     check()
-    out=transport.run(cmd,timeout=35)
+    out=transport.run(cmd,timeout=50 if runtime and start else 35)
     check()
     result=json.loads(out)
     if not isinstance(result,dict) or set(result)!={'code'} or result['code'] not in DIAG_CODES:

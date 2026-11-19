@@ -45,8 +45,7 @@ Environment=PYTHONPATH=/opt/madar-v2/runtime
     unit="""[Unit]
 Description=Madar V2 isolated node quota and client reconciler
 Wants=network-online.target
-After=network-online.target madar-v2-xray.service
-Requires=madar-v2-xray.service
+After=network-online.target
 
 [Service]
 Type=simple

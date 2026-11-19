@@ -60,6 +60,7 @@ class RuntimeSafetyTests(unittest.TestCase):
         self.assertIn('ExecStart=/usr/bin/python3 -m agent.runtime',service)
         self.assertIn('NoNewPrivileges=yes',service)
         self.assertIn('UMask=0077',service)
+        self.assertNotIn('madar-v2-xray.service',service)
         timer=units['madar-v2-runtime-watchdog.timer']
         self.assertIn('OnUnitActiveSec=15s',timer)
         self.assertNotIn('madar-sales-node',service)
