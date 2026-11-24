@@ -5,6 +5,7 @@ No shell commands, remote code downloads, or changes to V1 Xray services.
 A *signed* manifest and policy are required before customer activation.
 """
 import argparse
+from contextlib import contextmanager
 import fcntl
 import hashlib
 import json
@@ -183,7 +184,37 @@ def stop_owned_xray(runner=subprocess.run):
         stderr=subprocess.DEVNULL,check=False,timeout=15)
 
 
+@contextmanager
+def transition_guard(root,timeout=2):
+    """Serialize watchdog decisions and startup authorization; never wait forever."""
+    path=pathlib.Path(root)/'lease-transition.lock'
+    fd=os.open(path,os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW,0o600)
+    acquired=False
+    try:
+        deadline=time.monotonic()+timeout
+        while True:
+            try:
+                fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+                acquired=True
+                break
+            except BlockingIOError:
+                if time.monotonic()>=deadline:
+                    break
+                time.sleep(0.05)
+        yield acquired
+    finally:
+        if acquired:
+            fcntl.flock(fd,fcntl.LOCK_UN)
+        os.close(fd)
+
+
 def watchdog(root=DEFAULT_STATE,now_ms=None,stop=stop_owned_xray):
+    # A hung agent or lock cannot disable the independent watchdog.
+    with transition_guard(root):
+        return _watchdog_check(root,now_ms,stop)
+
+
+def _watchdog_check(root,now_ms,stop):
     """Standalone systemd timer stops Xray if a COMMERCIAL agent dies."""
     now_ms=int(time.time()*1000) if now_ms is None else now_ms
     doc=read_marker(root)
@@ -191,7 +222,7 @@ def watchdog(root=DEFAULT_STATE,now_ms=None,stop=stop_owned_xray):
         return False
     stamp=doc.get('checked_ms')
     expires=doc.get('policy_until_ms')
-    if doc.get('phase')=='lease_stopped' or type(stamp) is not int or type(expires) is not int or expires<=now_ms or stamp>now_ms+10000 or now_ms-stamp>45000:
+    if doc.get('phase') not in (None,'starting') or type(stamp) is not int or type(expires) is not int or expires<=now_ms or stamp>now_ms+10000 or now_ms-stamp>45000:
         stop()
         return False
     return True
@@ -297,6 +328,7 @@ class Runtime:
                     'policy_until_ms':old['policy_until_ms'],
                     'checked_ms':old['checked_ms'],'stopped_ms':int(self.clock()*1000),
                     'exit_monotonic':after['ExecMainExitTimestampMonotonic'],
+                    'boot_id':pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
                     'checkpoint':checkpoint,'unobserved_tail':'unknown'}
             with ledger.db:
                 encoded=json.dumps(ticket,sort_keys=True,separators=(',',':'))
@@ -319,7 +351,8 @@ class Runtime:
         if (not isinstance(ticket,dict) or ticket.get('phase')!='stopped' or
             not old or old.get('mode')!='commercial' or old.get('phase')!='lease_stopped' or
             any(old.get(k)!=ticket.get(k) for k in ('pid','checked_ms','policy_until_ms')) or
-            ledger_checkpoint(ledger)!=ticket.get('checkpoint')):
+            ledger_checkpoint(ledger)!=ticket.get('checkpoint') or
+            ticket.get('boot_id')!=pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip()):
             raise ReconcileError('lease recovery requires manual review')
         def verify_stop():
             evidence=service_generation(self.runner)
@@ -336,16 +369,22 @@ class Runtime:
         until=policy['expires_at']*1000
         if until-now_ms<RECOVERY_MIN_LEASE_MS:
             raise ReconcileError('lease recovery needs fresh policy')
-        verify_stop()
-        with ledger.db:
-            updated={**ticket,'phase':'starting'}
-            ledger.db.execute('UPDATE meta SET value=? WHERE key=?',
-                              (json.dumps(updated,sort_keys=True),LEASE_RECOVERY_KEY))
-            ledger.db.execute('UPDATE accounts SET counter=0,installed=0')
-        # This is a startup authorization from the verified policy, NOT
-        # live health. The watchdog still enforces the signed deadline.
-        store_marker(self.state,{'mode':'commercial','phase':'starting','pid':0,
-                                 'checked_ms':now_ms,'policy_until_ms':until})
+        with transition_guard(self.state) as acquired:
+            if not acquired:
+                raise ReconcileError('lease recovery needs fresh policy')
+            verify_stop()
+            now_ms=int(self.clock()*1000)
+            if until-now_ms<RECOVERY_MIN_LEASE_MS:
+                raise ReconcileError('lease recovery needs fresh policy')
+            with ledger.db:
+                updated={**ticket,'phase':'starting'}
+                ledger.db.execute('UPDATE meta SET value=? WHERE key=?',
+                                  (json.dumps(updated,sort_keys=True),LEASE_RECOVERY_KEY))
+                ledger.db.execute('UPDATE accounts SET counter=0,installed=0')
+            # This is a startup authorization from the verified policy, NOT
+            # live health. The watchdog still enforces the signed deadline.
+            store_marker(self.state,{'mode':'commercial','phase':'starting','pid':0,
+                                     'checked_ms':now_ms,'policy_until_ms':until})
         return now_ms
 
     def apply(self,ledger,active):
@@ -458,6 +497,9 @@ class Runtime:
             # a KeyError strands the order in provisioning forever.
             active=[{'subscription_id':row['id'],'uuid':row['uuid']}
                     for row in ledger.active(now_ms)]
+            if int(self.clock()*1000)>=policy['expires_at']*1000:
+                stop_owned_xray()
+                raise ReconcileError('signed policy lease expired')
             self.apply(ledger,active)
             pid=xray_pid(self.runner)
             now_ms=int(self.clock()*1000)
@@ -483,7 +525,8 @@ class Runtime:
         except Exception:
             # The pending ticket stays durable if recovery was interrupted.
             # Do not leave an unverified process running.
-            if recovering or (recovery_ticket(ledger) or {}).get('phase')=='starting':
+            pending=recovery_ticket(ledger)
+            if recovering or (isinstance(pending,dict) and pending.get('phase')=='starting'):
                 stop_owned_xray()
             raise
         finally:
