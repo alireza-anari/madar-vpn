@@ -33,6 +33,12 @@ DEFAULT_ROOT=pathlib.Path('/etc/madar-v2')
 DEFAULT_STATE=pathlib.Path('/var/lib/madar-v2/runtime')
 HEARTBEAT='heartbeat.json'
 MAX_STATS=1048576
+LEASE_RECOVERY_KEY='lease_recovery_pending'
+# Stop slightly early when renewal is unavailable, rather than wait for
+# the independent watchdog to race the final local accounting checkpoint.
+LEASE_STOP_MARGIN_MS=5000
+LEASE_CHECKPOINT_MAX_AGE_MS=10000
+RECOVERY_MIN_LEASE_MS=40000
 # Only enumerated diagnostic codes are written to systemd journal.
 # Never emit raw remote response bodies, UUIDs, HMACs, paths or secrets.
 PUBLIC_RUNTIME_CODES={
@@ -44,6 +50,8 @@ PUBLIC_RUNTIME_CODES={
     'client activation not acknowledged':'CLIENT_ACK_REJECTED',
     'revocation not acknowledged':'REVOCATION_ACK_REJECTED',
     'usage not acknowledged':'USAGE_ACK_REJECTED',
+    'lease recovery requires manual review':'LEASE_RECOVERY_REVIEW',
+    'lease recovery needs fresh policy':'LEASE_RECOVERY_FRESH_POLICY',
 }
 
 def runtime_diagnostic_code(error):
@@ -144,12 +152,22 @@ def wait_for_xray_readiness(runner=subprocess.run,*,timeout=6.0,interval=0.25,
 def store_marker(root,document):
     path=pathlib.Path(root)/HEARTBEAT
     data=json.dumps(document,separators=(',',':'),sort_keys=True)
-    fd=os.open(path,os.O_CREAT|os.O_WRONLY|os.O_TRUNC|os.O_NOFOLLOW,0o600)
-    with os.fdopen(fd,'w',encoding='utf-8') as f:
-        os.fchmod(f.fileno(),0o600)
-        f.write(data)
-        f.flush()
-        os.fsync(f.fileno())
+    # The independent watchdog must never observe a partially written marker.
+    fd,name=tempfile.mkstemp(prefix='.heartbeat-',dir=path.parent)
+    try:
+        with os.fdopen(fd,'w',encoding='utf-8') as f:
+            os.fchmod(f.fileno(),0o600)
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(name,path)
+        directory=os.open(path.parent,os.O_RDONLY|os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        pathlib.Path(name).unlink(missing_ok=True)
 
 
 def read_marker(root):
@@ -173,10 +191,44 @@ def watchdog(root=DEFAULT_STATE,now_ms=None,stop=stop_owned_xray):
         return False
     stamp=doc.get('checked_ms')
     expires=doc.get('policy_until_ms')
-    if type(stamp) is not int or type(expires) is not int or expires<=now_ms or stamp>now_ms+10000 or now_ms-stamp>45000:
+    if doc.get('phase')=='lease_stopped' or type(stamp) is not int or type(expires) is not int or expires<=now_ms or stamp>now_ms+10000 or now_ms-stamp>45000:
         stop()
         return False
     return True
+
+
+def service_generation(runner=subprocess.run):
+    """Read systemd evidence, including the last executed PID and exit time."""
+    fields=('ActiveState','MainPID','ExecMainPID','ExecMainCode',
+            'ExecMainStatus','ExecMainExitTimestampMonotonic')
+    args=['/usr/bin/systemctl','show','--no-pager',XRAY_UNIT]
+    for field in fields:
+        args+=['-p',field]
+    result=runner(args,capture_output=True,text=True,timeout=5,check=True)
+    values=dict(line.split('=',1) for line in result.stdout.splitlines() if '=' in line)
+    if any(field not in values for field in fields):
+        raise ReconcileError('lease recovery requires manual review')
+    return {field:values[field] for field in fields}
+
+
+def clean_stopped_generation(evidence,pid):
+    return (evidence.get('ActiveState')=='inactive' and
+            evidence.get('MainPID')=='0' and evidence.get('ExecMainPID')==str(pid) and
+            evidence.get('ExecMainCode')=='1' and evidence.get('ExecMainStatus')=='0' and
+            evidence.get('ExecMainExitTimestampMonotonic','').isdigit() and
+            int(evidence['ExecMainExitTimestampMonotonic'])>0)
+
+
+def ledger_checkpoint(ledger):
+    # Allow acknowledged sequence to advance during retry, but no account,
+    # quota, UUID, installation, absolute-counter or total change.
+    rows=[{k:v for k,v in row.items() if k!='reported_seq'} for row in ledger.all()]
+    return hashlib.sha256(json.dumps(rows,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+
+
+def recovery_ticket(ledger):
+    row=ledger.db.execute('SELECT value FROM meta WHERE key=?',(LEASE_RECOVERY_KEY,)).fetchone()
+    return json.loads(row[0]) if row else None
 
 
 class Runtime:
@@ -211,6 +263,91 @@ class Runtime:
         if xray_pid(self.runner)!=pid:
             raise ReconcileError('unrecognized Xray process generation')
         ledger.observe(absolute,now_ms)
+    def controlled_lease_stop(self,old,now_ms):
+        """Create a one-use recovery ticket only for a verified owned stop.
+
+        This preserves the last durable metering checkpoint, not an assertion
+        of byte-perfect final sampling. The unknown tail is recorded explicitly.
+        A crash, stale checkpoint, externally stopped generation, or failed
+        stop remains fail-closed and requires manual reconciliation.
+        """
+        if (not old or old.get('mode')!='commercial' or old.get('phase') or
+            type(old.get('pid')) is not int or old['pid']<=1 or
+            type(old.get('checked_ms')) is not int or
+            not 0<=now_ms-old['checked_ms']<=LEASE_CHECKPOINT_MAX_AGE_MS or
+            type(old.get('policy_until_ms')) is not int or
+            old['policy_until_ms']-now_ms>LEASE_STOP_MARGIN_MS or
+            not (self.state/'quota.sqlite').is_file()):
+            return False
+        ledger=LocalLedger(self.state/'quota.sqlite')
+        try:
+            if recovery_ticket(ledger) is not None:
+                return False
+            before=service_generation(self.runner)
+            if before['ActiveState']!='active' or before['MainPID']!=str(old['pid']):
+                return False
+            checkpoint=ledger_checkpoint(ledger)
+            self.runner(['/usr/bin/systemctl','stop',XRAY_UNIT],check=True,
+                stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,timeout=15)
+            after=service_generation(self.runner)
+            if not clean_stopped_generation(after,old['pid']):
+                return False
+            ticket={'phase':'stopped','pid':old['pid'],
+                    'policy_until_ms':old['policy_until_ms'],
+                    'checked_ms':old['checked_ms'],'stopped_ms':int(self.clock()*1000),
+                    'exit_monotonic':after['ExecMainExitTimestampMonotonic'],
+                    'checkpoint':checkpoint,'unobserved_tail':'unknown'}
+            with ledger.db:
+                encoded=json.dumps(ticket,sort_keys=True,separators=(',',':'))
+                ledger.db.execute('INSERT INTO meta(key,value) VALUES(?,?)',
+                                  (LEASE_RECOVERY_KEY,encoded))
+                ledger.db.execute('INSERT INTO meta(key,value) VALUES(?,?)',
+                                  ('controlled_lease_gap_'+str(ticket['stopped_ms']),encoded))
+            store_marker(self.state,{**old,'phase':'lease_stopped'})
+            print('MADAR_LEASE_STOP_CHECKPOINTED',flush=True)
+            return True
+        finally:
+            ledger.close()
+
+    def begin_lease_recovery(self,ledger,policy,old,ticket):
+        """Require a new signed commercial policy and unchanged stop evidence.
+
+        Mark the one-use ticket as starting before resetting the process-local
+        counter. A failed or interrupted start cannot reuse this authorization.
+        """
+        if (not isinstance(ticket,dict) or ticket.get('phase')!='stopped' or
+            not old or old.get('mode')!='commercial' or old.get('phase')!='lease_stopped' or
+            any(old.get(k)!=ticket.get(k) for k in ('pid','checked_ms','policy_until_ms')) or
+            ledger_checkpoint(ledger)!=ticket.get('checkpoint')):
+            raise ReconcileError('lease recovery requires manual review')
+        def verify_stop():
+            evidence=service_generation(self.runner)
+            if (not clean_stopped_generation(evidence,ticket['pid']) or
+                evidence['ExecMainExitTimestampMonotonic']!=ticket['exit_monotonic']):
+                raise ReconcileError('lease recovery requires manual review')
+        verify_stop()
+        if policy['expires_at']*1000<=old['policy_until_ms']:
+            raise ReconcileError('lease recovery needs fresh policy')
+        self.report_usage(ledger,int(self.clock()*1000))
+        if ledger.reportable():
+            raise ReconcileError('usage not acknowledged')
+        now_ms=int(self.clock()*1000)
+        until=policy['expires_at']*1000
+        if until-now_ms<RECOVERY_MIN_LEASE_MS:
+            raise ReconcileError('lease recovery needs fresh policy')
+        verify_stop()
+        with ledger.db:
+            updated={**ticket,'phase':'starting'}
+            ledger.db.execute('UPDATE meta SET value=? WHERE key=?',
+                              (json.dumps(updated,sort_keys=True),LEASE_RECOVERY_KEY))
+            ledger.db.execute('UPDATE accounts SET counter=0,installed=0')
+        # This is a startup authorization from the verified policy, NOT
+        # live health. The watchdog still enforces the signed deadline.
+        store_marker(self.state,{'mode':'commercial','phase':'starting','pid':0,
+                                 'checked_ms':now_ms,'policy_until_ms':until})
+        return now_ms
+
     def apply(self,ledger,active):
         desired=compile_dual_account_config(read_secret_file(self.root),active)
         current_path=self.root/'config.json'
@@ -258,7 +395,8 @@ class Runtime:
             if len(received)!=len(group):
                 raise ReconcileError('usage ACK incomplete')
             for r in group:
-                if received[r['id']]['sequence']<r['sequence']:
+                if (received[r['id']]['sequence']!=r['sequence'] or
+                    received[r['id']].get('cumulative_bytes')!=r['total']):
                     raise ReconcileError('usage ACK stale')
                 ledger.ack_report(r['id'],r['sequence'])
     def announce_clients(self,active):
@@ -295,9 +433,24 @@ class Runtime:
                 raise ReconcileError('commercial node was demoted')
             # Leave the original bootstrap UUID available for field testing.
             return {'mode':'test','connected':False}
+        old=read_marker(self.state)
+        if old and old.get('mode')=='commercial' and not (self.state/'quota.sqlite').is_file():
+            stop_owned_xray()
+            raise ReconcileError('lease recovery requires manual review')
         ledger=LocalLedger(self.state/'quota.sqlite')
+        recovering=False
         try:
-            self.sample(ledger,now_ms)
+            ticket=recovery_ticket(ledger)
+            if ticket is not None or (old and old.get('phase')):
+                # Any unexpected phase or partially completed recovery stays
+                # closed. No automatic epoch reset on an unknown generation.
+                if not isinstance(ticket,dict) or ticket.get('phase')!='stopped':
+                    stop_owned_xray()
+                    raise ReconcileError('lease recovery requires manual review')
+                now_ms=self.begin_lease_recovery(ledger,policy,old,ticket)
+                recovering=True
+            else:
+                self.sample(ledger,now_ms)
             ledger.reconcile(policy['clients'],now_ms)
             # LocalLedger rows use "id", while the signed client policy and
             # Xray/ACK compiler require "subscription_id". The first new
@@ -307,8 +460,17 @@ class Runtime:
                     for row in ledger.active(now_ms)]
             self.apply(ledger,active)
             pid=xray_pid(self.runner)
+            now_ms=int(self.clock()*1000)
+            if now_ms>=policy['expires_at']*1000:
+                stop_owned_xray()
+                raise ReconcileError('signed policy lease expired')
             store_marker(self.state,{'mode':'commercial','pid':pid,
                 'checked_ms':now_ms,'policy_until_ms':policy['expires_at']*1000})
+            if recovering:
+                with ledger.db:
+                    ledger.db.execute('DELETE FROM meta WHERE key=?',(LEASE_RECOVERY_KEY,))
+                recovering=False
+                print('MADAR_LEASE_RECOVERY_COMPLETE',flush=True)
             response=self.call('POST','/api/node/v1/health',{
                 'revision':self.revision,'observed_ms':now_ms,
                 'xray_healthy':True,'stats_healthy':True,'ports':[443,8443]})
@@ -318,6 +480,12 @@ class Runtime:
             self.report_usage(ledger,now_ms)
             self.revoke(ledger)
             return {'mode':'commercial','active':len(active)}
+        except Exception:
+            # The pending ticket stays durable if recovery was interrupted.
+            # Do not leave an unverified process running.
+            if recovering or (recovery_ticket(ledger) or {}).get('phase')=='starting':
+                stop_owned_xray()
+            raise
         finally:
             ledger.close()
     def local_tick(self):
@@ -326,8 +494,22 @@ class Runtime:
         if not old or old.get('mode')!='commercial':
             return
         now_ms=int(self.clock()*1000)
-        if type(old.get('policy_until_ms')) is not int or now_ms>=old['policy_until_ms']:
+        if old.get('phase')=='lease_stopped':
+            # The next remote poll alone may recover this generation.
+            return
+        if old.get('phase') or not (self.state/'quota.sqlite').is_file():
             stop_owned_xray()
+            raise ReconcileError('lease recovery requires manual review')
+        if (type(old.get('policy_until_ms')) is not int or
+            now_ms>=old['policy_until_ms']-LEASE_STOP_MARGIN_MS):
+            stopped=False
+            try:
+                stopped=self.controlled_lease_stop(old,now_ms)
+            finally:
+                if not stopped:
+                    stop_owned_xray()
+            if stopped:
+                return
             raise ReconcileError('signed policy lease expired')
         ledger=LocalLedger(self.state/'quota.sqlite')
         try:
@@ -355,7 +537,16 @@ class Runtime:
                     # signed deadline locally; the watchdog stops a dead agent.
                     old=read_marker(self.state)
                     if old and old.get('mode')=='commercial':
-                        watchdog(self.state,stop=stop_owned_xray)
+                        try:
+                            until=old.get('policy_until_ms')
+                            if (not old.get('phase') and type(until) is int and
+                                until-int(self.clock()*1000)<=LEASE_STOP_MARGIN_MS):
+                                self.local_tick()
+                            else:
+                                watchdog(self.state,stop=stop_owned_xray)
+                        except Exception as stop_error:
+                            journal_safe_error('local',stop_error)
+                            stop_owned_xray()
             else:
                 try:
                     self.local_tick()
