@@ -210,7 +210,10 @@ def transition_guard(root,timeout=2):
 
 def watchdog(root=DEFAULT_STATE,now_ms=None,stop=stop_owned_xray):
     # A hung agent or lock cannot disable the independent watchdog.
-    with transition_guard(root):
+    try:
+        with transition_guard(root):
+            return _watchdog_check(root,now_ms,stop)
+    except OSError:
         return _watchdog_check(root,now_ms,stop)
 
 
@@ -540,7 +543,7 @@ class Runtime:
         if old.get('phase')=='lease_stopped':
             # The next remote poll alone may recover this generation.
             return
-        if old.get('phase') or not (self.state/'quota.sqlite').is_file():
+        if old.get('phase'):
             stop_owned_xray()
             raise ReconcileError('lease recovery requires manual review')
         if (type(old.get('policy_until_ms')) is not int or
@@ -554,6 +557,9 @@ class Runtime:
             if stopped:
                 return
             raise ReconcileError('signed policy lease expired')
+        if not (self.state/'quota.sqlite').is_file():
+            stop_owned_xray()
+            raise ReconcileError('lease recovery requires manual review')
         ledger=LocalLedger(self.state/'quota.sqlite')
         try:
             self.sample(ledger,now_ms)
