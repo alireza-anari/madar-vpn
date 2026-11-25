@@ -23,13 +23,20 @@ ORIGIN='https://madar-v2-staging.alirezaanari117.workers.dev'
 SERVICE='madar-v2-runtime.service'
 WATCHDOG='madar-v2-runtime-watchdog.service'
 TIMER='madar-v2-runtime-watchdog.timer'
+NETWORK='madar-v2-runtime-network.service'
+NETWORK_TIMER='madar-v2-runtime-network.timer'
+XRAY_DROPIN='30-madar-runtime-start-gate.conf'
+XRAY_GATE="""[Service]
+Restart=no
+TimeoutStopSec=5s
+ExecStartPre=+/usr/bin/env PYTHONPATH=/opt/madar-v2/runtime /usr/bin/python3 -m agent.runtime --xray-start-check
+"""
 
 
 def render_runtime_units(node_id):
     if not allowed_staging_node_id(node_id):
         raise ReconcileError('invalid staging runtime node ID')
-    command=('/usr/bin/python3 -m agent.runtime --server '+ORIGIN+
-       ' --node-id '+node_id+' --key-file /etc/madar-v2/node.key'+
+    command=('/usr/bin/python3 -m agent.runtime --node-id '+node_id+' --key-file /etc/madar-v2/node.key'+
        ' --state-dir /var/lib/madar-v2/runtime --root /etc/madar-v2')
     hardening="""NoNewPrivileges=yes
 PrivateTmp=yes
@@ -44,14 +51,14 @@ Environment=PYTHONPATH=/opt/madar-v2/runtime
 """
     unit="""[Unit]
 Description=Madar V2 isolated node quota and client reconciler
-Wants=network-online.target
-After=network-online.target
 
 [Service]
 Type=simple
 User=root
 Group=root
-"""+hardening+"""ExecStart="""+command+"""
+"""+hardening+"""IPAddressDeny=any
+IPAddressAllow=localhost
+ExecStart="""+command+"""
 Restart=always
 RestartSec=5s
 
@@ -65,7 +72,10 @@ Description=Stop Madar V2 Xray when quota agent heartbeat expires
 Type=oneshot
 User=root
 Group=root
-"""+hardening+"""ExecStart="""+command+""" --watchdog
+"""+hardening+"""IPAddressDeny=any
+IPAddressAllow=localhost
+TimeoutStartSec=25s
+ExecStart="""+command+""" --watchdog
 """
     timer="""[Unit]
 Description=Madar V2 Xray quota watchdog clock
@@ -80,7 +90,32 @@ Persistent=false
 [Install]
 WantedBy=timers.target
 """
-    return {SERVICE:unit,WATCHDOG:monitor,TIMER:timer}
+    network="""[Unit]
+Description=Madar V2 signed control-plane network exchange
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+"""+hardening+"""TimeoutStartSec=25s
+ExecStart="""+command+""" --network-once --server """+ORIGIN+"""
+"""
+    network_timer="""[Unit]
+Description=Madar V2 control-plane exchange clock
+
+[Timer]
+OnActiveSec=1s
+OnUnitInactiveSec=10s
+AccuracySec=1s
+Unit=madar-v2-runtime-network.service
+
+[Install]
+WantedBy=timers.target
+"""
+    return {SERVICE:unit,WATCHDOG:monitor,TIMER:timer,NETWORK:network,
+            NETWORK_TIMER:network_timer}
 
 
 def install_node_runtime(node_id,key_source,package_source,*,root=CONFIG,
@@ -95,8 +130,11 @@ def install_node_runtime(node_id,key_source,package_source,*,root=CONFIG,
     unit_dir=pathlib.Path(unit_dir)
     if root!=CONFIG or dest!=DEST or unit_dir!=SYSTEMD:
         raise ReconcileError('production paths only; tests use render functions')
-    if any((unit_dir/name).exists() or (unit_dir/name).is_symlink()
-           for name in (SERVICE,WATCHDOG,TIMER)) or dest.exists() or KEY.exists():
+    units=render_runtime_units(node_id)
+    gate=unit_dir/'madar-v2-xray.service.d'/XRAY_DROPIN
+    _safe_config_root(gate.parent)
+    if any(path.exists() or path.is_symlink()
+           for path in [*(unit_dir/name for name in units),gate,dest,KEY]):
         raise ReconcileError('V2 runtime already configured; refuse overwrite')
     source=pathlib.Path(package_source)
     if not source.is_dir() or source.is_symlink():
@@ -142,8 +180,7 @@ def install_node_runtime(node_id,key_source,package_source,*,root=CONFIG,
             created.append(state_parent)
         state_runtime.mkdir(mode=0o700,exist_ok=False)
         created.append(state_runtime)
-        for name,text in render_runtime_units(node_id).items():
-            path=unit_dir/name
+        for path,text in [*((unit_dir/name,text) for name,text in units.items()),(gate,XRAY_GATE)]:
             with path.open('x',encoding='utf-8') as stream:
                 os.fchmod(stream.fileno(),0o644)
                 stream.write(text)
@@ -155,12 +192,13 @@ def install_node_runtime(node_id,key_source,package_source,*,root=CONFIG,
         invoke('daemon-reload')
         invoke('enable','--now',SERVICE)
         invoke('enable','--now',TIMER)
+        invoke('enable','--now',NETWORK_TIMER)
         return {'node_runtime':'installed','quota_local_enforced':False,
                 'field_verified':False}
     except BaseException:
-        for name in (SERVICE,TIMER):
+        for name in (NETWORK_TIMER,NETWORK,SERVICE,TIMER):
             try:
-                runner(['/usr/bin/systemctl','disable','--now',name],
+                runner(['/usr/bin/systemctl',*(['stop'] if name==NETWORK else ['disable','--now']),name],
                     check=False,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,timeout=15)
             except Exception:

@@ -169,7 +169,8 @@ async function deliverTable(env,name,nowMs,withPhoto) {
     let sent=false;
     try {
       const markup=withPhoto && item.reply_markup?JSON.parse(item.reply_markup):null;
-      const media=withPhoto && typeof item.media_file_id==='string' && item.media_file_id.length>0;
+      const media=withPhoto && typeof item.media_file_id==='string' && item.media_file_id.length>0 &&
+        (item.media_file_id!==BRAND_BANNER_URL || item.body.length<=1024);
       const displayBody=media?item.body.slice(0,1024):item.body;
       const entities=brandedEntities(displayBody);
       const sendPayload={
@@ -232,7 +233,7 @@ async function receive(request,env,ctx) {
   const minimal={
     updateId:event.updateId,chatId:event.chatId,actorId:event.actorId,
     locale:event.locale,key:event.key,inputText:event.inputText,photoId:event.photoId,
-    messageId:event.messageId,editKind:event.editKind,
+    messageId:event.messageId,editKind:event.editKind,sourcePhotoId:event.sourcePhotoId,
   };
   const payload=JSON.stringify(minimal);
   if(payload.length>8192) return json({error:'too_large'},413);

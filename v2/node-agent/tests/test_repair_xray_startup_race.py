@@ -30,12 +30,10 @@ class GuardedStartupPatchTests(unittest.TestCase):
               'installed INTEGER,counter INTEGER,total INTEGER,used INTEGER,'
               'sequence INTEGER,reported_seq INTEGER);')
             db.execute('INSERT INTO accounts VALUES(0,0,0,0,0,0)')
-        # The current repo source is patched. Reconstruct exactly the
-        # previous reviewed fragment for a realistic local upgrade.
-        original=(pathlib.Path(__file__).parents[1]/'agent'/'runtime.py').read_text()
-        self.assertIn(repair.HELPER,original)
-        self.assertIn(repair.NEW,original)
-        old=original.replace(repair.HELPER,'',1).replace(repair.NEW,repair.OLD,1)
+        # This legacy patcher intentionally recognizes only the old runtime.
+        old='def store_marker(root,document):\n    pass\n\n'
+        old+='def legacy_apply(self,ledger,active):\n'+repair.OLD+'\n'
+        old+="active=[{'subscription_id':row['id'],'uuid':row['uuid']} for row in []]\n"
         self.code.write_text(old)
         self.original=old
         for path in (self.code,self.metadata,self.ledger):path.chmod(0o600)

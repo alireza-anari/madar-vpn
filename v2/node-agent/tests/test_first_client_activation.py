@@ -11,7 +11,9 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from agent.account_policy import LocalLedger, compile_dual_account_config
-from agent.runtime import Runtime, read_marker
+from agent.installer import MARKER_TEXT
+from agent.manifest import sign
+from agent.runtime import POLICY, Runtime, boot_id, network_cycle, publish, read_marker
 
 
 NOW_SECONDS=1800000000
@@ -34,14 +36,11 @@ class FirstClientActivationTests(unittest.TestCase):
     def test_pending_first_client_is_compiled_for_both_ports_and_reaches_signed_ack(self):
         with tempfile.TemporaryDirectory() as directory:
             state=Path(directory)
-            runtime=Runtime.__new__(Runtime)
-            runtime.state=state
-            runtime.clock=lambda:NOW_SECONDS
-            runtime.node_id=NODE_ID
-            runtime.key=b'a'*32
-            runtime.origin='https://staging.invalid'
-            runtime.opener=Mock()
-            runtime.runner=Mock()
+            (state/'STAGING-ONLY').write_text(MARKER_TEXT)
+            (state/'STAGING-ONLY').chmod(0o600)
+            key=b'a'*32
+            runtime=Runtime(node_id=NODE_ID,key=key,state=state,root=state,
+                            clock=lambda:NOW_SECONDS,runner=Mock())
             client={
                 'subscription_id':SUB_ID,
                 'uuid':CLIENT_UUID,
@@ -50,10 +49,11 @@ class FirstClientActivationTests(unittest.TestCase):
                 'used_bytes':0,
                 'remaining_bytes':20*1024**3,
             }
-            policy={'revision':1,'expires_at':NOW_SECONDS+120,'mode':'commercial',
+            policy={'node_id':NODE_ID,'revision':1,'issued_at':NOW_SECONDS,
+                    'expires_at':NOW_SECONDS+120,'mode':'commercial',
                     'clients':[client]}
             events=[]
-            def fake_apply(ledger,active):
+            def fake_apply(ledger,active,lease,current):
                 # Uses the REAL account compiler: this raised KeyError before
                 # the fix because SQLite rows have "id", not "subscription_id".
                 config=compile_dual_account_config(LOCAL_SECRETS,active)
@@ -64,10 +64,11 @@ class FirstClientActivationTests(unittest.TestCase):
                                  [8443,443])
                 ledger.mark_installed([x['subscription_id'] for x in active])
                 events.append('xray-installed')
-            def fake_call(method,path,payload=None):
+                return {'pid':1234,'start_us':100,'boot_id':boot_id()}
+            def fake_call(opener,origin,node_id,key,method,path,payload=None,**kwargs):
                 if path=='/api/node/v1/clients':
                     events.append('policy')
-                    return {'unused':'verified by mocked policy boundary'}
+                    return envelope
                 if path=='/api/node/v1/health':
                     self.assertEqual(payload['ports'],[443,8443])
                     events.append('healthy')
@@ -83,14 +84,13 @@ class FirstClientActivationTests(unittest.TestCase):
                     return {'ok':True,'applied':1}
                 raise AssertionError('Unexpected outbound control plane path '+path)
             runtime.apply=fake_apply
-            runtime.call=fake_call
-            with patch('agent.runtime.poll_once') as poll, \
-                 patch('agent.runtime.verify_clients',return_value=policy), \
-                 patch('agent.runtime.xray_pid',return_value=1234):
-                result=runtime.once()
+            envelope={'payload':policy,'signature':sign(policy,key),'applied':False}
+            publish(state,POLICY,{'envelope':envelope},NOW_MS)
+            runtime.tick()
+            with patch('agent.runtime.poll_once') as poll, patch('agent.runtime.send',side_effect=fake_call):
+                network_cycle('https://staging.invalid',NODE_ID,key,state,clock=lambda:NOW_SECONDS)
             poll.assert_called_once()
-            self.assertEqual(result,{'mode':'commercial','active':1})
-            self.assertEqual(events,['policy','xray-installed','healthy','client-ack'])
+            self.assertEqual(events,['xray-installed','policy','healthy','client-ack'])
             self.assertEqual(read_marker(state)['mode'],'commercial')
             ledger=LocalLedger(state/'quota.sqlite')
             stored=ledger.get(SUB_ID)

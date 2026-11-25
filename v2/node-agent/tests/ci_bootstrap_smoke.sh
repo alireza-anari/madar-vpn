@@ -5,14 +5,15 @@ if [[ "$GITHUB_ACTIONS" != "true" || "$RUNNER_ENVIRONMENT" != "github-hosted" ]]
  exit 1
 fi
 cleanup() {
- sudo systemctl disable --now madar-v2-runtime.service madar-v2-runtime-watchdog.timer >/dev/null 2>&1 || true
- sudo rm -f /etc/systemd/system/madar-v2-runtime.service /etc/systemd/system/madar-v2-runtime-watchdog.service /etc/systemd/system/madar-v2-runtime-watchdog.timer
+ sudo systemctl disable --now madar-v2-runtime.service madar-v2-runtime-watchdog.timer madar-v2-runtime-network.timer >/dev/null 2>&1 || true
+ sudo systemctl stop madar-v2-runtime-network.service >/dev/null 2>&1 || true
+ sudo rm -f /etc/systemd/system/madar-v2-runtime.service /etc/systemd/system/madar-v2-runtime-watchdog.service /etc/systemd/system/madar-v2-runtime-watchdog.timer /etc/systemd/system/madar-v2-runtime-network.service /etc/systemd/system/madar-v2-runtime-network.timer
  sudo systemctl disable --now madar-v2-xray.service >/dev/null 2>&1 || true
  sudo systemctl disable --now madar-v2-caddy.service >/dev/null 2>&1 || true
  sudo rm -f /etc/systemd/system/madar-v2-xray.service /etc/systemd/system/madar-v2-caddy.service
  sudo rm -rf -- /etc/systemd/system/madar-v2-xray.service.d
  sudo systemctl daemon-reload >/dev/null 2>&1 || true
- sudo rm -rf -- /etc/madar-v2 /opt/madar-v2
+ sudo rm -rf -- /etc/madar-v2 /opt/madar-v2 /var/lib/madar-v2
  sudo userdel madar-v2-xray >/dev/null 2>&1 || true
  sudo userdel madar-v2-caddy >/dev/null 2>&1 || true
 }
@@ -45,6 +46,7 @@ PY
 sudo systemctl is-active --quiet madar-v2-xray.service
 sudo systemctl is-active --quiet madar-v2-runtime.service
 sudo systemctl is-enabled --quiet madar-v2-runtime-watchdog.timer
+sudo systemctl is-enabled --quiet madar-v2-runtime-network.timer
 test "$(sudo stat -c '%a' /etc/madar-v2/node.key)" = "600"
 sudo test -f /opt/madar-v2/runtime/agent/runtime.py
 sudo python3 - <<'PY'
@@ -81,3 +83,4 @@ from agent.dual_reality import listening
 assert listening(443) and listening(8443)
 PY
 echo "Verified: isolated systemd service running; not field-ready"
+sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" python3 -B tests/ci_runtime_outage.py

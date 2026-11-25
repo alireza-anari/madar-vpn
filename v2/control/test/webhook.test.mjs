@@ -60,3 +60,11 @@ test('no private identity, no persisted update',async()=>{
   assert.equal(r.status,200);
   assert.equal(env.calls.length,0);
 });
+
+test('webhook persists the source attachment ID for safe callback replies',async()=>{
+  const env=mockEnv();
+  await post(env,{update_id:102,callback_query:{from:{id:202},data:'v2:customer:tickets',
+    message:{message_id:7,chat:{id:202,type:'private'},photo:[{file_id:'support-image'}]}}});
+  const insert=env.calls.find(x=>x.sql.includes('INSERT OR IGNORE INTO telegram_inbox'));
+  assert.equal(JSON.parse(insert.params[2]).sourcePhotoId,'support-image');
+});

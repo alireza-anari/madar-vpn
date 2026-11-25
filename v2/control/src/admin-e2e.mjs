@@ -159,7 +159,9 @@ export async function e2eAction(env,actor,action,ref,nowMs=Date.now()){
     '\nنصب UUID اختصاصی: '+(ack?'✅ ACK واقعی دریافت شد':'⏳ هنوز ACK تازه دریافت نشده')+
     '\nحجم استفاده‌شده: '+faNumber(state.used_bytes??0)+' از '+faNumber(QUOTA)+' بایت'+
     '\n\n'+(active?'✅ UUID نصب و تأیید شده؛ می‌توانید لینک خصوصی بگیرید.':
-      state.subscription_state==='revoked'?'⛔ تست لغو شده؛ منتظر تأیید حذف از نود.':
+      state.subscription_state==='revoked'?(state.allocation_state==='released'?
+        '✅ حذف دسترسی آزمایشی از نود تأیید شد.':'⛔ تست لغو شده؛ منتظر تأیید حذف از نود.'):
+      state.order_state==='cancelled'?'⛔ سفارش آزمایشی لغو شد.':
       '⏳ عامل مدیریت باید کانفیگ جدید را واقعاً روی Xray اعمال کند.');
   const buttons=[
     ...(active?[btn('🔗 دریافت لینک دو اپراتور','link:'+ref)]:[]),

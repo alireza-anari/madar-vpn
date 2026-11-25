@@ -92,7 +92,7 @@ def _atomic_file(directory,prefix,text):
         raise
 
 
-def apply_config(root,config,*,binary,sha256,runner=subprocess_runner):
+def apply_config(root,config,*,binary,sha256,runner=subprocess_runner,restart_on_rollback=True):
     """Replace a config only after pinned-binary test, rollback on restart failure.
 
     Result deliberately says 'service_configured', never 'route_ready'.
@@ -138,7 +138,8 @@ def apply_config(root,config,*,binary,sha256,runner=subprocess_runner):
                 current.unlink(missing_ok=True)
                 if had_current and previous.exists():
                     os.replace(previous,current)
-                    runner(["/usr/bin/systemctl","restart",UNIT_NAME],timeout=30)
+                    if restart_on_rollback:
+                        runner(["/usr/bin/systemctl","restart",UNIT_NAME],timeout=30)
                 raise
             return {"status":"service_configured","field_verified":False,
                     "client_count":sum(len(x.get("settings",{}).get("users",[]))

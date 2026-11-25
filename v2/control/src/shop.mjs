@@ -4,7 +4,7 @@ import {receiveSupportPhoto,viewSupportPhoto} from './support-media.mjs';
 import {adminConfigAction} from './bot-config.mjs';
 import {adminDashboard,adminPanelAction,customerTicketAction,consumePanelInput,notifySupport,staffTicketDetails} from './bot-panels.mjs';
 import {beginNodeWizard,cancelNodeWizard,consumeNodeWizard} from './node-wizard.mjs';
-import { nodeAdminAction,nodeOverview,nodeDetails,nodeManagement,nodeFromRef,nodeFieldAction } from './node-admin.mjs';
+import { nodeUiRef,nodeAdminAction,nodeOverview,nodeDetails,nodeManagement,nodeFromRef,nodeFieldAction } from './node-admin.mjs';
 import { handleSeller, linkSellerOnStart, grantStaffRole } from './referrals.mjs';
 /**
  * Madar V2 business UI. Every mutable action is idempotent by the Telegram
@@ -652,16 +652,18 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
   if(customer)return customer;
   const adminPanel=await adminPanelAction(env,e,nowMs);
   if(adminPanel)return adminPanel;
-  const panelInput=await consumePanelInput(env,e,nowMs);
-  if(panelInput)return panelInput;
   if(key==='/cancel') {
     await db.batch([
       db.prepare('DELETE FROM customer_sessions WHERE telegram_id=?').bind(e.actorId),
       db.prepare('DELETE FROM admin_node_sessions WHERE telegram_id=?').bind(e.actorId),
+      db.prepare('DELETE FROM support_staff_sessions WHERE telegram_id=?').bind(e.actorId),
+      db.prepare('DELETE FROM v2_bot_input_sessions WHERE telegram_id=?').bind(e.actorId),
+      db.prepare('DELETE FROM admin_direct_drafts WHERE telegram_id=?').bind(e.actorId),
     ]);
-    await db.prepare('DELETE FROM support_staff_sessions WHERE telegram_id=?').bind(e.actorId).run();
     return response(t('✅ عملیات لغو شد.','✅ Cancelled.',e.locale),e.locale);
   }
+  const panelInput=await consumePanelInput(env,e,nowMs);
+  if(panelInput)return panelInput;
   if (key==='admin:node:new' || key==='admin:node:cancel') {
     if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
       return adminResponse('⛔ دسترسی به این بخش مجاز نیست.',e.locale);
@@ -675,7 +677,7 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
   }
   if(adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId)) {
     const wizard=await consumeNodeWizard(db,e.actorId,e.inputText,nowMs,env);
-    if(wizard)return adminResponse(wizard.text,e.locale);
+    if(wizard)return adminResponse(wizard.text,e.locale,wizard.replyMarkup?.inline_keyboard??[]);
   }
   const sellerAction=await handleSeller(env,e,nowMs);
   if(sellerAction)return sellerAction;
@@ -753,9 +755,9 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
     if(!rows.length)return adminResponse('🧪 هنوز سرور آزمایشی اضافه نشده است.',e.locale);
     return adminResponse('🧪  لینک‌های آزمایشی سرورها\n━━━━━━━━━━━━━━━━━━\n'+rows.map(x=>
       x.node_id+'  |  '+faStatus(x.state)).join('\n'),e.locale,
-      rows.filter(x=>x.state==='installed').map(x=>[{
-        text:'🔗 دریافت لینک '+x.node_id,callback_data:'v2:admin:node:trial:'+x.node_id
-      }]));
+      await Promise.all(rows.filter(x=>x.state==='installed').map(async x=>[{
+        text:'🔗 دریافت لینک '+x.node_id,callback_data:'v2:admin:node:trialref:'+await nodeUiRef(x.node_id)
+      }])));
   }
   if(key==='admin:plans') {
     if(!adminAllowed(env.ADMIN_TELEGRAM_IDS,e.actorId))
