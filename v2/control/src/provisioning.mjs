@@ -13,12 +13,13 @@ export async function reserveApprovedOrder(env,orderId,nowMs=Date.now(),targetNo
     return {status:'bad_target_node'};
   const db=env.DB;
   const order=await db.prepare(
-    "SELECT o.id,o.customer_telegram_id,p.quota_bytes,p.duration_days "+
+    "SELECT o.id,o.customer_telegram_id,COALESCE(o.quoted_bytes,p.quota_bytes) AS quota_bytes,o.held_node,p.duration_days "+
     "FROM orders o JOIN plans p ON p.id=o.plan_id "+
     "JOIN customers c ON c.telegram_id=o.customer_telegram_id "+
     "WHERE o.id=? AND o.state='approved' AND c.state='active'"
   ).bind(orderId).first();
   if(!order)return {status:'not_approved'};
+  const selectedNode=order.held_node??targetNodeId;
   // One node quota pool, two separate REALITY carrier endpoints. A route
   // must have current field evidence, current signed ACK and free capacity.
   const node=await db.prepare(
@@ -30,19 +31,21 @@ export async function reserveApprovedOrder(env,orderId,nowMs=Date.now(),targetNo
       "AND i.port=8443 AND i.published=1 AND i.verified_ms BETWEEN ? AND ? "+
     "WHERE n.lifecycle='ready' AND n.desired_revision=n.acked_revision "+
     "AND r.state='ready' AND r.verified_ms BETWEEN ? AND ? "+
-    "AND n.user_limit>(SELECT COUNT(*) FROM node_allocations a "+
-      "WHERE a.node_id=n.id AND a.state IN ('reserved','active')) "+
+    "AND n.user_limit>(SELECT COUNT(*) FROM retail_capacity_usage a "+
+      "WHERE a.node_id=n.id AND a.order_id IS NOT ?) "+
     "AND n.byte_limit-(SELECT COALESCE(SUM(a.quota_bytes),0) "+
-      "FROM node_allocations a WHERE a.node_id=n.id "+
-      "AND a.state IN ('reserved','active'))>=? "+
+      "FROM retail_capacity_usage a WHERE a.node_id=n.id "+
+      "AND a.order_id IS NOT ?)>=? "+
     "AND EXISTS(SELECT 1 FROM node_health h WHERE h.node_id=n.id "+
       "AND h.revision=n.desired_revision AND h.xray_healthy=1 AND h.stats_healthy=1 "+
       "AND h.observed_ms BETWEEN ? AND ?) "+
-    (targetNodeId===null?"":"AND n.id=? ")+
+    (order.held_node?"AND n.retail_enabled=1 AND EXISTS(SELECT 1 FROM node_acks k WHERE k.node_id=n.id "+
+      "AND k.revision=n.desired_revision AND k.status='accepted' AND k.observed_ms BETWEEN ? AND ?) ":"")+
+    (selectedNode==null?"":"AND n.id=? ")+
     "ORDER BY n.id LIMIT 1"
   ).bind(nowMs-600000,nowMs,nowMs-600000,nowMs,
-    nowMs-600000,nowMs,order.quota_bytes,nowMs-600000,nowMs,
-    ...(targetNodeId===null?[]:[targetNodeId])).first();
+    nowMs-600000,nowMs,orderId,orderId,order.quota_bytes,nowMs-600000,nowMs,
+    ...(order.held_node?[nowMs-600000,nowMs]:[]),...(selectedNode==null?[]:[selectedNode])).first();
   if(!node)return {status:'no_verified_capacity'};
   const subId=crypto.randomUUID(),allocationId=crypto.randomUUID(),uuid=crypto.randomUUID();
   const credential=await wrapClientUuid(uuid,env.SUBSCRIPTION_CREDENTIAL_KEY);

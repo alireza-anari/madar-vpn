@@ -211,7 +211,7 @@ async function clientAck(env,identity,nowMs) {
       return safeJson({error:'bad_request'},400);
     const row=await env.DB.prepare(
       "SELECT c.ciphertext_b64,c.nonce_b64,c.key_version,s.state,s.order_id,s.expires_at,"+
-      "o.state AS order_state,p.duration_days,s.owner_telegram_id "+
+      "o.state AS order_state,COALESCE(o.quoted_days,p.duration_days) AS duration_days,s.owner_telegram_id "+
       "FROM node_allocations a JOIN subscriptions s ON s.id=a.subscription_id "+
       "JOIN subscription_credentials c ON c.subscription_id=s.id "+
       "JOIN customers u ON u.telegram_id=s.owner_telegram_id "+
