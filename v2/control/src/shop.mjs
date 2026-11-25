@@ -66,13 +66,13 @@ const HEALTHY_NODE_SQL =
       "AND m.port=443 AND m.published=1 AND m.verified_ms BETWEEN ? AND ? " +
     "JOIN route_carrier_variants i ON i.route_id=r.id AND i.operator='irancell' " +
       "AND i.port=8443 AND i.published=1 AND i.verified_ms BETWEEN ? AND ? " +
-    "WHERE n.lifecycle='ready' AND n.desired_revision=n.acked_revision " +
+    "WHERE n.retail_enabled=1 AND n.lifecycle='ready' AND n.desired_revision=n.acked_revision " +
     "AND r.transport='reality' AND r.state='ready' AND r.verified_ms BETWEEN ? AND ? " +
-    "AND n.user_limit > (SELECT COUNT(*) FROM node_allocations a " +
-      "WHERE a.node_id=n.id AND a.state IN ('reserved','active')) " +
+    "AND n.user_limit > (SELECT COUNT(*) FROM retail_capacity_usage a " +
+      "WHERE a.node_id=n.id) " +
     "AND n.byte_limit - (SELECT COALESCE(SUM(a.quota_bytes),0) " +
-      "FROM node_allocations a WHERE a.node_id=n.id " +
-      "AND a.state IN ('reserved','active')) >= ? " +
+      "FROM retail_capacity_usage a WHERE a.node_id=n.id " +
+      ") >= ? " +
     "AND EXISTS(SELECT 1 FROM node_health h WHERE h.node_id=n.id " +
       "AND h.revision=n.desired_revision AND h.xray_healthy=1 AND h.stats_healthy=1 " +
       "AND h.observed_ms BETWEEN ? AND ?) " +
@@ -141,12 +141,12 @@ async function purchase(db,env,e,planId,nowMs) {
   const idempotency='telegram-update:' + e.updateId;
   try {
     const inserted=await db.prepare(
-      "INSERT INTO orders(id,customer_telegram_id,seller_telegram_id,plan_id,idempotency_key,quoted_amount,quoted_currency) " +
-      "SELECT ?,?,(SELECT seller_telegram_id FROM customers WHERE telegram_id=?),id,?,price_amount,price_currency " +
-      "FROM plans WHERE id=? AND active=1 AND price_amount=? AND price_currency=? " +
-      "AND quota_bytes=? AND duration_days=? AND EXISTS("+HEALTHY_NODE_SQL+")"
-    ).bind(id,e.actorId,e.actorId,idempotency,planId,p.price_amount,p.price_currency,
-      p.quota_bytes,p.duration_days,...capacityBindings(p.quota_bytes,nowMs)).run();
+      "INSERT INTO orders(id,customer_telegram_id,seller_telegram_id,plan_id,idempotency_key,quoted_amount,quoted_currency,held_node,quoted_bytes,quoted_days,pay_until_ms) " +
+      "SELECT ?,?,(SELECT seller_telegram_id FROM customers WHERE telegram_id=?),plans.id,?,price_amount,price_currency,candidate.id,quota_bytes,duration_days,? " +
+      "FROM plans CROSS JOIN ("+HEALTHY_NODE_SQL+") candidate WHERE plans.id=? AND active=1 AND price_amount=? AND price_currency=? " +
+      "AND quota_bytes=? AND duration_days=?"
+    ).bind(id,e.actorId,e.actorId,idempotency,nowMs+30*60000,...capacityBindings(p.quota_bytes,nowMs),planId,p.price_amount,p.price_currency,
+      p.quota_bytes,p.duration_days).run();
     if(inserted.meta?.changes!==1)
       return response('شرایط بسته یا ظرفیت سرور تغییر کرده است. لطفاً پرداخت نکنید و فهرست بسته‌ها را دوباره باز کنید.',e.locale);
   } catch {
@@ -159,6 +159,7 @@ async function purchase(db,env,e,planId,nowMs) {
     t('شناسه: ','Order: ',e.locale)+id,
     t('مبلغ: ','Amount: ',e.locale)+money(p.price_amount,p.price_currency),
     '',
+    'ظرفیت این سفارش ۳۰ دقیقه برای پرداخت و ارسال رسید رزرو شده است. پس از پایان مهلت، پرداخت نکنید. اگر پرداخت کرده‌اید و مهلت گذشته است، با کد سفارش به پشتیبانی پیام دهید.',
     env.PAYMENT_INSTRUCTIONS.trim(),
     '',
     t('پس از پرداخت، تصویر رسید را همین‌جا بفرستید. بررسی دستی است و پرداخت به‌تنهایی سرویس را فعال نمی‌کند.',
@@ -172,7 +173,7 @@ export function validAdminIds(ids,customerId='') {
     /^[0-9]{1,20}$/.test(x) && x!==customerId))].slice(0,20);
 }
 
-async function storeReceipt(db,e,env) {
+async function storeReceipt(db,e,env,nowMs) {
   const order=await db.prepare(
     "SELECT id,state FROM orders WHERE customer_telegram_id=? " +
     "AND state IN ('pending','receipt_submitted') ORDER BY created_at DESC LIMIT 1"
@@ -182,14 +183,19 @@ async function storeReceipt(db,e,env) {
   if(typeof e.photoId!=='string' || e.photoId.length>512 || e.photoId.length<5)
     return response(t('رسید معتبر نیست؛ لطفاً تصویر رسید را ارسال کنید.','Please send a valid receipt image.',e.locale),e.locale);
   if(order.state==='pending') {
-    await db.batch([
+    const result=await db.batch([
       db.prepare(
-        "INSERT OR IGNORE INTO receipts(id,order_id,telegram_file_id,upload_by_telegram_id) VALUES(?,?,?,?)"
-      ).bind(crypto.randomUUID(),order.id,e.photoId,e.actorId),
+        "INSERT INTO receipts(id,order_id,telegram_file_id,upload_by_telegram_id) "+
+        "SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM orders WHERE id=? AND state='pending' "+
+        "AND (pay_until_ms IS NULL OR pay_until_ms>?))"
+      ).bind(crypto.randomUUID(),order.id,e.photoId,e.actorId,order.id,nowMs),
       db.prepare(
-        "UPDATE orders SET state='receipt_submitted',updated_at=CURRENT_TIMESTAMP WHERE id=? AND state='pending'"
-      ).bind(order.id),
+        "UPDATE orders SET state='receipt_submitted',updated_at=CURRENT_TIMESTAMP WHERE id=? AND state='pending' "+
+        "AND (pay_until_ms IS NULL OR pay_until_ms>?)"
+      ).bind(order.id,nowMs),
     ]);
+    if(result[0]?.meta?.changes!==1 && result[1]?.meta?.changes!==1)
+      return response('وضعیت سفارش تغییر کرده است. اگر پرداخت کرده‌اید، کد سفارش را برای پشتیبانی بفرستید.',e.locale);
   }
   // An administrative notice uses a deterministic key, so a retried event
   // cannot spam admins even when acknowledgement is lost.
@@ -648,7 +654,7 @@ export async function resolveBotAction(env,e,nowMs=Date.now()) {
   if(e.photoId){
     const image=await receiveSupportPhoto(env,e,nowMs);
     if(image)return image;
-    return storeReceipt(db,e,env);
+    return storeReceipt(db,e,env,nowMs);
   }
   const customerImage=key.match(/^customer:ticket:media:([0-9]{1,20})$/);
   if(customerImage)return viewSupportPhoto(env,e,customerImage[1],true);

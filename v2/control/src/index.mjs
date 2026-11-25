@@ -374,6 +374,7 @@ export default {
     await reconcileApprovedOrders(env);
     if(!env.DB) return;
     const now=Date.now();
+    await env.DB.prepare("UPDATE orders SET state='cancelled',updated_at=CURRENT_TIMESTAMP WHERE state='pending' AND pay_until_ms<=?").bind(now).run();
     await expireEntitlements(env,now);
     // Minimize stored Telegram content. Orders, receipts and subscriptions
     if(env.RUNNER_ENROLLMENT_ENABLED==='true')await cleanupRunnerJobs(env.DB,now);
