@@ -41,6 +41,7 @@ export function adminAllowed(ids, userId) {
 
 export function salesConfigured(env) {
   return featureEnabled(env,'SHOP_ENABLED') && featureEnabled(env,'PROVISIONING_ENABLED') &&
+    featureEnabled(env,'SUBSCRIPTION_LINKS_ENABLED') && featureEnabled(env,'SUBSCRIPTION_API_ENABLED') &&
     typeof env.PAYMENT_INSTRUCTIONS === 'string' &&
     env.PAYMENT_INSTRUCTIONS.trim().length >= 12 &&
     env.PAYMENT_INSTRUCTIONS.length <= 700;
@@ -58,12 +59,7 @@ async function upsertCustomer(db, e) {
   ).bind(e.actorId).run();
 }
 
-async function healthyNodeAvailable(db, quota, nowMs) {
-  // The storefront must never ask a customer to pay unless the same
-  // fresh dual-REALITY capacity evidence used by the provisioner exists.
-  // A previously published route alone does NOT prove live node health.
-  const from=nowMs-600000;
-  const r = await db.prepare(
+const HEALTHY_NODE_SQL =
     "SELECT n.id FROM nodes n " +
     "JOIN routes r ON r.node_id=n.id AND r.id=n.id||'_reality' " +
     "JOIN route_carrier_variants m ON m.route_id=r.id AND m.operator='mci' " +
@@ -82,9 +78,15 @@ async function healthyNodeAvailable(db, quota, nowMs) {
       "AND h.observed_ms BETWEEN ? AND ?) " +
     "AND EXISTS(SELECT 1 FROM node_acks a WHERE a.node_id=n.id " +
       "AND a.revision=n.desired_revision AND a.status='accepted' " +
-      "AND a.observed_ms BETWEEN ? AND ?) ORDER BY n.id LIMIT 1"
-  ).bind(from,nowMs,from,nowMs,from,nowMs,quota,
-    from,nowMs,from,nowMs).first();
+      "AND a.observed_ms BETWEEN ? AND ?) ORDER BY n.id LIMIT 1";
+
+function capacityBindings(quota,nowMs) {
+  const from=nowMs-600000;
+  return [from,nowMs,from,nowMs,from,nowMs,quota,from,nowMs,from,nowMs];
+}
+
+async function healthyNodeAvailable(db,quota,nowMs) {
+  const r=await db.prepare(HEALTHY_NODE_SQL).bind(...capacityBindings(quota,nowMs)).first();
   return r?.id ?? null;
 }
 
@@ -135,16 +137,18 @@ async function purchase(db,env,e,planId,nowMs) {
     '\nوضعیت: '+faStatus(active.state),e.locale);
   const p=await db.prepare('SELECT * FROM plans WHERE id=? AND active=1').bind(planId).first();
   if (!p) return response(t('پلن پیدا نشد.','Plan not found.',e.locale),e.locale);
-  if (!await availableForSale(db,p,nowMs)) return response(t('فعلاً سرور آماده با ظرفیت کافی نداریم؛ هیچ پرداختی انجام ندهید.',
-    'No verified server has capacity. Please do not pay.',e.locale),e.locale);
   const id=crypto.randomUUID();
   const idempotency='telegram-update:' + e.updateId;
   try {
-    await db.prepare(
+    const inserted=await db.prepare(
       "INSERT INTO orders(id,customer_telegram_id,seller_telegram_id,plan_id,idempotency_key,quoted_amount,quoted_currency) " +
-      "SELECT ?,?,(SELECT seller_telegram_id FROM customers WHERE telegram_id=?),?,?,?,? " +
-      "WHERE EXISTS(SELECT 1 FROM plans WHERE id=? AND active=1)"
-    ).bind(id,e.actorId,e.actorId,planId,idempotency,p.price_amount,p.price_currency,planId).run();
+      "SELECT ?,?,(SELECT seller_telegram_id FROM customers WHERE telegram_id=?),id,?,price_amount,price_currency " +
+      "FROM plans WHERE id=? AND active=1 AND price_amount=? AND price_currency=? " +
+      "AND quota_bytes=? AND duration_days=? AND EXISTS("+HEALTHY_NODE_SQL+")"
+    ).bind(id,e.actorId,e.actorId,idempotency,planId,p.price_amount,p.price_currency,
+      p.quota_bytes,p.duration_days,...capacityBindings(p.quota_bytes,nowMs)).run();
+    if(inserted.meta?.changes!==1)
+      return response('شرایط بسته یا ظرفیت سرور تغییر کرده است. لطفاً پرداخت نکنید و فهرست بسته‌ها را دوباره باز کنید.',e.locale);
   } catch {
     const current=await pendingOrder(db,e.actorId);
     if (current) return response(t('سفارش باز شما: ','Your open order: ',e.locale) + current.id,e.locale);

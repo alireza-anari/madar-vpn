@@ -14,6 +14,7 @@ test('sales require explicit opt-in and valid payment instructions',()=>{
   assert.equal(salesConfigured({SHOP_ENABLED:'true'}),false);
   assert.equal(salesConfigured({SHOP_ENABLED:'true',PAYMENT_INSTRUCTIONS:'short'}),false);
   assert.equal(salesConfigured({
+    SUBSCRIPTION_LINKS_ENABLED:'true',SUBSCRIPTION_API_ENABLED:'true',
     SHOP_ENABLED:'true',PROVISIONING_ENABLED:'true',PAYMENT_INSTRUCTIONS:'Confirmed official payment instructions',
   }),true);
 });
@@ -34,6 +35,7 @@ test('route availability never guesses capacity from missing evidence', async()=
 
 test('nonprovisioning checkout never opens even if a bank destination exists',()=>{
   assert.equal(salesConfigured({
+    SUBSCRIPTION_LINKS_ENABLED:'true',SUBSCRIPTION_API_ENABLED:'true',
     SHOP_ENABLED:'true',PAYMENT_INSTRUCTIONS:'Confirmed official payment instructions'
   }),false);
 });
@@ -138,11 +140,13 @@ test('private Telegram user cannot mint another user subscription link',async()=
 
 test('production secret overrides can enable sales only with payment instructions',()=>{
   assert.equal(salesConfigured({
+    SUBSCRIPTION_LINKS_ENABLED:'true',SUBSCRIPTION_API_ENABLED:'true',
     SHOP_ENABLED:'false',SHOP_ENABLED_SECRET:'true',
     PROVISIONING_ENABLED:'false',PROVISIONING_ENABLED_SECRET:'true',
     PAYMENT_INSTRUCTIONS:'Verified payment details provided by the merchant',
   }),true);
   assert.equal(salesConfigured({
+    SUBSCRIPTION_LINKS_ENABLED:'true',SUBSCRIPTION_API_ENABLED:'true',
     SHOP_ENABLED:'false',SHOP_ENABLED_SECRET:'true',
     PROVISIONING_ENABLED:'false',PROVISIONING_ENABLED_SECRET:'true',
   }),false);
@@ -150,13 +154,22 @@ test('production secret overrides can enable sales only with payment instruction
 
 test('an explicit secret false cannot be bypassed by public sales variables',()=>{
   assert.equal(salesConfigured({
+    SUBSCRIPTION_LINKS_ENABLED:'true',SUBSCRIPTION_API_ENABLED:'true',
     SHOP_ENABLED:'true',SHOP_ENABLED_SECRET:'false',
     PROVISIONING_ENABLED:'true',
     PAYMENT_INSTRUCTIONS:'Valid independently verified payment instructions',
   }),false);
   assert.equal(salesConfigured({
+    SUBSCRIPTION_LINKS_ENABLED:'true',SUBSCRIPTION_API_ENABLED:'true',
     SHOP_ENABLED:'true',
     PROVISIONING_ENABLED:'true',PROVISIONING_ENABLED_SECRET:'false',
     PAYMENT_INSTRUCTIONS:'Valid independently verified payment instructions',
   }),false);
+});
+
+test('checkout requires both retail delivery flags',()=>{
+  const env={SHOP_ENABLED:'true',PROVISIONING_ENABLED:'true',SUBSCRIPTION_LINKS_ENABLED:'true',
+    SUBSCRIPTION_API_ENABLED:'true',PAYMENT_INSTRUCTIONS:'Confirmed official payment instructions'};
+  for(const flag of ['SUBSCRIPTION_LINKS_ENABLED','SUBSCRIPTION_API_ENABLED'])
+    assert.equal(salesConfigured({...env,[flag+'_SECRET']:'false'}),false);
 });

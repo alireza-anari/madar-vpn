@@ -2,11 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {readdirSync,readFileSync} from 'node:fs';
-import {availableForSale} from '../src/shop.mjs';
+import {availableForSale,resolveBotAction} from '../src/shop.mjs';
 
 const NOW=1800000000000;
 const GB=1073741824;
-function fixture() {
+function fixture(beforeOrder=()=>{}) {
   const raw=new DatabaseSync(':memory:');
   raw.exec('PRAGMA foreign_keys=ON');
   for(const file of readdirSync(new URL('../migrations/',import.meta.url)).sort())
@@ -25,12 +25,16 @@ function fixture() {
     .run(id,NOW-1000);
   const DB={prepare(sql){
     return {bind(...args){return {
+      run:async()=>{
+        if(sql.startsWith('INSERT INTO orders'))beforeOrder(raw);
+        return {meta:{changes:raw.prepare(sql).run(...args).changes}};
+      },
       first:async()=>raw.prepare(sql).get(...args)??null,
       all:async()=>({results:raw.prepare(sql).all(...args)}),
     };}};
   }};
   const check=()=>availableForSale(DB,{quota_bytes:GB},NOW);
-  return {raw,id,route,check};
+  return {DB,raw,id,route,check};
 }
 test('retail offers capacity only after two current carrier routes, signed ACK and stats health',async()=>{
   const {raw,check}=fixture();
@@ -84,3 +88,23 @@ test('capacity never oversells allocated bytes and user slots',async()=>{
     assert.equal(await check(),false);
   }finally{raw.close();}
 });
+
+for(const [scenario,change,expected] of [
+  ['available',()=>{},1],
+  ['withdrawn plan',raw=>raw.exec('UPDATE plans SET active=0'),0],
+  ['changed price',raw=>raw.exec('UPDATE plans SET price_amount=150'),0],
+  ['lost capacity',raw=>raw.exec('UPDATE nodes SET user_limit=0'),0],
+]){
+  test('checkout at insertion with '+scenario,async()=>{
+    const {DB,raw}=fixture(change);
+    try{
+      raw.prepare("INSERT INTO plans(id,title_fa,title_en,price_amount,price_currency,quota_bytes,duration_days,active) VALUES('monthly','ماهانه','Monthly',100,'IRT',?,30,1)").run(GB);
+      const payment='Payment destination for fixture only';
+      const env={DB,ADMIN_TELEGRAM_IDS:'100',SHOP_ENABLED:'true',PROVISIONING_ENABLED:'true',
+        SUBSCRIPTION_LINKS_ENABLED:'true',SUBSCRIPTION_API_ENABLED:'true',PAYMENT_INSTRUCTIONS:payment};
+      const reply=await resolveBotAction(env,{actorId:'100',key:'buy:monthly',updateId:123},NOW);
+      assert.equal(raw.prepare('SELECT COUNT(*) AS n FROM orders').get().n,expected);
+      assert.equal(reply.text.includes(payment),expected===1);
+    }finally{raw.close();}
+  });
+}
