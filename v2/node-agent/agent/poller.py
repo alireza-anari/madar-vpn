@@ -71,7 +71,7 @@ def signed_headers(key,node_id,method,path,body,now=None):
     }
 
 
-def send(opener,base,node_id,key,method,path,payload=None):
+def send(opener,base,node_id,key,method,path,payload=None,*,max_response=65_536):
     body=b"" if payload is None else json.dumps(
         payload,separators=(",",":"),ensure_ascii=False
     ).encode("utf-8")
@@ -85,8 +85,8 @@ def send(opener,base,node_id,key,method,path,payload=None):
     with opener.open(req,timeout=10) as response:
         if response.status!=200:
             raise ValueError("control-plane refused signed request")
-        raw=response.read(65_537)
-        if len(raw)>65_536:
+        raw=response.read(max_response+1)
+        if len(raw)>max_response:
             raise ValueError("control-plane response too large")
     result=json.loads(raw.decode("utf-8"))
     if not isinstance(result,dict):
@@ -103,7 +103,7 @@ def poll_once(base_url,node_id,key,state_root,opener=None,now=None):
     if not 32<=len(key)<=32:
         raise ValueError("node key must be 32 bytes")
     response=send(opener,base,node_id,key,"GET","/api/node/v1/manifest")
-    if set(response)<{"payload","signature"}:
+    if not {"payload","signature"}.issubset(response):
         raise ValueError("unsigned manifest")
     store=AgentStore(state_root,node_id)
     outcome=store.accept(response["payload"],response["signature"],key,now=now)

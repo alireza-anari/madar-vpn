@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from agent.runtime import read_marker,store_marker,watchdog,Runtime,stats_snapshot,runtime_diagnostic_code,journal_safe_error
+from agent.runtime import read_marker,store_marker,watchdog,Runtime,stats_snapshot,runtime_diagnostic_code,journal_safe_error,boot_id,fenced
 from agent.runtime_install import render_runtime_units
 from agent.account_policy import LocalLedger
 from agent.reconciler import ReconcileError
@@ -47,20 +47,30 @@ class RuntimeSafetyTests(unittest.TestCase):
             self.assertFalse(watchdog(root,136000,stop=lambda:stopped.append(1)))
             self.assertEqual(stopped,[1])
             self.assertEqual(read_marker(root)['pid'],1234)
+            self.assertTrue(fenced(root))
+            self.assertFalse(watchdog(root,137500,stop=lambda:stopped.append(1)))
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            stopped=[]
             store_marker(root,{'mode':'commercial','pid':1234,'checked_ms':137000,'policy_until_ms':138000})
             self.assertTrue(watchdog(root,137500,stop=lambda:stopped.append(1)))
             self.assertFalse(watchdog(root,138000,stop=lambda:stopped.append(1)))
-            self.assertEqual(stopped,[1,1])
+            self.assertEqual(stopped,[1])
 
     def test_rendered_units_are_isolated_and_include_independent_watchdog(self):
         units=render_runtime_units('test-node01')
-        self.assertEqual(len(units),3)
+        self.assertEqual(len(units),5)
         service=units['madar-v2-runtime.service']
         self.assertIn(' --node-id test-node01 ',service)
         self.assertIn('ExecStart=/usr/bin/python3 -m agent.runtime',service)
         self.assertIn('NoNewPrivileges=yes',service)
         self.assertIn('UMask=0077',service)
         self.assertNotIn('madar-v2-xray.service',service)
+        self.assertIn('IPAddressDeny=any',service)
+        self.assertIn('IPAddressAllow=localhost',service)
+        self.assertIn('--network-once --server',units['madar-v2-runtime-network.service'])
+        self.assertIn('TimeoutStartSec=25s',units['madar-v2-runtime-network.service'])
+        self.assertNotIn(' --server ',service)
         timer=units['madar-v2-runtime-watchdog.timer']
         self.assertIn('OnUnitActiveSec=15s',timer)
         self.assertNotIn('madar-sales-node',service)
@@ -82,11 +92,12 @@ class RuntimeSafetyTests(unittest.TestCase):
             runtime.runner=Mock()
             ledger=Mock()
             ledger.all.return_value=[{'id':'sub-one','installed':1}]
-            store_marker(runtime.state,{'mode':'commercial','pid':123})
-            with patch('agent.runtime.xray_pid',side_effect=[123,124]), \
+            gen={'pid':123,'start_us':100,'boot_id':boot_id()}
+            old={'mode':'commercial','pid':123,'generation':gen}
+            with patch('agent.runtime.live_generation',side_effect=[gen,{**gen,'pid':124}]), \
                  patch('agent.runtime.stats_snapshot',return_value='{"stat":[]}'):
                 with self.assertRaisesRegex(ReconcileError,'unrecognized Xray process generation'):
-                    runtime.sample(ledger,1000)
+                    runtime.sample(ledger,old,1000)
             ledger.observe.assert_not_called()
 
     def test_local_tick_removes_exhausted_customer_without_worker_round_trip(self):
@@ -107,12 +118,12 @@ class RuntimeSafetyTests(unittest.TestCase):
             runtime.clock=lambda:1800000000
             runtime.runner=lambda *args,**kwargs:None
             installed=[]
-            def local_sample(x,_now):
+            def local_sample(x,_old,_now):
                 x.observe({'sub-one':1001},1800000000000)
+                return {'pid':123,'start_us':100,'boot_id':boot_id()}
             runtime.sample=local_sample
-            runtime.apply=lambda _ledger,active:installed.append(active)
-            with patch('agent.runtime.xray_pid',return_value=123):
-                runtime.local_tick()
+            runtime.apply=lambda _ledger,active,_lease,_current:installed.append(active)
+            runtime.tick()
             self.assertEqual(installed,[[]])
             updated=LocalLedger(path/'quota.sqlite')
             self.assertGreaterEqual(updated.get('sub-one')['used'],1000)
@@ -127,9 +138,10 @@ class RuntimeSafetyTests(unittest.TestCase):
             runtime=Runtime.__new__(Runtime)
             runtime.state=path
             runtime.clock=lambda:1800000002
+            runtime.runner=Mock()
             with patch('agent.runtime.stop_owned_xray') as stop:
-                with self.assertRaisesRegex(Exception,'signed policy lease expired'):
-                    runtime.local_tick()
+                with self.assertRaisesRegex(ReconcileError,'manual review'):
+                    runtime.tick()
                 stop.assert_called_once()
 
 

@@ -20,12 +20,17 @@ from urllib.parse import quote
 from .installer import MARKER_TEXT
 from .bootstrap import allowed_staging_node_id
 from .dual_reality import CAPABILITIES
+from .runtime_install import NETWORK, NETWORK_TIMER, XRAY_DROPIN, XRAY_GATE
 
 ETC=pathlib.Path('/etc/madar-v2')
 APP=pathlib.Path('/opt/madar-v2')
 DATA=pathlib.Path('/var/lib/madar-v2')
 UNITS=pathlib.Path('/etc/systemd/system')
 FILES={
+    NETWORK:('Description=Madar V2 signed control-plane network exchange',
+             'ExecStart=/usr/bin/python3 -m agent.runtime ',' --network-once '),
+    NETWORK_TIMER:('Description=Madar V2 control-plane exchange clock',
+                   'Unit=madar-v2-runtime-network.service'),
     'madar-v2-runtime.service':(
         'Description=Madar V2 isolated node quota and client reconciler',
         'ExecStart=/usr/bin/python3 -m agent.runtime '),
@@ -43,6 +48,8 @@ FILES={
         'ExecStart=/opt/madar-v2/bin/caddy run --config '),
 }
 STOP_SEQUENCE=(
+    NETWORK_TIMER,
+    NETWORK,
     'madar-v2-runtime-watchdog.timer',
     'madar-v2-runtime.service',
     'madar-v2-runtime-watchdog.service',
@@ -58,6 +65,9 @@ STATE_FILES=frozenset({
     'runtime/quota.sqlite','runtime/quota.sqlite-journal',
     'runtime/quota.sqlite-wal','runtime/quota.sqlite-shm',
     'runtime/heartbeat.json','runtime/runtime.lock','runtime/desired/state.json',
+    'runtime/lease-transition.lock','runtime/generation-fence.json',
+    'runtime/policy-inbox.json','runtime/runtime-outbox.json',
+    'runtime/usage-receipts.json','runtime/start-receipt.json',
 })
 
 
@@ -163,10 +173,11 @@ def _check_units(directory):
     drop=directory/'madar-v2-xray.service.d'
     if drop.exists() or drop.is_symlink():
         _owned(drop,'dir')
-        children=list(drop.iterdir())
-        if len(children)!=1 or children[0].name!='20-madar-test-reality-443.conf':
-            raise ResetBlocked('UNKNOWN_V2_CAPABILITY_OVERRIDE')
-        if _owned(children[0],'file').read_text()!=CAPABILITIES:
+        expected={'20-madar-test-reality-443.conf':CAPABILITIES,XRAY_DROPIN:XRAY_GATE}
+        children={path.name:path for path in drop.iterdir()}
+        if ('20-madar-test-reality-443.conf' not in children or
+            any(name not in expected or _owned(path,'file').read_text()!=expected[name]
+                for name,path in children.items())):
             raise ResetBlocked('UNKNOWN_V2_CAPABILITY_OVERRIDE')
     else:
         drop=None
@@ -222,7 +233,7 @@ def reset(node_id,public_ip,*,apply=False,etc=ETC,app=APP,data=DATA,
                 stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
             if active.returncode==0:
                 raise ResetBlocked('V2_SYSTEMD_STILL_ACTIVE')
-            if service!='madar-v2-runtime-watchdog.service':
+            if service not in ('madar-v2-runtime-watchdog.service',NETWORK):
                 disabled=runner(['/usr/bin/systemctl','disable',service],
                     check=False,timeout=20,stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)

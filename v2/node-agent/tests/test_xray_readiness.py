@@ -72,6 +72,8 @@ class ReadinessRaceTests(unittest.TestCase):
             runtime=Runtime.__new__(Runtime)
             runtime.root=pathlib.Path(tmp)
             runtime.runner=Mock()
+            runtime.state=pathlib.Path(tmp)
+            runtime.clock=lambda:1.0
             # Force the service-inactive path so startup invalidates the old PID.
             runtime.runner.return_value.returncode=1
             ledger=Mock()
@@ -82,12 +84,11 @@ class ReadinessRaceTests(unittest.TestCase):
                  patch('agent.runtime.wait_for_xray_readiness',
                        side_effect=ReconcileError('dual REALITY and stats listeners not active')) as ready:
                 with self.assertRaisesRegex(ReconcileError,'dual REALITY'):
-                    runtime.apply(ledger,active)
+                    runtime.apply(ledger,active,{'policy_until_ms':120000},None)
             ready.assert_called_once()
             ledger.mark_installed.assert_not_called()
-            # The old process generation is invalidated after a fresh start,
-            # but this must never activate a paid customer on failed readiness.
-            ledger.epoch_reset.assert_called_once()
+            # On failure, preserve the old absolute counters for review.
+            ledger.epoch_reset.assert_not_called()
 
 
 if __name__=='__main__':

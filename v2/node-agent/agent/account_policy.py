@@ -45,7 +45,7 @@ def verify_clients(envelope,key,node_id,now=None):
     integer(p['revision'],1)
     issued=integer(p['issued_at'],1)
     until=integer(p['expires_at'],1)
-    if issued>now+30 or now-issued>90 or not now<until<=now+150:
+    if issued>now+30 or now-issued>90 or not now<until<=now+150 or not issued<until<=issued+120:
         raise ValueError("EXPIRED_POLICY")
     if p['mode'] not in ('commercial','test') or not isinstance(p['clients'],list) or len(p['clients'])>1000:
         raise ValueError("INVALID_CLIENTS")
@@ -63,7 +63,7 @@ def verify_clients(envelope,key,node_id,now=None):
         if not isinstance(c['uuid'],str) or not UUID.fullmatch(c['uuid']) or c['uuid'] in uuids:
             raise ValueError("INVALID_UUID")
         uuids.add(c['uuid'])
-        integer(c['expires_at'],now)
+        integer(c['expires_at'],1)
         cap=integer(c['quota_bytes'],1)
         used=integer(c['used_bytes'])
         left=integer(c['remaining_bytes'])
@@ -146,10 +146,10 @@ def parse_stats(raw,sub_ids):
 
 class LocalLedger:
     """Cumulative totals cannot be reset by policy refresh or Xray restart."""
-    def __init__(self,filename):
+    def __init__(self,filename,*,timeout=5):
         path=Path(filename)
         path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
-        self.db=sqlite3.connect(path)
+        self.db=sqlite3.connect(path,timeout=timeout)
         os.chmod(path,0o600)
         self.db.execute('PRAGMA synchronous=FULL')
         self.db.execute('PRAGMA journal_mode=DELETE')
@@ -186,8 +186,9 @@ class LocalLedger:
                     self.db.execute(
                         'UPDATE accounts SET quota=?,used=?,expires_ms=?,present=1 WHERE id=?',
                         (quota,max(old['used'],remote_used),c['expires_at'],sid))
-                    self.db.execute('UPDATE accounts SET total=MAX(total,?) WHERE id=?',
-                        (remote_used,sid))
+                    self.db.execute('UPDATE accounts SET sequence=sequence+CASE WHEN sequence>0 AND total<? THEN 1 ELSE 0 END,'
+                        'total=MAX(total,?) WHERE id=?',
+                        (remote_used,remote_used,sid))
                 else:
                     self.db.execute('INSERT INTO accounts(id,uuid,quota,used,expires_ms,total) VALUES(?,?,?,?,?,?)',
                         (sid,c['uuid'],quota,remote_used,c['expires_at'],remote_used))
@@ -202,6 +203,8 @@ class LocalLedger:
                     raise ValueError("COUNTER_ROLLBACK")
                 delta=value-old['counter']
                 if delta:
+                    integer(old['total']+delta)
+                    integer(old['sequence']+1)
                     self.db.execute(
                         'UPDATE accounts SET counter=?,total=total+?,used=MAX(used,total+?),sequence=sequence+1 WHERE id=?',
                         (value,delta,delta,sid))
