@@ -155,6 +155,16 @@ test('unhealthy node cannot create new test, but admin can revoke an existing E2
   const blocked=await resolveBotAction(env,event(ADMIN,'admin:configs:e2e:start:'+ref),NOW);
   assert.match(blocked.text,/no_verified_capacity/);
   assert.equal(raw.prepare('SELECT COUNT(*) n FROM subscriptions').get().n,0);
-  // No test subscription is created even though the synthetic order remains approved.
+  await resolveBotAction(env,event(ADMIN,'admin:configs:e2e:revoke:'+ref),NOW+1);
+  assert.equal(raw.prepare('SELECT state FROM orders').get().state,'cancelled');
+  raw.close();
+});
+
+test('revoking a pending test cancels its order and retains capacity until the removal ACK',async()=>{
+  const {raw,env}=fixture(),ref=await nodeUiRef(NODE);
+  await resolveBotAction(env,event(ADMIN,'admin:configs:e2e:start:'+ref),NOW);
+  await resolveBotAction(env,event(ADMIN,'admin:configs:e2e:revoke:'+ref),NOW+1);
+  assert.equal(raw.prepare('SELECT state FROM orders').get().state,'cancelled');
+  assert.equal(raw.prepare('SELECT state FROM node_allocations').get().state,'reserved');
   raw.close();
 });
