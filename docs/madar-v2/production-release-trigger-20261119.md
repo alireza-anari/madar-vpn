@@ -17,3 +17,7 @@ Authorized release target only:
 - Existing staging name remains unchanged so the Telegram webhook, node master keys and D1 records are not disrupted.
 
 This one-shot file change intentionally dispatches the existing guarded release workflow on the canonical branch; future pushes do not rerun this workflow unless this exact trigger path changes and the exact message guard matches.
+
+## November 25 staging release
+
+Publish merged PRs #73 and #75 from 0d8c316bbc37645c89c589ef31fa3ee421938b4a. Apply migration 0031 for cancelled internal test orders. The existing allocation remains reserved until the signed removal acknowledgement arrives.
