@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { canonical, deriveNodeKey, signNodeRequest, authenticatedNode } from '../src/node-control.mjs';
 
+const NOW_MS=1800000000000;
 const master=btoa(String.fromCharCode(...new Uint8Array(32).fill(37))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
 test('canonical manifest order deterministic and Python-compatible',()=>{
   assert.equal(canonical({z:1,a:[{c:3,b:2}]}),'{"a":[{"b":2,"c":3}],"z":1}');
@@ -80,13 +81,13 @@ function replayDb() {
 test('read-only and idempotent polling routes do not write replay nonces',async()=>{
   const mock=replayDb(),env={DB:mock.DB,NODE_MASTER_KEY:master};
   assert.equal((await authenticatedNode(
-    await signedRequest('/api/node/v1/manifest','GET','a'.repeat(32)),env)).id,'node_01');
+    await signedRequest('/api/node/v1/manifest','GET','a'.repeat(32)),env,NOW_MS)).id,'node_01');
   assert.equal((await authenticatedNode(
     await signedRequest('/api/node/v1/manifest','GET','a'.repeat(32)),env)).id,'node_01');
 
   const ackPayload={revision:1,status:'accepted',digest:'a'.repeat(64)};
   assert.equal((await authenticatedNode(
-    await signedRequest('/api/node/v1/ack','POST','b'.repeat(32),ackPayload),env)).id,'node_01');
+    await signedRequest('/api/node/v1/ack','POST','b'.repeat(32),ackPayload),env,NOW_MS)).id,'node_01');
   assert.equal((await authenticatedNode(
     await signedRequest('/api/node/v1/ack','POST','b'.repeat(32),ackPayload),env)).id,'node_01');
   assert.equal(mock.nonceWrites,0);
@@ -95,9 +96,9 @@ test('read-only and idempotent polling routes do not write replay nonces',async(
 test('unknown signed node mutations retain durable one-time replay protection',async()=>{
   const mock=replayDb(),env={DB:mock.DB,NODE_MASTER_KEY:master};
   assert.equal((await authenticatedNode(
-    await signedRequest('/api/node/v1/future-mutation','POST','c'.repeat(32),{value:1}),env)).id,'node_01');
+    await signedRequest('/api/node/v1/future-mutation','POST','c'.repeat(32),{value:1}),env,NOW_MS)).id,'node_01');
   const replay=await authenticatedNode(
-    await signedRequest('/api/node/v1/future-mutation','POST','c'.repeat(32),{value:1}),env);
+    await signedRequest('/api/node/v1/future-mutation','POST','c'.repeat(32),{value:1}),env,NOW_MS);
   assert.equal(replay.error.status,409);
   assert.equal(mock.nonceWrites,2);
   const wrongPath=await signedRequest('/api/node/v1/manifest','GET','d'.repeat(32));
@@ -111,5 +112,5 @@ test('unknown signed node mutations retain durable one-time replay protection',a
       'content-type':'application/json',
     },
   });
-  assert.equal((await authenticatedNode(invalid,env)).error.status,401);
+  assert.equal((await authenticatedNode(invalid,env,NOW_MS)).error.status,401);
 });
