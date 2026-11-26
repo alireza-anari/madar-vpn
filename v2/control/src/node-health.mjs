@@ -5,7 +5,7 @@
 import {authenticatedNode} from './node-control.mjs';
 import {manualPair,manualAttestationEnabled} from './admin-carrier-accept.mjs';
 
-const HEALTH_REFRESH_MS=120_000;
+const HEALTH_REFRESH_MS=300_000;
 const HEALTH_FRESH_MS=10*60_000;
 
 const json=(obj,status=200)=>new Response(JSON.stringify(obj),{
