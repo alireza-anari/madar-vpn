@@ -56,7 +56,7 @@ export async function usageRoute(request,env,nowMs=Date.now()) {
     if(!allowed)return reply({error:'allocation_not_found'},409);
     // D1 batch is a transaction: a durable cumulative checkpoint and the
     // customer-facing balance either both commit or neither does.
-    const [saved]=await env.DB.batch([
+    await env.DB.batch([
       env.DB.prepare(
         "INSERT INTO node_usage_reports(node_id,subscription_id,sequence,cumulative_bytes,observed_ms) "+
         "VALUES(?,?,?,?,?) ON CONFLICT(node_id,subscription_id) DO UPDATE SET "+
