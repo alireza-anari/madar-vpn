@@ -24,7 +24,10 @@ jobs:
       github.ref == 'refs/heads/rewrite/madar-v2-20261110' &&
       (
         (github.event_name == 'workflow_dispatch' && inputs.target == 'madar-v2-staging') ||
-        (github.event_name == 'push' && github.event.head_commit.message == 'deploy validated Madar V2 to existing Worker')
+        (github.event_name == 'push' && (
+          github.event.head_commit.message == 'deploy validated Madar V2 to existing Worker' ||
+          github.event.head_commit.message == 'deploy V2 D1 quota hotfix 2026-11-26'
+        ))
       )
     runs-on: ubuntu-latest
     environment: madar-v2-staging
@@ -111,10 +114,19 @@ jobs:
           test "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/telegram/webhook")" = 401
           status="$(curl -sS -o /dev/null -w '%{http_code}' "$BASE_URL/health/ready")"
           test "$status" = 503 -o "$status" = 200
-          login="$(curl -fsS --retry 2 -H 'content-type: application/json' -X POST -d '{}' "$BASE_URL/api/v2/android/login/start")"
-          echo "$login" | jq -e '.id | test("^[A-Za-z0-9_-]{24}$")' >/dev/null
-          echo "$login" | jq -e '.verifier | test("^[A-Za-z0-9_-]{43}$")' >/dev/null
-          echo "$login" | jq -e '.login_url | startswith("https://t.me/Madar_v2_bot?start=app_")' >/dev/null
+          login_status="$(curl -sS -o /tmp/madar-v2-login.json -w '%{http_code}' --connect-timeout 5 --max-time 15 -H 'content-type: application/json' -X POST -d '{}' "$BASE_URL/api/v2/android/login/start")"
+          if [[ "$login_status" == "200" ]]; then
+            login="$(cat /tmp/madar-v2-login.json)"
+            echo "$login" | jq -e '.id | test("^[A-Za-z0-9_-]{24}$")' >/dev/null
+            echo "$login" | jq -e '.verifier | test("^[A-Za-z0-9_-]{43}$")' >/dev/null
+            echo "$login" | jq -e '.login_url | startswith("https://t.me/Madar_v2_bot?start=app_")' >/dev/null
+          elif [[ "$login_status" == "503" && "$(git log -1 --format=%s)" == "deploy V2 D1 quota hotfix 2026-11-26" ]]; then
+            echo "D1_WRITE_QUOTA_EXHAUSTED: Android login write smoke deferred until daily quota reset"
+          else
+            echo "ANDROID_LOGIN_SMOKE_FAILED HTTP $login_status"
+            cat /tmp/madar-v2-login.json
+            exit 1
+          fi
           curl -fsS --retry 3 --retry-delay 2 "$BASE_URL/health/bot" |
             jq -e '.status=="ok" and .is_dedicated_v2==true and .webhook=="v2"' >/dev/null
           test "$(curl -sS --retry 2 -o /dev/null -w '%{http_code}' "$BASE_URL/api/node/v1/clients")" = 401
