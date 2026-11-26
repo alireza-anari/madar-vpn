@@ -274,8 +274,8 @@ async function clientAck(env,identity,nowMs) {
       "INSERT INTO node_client_acks(node_id,subscription_id,revision,credential_sha256,observed_ms) "+
       "VALUES(?,?,?,?,?) ON CONFLICT(node_id,subscription_id) DO UPDATE SET "+
       "revision=excluded.revision,credential_sha256=excluded.credential_sha256,"+
-      "observed_ms=excluded.observed_ms WHERE revision<>excluded.revision OR "+
-      "credential_sha256<>excluded.credential_sha256 OR "+
+      "observed_ms=excluded.observed_ms WHERE node_client_acks.revision<>excluded.revision OR "+
+      "node_client_acks.credential_sha256<>excluded.credential_sha256 OR "+
       "excluded.observed_ms>=node_client_acks.observed_ms+?"
     ).bind(identity.id,member.subscription_id,b.revision,current,nowMs,CLIENT_ACK_REFRESH_MS));
   }
