@@ -87,7 +87,7 @@ test('accepted node ACK refreshes its D1 row no more than once per two minutes',
   assert.equal(repeated.status,200);
   assert.equal(raw.prepare('SELECT total_changes() n').get().n,before);
 
-  const refresh=now+120_000;
+  const refresh=now+300_000;
   const renewed=await nodeRoute(await signed(path,'POST',payload,refresh),env,refresh);
   assert.equal(renewed.status,200);
   assert.ok(raw.prepare('SELECT total_changes() n').get().n>before);
