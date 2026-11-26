@@ -83,13 +83,13 @@ test('read-only and idempotent polling routes do not write replay nonces',async(
   assert.equal((await authenticatedNode(
     await signedRequest('/api/node/v1/manifest','GET','a'.repeat(32)),env,NOW_MS)).id,'node_01');
   assert.equal((await authenticatedNode(
-    await signedRequest('/api/node/v1/manifest','GET','a'.repeat(32)),env)).id,'node_01');
+    await signedRequest('/api/node/v1/manifest','GET','a'.repeat(32)),env,NOW_MS)).id,'node_01');
 
   const ackPayload={revision:1,status:'accepted',digest:'a'.repeat(64)};
   assert.equal((await authenticatedNode(
     await signedRequest('/api/node/v1/ack','POST','b'.repeat(32),ackPayload),env,NOW_MS)).id,'node_01');
   assert.equal((await authenticatedNode(
-    await signedRequest('/api/node/v1/ack','POST','b'.repeat(32),ackPayload),env)).id,'node_01');
+    await signedRequest('/api/node/v1/ack','POST','b'.repeat(32),ackPayload),env,NOW_MS)).id,'node_01');
   assert.equal(mock.nonceWrites,0);
 });
 
