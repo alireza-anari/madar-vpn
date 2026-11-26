@@ -8,7 +8,7 @@ const NODE_RE=/^[A-Za-z0-9][A-Za-z0-9_-]{1,63}$/;
 const HEX32=/^[a-f0-9]{32}$/;
 const HEX64=/^[a-f0-9]{64}$/;
 const HEADER='x-madar-node-';
-const ACK_REFRESH_MS=120_000;
+const ACK_REFRESH_MS=300_000;
 const CLIENT_ACK_REFRESH_MS=120_000;
 // These signed operations are read-only, monotonic, or otherwise idempotent.
 // Their replay has no additional business effect, so do not spend a D1 row
