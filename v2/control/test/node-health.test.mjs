@@ -86,7 +86,7 @@ test('repeated healthy reports are D1-write-throttled while freshness stays curr
  const repeated=await nodeHealthRoute(await signed(payload(middle),middle),env,middle);
  assert.equal(repeated.status,200);
  assert.equal(raw.prepare('SELECT total_changes() n').get().n,before);
- const refresh=now+120_000;
+ const refresh=now+300_000;
  const renewed=await nodeHealthRoute(await signed(payload(refresh),refresh),env,refresh);
  assert.equal(renewed.status,200);
  assert.ok(raw.prepare('SELECT total_changes() n').get().n>before);
