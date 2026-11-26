@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from agent.runtime import read_marker,store_marker,watchdog,Runtime,stats_snapshot,runtime_diagnostic_code,journal_safe_error,boot_id,fenced
+from agent.runtime import read_marker,store_marker,watchdog,Runtime,stats_snapshot,runtime_diagnostic_code,journal_safe_error,boot_id,fenced,valid_usage_receipts
 from agent.runtime_install import render_runtime_units
 from agent.account_policy import LocalLedger
 from agent.reconciler import ReconcileError
@@ -70,12 +70,28 @@ class RuntimeSafetyTests(unittest.TestCase):
         self.assertIn('IPAddressAllow=localhost',service)
         self.assertIn('--network-once --server',units['madar-v2-runtime-network.service'])
         self.assertIn('TimeoutStartSec=25s',units['madar-v2-runtime-network.service'])
+        self.assertIn('OnUnitInactiveSec=60s',units['madar-v2-runtime-network.timer'])
         self.assertNotIn(' --server ',service)
         timer=units['madar-v2-runtime-watchdog.timer']
         self.assertIn('OnUnitActiveSec=15s',timer)
         self.assertNotIn('madar-sales-node',service)
         for invalid in ('node1','prod-01','test node','../etc'):
             with self.assertRaises(Exception):render_runtime_units(invalid)
+
+    def test_usage_receipts_accept_only_older_durable_checkpoints(self):
+        submitted=[{'subscription_id':'sub-one','sequence':9,'cumulative_bytes':900}]
+        older=[{'subscription_id':'sub-one','sequence':6,'cumulative_bytes':600}]
+        self.assertTrue(valid_usage_receipts(submitted,older))
+        self.assertTrue(valid_usage_receipts(submitted,[
+            {'subscription_id':'sub-one','sequence':9,'cumulative_bytes':900}
+        ]))
+        self.assertFalse(valid_usage_receipts(submitted,[
+            {'subscription_id':'sub-one','sequence':10,'cumulative_bytes':900}
+        ]))
+        self.assertFalse(valid_usage_receipts(submitted,[
+            {'subscription_id':'sub-one','sequence':6,'cumulative_bytes':901}
+        ]))
+        self.assertFalse(valid_usage_receipts(submitted,[]))
 
     def test_prevent_leaking_secrets_or_publishing_raw_stats_service(self):
         units=render_runtime_units('test-safe01')
