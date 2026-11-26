@@ -8,6 +8,11 @@ const reply=(value,status=200)=>new Response(JSON.stringify(value),{status,heade
 const MAX=9007199254740991;
 const safeInt=n=>Number.isSafeInteger(n)&&n>=0&&n<=MAX;
 const SUB_ID=/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/;
+// The node enforces quotas locally on every runtime tick. D1 only needs a
+// durable usage checkpoint every five minutes, after 64 MiB of new traffic,
+// or when the subscription approaches/exceeds its quota.
+const USAGE_REFRESH_MS=5*60_000;
+const USAGE_DELTA_BYTES=64*1024*1024;
 
 export function validateUsageReport(data,nowMs) {
   if(!data||typeof data!=='object'||Array.isArray(data)||
@@ -58,21 +63,31 @@ export async function usageRoute(request,env,nowMs=Date.now()) {
         "sequence=excluded.sequence,cumulative_bytes=excluded.cumulative_bytes,"+
         "observed_ms=excluded.observed_ms WHERE "+
         "excluded.sequence>node_usage_reports.sequence AND "+
-        "excluded.cumulative_bytes>=node_usage_reports.cumulative_bytes"
-      ).bind(auth.id,row.subscription_id,row.sequence,row.cumulative_bytes,row.observed_ms),
+        "excluded.cumulative_bytes>=node_usage_reports.cumulative_bytes AND ("+
+        "excluded.observed_ms-node_usage_reports.observed_ms>=? OR "+
+        "excluded.cumulative_bytes-node_usage_reports.cumulative_bytes>=? OR "+
+        "EXISTS(SELECT 1 FROM subscriptions s WHERE s.id=? AND ("+
+        "excluded.cumulative_bytes>=s.max_bytes OR "+
+        "(s.max_bytes>? AND excluded.cumulative_bytes>=s.max_bytes-?))))"
+      ).bind(auth.id,row.subscription_id,row.sequence,row.cumulative_bytes,row.observed_ms,
+        USAGE_REFRESH_MS,USAGE_DELTA_BYTES,row.subscription_id,USAGE_DELTA_BYTES,USAGE_DELTA_BYTES),
       env.DB.prepare(
-        "UPDATE subscriptions SET used_bytes=MIN(max_bytes,MAX(used_bytes,"+
+        "UPDATE subscriptions SET used_bytes=MIN(max_bytes,"+
         "(SELECT COALESCE(SUM(cumulative_bytes),0) FROM node_usage_reports "+
-        "WHERE subscription_id=?))) WHERE id=?"
-      ).bind(row.subscription_id,row.subscription_id),
+        "WHERE subscription_id=?)) WHERE id=? AND used_bytes<MIN(max_bytes,"+
+        "(SELECT COALESCE(SUM(cumulative_bytes),0) FROM node_usage_reports "+
+        "WHERE subscription_id=?))"
+      ).bind(row.subscription_id,row.subscription_id,row.subscription_id),
     ]);
     const actual=await env.DB.prepare(
       "SELECT sequence,cumulative_bytes FROM node_usage_reports "+
       "WHERE node_id=? AND subscription_id=?"
     ).bind(auth.id,row.subscription_id).first();
     if(!actual)return reply({error:'checkpoint_failed'},503);
-    if(Number(saved.meta?.changes)!==1&&
-       (actual.sequence!==row.sequence||actual.cumulative_bytes!==row.cumulative_bytes))
+    // A throttled checkpoint may acknowledge an older durable sequence. The
+    // node keeps newer local bytes pending and retries them; never claim that
+    // unpersisted usage was stored.
+    if(actual.sequence>row.sequence||actual.cumulative_bytes>row.cumulative_bytes)
       return reply({error:'stale_or_regressed_usage'},409);
     result.push({subscription_id:row.subscription_id,
       cumulative_bytes:actual.cumulative_bytes,sequence:actual.sequence});
