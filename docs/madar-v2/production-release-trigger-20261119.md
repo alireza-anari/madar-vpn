@@ -21,3 +21,7 @@ This one-shot file change intentionally dispatches the existing guarded release 
 ## November 25 staging release
 
 Publish merged PRs #73 and #75 from 0d8c316bbc37645c89c589ef31fa3ee421938b4a. Apply migration 0031 for cancelled internal test orders. The existing allocation remains reserved until the signed removal acknowledgement arrives.
+
+## November 26 D1 write-amplification hotfix
+
+Publish merged PR #77 (squash commit 67c7aa2f4194e99af1da4b3c71fc9c7564fd0adc) to the existing `madar-v2-staging` Worker and existing V2 D1 database. No migration or binding change is required. The exact commit message for this one-time trigger is `deploy V2 D1 quota hotfix 2026-11-26`. The current D1 free-tier daily write quota is already exhausted, so the Android login write smoke may return 503 until the UTC daily reset; the narrowly gated one-time workflow exception skips only that write smoke while retaining Worker liveness, webhook authentication, Telegram bot binding, and configuration verification. All ordinary future releases continue to require the full login smoke test.
