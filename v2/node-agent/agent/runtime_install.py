@@ -107,7 +107,7 @@ Description=Madar V2 control-plane exchange clock
 
 [Timer]
 OnActiveSec=1s
-OnUnitInactiveSec=10s
+OnUnitInactiveSec=60s
 AccuracySec=1s
 Unit=madar-v2-runtime-network.service
 
