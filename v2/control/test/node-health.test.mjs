@@ -9,8 +9,8 @@ const now=1800000000000,node='test-node01';
 const master=btoa(String.fromCharCode(...new Uint8Array(32).fill(13)))
  .replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
 let nonceIndex=0;
-async function signed(doc){
- const body=JSON.stringify(doc),ts=Math.floor(now/1000),nonce=(++nonceIndex).toString(16).padStart(32,'0');
+async function signed(doc,at=now){
+ const body=JSON.stringify(doc),ts=Math.floor(at/1000),nonce=(++nonceIndex).toString(16).padStart(32,'0');
  const key=await deriveNodeKey(master,node);
  const signature=await signNodeRequest(key,'POST','/api/node/v1/health',ts,nonce,new TextEncoder().encode(body));
  return new Request('https://example.test/api/node/v1/health',{
@@ -21,8 +21,8 @@ async function signed(doc){
    }
  });
 }
-const payload=()=>({revision:1,ports:[443,8443],
-  xray_healthy:true,stats_healthy:true,observed_ms:now});
+const payload=(at=now)=>({revision:1,ports:[443,8443],
+  xray_healthy:true,stats_healthy:true,observed_ms:at});
 function fixture(){
  const raw=new DatabaseSync(':memory:');
  raw.exec('PRAGMA foreign_keys=ON');
@@ -73,6 +73,26 @@ test('signed healthy REALITY 443+8443 renews operational freshness only after ca
  assert.equal(raw.prepare("SELECT observed_ms FROM node_health").get().observed_ms,now);
  raw.close();
 });
+test('repeated healthy reports are D1-write-throttled while freshness stays current',async()=>{
+ const {raw,env}=fixture();
+ for(const [i,operator,port] of [['p1','mci',443],['p2','irancell',8443]]){
+  raw.prepare("INSERT INTO field_probes(id,node_id,operator,port,revision,observed_ms,upload_bytes,download_bytes) "+
+    "VALUES(?,?,?,?,1,?,1024,1024)").run(i,node,operator,port,now-300000);
+ }
+ const first=await nodeHealthRoute(await signed(payload(now)),env,now);
+ assert.equal(first.status,200);
+ const before=raw.prepare('SELECT total_changes() n').get().n;
+ const middle=now+60_000;
+ const repeated=await nodeHealthRoute(await signed(payload(middle),middle),env,middle);
+ assert.equal(repeated.status,200);
+ assert.equal(raw.prepare('SELECT total_changes() n').get().n,before);
+ const refresh=now+120_000;
+ const renewed=await nodeHealthRoute(await signed(payload(refresh),refresh),env,refresh);
+ assert.equal(renewed.status,200);
+ assert.ok(raw.prepare('SELECT total_changes() n').get().n>before);
+ raw.close();
+});
+
 test('accepted one-time field proofs remain valid after 24h if signed health is fresh',async()=>{
  const {raw,env}=fixture();
  for(const [i,operator,port] of [['old-mci','mci',443],['old-irancell','irancell',8443]]){
