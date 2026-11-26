@@ -87,7 +87,8 @@ export async function usageRoute(request,env,nowMs=Date.now()) {
     // A throttled checkpoint may acknowledge an older durable sequence. The
     // node keeps newer local bytes pending and retries them; never claim that
     // unpersisted usage was stored.
-    if(actual.sequence>row.sequence||actual.cumulative_bytes>row.cumulative_bytes)
+    if(actual.sequence>row.sequence||actual.cumulative_bytes>row.cumulative_bytes||
+       (actual.sequence===row.sequence&&actual.cumulative_bytes!==row.cumulative_bytes))
       return reply({error:'stale_or_regressed_usage'},409);
     result.push({subscription_id:row.subscription_id,
       cumulative_bytes:actual.cumulative_bytes,sequence:actual.sequence});
