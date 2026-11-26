@@ -79,23 +79,25 @@ function replayDb() {
 
 test('read-only and idempotent polling routes do not write replay nonces',async()=>{
   const mock=replayDb(),env={DB:mock.DB,NODE_MASTER_KEY:master};
-  const get=await signedRequest('/api/node/v1/manifest','GET','a'.repeat(32));
-  assert.equal((await authenticatedNode(get,env)).id,'node_01');
-  assert.equal((await authenticatedNode(get,env)).id,'node_01');
+  assert.equal((await authenticatedNode(
+    await signedRequest('/api/node/v1/manifest','GET','a'.repeat(32)),env)).id,'node_01');
+  assert.equal((await authenticatedNode(
+    await signedRequest('/api/node/v1/manifest','GET','a'.repeat(32)),env)).id,'node_01');
 
-  const ack=await signedRequest('/api/node/v1/ack','POST','b'.repeat(32),{
-    revision:1,status:'accepted',digest:'a'.repeat(64),
-  });
-  assert.equal((await authenticatedNode(ack,env)).id,'node_01');
-  assert.equal((await authenticatedNode(ack,env)).id,'node_01');
+  const ackPayload={revision:1,status:'accepted',digest:'a'.repeat(64)};
+  assert.equal((await authenticatedNode(
+    await signedRequest('/api/node/v1/ack','POST','b'.repeat(32),ackPayload),env)).id,'node_01');
+  assert.equal((await authenticatedNode(
+    await signedRequest('/api/node/v1/ack','POST','b'.repeat(32),ackPayload),env)).id,'node_01');
   assert.equal(mock.nonceWrites,0);
 });
 
 test('unknown signed node mutations retain durable one-time replay protection',async()=>{
   const mock=replayDb(),env={DB:mock.DB,NODE_MASTER_KEY:master};
-  const request=await signedRequest('/api/node/v1/future-mutation','POST','c'.repeat(32),{value:1});
-  assert.equal((await authenticatedNode(request,env)).id,'node_01');
-  const replay=await authenticatedNode(request,env);
+  assert.equal((await authenticatedNode(
+    await signedRequest('/api/node/v1/future-mutation','POST','c'.repeat(32),{value:1}),env)).id,'node_01');
+  const replay=await authenticatedNode(
+    await signedRequest('/api/node/v1/future-mutation','POST','c'.repeat(32),{value:1}),env);
   assert.equal(replay.error.status,409);
   assert.equal(mock.nonceWrites,2);
   const wrongPath=await signedRequest('/api/node/v1/manifest','GET','d'.repeat(32));
