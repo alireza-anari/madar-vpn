@@ -75,6 +75,25 @@ test('only signed node identity can retrieve encrypted-at-rest client UUID',asyn
   assert.match(doc.signature,/^[A-Za-z0-9_-]{43}$/);
   raw.close();
 });
+test('accepted node ACK refreshes its D1 row no more than once per two minutes',async()=>{
+  const {raw,env}=await fixture(),path='/api/node/v1/ack';
+  const payload={revision:1,status:'accepted',digest:'a'.repeat(64)};
+  const first=await nodeRoute(await signed(path,'POST',payload),env,now);
+  assert.equal(first.status,200);
+  const before=raw.prepare('SELECT total_changes() n').get().n;
+
+  const middle=now+60_000;
+  const repeated=await nodeRoute(await signed(path,'POST',payload,middle),env,middle);
+  assert.equal(repeated.status,200);
+  assert.equal(raw.prepare('SELECT total_changes() n').get().n,before);
+
+  const refresh=now+120_000;
+  const renewed=await nodeRoute(await signed(path,'POST',payload,refresh),env,refresh);
+  assert.equal(renewed.status,200);
+  assert.ok(raw.prepare('SELECT total_changes() n').get().n>before);
+  raw.close();
+});
+
 test('customer order remains pending until matching signed Xray installation ACK',async()=>{
   const {raw,env}=await fixture();
   const path='/api/node/v1/clients/ack';
