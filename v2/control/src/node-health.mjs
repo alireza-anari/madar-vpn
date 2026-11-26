@@ -5,6 +5,9 @@
 import {authenticatedNode} from './node-control.mjs';
 import {manualPair,manualAttestationEnabled} from './admin-carrier-accept.mjs';
 
+const HEALTH_REFRESH_MS=300_000;
+const HEALTH_FRESH_MS=10*60_000;
+
 const json=(obj,status=200)=>new Response(JSON.stringify(obj),{
   status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store'},
 });
@@ -53,24 +56,47 @@ export async function nodeHealthRoute(request,env,nowMs=Date.now()){
     "AND ((v.operator='mci' AND v.port=443) OR (v.operator='irancell' AND v.port=8443))"
   ).bind(routeId).first();
   if(Number(ready?.n)!==2)return json({error:'route_not_ready'},409);
-  const results=await env.DB.batch([
+  const currentHealth=await env.DB.prepare(
+    "SELECT revision FROM node_health WHERE node_id=?"
+  ).bind(auth.id).first();
+  const bootstrapHealth=!currentHealth||currentHealth.revision!==doc.revision;
+  await env.DB.batch([
     env.DB.prepare(
       "INSERT INTO node_health(node_id,revision,observed_ms,xray_healthy,stats_healthy) "+
       "VALUES(?,?,?,1,1) ON CONFLICT(node_id) DO UPDATE SET "+
       "revision=excluded.revision,observed_ms=excluded.observed_ms,"+
-      "xray_healthy=1,stats_healthy=1 WHERE excluded.observed_ms>=node_health.observed_ms"
-    ).bind(auth.id,doc.revision,doc.observed_ms),
+      "xray_healthy=1,stats_healthy=1 WHERE excluded.revision<>node_health.revision OR "+
+      "node_health.xray_healthy<>1 OR node_health.stats_healthy<>1 OR "+
+      "excluded.observed_ms>=node_health.observed_ms+?"
+    ).bind(auth.id,doc.revision,doc.observed_ms,HEALTH_REFRESH_MS),
     env.DB.prepare(
-      "UPDATE routes SET verified_ms=? WHERE id=? AND state='ready'"
-    ).bind(doc.observed_ms,routeId),
+      "UPDATE routes SET verified_ms=? WHERE id=? AND state='ready' "+
+      "AND (?=1 OR verified_ms IS NULL OR verified_ms<=?)"
+    ).bind(doc.observed_ms,routeId,bootstrapHealth?1:0,doc.observed_ms-HEALTH_REFRESH_MS),
     env.DB.prepare(
       "UPDATE route_carrier_variants SET verified_ms=? WHERE route_id=? "+
       "AND published=1 AND ((operator='mci' AND port=443) OR "+
-      "(operator='irancell' AND port=8443))"
-    ).bind(doc.observed_ms,routeId),
+      "(operator='irancell' AND port=8443)) AND "+
+      "(?=1 OR verified_ms IS NULL OR verified_ms<=?)"
+    ).bind(doc.observed_ms,routeId,bootstrapHealth?1:0,doc.observed_ms-HEALTH_REFRESH_MS),
   ]);
-  if(results[0]?.meta?.changes!==1||results[1]?.meta?.changes!==1||
-     results[2]?.meta?.changes!==2)return json({error:'state_changed'},409);
+  // A healthy node may report frequently, but route freshness is consumed
+  // with a 10-minute TTL. Refresh D1 at most every five minutes and verify the
+  // persisted state rather than treating an intentional no-op as a failure.
+  const state=await env.DB.prepare(
+    "SELECT h.revision,h.xray_healthy,h.stats_healthy,h.observed_ms AS health_ms,"+
+    "r.state AS route_state,r.verified_ms AS route_ms,COUNT(v.operator) AS variants,"+
+    "MIN(v.verified_ms) AS variant_ms FROM node_health h "+
+    "JOIN routes r ON r.id=? AND r.node_id=h.node_id "+
+    "JOIN route_carrier_variants v ON v.route_id=r.id AND v.published=1 "+
+    "AND ((v.operator='mci' AND v.port=443) OR (v.operator='irancell' AND v.port=8443)) "+
+    "WHERE h.node_id=? GROUP BY h.node_id"
+  ).bind(routeId,auth.id).first();
+  if(!state||state.revision!==doc.revision||state.xray_healthy!==1||
+     state.stats_healthy!==1||state.health_ms<nowMs-HEALTH_FRESH_MS||
+     state.route_state!=='ready'||state.route_ms<nowMs-HEALTH_FRESH_MS||
+     Number(state.variants)!==2||state.variant_ms<nowMs-HEALTH_FRESH_MS)
+    return json({error:'state_changed'},409);
   return json({ok:true,health_fresh:true,
     carrier_proofs:independent?'initial_independent_acceptance':'owner_manual_attestation'});
 }

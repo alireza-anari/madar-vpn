@@ -8,6 +8,20 @@ const NODE_RE=/^[A-Za-z0-9][A-Za-z0-9_-]{1,63}$/;
 const HEX32=/^[a-f0-9]{32}$/;
 const HEX64=/^[a-f0-9]{64}$/;
 const HEADER='x-madar-node-';
+const ACK_REFRESH_MS=300_000;
+const CLIENT_ACK_REFRESH_MS=300_000;
+// These signed operations are read-only, monotonic, or otherwise idempotent.
+// Their replay has no additional business effect, so do not spend a D1 row
+// write on a nonce for every 10-second control-plane cycle.
+const REPLAY_SAFE_NODE_REQUESTS=new Set([
+  'GET /api/node/v1/manifest',
+  'GET /api/node/v1/clients',
+  'POST /api/node/v1/ack',
+  'POST /api/node/v1/health',
+  'POST /api/node/v1/usage',
+  'POST /api/node/v1/clients/ack',
+  'POST /api/node/v1/clients/revoked',
+]);
 const encoder=new TextEncoder();
 
 const toHex=bytes=>Array.from(bytes).map(b=>b.toString(16).padStart(2,'0')).join('');
@@ -85,11 +99,15 @@ export async function authenticatedNode(request,env,nowMs=Date.now()) {
   ).bind(id).first();
   if(!node || node.lifecycle==='retired'||node.lifecycle==='quarantined')
     return {error:safeJson({error:'unauthorized'},401)};
-  // Replay protection with an atomic UNIQUE constraint in D1.
-  const saved=await env.DB.prepare(
-    'INSERT OR IGNORE INTO node_nonces(node_id,nonce,created_ms) VALUES(?,?,?)'
-  ).bind(id,nonce,nowMs).run();
-  if(saved.meta?.changes!==1) return {error:safeJson({error:'replay'},409)};
+  // Keep durable replay protection for any future non-idempotent node route.
+  // Current polling endpoints are safe to repeat and must not write one nonce
+  // row per read/heartbeat; their handlers enforce monotonic/idempotent updates.
+  if(!REPLAY_SAFE_NODE_REQUESTS.has(request.method+' '+url.pathname)){
+    const saved=await env.DB.prepare(
+      'INSERT OR IGNORE INTO node_nonces(node_id,nonce,created_ms) VALUES(?,?,?)'
+    ).bind(id,nonce,nowMs).run();
+    if(saved.meta?.changes!==1) return {error:safeJson({error:'replay'},409)};
+  }
   return {id,key,node,raw};
 }
 
@@ -139,8 +157,9 @@ async function ack(env,identity,nowMs) {
     env.DB.prepare(
       'INSERT INTO node_acks(node_id,revision,digest,status,observed_ms) VALUES(?,?,?,?,?) '+
       'ON CONFLICT(node_id,revision,digest) DO UPDATE SET status=excluded.status,'+
-      'observed_ms=excluded.observed_ms WHERE excluded.observed_ms>=node_acks.observed_ms'
-    ).bind(identity.id,revision,hash,code,nowMs),
+      'observed_ms=excluded.observed_ms WHERE excluded.status<>node_acks.status OR '+
+      'excluded.observed_ms>=node_acks.observed_ms+?'
+    ).bind(identity.id,revision,hash,code,nowMs,ACK_REFRESH_MS),
     env.DB.prepare(
       'UPDATE nodes SET acked_revision=? WHERE id=? AND desired_revision=? AND acked_revision<? AND ?=?'
     ).bind(revision,identity.id,revision,revision,code,'accepted'),
@@ -148,7 +167,8 @@ async function ack(env,identity,nowMs) {
   // Admin can truthfully record successful mobile tests before the node
   // reconnects. Only a fresh authenticated node ACK may finish commissioning.
   let promoted={ready:false};
-  if(code==='accepted'){
+  if(code==='accepted' && (identity.node.lifecycle!=='ready' ||
+      identity.node.acked_revision!==revision)){
     try{promoted=await promoteAdminPair(env,identity.id,nowMs);}
     catch{promoted={ready:false};}
   }
@@ -254,8 +274,10 @@ async function clientAck(env,identity,nowMs) {
       "INSERT INTO node_client_acks(node_id,subscription_id,revision,credential_sha256,observed_ms) "+
       "VALUES(?,?,?,?,?) ON CONFLICT(node_id,subscription_id) DO UPDATE SET "+
       "revision=excluded.revision,credential_sha256=excluded.credential_sha256,"+
-      "observed_ms=excluded.observed_ms"
-    ).bind(identity.id,member.subscription_id,b.revision,current,nowMs));
+      "observed_ms=excluded.observed_ms WHERE node_client_acks.revision<>excluded.revision OR "+
+      "node_client_acks.credential_sha256<>excluded.credential_sha256 OR "+
+      "excluded.observed_ms>=node_client_acks.observed_ms+?"
+    ).bind(identity.id,member.subscription_id,b.revision,current,nowMs,CLIENT_ACK_REFRESH_MS));
   }
   await env.DB.batch(commands);
   return safeJson({ok:true,applied:members.length});

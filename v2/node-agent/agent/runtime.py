@@ -470,6 +470,45 @@ def publish(root,name,doc,now_ms):
     store_document(root,name,{**doc,'published_ms':now_ms,'boot_id':boot_id()})
 
 
+def valid_usage_receipts(expected,received):
+    """Accept only a durable checkpoint no newer than the submitted local usage.
+
+    The control plane coalesces frequent usage reports. An older acknowledged
+    sequence remains safe: publish_usage marks only that sequence as reported,
+    leaving newer local bytes pending for the next network cycle.
+    """
+    if not isinstance(expected,list) or not isinstance(received,list) or len(expected)!=len(received):
+        return False
+    expected_by_id={}
+    for row in expected:
+        if not isinstance(row,dict):
+            return False
+        sid=row.get('subscription_id')
+        if not isinstance(sid,str) or sid in expected_by_id:
+            return False
+        if type(row.get('sequence')) is not int or row['sequence']<1:
+            return False
+        if type(row.get('cumulative_bytes')) is not int or row['cumulative_bytes']<0:
+            return False
+        expected_by_id[sid]=row
+    seen=set()
+    for receipt in received:
+        if not isinstance(receipt,dict) or set(receipt)!={'subscription_id','sequence','cumulative_bytes'}:
+            return False
+        sid=receipt.get('subscription_id')
+        submitted=expected_by_id.get(sid)
+        sequence=receipt.get('sequence')
+        cumulative=receipt.get('cumulative_bytes')
+        if sid in seen or submitted is None or type(sequence) is not int or type(cumulative) is not int:
+            return False
+        if sequence<1 or sequence>submitted['sequence'] or cumulative<0 or cumulative>submitted['cumulative_bytes']:
+            return False
+        if sequence==submitted['sequence'] and cumulative!=submitted['cumulative_bytes']:
+            return False
+        seen.add(sid)
+    return seen==set(expected_by_id)
+
+
 def network_cycle(origin,node_id,key,state,*,clock=time.time,opener=None):
     """Own all external I/O. The local runtime owns the ledger and Xray."""
     opener=opener or urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect())
@@ -502,11 +541,10 @@ def network_cycle(origin,node_id,key,state,*,clock=time.time,opener=None):
             response=call('POST','/api/node/v1/usage',payload)
             expected=[{k:v for k,v in report.items() if k!='observed_ms'}
                       for report in payload['reports']]
-            if (response.get('ok') is not True or
-                sorted(response.get('received',[]),key=lambda r:r['subscription_id'])!=
-                sorted(expected,key=lambda r:r['subscription_id'])):
+            acknowledged=response.get('received')
+            if response.get('ok') is not True or not valid_usage_receipts(expected,acknowledged):
                 raise ReconcileError('usage not acknowledged')
-            received.extend(expected)
+            received.extend(acknowledged)
             publish(state,RECEIPTS,{'usage':received},int(clock()*1000))
         except Exception as exc:
             journal_safe_error('remote',exc)

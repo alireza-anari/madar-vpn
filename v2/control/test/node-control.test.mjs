@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { canonical, deriveNodeKey, signNodeRequest, authenticatedNode } from '../src/node-control.mjs';
 
+const NOW_MS=1800000000000;
 const master=btoa(String.fromCharCode(...new Uint8Array(32).fill(37))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
 test('canonical manifest order deterministic and Python-compatible',()=>{
   assert.equal(canonical({z:1,a:[{c:3,b:2}]}),'{"a":[{"b":2,"c":3}],"z":1}');
@@ -32,46 +33,84 @@ test('HMAC signature binds request to method, path, timestamp and body',async()=
   assert.notEqual(a,b);
 });
 
-test('a signed node request verifies once and replay is rejected',async()=>{
-  const nowMs=1800000000000,ts=1800000000,nonce='a'.repeat(32),id='node_01';
+async function signedRequest(path,method,nonce,payload,nowMs=1800000000000) {
+  const id='node_01',timestamp=Math.floor(nowMs/1000);
+  const body=payload===undefined?'':JSON.stringify(payload);
   const key=await deriveNodeKey(master,id);
-  const signature=await signNodeRequest(key,'GET','/api/node/v1/manifest',ts,nonce);
-  const request=()=>new Request('https://example.test/api/node/v1/manifest',{
+  const signature=await signNodeRequest(key,method,path,timestamp,nonce,
+    new TextEncoder().encode(body));
+  return new Request('https://example.test'+path,{
+    method,
     headers:{
       'x-madar-node-id':id,
-      'x-madar-node-timestamp':String(ts),
+      'x-madar-node-timestamp':String(timestamp),
       'x-madar-node-nonce':nonce,
       'x-madar-node-signature':signature,
+      ...(method==='POST'?{'content-type':'application/json'}:{}),
     },
+    ...(method==='POST'?{body}:{})
   });
+}
+
+function replayDb() {
   const seen=new Set();
-  const db={
+  let nonceWrites=0;
+  const DB={
     prepare(sql) {
-      return {bind(...args){
+      return {bind(...args) {
         return {
-          async first(){
+          async first() {
             assert.match(sql,/FROM nodes/);
-            return {id,lifecycle:'provisioning',desired_revision:1,acked_revision:0,user_limit:20,byte_limit:1000};
+            return {id:'node_01',lifecycle:'provisioning',desired_revision:1,
+              acked_revision:0,user_limit:20,byte_limit:1000};
           },
-          async run(){
+          async run() {
             assert.match(sql,/node_nonces/);
+            nonceWrites++;
             if(seen.has(args[1]))return {meta:{changes:0}};
-            seen.add(args[1]);return {meta:{changes:1}};
+            seen.add(args[1]);
+            return {meta:{changes:1}};
           },
         };
       }};
     },
   };
-  const env={DB:db,NODE_MASTER_KEY:master};
-  const accepted=await authenticatedNode(request(),env,nowMs);
-  assert.equal(accepted.id,id);
-  const again=await authenticatedNode(request(),env,nowMs);
-  assert.equal(again.error.status,409);
-  const wrongPath=new Request('https://example.test/api/node/v1/ack',{method:'POST',
-    headers:{
-      'x-madar-node-id':id,'x-madar-node-timestamp':String(ts),
-      'x-madar-node-nonce':'b'.repeat(32),'x-madar-node-signature':signature,
+  return {DB,get nonceWrites(){return nonceWrites;}};
+}
+
+test('read-only and idempotent polling routes do not write replay nonces',async()=>{
+  const mock=replayDb(),env={DB:mock.DB,NODE_MASTER_KEY:master};
+  assert.equal((await authenticatedNode(
+    await signedRequest('/api/node/v1/manifest','GET','a'.repeat(32)),env,NOW_MS)).id,'node_01');
+  assert.equal((await authenticatedNode(
+    await signedRequest('/api/node/v1/manifest','GET','a'.repeat(32)),env,NOW_MS)).id,'node_01');
+
+  const ackPayload={revision:1,status:'accepted',digest:'a'.repeat(64)};
+  assert.equal((await authenticatedNode(
+    await signedRequest('/api/node/v1/ack','POST','b'.repeat(32),ackPayload),env,NOW_MS)).id,'node_01');
+  assert.equal((await authenticatedNode(
+    await signedRequest('/api/node/v1/ack','POST','b'.repeat(32),ackPayload),env,NOW_MS)).id,'node_01');
+  assert.equal(mock.nonceWrites,0);
+});
+
+test('unknown signed node mutations retain durable one-time replay protection',async()=>{
+  const mock=replayDb(),env={DB:mock.DB,NODE_MASTER_KEY:master};
+  assert.equal((await authenticatedNode(
+    await signedRequest('/api/node/v1/future-mutation','POST','c'.repeat(32),{value:1}),env,NOW_MS)).id,'node_01');
+  const replay=await authenticatedNode(
+    await signedRequest('/api/node/v1/future-mutation','POST','c'.repeat(32),{value:1}),env,NOW_MS);
+  assert.equal(replay.error.status,409);
+  assert.equal(mock.nonceWrites,2);
+  const wrongPath=await signedRequest('/api/node/v1/manifest','GET','d'.repeat(32));
+  const signature=wrongPath.headers.get('x-madar-node-signature');
+  const invalid=new Request('https://example.test/api/node/v1/future-mutation',{
+    method:'POST',body:'{}',headers:{
+      'x-madar-node-id':'node_01',
+      'x-madar-node-timestamp':'1800000000',
+      'x-madar-node-nonce':'e'.repeat(32),
+      'x-madar-node-signature':signature,
+      'content-type':'application/json',
     },
-    body:'{}'});
-  assert.equal((await authenticatedNode(wrongPath,env,nowMs)).error.status,401);
+  });
+  assert.equal((await authenticatedNode(invalid,env,NOW_MS)).error.status,401);
 });

@@ -8,9 +8,9 @@ const now=1800000000000,node='test-node01';
 const master=btoa(String.fromCharCode(...new Uint8Array(32).fill(12)))
   .replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
 const serial={value:0};
-async function signed(path,payload){
+async function signed(path,payload,at=now){
   const body=JSON.stringify(payload),method='POST',
-    sec=Math.floor(now/1000),
+    sec=Math.floor(at/1000),
     nonce=(++serial.value).toString(16).padStart(32,'0');
   const key=await deriveNodeKey(master,node);
   const sig=await signNodeRequest(key,method,path,sec,nonce,
@@ -48,8 +48,8 @@ function fixture(){
   }};
   return {raw,env:{DB,NODE_MASTER_KEY:master}};
 }
-const payload=(n=100,seq=1)=>({revision:1,reports:[{
-  subscription_id:'sub-one',sequence:seq,cumulative_bytes:n,observed_ms:now-1000
+const payload=(n=100,seq=1,at=now)=>({revision:1,reports:[{
+  subscription_id:'sub-one',sequence:seq,cumulative_bytes:n,observed_ms:at-1000
 }]});
 test('cannot submit malformed or double-counting usage batches',()=>{
   assert.ok(validateUsageReport(payload(),now));
@@ -77,6 +77,31 @@ test('node usage increases monotonically, retries do not double-count, cap is en
   assert.equal(raw.prepare("SELECT state FROM node_allocations WHERE id='a1'").get().state,'released');
   raw.close();
 });
+test('small usage deltas are coalesced and older durable checkpoints are acknowledged',async()=>{
+  const {raw,env}=fixture(),path='/api/node/v1/usage';
+  const first=await usageRoute(await signed(path,payload(300,1,now),now),env,now);
+  assert.equal(first.status,200);
+  const before=raw.prepare('SELECT total_changes() n').get().n;
+
+  const pendingAt=now+10_000;
+  const pending=await usageRoute(await signed(path,payload(500,2,pendingAt),pendingAt),env,pendingAt);
+  assert.equal(pending.status,200);
+  assert.deepEqual((await pending.json()).received,[{
+    subscription_id:'sub-one',cumulative_bytes:300,sequence:1,
+  }]);
+  assert.equal(raw.prepare('SELECT total_changes() n').get().n,before);
+  assert.equal(raw.prepare("SELECT used_bytes FROM subscriptions WHERE id='sub-one'").get().used_bytes,300);
+
+  const flushAt=now+301_000;
+  const flushed=await usageRoute(await signed(path,payload(500,2,flushAt),flushAt),env,flushAt);
+  assert.equal(flushed.status,200);
+  assert.deepEqual((await flushed.json()).received,[{
+    subscription_id:'sub-one',cumulative_bytes:500,sequence:2,
+  }]);
+  assert.equal(raw.prepare("SELECT used_bytes FROM subscriptions WHERE id='sub-one'").get().used_bytes,500);
+  raw.close();
+});
+
 test('unsigned fake usage never changes quota',async()=>{
   const {raw,env}=fixture();
   const bad=await usageRoute(new Request('https://example.test/api/node/v1/usage',{
