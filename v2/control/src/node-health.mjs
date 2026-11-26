@@ -81,7 +81,7 @@ export async function nodeHealthRoute(request,env,nowMs=Date.now()){
     ).bind(doc.observed_ms,routeId,bootstrapHealth?1:0,doc.observed_ms-HEALTH_REFRESH_MS),
   ]);
   // A healthy node may report frequently, but route freshness is consumed
-  // with a 10-minute TTL. Refresh D1 at most every two minutes and verify the
+  // with a 10-minute TTL. Refresh D1 at most every five minutes and verify the
   // persisted state rather than treating an intentional no-op as a failure.
   const state=await env.DB.prepare(
     "SELECT h.revision,h.xray_healthy,h.stats_healthy,h.observed_ms AS health_ms,"+
