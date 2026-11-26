@@ -56,6 +56,10 @@ export async function nodeHealthRoute(request,env,nowMs=Date.now()){
     "AND ((v.operator='mci' AND v.port=443) OR (v.operator='irancell' AND v.port=8443))"
   ).bind(routeId).first();
   if(Number(ready?.n)!==2)return json({error:'route_not_ready'},409);
+  const currentHealth=await env.DB.prepare(
+    "SELECT revision FROM node_health WHERE node_id=?"
+  ).bind(auth.id).first();
+  const bootstrapHealth=!currentHealth||currentHealth.revision!==doc.revision;
   await env.DB.batch([
     env.DB.prepare(
       "INSERT INTO node_health(node_id,revision,observed_ms,xray_healthy,stats_healthy) "+
@@ -67,13 +71,14 @@ export async function nodeHealthRoute(request,env,nowMs=Date.now()){
     ).bind(auth.id,doc.revision,doc.observed_ms,HEALTH_REFRESH_MS),
     env.DB.prepare(
       "UPDATE routes SET verified_ms=? WHERE id=? AND state='ready' "+
-      "AND (verified_ms IS NULL OR verified_ms<=?)"
-    ).bind(doc.observed_ms,routeId,doc.observed_ms-HEALTH_REFRESH_MS),
+      "AND (?=1 OR verified_ms IS NULL OR verified_ms<=?)"
+    ).bind(doc.observed_ms,routeId,bootstrapHealth?1:0,doc.observed_ms-HEALTH_REFRESH_MS),
     env.DB.prepare(
       "UPDATE route_carrier_variants SET verified_ms=? WHERE route_id=? "+
       "AND published=1 AND ((operator='mci' AND port=443) OR "+
-      "(operator='irancell' AND port=8443)) AND (verified_ms IS NULL OR verified_ms<=?)"
-    ).bind(doc.observed_ms,routeId,doc.observed_ms-HEALTH_REFRESH_MS),
+      "(operator='irancell' AND port=8443)) AND "+
+      "(?=1 OR verified_ms IS NULL OR verified_ms<=?)"
+    ).bind(doc.observed_ms,routeId,bootstrapHealth?1:0,doc.observed_ms-HEALTH_REFRESH_MS),
   ]);
   // A healthy node reports every 10 seconds, but route freshness is consumed
   // with a 10-minute TTL. Refresh D1 at most every two minutes and verify the
