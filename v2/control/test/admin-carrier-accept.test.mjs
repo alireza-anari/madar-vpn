@@ -117,7 +117,7 @@ test('only signed ACK + both distinct current-revision admin claims can promote;
   assert.equal(again.status,200);
   assert.equal(raw.prepare("SELECT COUNT(*) n FROM node_acks").get().n,1);
   assert.equal(raw.prepare("SELECT observed_ms FROM node_acks").get().observed_ms,NOW);
-  const refreshAt=NOW+120000;
+  const refreshAt=NOW+300000;
   const refreshed=await nodeRoute(await signedAck('accepted','a'.repeat(64),refreshAt),env,refreshAt);
   assert.equal(refreshed.status,200);
   assert.equal(raw.prepare("SELECT observed_ms FROM node_acks").get().observed_ms,refreshAt);
