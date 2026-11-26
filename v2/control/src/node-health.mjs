@@ -56,7 +56,7 @@ export async function nodeHealthRoute(request,env,nowMs=Date.now()){
     "AND ((v.operator='mci' AND v.port=443) OR (v.operator='irancell' AND v.port=8443))"
   ).bind(routeId).first();
   if(Number(ready?.n)!==2)return json({error:'route_not_ready'},409);
-  const results=await env.DB.batch([
+  await env.DB.batch([
     env.DB.prepare(
       "INSERT INTO node_health(node_id,revision,observed_ms,xray_healthy,stats_healthy) "+
       "VALUES(?,?,?,1,1) ON CONFLICT(node_id) DO UPDATE SET "+
