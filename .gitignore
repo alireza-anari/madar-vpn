@@ -15,6 +15,7 @@ test-results/
 # Sales Python test/build outputs
 sales-runner/**/__pycache__/
 sales-node/**/__pycache__/
+v2/**/__pycache__/
 sales-runner/.pytest_cache/
 sales-node/.pytest_cache/
 apps/sales-bot/dist/

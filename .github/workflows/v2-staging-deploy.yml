@@ -1,0 +1,155 @@
+name: Madar V2 guarded staging release
+
+on:
+  push:
+    branches: ['rewrite/madar-v2-20261110']
+    paths: ['docs/madar-v2/production-release-trigger-20261119.md']
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Type madar-v2-staging exactly
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: madar-v2-staging-release
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      github.ref == 'refs/heads/rewrite/madar-v2-20261110' &&
+      (
+        (github.event_name == 'workflow_dispatch' && inputs.target == 'madar-v2-staging') ||
+        (github.event_name == 'push' && (
+          github.event.head_commit.message == 'deploy validated Madar V2 to existing Worker' ||
+          github.event.head_commit.message == 'deploy V2 D1 quota hotfix 2026-11-26'
+        ))
+      )
+    runs-on: ubuntu-latest
+    environment: madar-v2-staging
+    timeout-minutes: 30
+    env:
+      CLOUDFLARE_ACCOUNT_ID: 2e4e0d025c81b9134fd2d19f17535e30
+      CLOUDFLARE_API_TOKEN: ${{ secrets.MADAR_V2_STAGING_CF_TOKEN }}
+      BASE_URL: https://madar-v2-staging.alirezaanari117.workers.dev
+      DB_ID: 81e78af9-9740-45da-9e80-9b2d498f4f54
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Re-check allowed branch, DB and source
+        run: |
+          set -euo pipefail
+          : "${CLOUDFLARE_API_TOKEN:?Independent staging deploy token required}"
+          grep -q '"name": "madar-v2-staging"' v2/control/wrangler.jsonc
+          grep -q "$DB_ID" v2/control/wrangler.jsonc
+          grep -q '"keep_vars": true' v2/control/wrangler.jsonc
+          ! grep -q 'f59e160f-89ab-4a90-a4dc-f257883d5a61' v2/control/wrangler.jsonc
+          (cd v2/control && npm run check && npm test)
+          python3 v2/control/test/schema.test.py
+          (cd v2/node-agent && python3 -m unittest discover -s tests)
+      - name: Confirm remote Worker still uses staging D1
+        run: |
+          curl -fsS --retry 2 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/madar-v2-staging/settings" |
+            jq -e --arg db "$DB_ID" '.success == true and any(.result.bindings[]; .type=="d1" and .name=="DB" and .id==$db)' >/dev/null
+      - name: Set isolated Android login feature bindings
+        run: |
+          set -euo pipefail
+          payload='{"secrets":{
+            "ANDROID_LOGIN_ENABLED_SECRET":{"name":"ANDROID_LOGIN_ENABLED_SECRET","type":"secret_text","text":"true"},
+            "SUBSCRIPTION_API_ENABLED_SECRET":{"name":"SUBSCRIPTION_API_ENABLED_SECRET","type":"secret_text","text":"true"},
+            "BOT_USERNAME_SECRET":{"name":"BOT_USERNAME_SECRET","type":"secret_text","text":"Madar_v2_bot"}
+          }}'
+          curl -fsS -X PATCH \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/madar-v2-staging/secrets-bulk" \
+            --data "$payload" | jq -e '.success == true' >/dev/null
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.9.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Apply pending migrations to isolated V2 D1 only
+        run: |
+          set -euo pipefail
+          pnpm --filter @madar/sales-bot exec wrangler d1 migrations apply madar-v2-staging-db --remote --config ../../v2/control/wrangler.jsonc
+      - name: Verify migration isolates owner-only tests from retail checkout
+        run: |
+          set -euo pipefail
+          payload="$(jq -nc --arg sql "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_v2_one_retail_checkout_per_customer'" '{sql:$sql}')"
+          curl --fail-with-body -fsS --retry 2 -X POST \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H 'Content-Type: application/json' \
+            --data "$payload" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/$DB_ID/query" |
+            jq -e '.success==true and (.result[0].results[0].sql | contains("admin-e2e:"))' >/dev/null
+      - name: Remember exact V2 Worker version for guarded rollback
+        run: |
+          set -euo pipefail
+          previous="$(curl --fail-with-body -fsS --retry 2 \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/madar-v2-staging/deployments" |
+            jq -er '.result.deployments[0].versions[] | select(.percentage==100) | .version_id')"
+          test -n "$previous"
+          echo "PREVIOUS_V2_VERSION_ID=$previous" >> "$GITHUB_ENV"
+      - name: Deploy V2 Worker only
+        id: deploy_v2
+        run: pnpm --filter @madar/sales-bot exec wrangler deploy --config ../../v2/control/wrangler.jsonc
+      - name: Verify live and unauthenticated webhook rejection
+        run: |
+          curl -fsS --retry 3 --retry-delay 2 "$BASE_URL/health/live" | jq -e '.status=="alive" and .service=="madar-v2"' >/dev/null
+          test "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/telegram/webhook")" = 401
+          status="$(curl -sS -o /dev/null -w '%{http_code}' "$BASE_URL/health/ready")"
+          test "$status" = 503 -o "$status" = 200
+          login_status="$(curl -sS -o /tmp/madar-v2-login.json -w '%{http_code}' --connect-timeout 5 --max-time 15 -H 'content-type: application/json' -X POST -d '{}' "$BASE_URL/api/v2/android/login/start")"
+          if [[ "$login_status" == "200" ]]; then
+            login="$(cat /tmp/madar-v2-login.json)"
+            echo "$login" | jq -e '.id | test("^[A-Za-z0-9_-]{24}$")' >/dev/null
+            echo "$login" | jq -e '.verifier | test("^[A-Za-z0-9_-]{43}$")' >/dev/null
+            echo "$login" | jq -e '.login_url | startswith("https://t.me/Madar_v2_bot?start=app_")' >/dev/null
+          elif [[ "$login_status" == "503" && "$(git log -1 --format=%s)" == "deploy V2 D1 quota hotfix 2026-11-26" ]]; then
+            echo "D1_WRITE_QUOTA_EXHAUSTED: Android login write smoke deferred until daily quota reset"
+          else
+            echo "ANDROID_LOGIN_SMOKE_FAILED HTTP $login_status"
+            cat /tmp/madar-v2-login.json
+            exit 1
+          fi
+          curl -fsS --retry 3 --retry-delay 2 "$BASE_URL/health/bot" |
+            jq -e '.status=="ok" and .is_dedicated_v2==true and .webhook=="v2"' >/dev/null
+          test "$(curl -sS --retry 2 -o /dev/null -w '%{http_code}' "$BASE_URL/api/node/v1/clients")" = 401
+          settings="$(curl --fail-with-body -fsS --retry 2 \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/madar-v2-staging/settings")"
+          echo "$settings" | jq -e --arg db "$DB_ID" '
+            .success==true and
+            any(.result.bindings[]; .type=="d1" and .name=="DB" and (.id==$db or .database_id==$db)) and
+            any(.result.bindings[]; .name=="SHOP_ENABLED" and .text=="false") and
+            any(.result.bindings[]; .name=="PROVISIONING_ENABLED" and .text=="false") and
+            any(.result.bindings[]; .name=="SUBSCRIPTION_LINKS_ENABLED" and .text=="false")
+          ' >/dev/null
+          echo STAGING_RELEASE_VERIFIED
+      - name: Roll back only V2 Worker code if post-deploy verification failed
+        if: failure() && steps.deploy_v2.outcome == 'success'
+        run: |
+          set -euo pipefail
+          : "${PREVIOUS_V2_VERSION_ID:?Missing rollback version}"
+          curl --fail-with-body -fsS -X POST \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/madar-v2-staging/deployments" \
+            --data "$(jq -nc --arg id "$PREVIOUS_V2_VERSION_ID" '{strategy:"percentage",versions:[{version_id:$id,percentage:100}],annotations:{"workers/message":"V2-only code rollback after failed post-deploy verification"}}')" |
+            jq -e '.success==true' >/dev/null
+          echo "V2_ONLY_CODE_ROLLBACK_COMPLETED"

@@ -1,0 +1,67 @@
+name: Madar V2 staging RSA key preflight
+on:
+  push:
+    branches:
+      - rewrite/madar-v2-20261110
+    paths:
+      - .github/workflows/v2-key-preflight.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate-key-pair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: madar-v2-staging
+    env:
+      PRIVATE_KEY_PEM: ${{ secrets.MADAR_V2_RUNNER_PRIVATE_KEY_PEM }}
+      EXPECTED_PUBKEY_SHA256: cd4ab1126734c025980235a2470e2371b897b0f6d1bf337a99ff90a31080786c
+    steps:
+      - name: Install pinned cryptography
+        run: python3 -m pip install --disable-pip-version-check --quiet cryptography==50.0.2
+      - name: Validate private RSA key matches V2 Cloudflare public key without printing secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64
+          import hashlib
+          import os
+          from cryptography.hazmat.primitives.serialization import load_pem_private_key
+          from cryptography.hazmat.primitives.asymmetric import rsa
+
+          pem = os.environ.get("PRIVATE_KEY_PEM", "").strip()
+          if not pem:
+              raise SystemExit("V2_RSA_SECRET_MISSING")
+          if pem.startswith('"') and pem.endswith('"'):
+              import json
+              try:
+                  pem = json.loads(pem)
+              except (ValueError, TypeError):
+                  raise SystemExit("V2_RSA_SECRET_WRAPPED_INVALID_JSON") from None
+          changed_newlines = False
+          if r"\n" in pem and "\n" not in pem:
+              pem = pem.replace(r"\n", "\n")
+              changed_newlines = True
+          if not pem.startswith("-----BEGIN "):
+              raise SystemExit("V2_RSA_PEM_HEADER_MISSING")
+          if "-----END " not in pem:
+              raise SystemExit("V2_RSA_PEM_FOOTER_MISSING")
+          if pem.count("\n") < 2:
+              raise SystemExit("V2_RSA_PEM_NEWLINES_MISSING")
+          try:
+              key = load_pem_private_key(pem.encode(), password=None)
+          except (ValueError, TypeError):
+              raise SystemExit("V2_RSA_PRIVATE_KEY_TRUNCATED_OR_CORRUPTED" if len(pem) < 1000 else "V2_RSA_PRIVATE_KEY_INVALID") from None
+          if not isinstance(key, rsa.RSAPrivateKey):
+              raise SystemExit("V2_RSA_NOT_RSA")
+          public_numbers = key.public_key().public_numbers()
+          modulus = base64.urlsafe_b64encode(public_numbers.n.to_bytes(
+              (public_numbers.n.bit_length()+7)//8, "big")).rstrip(b"=").decode()
+          exponent = base64.urlsafe_b64encode(public_numbers.e.to_bytes(
+              (public_numbers.e.bit_length()+7)//8, "big")).rstrip(b"=").decode()
+          digest = hashlib.sha256((modulus+"."+exponent).encode()).hexdigest()
+          if digest != os.environ["EXPECTED_PUBKEY_SHA256"]:
+              raise SystemExit("V2_RSA_KEY_PAIR_MISMATCH")
+          print("V2_RSA_PRIVATE_KEY_VALID_AFTER_NEWLINE_NORMALIZATION" if changed_newlines else "V2_RSA_PRIVATE_KEY_VALID_AND_MATCHES_CLOUDFLARE")
+          PY

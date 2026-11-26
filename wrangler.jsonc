@@ -1,0 +1,16 @@
+{
+  "name": "madar-staging",
+  "main": "apps/api/dist/madar_api/index.js",
+  "compatibility_date": "2026-10-08",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "assets": {
+    "directory": "apps/web/dist",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": [
+      "/api/*"
+    ]
+  },
+  "previews": {}
+}
