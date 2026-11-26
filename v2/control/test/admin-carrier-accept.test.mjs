@@ -40,9 +40,9 @@ function fixture(){
   }};
   return {raw,env:{DB,NODE_MASTER_KEY:master,ADMIN_MANUAL_FIELD_ACCEPT_ENABLED:'true'}};
 }
-async function signedAck(code='accepted',digest='a'.repeat(64)){
+async function signedAck(code='accepted',digest='a'.repeat(64),nowMs=NOW){
   const path='/api/node/v1/ack',body=JSON.stringify({revision:1,status:code,digest});
-  const stamp=Math.floor(NOW/1000),nonce=(++seq).toString(16).padStart(32,'0');
+  const stamp=Math.floor(nowMs/1000),nonce=(++seq).toString(16).padStart(32,'0');
   const sig=await signNodeRequest(await deriveNodeKey(master,ID),
     'POST',path,stamp,nonce,new TextEncoder().encode(body));
   return new Request('https://example.test'+path,{
@@ -113,10 +113,14 @@ test('only signed ACK + both distinct current-revision admin claims can promote;
   assert.equal(h.status,200);
   assert.equal((await h.json()).carrier_proofs,'owner_manual_attestation');
   assert.equal(raw.prepare("SELECT observed_ms FROM node_health").get().observed_ms,NOW);
-  const again=await nodeRoute(await signedAck(),env,NOW+1000);
+  const again=await nodeRoute(await signedAck('accepted','a'.repeat(64),NOW+1000),env,NOW+1000);
   assert.equal(again.status,200);
   assert.equal(raw.prepare("SELECT COUNT(*) n FROM node_acks").get().n,1);
-  assert.equal(raw.prepare("SELECT observed_ms FROM node_acks").get().observed_ms,NOW+1000);
+  assert.equal(raw.prepare("SELECT observed_ms FROM node_acks").get().observed_ms,NOW);
+  const refreshAt=NOW+120000;
+  const refreshed=await nodeRoute(await signedAck('accepted','a'.repeat(64),refreshAt),env,refreshAt);
+  assert.equal(refreshed.status,200);
+  assert.equal(raw.prepare("SELECT observed_ms FROM node_acks").get().observed_ms,refreshAt);
   raw.close();
 });
 test('stale admin tests or missing feature flag cannot promote or forge independent proof',async()=>{
