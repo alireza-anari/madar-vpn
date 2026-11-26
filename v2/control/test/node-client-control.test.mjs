@@ -47,11 +47,11 @@ async function fixture(){
   return {raw,env:{DB,NODE_MASTER_KEY:master,SUBSCRIPTION_CREDENTIAL_KEY:credentialKey}};
 }
 let nonceNumber=1;
-async function signed(path,method,payload){
+async function signed(path,method,payload,at=now){
   const key=await deriveNodeKey(master,id);
   const body=payload?JSON.stringify(payload):'';
   const nonce=(nonceNumber++).toString(16).padStart(32,'0');
-  const timestamp=Math.floor(now/1000);
+  const timestamp=Math.floor(at/1000);
   const signature=await signNodeRequest(key,method,path,timestamp,nonce,
     new TextEncoder().encode(body));
   return new Request('https://example.test'+path,{method,
@@ -92,5 +92,10 @@ test('customer order remains pending until matching signed Xray installation ACK
   assert.equal(raw.prepare("SELECT state FROM orders WHERE id='o1'").get().state,'fulfilled');
   assert.equal(raw.prepare("SELECT count(*) n FROM node_client_acks").get().n,1);
   assert.equal(raw.prepare("SELECT count(*) n FROM telegram_notifications").get().n,1);
+  const before=raw.prepare('SELECT total_changes() n').get().n;
+  const repeatedAt=now+60_000;
+  const repeated=await nodeRoute(await signed(path,'POST',payload,repeatedAt),env,repeatedAt);
+  assert.equal(repeated.status,200);
+  assert.equal(raw.prepare('SELECT total_changes() n').get().n,before);
   raw.close();
 });
